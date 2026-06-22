@@ -35,7 +35,9 @@ direction, not settled law.
 - **Playback:** AVFoundation / AVKit.
 - **Networking to the Pi:** the Network framework (`NWConnection`/`NWBrowser`) for
   discovery and control; HTTP for the clip API; a low-latency path (e.g. HLS or a
-  raw stream) for preview. The transport is an open design question -- write an ADR.
+  raw stream) for preview. The transport is now decided -- see the app<->Pi
+  transport ADR (`docs/design/2026-06-22-app-pi-transport-and-api.md`) and the
+  canonical wire contract it delegates to in `raspi/`.
 - **CarPlay:** the App Intents framework for voice ("save that clip") and the
   CarPlay template framework (Driving Task app category) for the on-screen panel.
 
@@ -74,3 +76,7 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 `docs/design/`. Current:
 
 - `2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
+- `2026-06-22-app-pi-transport-and-api.md` -- the app-side obligations for talking to
+  the Pi (NEHotspotConfiguration join, NWConnection Wi-Fi pinning, the hand-rolled
+  per-plane HTTP/1.1 client, loopback-HLS playback, App Intents incident-lock). The
+  wire contract itself is delegated to the raspi-side ADR of the same name.

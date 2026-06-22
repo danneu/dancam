@@ -88,3 +88,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 
 - `2026-06-22-crash-safe-recording.md` -- how recording survives abrupt power loss
   (format + filesystem + card hardware layers).
+- `2026-06-22-app-pi-transport-and-api.md` -- the app<->Pi wire contract: transport
+  per plane (control/events/preview/clip-pull), the `/v1` API surface, connection
+  lifecycle, WPA2-only auth posture, and the incident-lock idempotency contract. The
+  Pi owns this contract; the canonical copy lives here.

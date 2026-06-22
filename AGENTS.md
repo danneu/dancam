@@ -68,6 +68,11 @@ These are settled at the system level. Side-specific ADRs must not contradict th
 - **Thermals are a real constraint, not an afterthought.** The unit lives on a
   windshield in Texas heat. The camera sensor (rated to ~50 C) is the weak link,
   not the Pi board (rated to 70 C). See `raspi/AGENTS.md`.
+- **The app<->Pi link is a versioned local API served by the Pi, pinned to Wi-Fi.**
+  Control is request/response HTTP; live preview is low-res MJPEG derived from the
+  camera's lores stream (never the H.264 recording encoder); clips are pulled
+  on-demand with resumable byte ranges. The link is never on the recording path.
+  See `raspi/docs/design/2026-06-22-app-pi-transport-and-api.md`.
 
 ## Design decisions (ADRs)
 

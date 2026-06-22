@@ -6,6 +6,15 @@
 - **Related:** root `AGENTS.md` (cross-cutting principle "Recording must survive
   abrupt power loss")
 
+> **Note (2026-06-22):** This ADR's **live-preview transport** language -- that the
+> same TS segments feed the iPhone live preview via HLS -- is **superseded by**
+> `2026-06-22-app-pi-transport-and-api.md`, which selects **MJPEG from the camera's
+> lores stream** for live preview (the single H.264 encoder is committed to the 1080p30
+> recording, and low-bitrate H.264 smears the low-light detail the preview exists to
+> assess). Everything else here stands unchanged: the `.ts` recording format/container,
+> the crash-safety layers, and "HLS for clip pull/playback, remux to MP4 only for
+> export/share" (which the transport ADR realizes). Append-only per the ADR convention.
+
 ## Context
 
 The camera unit is powered from the car. When the engine goes off, power is cut
