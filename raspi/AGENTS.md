@@ -52,8 +52,9 @@ Provisional until captured as ADRs.
 - **OS:** Raspberry Pi OS (64-bit), with a **read-only root filesystem** (overlayfs)
   so power loss can never corrupt the OS. Footage goes on a **separate journaled
   partition** (ext4 or F2FS).
-- **Capture/encode:** `rpicam-vid` / libcamera (or Picamera2). Output segmented,
-  crash-tolerant streams (MPEG-TS or raw H.264 with inline headers).
+- **Capture/encode:** `rpicam-vid` / libcamera (or Picamera2). Output segmented
+  MPEG-TS (`.ts`) with inline headers -- truncation-tolerant and HLS-native for the
+  iPhone. See the crash-safe recording ADR for why TS over raw H.264 / MP4.
 - **Storage model:** a **ring buffer** of short segments; oldest deleted as the card
   fills; incident-locked segments are exempt from deletion.
 - **Access point:** hostapd + dnsmasq (or equivalent) so the phone can connect

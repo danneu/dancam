@@ -43,15 +43,26 @@ catastrophic failures; the hardware layer covers the residual risk software cann
 ### Layer 1 -- crash-tolerant format and segmentation
 
 - Record in **short segments** (target 30-60 s per file) rather than one long file.
-- Use a **truncation-tolerant container**: **MPEG-TS** (`.ts`), or **raw H.264**
-  elementary stream (`.h264`). Both can be cut at any byte and still play up to the
-  cut. **Do not record straight to MP4/MOV** as the recording format -- MP4 writes
-  its index (`moov` atom) at the end, so a power cut loses the *entire* clip.
+- Use **MPEG-TS** (`.ts`) as the recording container. It is truncation-tolerant
+  (a power cut can sever it at any byte and it still plays up to the cut) **and** it
+  carries timing (PTS/DTS) and is the native HLS segment format on iOS. The same
+  segments therefore feed both the iPhone live preview (HLS) and clip playback (wrap
+  in a local HLS playlist) with minimal glue. The iPhone playback path -- HLS for
+  preview and pull, remux to MP4 only for export/share -- is owned by the app<->Pi
+  transport design.
+- **Do not record raw H.264 elementary stream** (`.h264`), even though it is equally
+  truncation-tolerant and is `rpicam-vid`'s default output: it has no container and
+  no timestamps, so AVFoundation cannot play it without a remux *and* fabricated PTS
+  values. Fabricating timing is especially nasty here -- variable framerate plus the
+  Pi's lack of an RTC give no reliable clock to reconstruct it from. The ~2% size
+  saving over TS is not worth it.
+- **Do not record straight to MP4/MOV** as the recording format -- MP4 writes its
+  index (`moov` atom) at the end, so a power cut loses the *entire* clip. (MP4 is
+  produced later as an export format, off the hot path -- never as the live format.)
 - Emit inline stream headers (SPS/PPS at every keyframe, e.g. `rpicam-vid --inline`)
   so each segment is independently decodable.
 - A power cut then costs at most the final partial segment, and that segment is
-  usually still playable up to the cut. (MP4 may be produced later as an export
-  format, off the hot path -- never as the live recording format.)
+  usually still playable up to the cut.
 
 ### Layer 2 -- filesystem and OS
 
@@ -100,9 +111,10 @@ catastrophic failures; the hardware layer covers the residual risk software cann
 - Read-only root adds operational friction: configuration changes require toggling
   the overlay off/on, and logs must go to the writable partition (or be disabled).
   Document this in the raspi build/run notes.
-- Recordings are `.ts` / `.h264`, not `.mp4`. The app must play these (AVFoundation
-  handles TS) or the unit/app must remux to MP4 as an explicit export step, off the
-  recording hot path.
+- Recordings are `.ts`, not `.mp4`. iOS plays TS through **HLS** (a local `.m3u8`
+  referencing the segments), not as a standalone file -- so the app serves and plays
+  footage via HLS, and remuxes to MP4 only for export/share (Photos, AirDrop). That
+  TS->MP4 remux is clean because the timestamps already exist in the stream.
 
 ## Alternatives considered
 
@@ -113,9 +125,14 @@ catastrophic failures; the hardware layer covers the residual risk software cann
 - **"Crash-proof format" only.** Rejected. Fixing only the in-flight file leaves the
   filesystem and OS exposed -- the dangerous failures. Format is necessary but not
   sufficient.
+- **Raw H.264 elementary stream (`.h264`).** Equally truncation-tolerant and the
+  simplest to produce on the Pi, but rejected: no container and no timestamps, so
+  AVFoundation cannot play it without a remux plus fabricated PTS values (and there
+  is no RTC to reconstruct timing from). TS's embedded timing and HLS-native iOS
+  playback outweigh its ~2% packet overhead. See the Layer 1 decision.
 - **Record straight to MP4 with a periodic-finalize trick (fragmented MP4).** fMP4 is
-  more resilient than plain MP4, but TS/raw-H.264 are simpler and strictly more
-  truncation-tolerant, and avoid muxer edge cases on a 512 MB board. Revisit only if
-  MP4-native playback proves necessary on the hot path.
+  more resilient than plain MP4, but TS is simpler, strictly more truncation-tolerant,
+  and avoids muxer edge cases on a 512 MB board. Revisit only if MP4-native playback
+  proves necessary on the hot path.
 - **FAT recording partition + offline "repair" tool** (what many cheap dashcams do).
   Rejected: fragile, and we have no FAT-compatibility requirement.
