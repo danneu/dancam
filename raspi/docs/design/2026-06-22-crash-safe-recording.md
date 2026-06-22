@@ -1,0 +1,121 @@
+# ADR: Crash-safe recording on the camera unit
+
+- **Status:** Accepted
+- **Date:** 2026-06-22
+- **Owner:** raspi
+- **Related:** root `AGENTS.md` (cross-cutting principle "Recording must survive
+  abrupt power loss")
+
+## Context
+
+The camera unit is powered from the car. When the engine goes off, power is cut
+**without warning, mid-write.** A dashcam that corrupts its footage -- or worse,
+bricks its OS -- on every shutdown is useless. So corruption resistance is a
+first-class requirement, not a nice-to-have.
+
+There are three distinct failure modes when power is lost during a write, and they
+are commonly conflated. They need different fixes:
+
+1. **The in-flight file.** The clip being written loses its tail, or its container
+   index never gets finalized.
+2. **The filesystem.** Filesystem metadata was mid-update. This can orphan files,
+   corrupt the directory, or -- if it hits the OS root partition -- prevent the unit
+   from booting at all (a "dead dashcam").
+3. **The SD card's own controller.** The card's Flash Translation Layer (FTL) is
+   constantly rewriting its internal mapping tables (wear-leveling, garbage
+   collection) *below* the OS. Power loss mid program/erase can corrupt data that
+   was *already safely written*, or brick the card. **Software cannot make a single
+   flash write atomic** -- this layer is invisible to the filesystem.
+
+A common mistake is to fix only #1 (pick a "crash-proof video format") and assume
+the problem is solved. #2 is the more dangerous failure (it can brick the unit), and
+#3 is the part no software can fully solve.
+
+Constraints from the platform (see `raspi/AGENTS.md`): Raspberry Pi Zero 2 W,
+512 MB RAM, 1080p30 H.264 hardware encode, footage stored on microSD, no RTC, and a
+hot-car environment that stresses the card.
+
+## Decision
+
+Defend in all three layers. The software layers are free and prevent the
+catastrophic failures; the hardware layer covers the residual risk software cannot.
+
+### Layer 1 -- crash-tolerant format and segmentation
+
+- Record in **short segments** (target 30-60 s per file) rather than one long file.
+- Use a **truncation-tolerant container**: **MPEG-TS** (`.ts`), or **raw H.264**
+  elementary stream (`.h264`). Both can be cut at any byte and still play up to the
+  cut. **Do not record straight to MP4/MOV** as the recording format -- MP4 writes
+  its index (`moov` atom) at the end, so a power cut loses the *entire* clip.
+- Emit inline stream headers (SPS/PPS at every keyframe, e.g. `rpicam-vid --inline`)
+  so each segment is independently decodable.
+- A power cut then costs at most the final partial segment, and that segment is
+  usually still playable up to the cut. (MP4 may be produced later as an export
+  format, off the hot path -- never as the live recording format.)
+
+### Layer 2 -- filesystem and OS
+
+- **Read-only root filesystem** (overlayfs; Raspberry Pi OS supports this via
+  `raspi-config`). If root is never written, power loss **cannot corrupt the OS, so
+  the unit always boots.** This is the single most important anti-bricking measure.
+- **Separate, journaled recording partition** (ext4, or F2FS for flash-friendliness).
+  Journaling recovers the filesystem to a consistent, mountable state on next boot.
+  **Do not use FAT/exFAT** for recordings -- no journaling, fragile on power loss.
+  (We do not need FAT compatibility: the card is read by the phone over Wi-Fi, not
+  plugged into a PC.)
+- Flush aggressively: `fsync()` at each segment close, mount with frequent commits
+  (e.g. `noatime,commit=5`), and keep the dirty-page window small. The goal is that
+  little unwritten data is ever in RAM.
+
+### Layer 3 -- the SD card hardware
+
+- Use an **industrial / high-endurance microSD with power-loss protection (PLP)** --
+  on-card capacitors that flush the controller's buffers on power loss. This is the
+  hardware fix for the FTL risk, and it must also be rated for the hot-car
+  environment (85 C).
+- **Optionally** add a **supercapacitor module** (e.g. Juice4Halt HV, 7-28 V input,
+  -40/+85 C, ~60 s hold-up) for a clean power-down. This protects the FTL by giving
+  the card a graceful shutdown and lets us finalize the current segment instead of
+  truncating it. **No lithium batteries** -- fire/swelling risk in a hot car.
+
+### Software behavior
+
+- Auto-start recording on boot (ignition-on -> recording). 
+- Watch a power-good signal (from the supercap module's GPIO, or a divider on a GPIO)
+  and run a clean `shutdown` on power loss if hold-up power is present.
+- Run a ring buffer: delete oldest segments as the card fills, but **never delete
+  incident-locked segments** (the app locks an incident; see `app/AGENTS.md`).
+
+## Consequences
+
+- A power cut results in: OS always boots (read-only root), filesystem recovers
+  automatically (journaling), at most the last ~30-60 s segment is lost, and the
+  card's FTL is protected (PLP card, and clean shutdown if a supercap is fitted).
+  This is a battery-free design that matches how commercial dashcams survive constant
+  power cuts.
+- **The supercap becomes optional, not mandatory.** With Layers 1-2 plus a PLP card,
+  the supercap is belt-and-suspenders: it buys clean finalization of the current
+  segment and extra FTL safety. Whether to fit it is a cost/effort call, deferred to
+  a build-time decision; it is not required for correctness.
+- Read-only root adds operational friction: configuration changes require toggling
+  the overlay off/on, and logs must go to the writable partition (or be disabled).
+  Document this in the raspi build/run notes.
+- Recordings are `.ts` / `.h264`, not `.mp4`. The app must play these (AVFoundation
+  handles TS) or the unit/app must remux to MP4 as an explicit export step, off the
+  recording hot path.
+
+## Alternatives considered
+
+- **Supercap-only (no software hardening).** Rejected as the primary strategy: a
+  supercap reduces how often a bad cut happens but does not eliminate it (the cut can
+  still land mid-write before shutdown completes), and it does nothing to protect the
+  OS root. Software hardening is free and addresses the bricking risk directly.
+- **"Crash-proof format" only.** Rejected. Fixing only the in-flight file leaves the
+  filesystem and OS exposed -- the dangerous failures. Format is necessary but not
+  sufficient.
+- **Record straight to MP4 with a periodic-finalize trick (fragmented MP4).** fMP4 is
+  more resilient than plain MP4, but TS/raw-H.264 are simpler and strictly more
+  truncation-tolerant, and avoid muxer edge cases on a 512 MB board. Revisit only if
+  MP4-native playback proves necessary on the hot path.
+- **FAT recording partition + offline "repair" tool** (what many cheap dashcams do).
+  Rejected: fragile, and we have no FAT-compatibility requirement.
