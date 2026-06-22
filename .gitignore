@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Xcode / Swift (app/)
+*.xcuserstate
+xcuserdata/
+DerivedData/
+build/
+*.xcworkspace/xcuserdata/
+.swiftpm/
+Package.resolved
+
+# Python / Raspberry Pi (raspi/)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Secrets / local config (never commit Wi-Fi creds, keys, etc.)
+*.local
+.env
+secrets/
+
+# Logs and captured media (never commit footage)
+*.log
+*.h264
+*.ts
+*.mp4
+recordings/
