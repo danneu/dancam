@@ -35,14 +35,11 @@ slices, deepened on later passes; codenamed `oak`, `fox`, ... so they reorder wi
 renumbering), the default order and mock-Pi / real-Pi tracks, and an **Icebox** of
 parked someday-maybe swoops. Read it before deciding what to build next.
 
-## Hardware (tenative)
+## Hardware (tentative)
 
-The hardware may change for the v1 as we start concrete implementation, but this
-is the plan so far.
-
-- [Raspberry Pi Zero 2 W (2021)](https://www.amazon.com/gp/product/B09LH5SBPS)
-  (60 USD)
-- [Arducam for Raspberry Pi Camera Module 3 Wide](https://www.amazon.com/gp/product/B0C5D97DRJ) (30 USD): 120°(D) IMX708 Autofocus Pi Camera V3, 15cm 15-22 Pin FFC Cable
+Raspberry Pi Zero 2 W + Arducam IMX708 Autofocus Wide camera. The full spec, part
+links, and prices live in [`raspi/AGENTS.md`](raspi/AGENTS.md). Hardware may change as
+concrete implementation starts.
 
 ## Repository layout
 
@@ -70,8 +67,8 @@ it carries the details and constraints specific to that side.
         +----------- 2.4 GHz link ----------------> CarPlay surface (voice/status/control)
 ```
 
-Key data-flow rule: **the microSD is the system of record; Wi-Fi is only for
-preview and selective pull.** Footage is never streamed-to-phone-as-primary-storage.
+Key data-flow rule: the microSD is the system of record; Wi-Fi carries only preview
+and selective pull (the "SD is the source of truth" principle below).
 
 ## Cross-cutting principles (the decisions that shape everything)
 
@@ -93,9 +90,9 @@ These are settled at the system level. Side-specific ADRs must not contradict th
   windshield in Texas heat. The camera sensor (rated to ~50 C) is the weak link,
   not the Pi board (rated to 70 C). See `raspi/AGENTS.md`.
 - **The app<->Pi link is a versioned local API served by the Pi, pinned to Wi-Fi.**
-  Control is request/response HTTP; live preview is low-res MJPEG derived from the
-  camera's lores stream (never the H.264 recording encoder); clips are pulled
-  on-demand with resumable byte ranges. The link is never on the recording path.
+  Request/response control plus low-res preview and on-demand clip pull; never on the
+  recording path. The transport mechanics (MJPEG preview, resumable ranged pull, SSE
+  events) live in the transport ADR.
   See `raspi/docs/design/2026-06-22-app-pi-transport-and-api.md`.
 
 ## Design decisions (ADRs)

@@ -42,6 +42,15 @@ Use a space-based segment ring buffer on the writable journaled recording
 partition, with incident locks implemented as hardlinks. The filesystem is the
 durable source of lock truth; the in-memory index is a rebuildable cache.
 
+**On defaults and exact figures.** What this ADR *fixes* is the model: a space-based
+ring, hardlink locks, a single-writer coordinator, and disk-as-truth rebuild. The
+concrete numbers and shapes used to illustrate it -- the default percentages (2%
+headroom, 40% global locked cap, ~25% per-incident ceiling), the 15 s/30 s incident
+roll, segment length, the capacity/sizing tables, and the exact fsync step ordering in
+the commit sequence -- are **design-time starting points to confirm and tune during
+implementation, not frozen contract.** Where one of these becomes client-visible it is
+owned by the transport ADR (e.g. `retention`), and that contract governs.
+
 ### On-Disk Layout
 
 All paths live under `/rec/` on the writable recording partition, never on the
@@ -538,6 +547,13 @@ them contractually:
 Until those companion updates land, additive fields can serialize harmlessly, and
 truncation remains observable through `GET /v1/incidents` and `storage_full`, but
 the app contract is not complete.
+
+> **Update (2026-06-23):** These companion updates have **landed** in the transport
+> ADR's *Storage companion fields* subsection: `coverage_truncated`, the `deleted`
+> tombstone marker, Pi-side-set `source`, and `retention` max-age ceiling semantics are
+> now part of the canonical wire contract. The dedicated terminal-incident SSE event
+> stays deferred there by mutual agreement (`incident_resolved` keeps its single
+> meaning). The wire contract and this ADR now agree.
 
 ## Consequences
 

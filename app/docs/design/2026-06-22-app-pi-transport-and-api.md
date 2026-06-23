@@ -69,25 +69,24 @@ parsers -- not a general HTTP stack.
 
 ### Time sync and clip provenance
 
-The Pi has no RTC, so the app is the trusted time source: the handshake runs
-`GET /v1/capabilities` -> `POST /v1/time` (RTT-compensated) -> `GET /v1/status`, and
-until time sync succeeds the app shows "time unverified" and tags pulled clips as
-approximate. A clip with `time_approximate: true` may have its `start_ms` corrected once
-sync lands, so window queries run before sync are best-effort and are re-run after sync
-for an evidence-grade window.
+The Pi has no RTC, so the app is the trusted time source. App obligations: send the
+handshake's `POST /v1/time` (RTT-compensated), show "time unverified" until it lands,
+tag pre-sync clips approximate, and re-run any pre-sync window query after sync for an
+evidence-grade result. The handshake order and the `time_approximate` /
+post-sync-`start_ms`-correction semantics are defined in the raspi ADR; this ADR does
+not restate them.
 
 ### Incident lock with queue-and-flush (CarPlay voice path)
 
 The incident lock is invoked via **App Intents** ("save that clip") and feeds the
-CarPlay surface (per the CarPlay ADR). The app **generates the idempotency UUID before
-speaking** so retries fold into one incident, and on the cold/voice path (no warm
-socket) it **queues the lock locally (UUID + `at_epoch_ms` wall-clock timestamp) and
-flushes it after the reconnect handshake's `POST /v1/time`**, so a retroactive
-`at_epoch_ms` resolves against a valid monotonic -> wall map. The Pi additionally
-accepts and preserves pre-sync locks defensively; a pre-sync lock comes back with
-`pending_resolution: true` and resolves later via `GET /v1/incidents` + the
-`incident_resolved` SSE event -- the app waits for that before treating the incident's
-window as final.
+CarPlay surface (per the CarPlay ADR). App obligations: **generate the idempotency UUID
+before speaking** so retries fold into one incident; on the cold/voice path (no warm
+socket) **queue the lock locally** (UUID + `at_epoch_ms` wall-clock timestamp) and
+**flush it after the reconnect handshake's `POST /v1/time`**; and, for a pre-sync lock,
+**wait for the `incident_resolved` SSE event** (observed via `GET /v1/incidents`) before
+treating the incident's window as final. How the Pi preserves a pre-sync lock
+(`pending_resolution`, reboot-crossing idempotency, force-finalize-once) is the raspi
+ADR's contract, not restated here.
 
 ### Clip playback and export
 

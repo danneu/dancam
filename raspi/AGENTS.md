@@ -10,7 +10,8 @@ principles. This file covers the camera unit specifically.
 
 ## Hardware (v1)
 
-- **Board:** Raspberry Pi Zero 2 W.
+- **Board:** [Raspberry Pi Zero 2 W (2021)](https://www.amazon.com/gp/product/B09LH5SBPS)
+  (~60 USD).
   - Quad-core Cortex-A53 @ 1 GHz, **512 MB RAM** (tight -- keep the software lean).
   - **Wi-Fi: 2.4 GHz 802.11 b/g/n only. No 5 GHz.** This shapes the whole link
     design (preview + pull only; see below).
@@ -19,7 +20,8 @@ principles. This file covers the camera unit specifically.
   - Operating range -20 C to +70 C ambient. **No real-time clock** -- time comes
     from the phone (on connect) and/or a GPS module.
   - 40-pin header is unpopulated from the factory.
-- **Camera:** Arducam 12MP IMX708 Autofocus Wide (Camera Module 3 Wide equivalent).
+- **Camera:** [Arducam 12MP IMX708 Autofocus Wide](https://www.amazon.com/gp/product/B0C5D97DRJ)
+  (~30 USD; Camera Module 3 Wide equivalent).
   - 120 deg diagonal FOV, HDR, PDAF autofocus, Sony IMX708, libcamera-native.
   - Ships with a 22-22pin FPC cable that fits the Zero's connector (the official
     Raspberry Pi module's bundled cable does NOT fit the Zero -- ours does).
@@ -47,17 +49,19 @@ this ecosystem, and autofocus tops out at 120 deg (wider needs a fixed-focus M12
 
 ## Software stack (intended)
 
-Provisional until captured as ADRs.
+Most of this is now settled in ADRs (linked per item below); the remainder is the
+current provisional direction until it is captured.
 
 - **OS:** Raspberry Pi OS (64-bit), with a **read-only root filesystem** (overlayfs)
   so power loss can never corrupt the OS. Footage goes on a **separate journaled
-  partition** (ext4 or F2FS).
+  partition** (ext4 or F2FS). See the crash-safe recording ADR.
 - **Capture/encode:** `rpicam-vid` (libcamera), driven as a **subprocess** by the
   Rust service (never linked -- see the service-language ADR). Output segmented
   MPEG-TS (`.ts`) with inline headers -- truncation-tolerant and HLS-native for the
   iPhone. See the crash-safe recording ADR for why TS over raw H.264 / MP4.
 - **Storage model:** a **ring buffer** of short segments; oldest deleted as the card
-  fills; incident-locked segments are exempt from deletion.
+  fills; incident-locked segments are exempt from deletion. See the storage
+  ring-buffer / incident-lock ADR.
 - **Access point:** hostapd + dnsmasq (or equivalent) so the phone can connect
   directly with no router.
 - **Control + media service:** a small **Rust** service (see the service-language
@@ -80,10 +84,12 @@ raspi/
 
 ## Build / run
 
-The service is written in **Rust** and the camera is driven as a subprocess
-(`rpicam-vid`); see `docs/design/2026-06-23-service-language-rust.md`. Two facts
-shape the whole workflow: code is **cross-compiled on the dev host** (never built on
-the Pi), and the **dev image differs from the car image**.
+No code has landed yet -- this is the intended workflow, and the commands below are a
+starting point to firm up (ideally into a `deploy.sh`) once the service exists. The
+service will be written in **Rust** with the camera driven as a subprocess
+(`rpicam-vid`); the rationale is in `docs/design/2026-06-23-service-language-rust.md`.
+Two facts shape the whole workflow: code is **cross-compiled on the dev host** (never
+built on the Pi), and the **dev image differs from the car image**.
 
 ### Dev image vs. car image
 
@@ -125,9 +131,8 @@ p3  rest    ext4/f2fs  /data            recordings ring buffer + logs (only RW p
 Only `/data` is written at runtime, which is what makes abrupt power loss safe:
 journaled, `fsync()` at segment close, on a PLP card; `p1`/`p2` are read-only so a
 cut cannot corrupt the OS. Note: the app's "format the SD" action (swoop `kelp`)
-clears **`/data` only**, never the whole card -- the OS lives on the same card. Early dev:
-skip all of this and record to a folder on the writable root; introduce the layout
-during the crash-safe hardening pass.
+clears **`/data` only**, never the whole card -- the OS lives on the same card. (Early
+dev skips this layout entirely -- see the dev-vs-car note above.)
 
 ### Rust dev loop
 
@@ -136,8 +141,8 @@ Cross-compile on the Mac -- 512 MB cannot build a real dependency tree.
 - One-time: `rustup target add aarch64-unknown-linux-musl`; `brew install zig` plus
   `cargo install cargo-zigbuild` (or use `cross` with Docker).
 - Build: `cargo zigbuild --release --target aarch64-unknown-linux-musl` -> a single
-  static binary (no glibc/runtime coupling; scp-and-run, nothing to install -- ideal
-  for a read-only root).
+  static musl binary (nothing to install on the read-only root; the service-language
+  ADR covers why musl/static).
 - Deploy: `rsync` the binary to the Pi, then `ssh dancam sudo systemctl restart dancam`.
   Wrap build + rsync + restart in a `deploy.sh`. VS Code Remote-SSH is handy for
   poking around the Pi directly.

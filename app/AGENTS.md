@@ -34,10 +34,11 @@ direction, not settled law.
   (footage itself is pulled on demand and stored as files, not in the store).
 - **Playback:** AVFoundation / AVKit.
 - **Networking to the Pi:** the Network framework (`NWConnection`/`NWBrowser`) for
-  discovery and control; HTTP for the clip API; a low-latency path (e.g. HLS or a
-  raw stream) for preview. The transport is now decided -- see the app<->Pi
-  transport ADR (`docs/design/2026-06-22-app-pi-transport-and-api.md`) and the
-  canonical wire contract it delegates to in `raspi/`.
+  discovery and control; HTTP for the clip API; MJPEG over HTTP for low-res live
+  preview. The transport is decided -- see the app<->Pi transport ADR
+  (`docs/design/2026-06-22-app-pi-transport-and-api.md`) and the canonical wire
+  contract it delegates to in `raspi/`. (HLS-for-preview and raw-stream options were
+  considered and rejected there.)
 - **CarPlay:** the App Intents framework for voice ("save that clip") and the
   CarPlay template framework (Driving Task app category) for the on-screen panel.
 
@@ -45,14 +46,12 @@ When reviewing or writing Swift here, the repo has helper skills: `swiftui-pro`,
 `swift-concurrency-pro`, `swift-testing-pro`, `swiftdata-pro`. Prefer Swift Testing
 over XCTest for new tests.
 
-## CarPlay -- the one rule that surprises people
+## CarPlay
 
-Third-party CarPlay apps **cannot render a live camera feed** (no arbitrary-video
-template exists). The live preview stays on the iPhone. CarPlay gets a voice +
-status + control surface only. The ranked integration plan and the entitlement
-path are in:
-
-- `docs/design/2026-06-22-carplay-integration-surface.md`
+The surprising constraint: third-party CarPlay apps **cannot render a live camera
+feed** (no arbitrary-video template), so the live preview stays on the iPhone and
+CarPlay is voice + status + control only. The ranked integration plan and entitlement
+path are in `docs/design/2026-06-22-carplay-integration-surface.md`.
 
 ## Structure (planned)
 

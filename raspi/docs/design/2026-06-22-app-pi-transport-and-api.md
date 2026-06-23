@@ -9,7 +9,18 @@
   note to it); `app/docs/design/2026-06-22-carplay-integration-surface.md` (consumes
   the incident-lock + offline signal defined here);
   `app/docs/design/2026-06-22-app-pi-transport-and-api.md` (the app-side companion ADR
-  that delegates the wire contract to this one)
+  that delegates the wire contract to this one);
+  `2026-06-23-storage-ring-buffer-incident-lock.md` (the later ADR that owns the
+  storage/ring-buffer mechanisms this ADR only calls)
+
+> **Note (2026-06-23):** Editorial pass after the storage ADR
+> (`2026-06-23-storage-ring-buffer-incident-lock.md`) landed. Two changes, no decision
+> altered: (1) the repeated "mechanism owned by the storage ADR" reminders are
+> consolidated into the Context paragraph below rather than restated at each endpoint;
+> (2) a *Storage companion fields* subsection is appended to the API surface,
+> reconciling the additive fields that ADR introduced (`coverage_truncated`, the
+> `deleted` tombstone marker, lock `source`, `retention` ceiling semantics) so the two
+> docs agree. Append-only per the ADR convention.
 
 ## Context
 
@@ -24,8 +35,13 @@ principles and the two existing ADRs.
 
 This is the third design decision. The Pi storage ring-buffer / incident-lock
 internals (how segments are protected, reference-counted, force-finalized, and how
-pre-sync locks are held pending resolution) are a separate, later ADR; this ADR only
-**calls** that interface and fixes the observable wire contract around it.
+pre-sync locks are held pending resolution) live in a separate ADR,
+`2026-06-23-storage-ring-buffer-incident-lock.md`. This ADR only **calls** that
+interface and fixes the observable wire contract around it. **Read every mechanism
+named below with that split in mind:** wherever this ADR describes finalize,
+persistence, pending-resolution, or reference-counting behavior, the storage ADR owns
+the mechanism and this ADR fixes only the contract -- stated once here rather than
+repeated at each endpoint.
 
 ### Key technical facts (validated this session)
 
@@ -116,8 +132,8 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   an immutable, *pullable* segment within seconds instead of only at the next natural
   rollover. (Incident review is a headline use case; without this the most recent
   ~30-60 s would sit in the open segment, unreviewable up to the mark.) This is the same
-  finalize `recording/stop` performs, just triggered by the lock; the finalize
-  *mechanism* is owned by the recording/storage ADR. A **past** `at_epoch_ms` (e.g. the
+  finalize `recording/stop` performs, just triggered by the lock. A **past**
+  `at_epoch_ms` (e.g. the
   cold post-reboot path below) needs **no split**: its footage is already in finalized,
   pullable segments, and force-finalizing the *current* segment would only cut unrelated
   live footage. The **post-roll** is then locked lazily as future segments finalize, so
@@ -140,8 +156,7 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
     once** -- on the first delivery, and only if the mark is in the open segment (above);
     a deduped retry (or a queue-flush after reboot, the dominant path here) returns the
     existing incident and performs **no further segment split**. So "retries are safe"
-    covers the side effect, not just the incident record. The *persistence mechanism* is
-    owned by the storage/ring-buffer ADR; this ADR fixes the contract.
+    covers the side effect, not just the incident record.
 
   - **Pre-sync locks are preserved, not lost (observable contract).** The dominant
     cold-path case is a lock queued *before* a power cut and flushed against a
@@ -166,8 +181,7 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
     Once `POST /v1/time` binds the precise window, the incident's
     `window`/`locked_segment_ids` narrow to `[at_epoch_ms - pre_s, at_epoch_ms + post_s]`,
     observable via `GET /v1/incidents` and announced by an `incident_resolved` SSE event
-    so the client knows when it is safe to read/pull. The pending-resolution mechanism is
-    owned by the storage/ring-buffer ADR; this ADR fixes the contract.
+    so the client knows when it is safe to read/pull.
 
 - `GET /v1/incidents?limit=&cursor=` -- list locked incidents. A pre-sync lock appears
   with `pending_resolution: true` and no concrete `window` until time sync binds it.
@@ -175,8 +189,7 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
 - `DELETE /v1/incidents/{id}` -- unlock. **Only releases segments not referenced by any
   other incident** (segment protection is the union of all incidents' segment sets /
   reference-counted), so unlocking one incident never exposes footage another incident
-  still needs. The accounting mechanism is owned by the storage/ring-buffer ADR; this ADR
-  fixes the observable contract.
+  still needs.
 
 **Preview**
 
@@ -218,6 +231,36 @@ clip playback below). This keeps every Pi request on the pinned `NWConnection`.
   time sync -- safe to read/pull now), `storage_full`, `recording_stopped`,
   `temp_warning`, `time_synced`. Offline is detected by **absence of heartbeat**, not a
   push.
+
+**Storage companion fields (reconciled 2026-06-23).** The storage ADR
+(`2026-06-23-storage-ring-buffer-incident-lock.md`) introduced facts the app needs to
+rely on contractually. They are folded into the wire contract here, all additive
+(clients ignore unknown keys, so no version bump):
+
+- **`coverage_truncated` (bool)** -- added to the incident object on both the lock
+  response and `GET /v1/incidents`. `true` means a bounded cap/eviction policy clamped
+  the pre-roll/post-roll or evicted older incidents, so the saved window is narrower than
+  requested. The marked moment is always preserved; only surrounding context may be
+  clamped.
+- **`deleted` (bool, optional)** -- present and `true` only on a lock response that is a
+  tombstone-hit replay (the `idempotency_key` matches an already-deleted incident). Such
+  a response carries the original `incident_id`, an empty `locked_segment_ids`,
+  `window: null`, and performs no side effects, so a late retry cannot resurrect a
+  deleted incident.
+- **`source`** -- **set Pi-side from the request's invocation context, not accepted from
+  the wire body.** It is opaque metadata for listings/telemetry and MUST NOT affect
+  idempotency or force-finalize logic. (A wire-supplied `source` is therefore ignored.)
+- **`retention`** (in `GET`/`PATCH /v1/settings`) -- a **max-age ceiling** layered on the
+  space-based ring, not a minimum-retention guarantee: GC also drops segments older than
+  the ceiling, with the same protected-segment skip rules. Defaults **unset** = pure
+  space-based retention. Best-effort for never-synced footage (the age compares derived
+  wall times).
+- **Terminal incidents over SSE (deferred).** An incident that becomes provably
+  unresolvable or is truncated is surfaced in v1 via `GET /v1/incidents`
+  (`coverage_truncated: true`, or a terminal status) plus the existing `storage_full`
+  event. A dedicated terminal SSE event is intentionally **not** added yet:
+  `incident_resolved` keeps its single meaning ("precise window bound, safe to
+  read/pull"). Adding a terminal event later is an additive companion change.
 
 ### Clip playback / export (app side)
 
