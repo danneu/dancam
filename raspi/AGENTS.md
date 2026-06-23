@@ -96,9 +96,9 @@ Same Raspberry Pi OS base, two configurations:
 | Access | `ssh dan@dancam.local` over the LAN | phone joins the Pi's AP |
 | Recordings | a folder on root is fine early | dedicated journaled `/data` partition |
 
-Swoops 0-4 live in the dev image. Read-only root, AP mode, and the partition layout
-are a hardening pass (the crash-safe ADR is the north star, not the spec for early
-swoops) -- not something to fight while iterating.
+The early swoops live in the dev image. Read-only root, AP mode, and the partition
+layout are a hardening pass (the crash-safe ADR is the north star, not the spec for
+early swoops) -- not something to fight while iterating.
 
 ### OS and first flash (once)
 
@@ -124,8 +124,8 @@ p3  rest    ext4/f2fs  /data            recordings ring buffer + logs (only RW p
 
 Only `/data` is written at runtime, which is what makes abrupt power loss safe:
 journaled, `fsync()` at segment close, on a PLP card; `p1`/`p2` are read-only so a
-cut cannot corrupt the OS. Note: the app's "format the SD" action (Swoop 3) clears
-**`/data` only**, never the whole card -- the OS lives on the same card. Early dev:
+cut cannot corrupt the OS. Note: the app's "format the SD" action (swoop `kelp`)
+clears **`/data` only**, never the whole card -- the OS lives on the same card. Early dev:
 skip all of this and record to a folder on the writable root; introduce the layout
 during the crash-safe hardening pass.
 
