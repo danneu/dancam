@@ -62,9 +62,11 @@ Provisional until captured as ADRs.
 - **Control + media service:** a small service exposing a control API (start/stop,
   settings, time sync, incident lock) and a media API (list/preview/pull clips) to
   the app.
-- **Power-loss safety:** an industrial microSD with power-loss protection (PLP),
-  optionally plus a supercapacitor module (e.g. Juice4Halt HV) for clean shutdown.
-  No lithium batteries -- they are a fire risk baking in a hot car.
+- **Power-loss safety:** an industrial microSD with power-loss protection (PLP). The
+  unit runs off a switched USB accessory source that dies with the car, so power loss
+  is abrupt and unsignaled -- no clean-shutdown path and no supercapacitor; the
+  crash-safe layers carry recording integrity. No lithium batteries -- they are a fire
+  risk baking in a hot car. See `docs/design/2026-06-23-power-source-and-shutdown.md`.
 
 ## Structure (planned)
 
@@ -95,3 +97,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `2026-06-23-storage-ring-buffer-incident-lock.md` -- the Pi storage model:
   segment ring buffer, no-RTC ordering, incident hardlink locks, pre-sync holds,
   caps, rebuild, and the in-process storage service interface.
+- `2026-06-23-power-source-and-shutdown.md` (Proposed) -- the v1 power topology
+  (switched USB accessory source, 5V regulated, dies with the car) and the decision
+  to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves
+  the crash-safe ADR's deferred supercapacitor question (dropped for this topology).

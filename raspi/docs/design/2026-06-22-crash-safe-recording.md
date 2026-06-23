@@ -15,6 +15,15 @@
 > the crash-safety layers, and "HLS for clip pull/playback, remux to MP4 only for
 > export/share" (which the transport ADR realizes). Append-only per the ADR convention.
 
+> **Note (2026-06-23):** The **supercapacitor / clean-shutdown** path in Layer 3 and
+> "Software behavior" (watch a power-good signal; run a clean `shutdown` on power loss)
+> is **resolved and dropped** by `2026-06-23-power-source-and-shutdown.md`. The v1
+> power topology is a **switched USB accessory source** that dies with the car and
+> exposes no power-fail signal, so abrupt power loss is the design assumption and there
+> is no clean-shutdown path. The residual FTL risk the supercap would have covered is
+> handled by the PLP-rated card (Layer 3). The `.ts` format, segmentation, filesystem,
+> and PLP-card layers here stand unchanged. Append-only per the ADR convention.
+
 ## Context
 
 The camera unit is powered from the car. When the engine goes off, power is cut
