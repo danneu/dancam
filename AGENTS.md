@@ -128,7 +128,10 @@ To start a new ADR, copy the structure of an existing one in the same folder.
 - **Writing style:** plain ASCII. Write `4x` not the times sign, straight quotes,
   `--` not an em dash, `degrees`/`deg` not the degree sign. Applies to docs, code
   comments, and commit messages.
-- **Commits:** small and logical; one coherent change per commit. Imperative subject
-  line (`Add ...`, `Document ...`), with a body when the why isn't obvious.
+- **Commits:** small and logical; one coherent change per commit. Follow
+  [Conventional Commits](https://www.conventionalcommits.org/) -- a `type(scope):
+  summary` subject (types: `feat`, `fix`, `docs`, `refactor`, `chore`; scope optional,
+  e.g. `app` / `raspi`), with a body when the why isn't obvious. Example:
+  `docs(raspi): add power-source-and-shutdown ADR`.
 - **Source of truth for context:** `AGENTS.md` files. `CLAUDE.md` exists only to
   import `AGENTS.md` for the Claude Code harness.
