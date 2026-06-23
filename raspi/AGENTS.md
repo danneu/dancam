@@ -92,3 +92,6 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   per plane (control/events/preview/clip-pull), the `/v1` API surface, connection
   lifecycle, WPA2-only auth posture, and the incident-lock idempotency contract. The
   Pi owns this contract; the canonical copy lives here.
+- `2026-06-23-storage-ring-buffer-incident-lock.md` -- the Pi storage model:
+  segment ring buffer, no-RTC ordering, incident hardlink locks, pre-sync holds,
+  caps, rebuild, and the in-process storage service interface.
