@@ -52,16 +52,17 @@ Provisional until captured as ADRs.
 - **OS:** Raspberry Pi OS (64-bit), with a **read-only root filesystem** (overlayfs)
   so power loss can never corrupt the OS. Footage goes on a **separate journaled
   partition** (ext4 or F2FS).
-- **Capture/encode:** `rpicam-vid` / libcamera (or Picamera2). Output segmented
+- **Capture/encode:** `rpicam-vid` (libcamera), driven as a **subprocess** by the
+  Rust service (never linked -- see the service-language ADR). Output segmented
   MPEG-TS (`.ts`) with inline headers -- truncation-tolerant and HLS-native for the
   iPhone. See the crash-safe recording ADR for why TS over raw H.264 / MP4.
 - **Storage model:** a **ring buffer** of short segments; oldest deleted as the card
   fills; incident-locked segments are exempt from deletion.
 - **Access point:** hostapd + dnsmasq (or equivalent) so the phone can connect
   directly with no router.
-- **Control + media service:** a small service exposing a control API (start/stop,
-  settings, time sync, incident lock) and a media API (list/preview/pull clips) to
-  the app.
+- **Control + media service:** a small **Rust** service (see the service-language
+  ADR) exposing a control API (start/stop, settings, time sync, incident lock) and a
+  media API (list/preview/pull clips) to the app.
 - **Power-loss safety:** an industrial microSD with power-loss protection (PLP). The
   unit runs off a switched USB accessory source that dies with the car, so power loss
   is abrupt and unsignaled -- no clean-shutdown path and no supercapacitor; the
@@ -79,9 +80,80 @@ raspi/
 
 ## Build / run
 
-Not yet established. When code lands, document here: how to flash/provision an SD
-image, how to enable the read-only overlay and the recording partition, how to run
-the capture + service locally, and how to point the app at the unit.
+The service is written in **Rust** and the camera is driven as a subprocess
+(`rpicam-vid`); see `docs/design/2026-06-23-service-language-rust.md`. Two facts
+shape the whole workflow: code is **cross-compiled on the dev host** (never built on
+the Pi), and the **dev image differs from the car image**.
+
+### Dev image vs. car image
+
+Same Raspberry Pi OS base, two configurations:
+
+| | Dev image (on the desk) | Car image (deployed) |
+|---|---|---|
+| Root filesystem | writable -- edit & restart freely | read-only (overlayfs) |
+| Network | joins home Wi-Fi as a client | runs the AP (hostapd + dnsmasq) |
+| Access | `ssh dan@dancam.local` over the LAN | phone joins the Pi's AP |
+| Recordings | a folder on root is fine early | dedicated journaled `/data` partition |
+
+Swoops 0-4 live in the dev image. Read-only root, AP mode, and the partition layout
+are a hardening pass (the crash-safe ADR is the north star, not the spec for early
+swoops) -- not something to fight while iterating.
+
+### OS and first flash (once)
+
+- **Raspberry Pi OS Lite, 64-bit** (Bookworm). Lite = headless and lean for 512 MB;
+  Bookworm ships `rpicam-vid` and IMX708 support natively.
+- Flash with **Raspberry Pi Imager**, pre-setting hostname (`dancam`), SSH on, the
+  user, and **home Wi-Fi credentials**. Boot headless, then `ssh dan@dancam.local`
+  over the LAN (mDNS). No monitor or keyboard, and no card-shuffling after this.
+- Fallback if Wi-Fi is fussy: the data micro-USB port supports gadget mode
+  (`g_ether`) -> SSH over the USB cable.
+
+### microSD partition layout (car image)
+
+One physical card (the Zero 2 W has a single slot); OS and footage share it in
+separate partitions. The card must be high-endurance / PLP-rated (see the crash-safe
+ADR).
+
+```
+p1  ~512MB  FAT32      /boot/firmware   firmware (effectively read-only)
+p2  ~8-16GB ext4       /                OS root -- mounted READ-ONLY (overlayfs)
+p3  rest    ext4/f2fs  /data            recordings ring buffer + logs (only RW partition)
+```
+
+Only `/data` is written at runtime, which is what makes abrupt power loss safe:
+journaled, `fsync()` at segment close, on a PLP card; `p1`/`p2` are read-only so a
+cut cannot corrupt the OS. Note: the app's "format the SD" action (Swoop 3) clears
+**`/data` only**, never the whole card -- the OS lives on the same card. Early dev:
+skip all of this and record to a folder on the writable root; introduce the layout
+during the crash-safe hardening pass.
+
+### Rust dev loop
+
+Cross-compile on the Mac -- 512 MB cannot build a real dependency tree.
+
+- One-time: `rustup target add aarch64-unknown-linux-musl`; `brew install zig` plus
+  `cargo install cargo-zigbuild` (or use `cross` with Docker).
+- Build: `cargo zigbuild --release --target aarch64-unknown-linux-musl` -> a single
+  static binary (no glibc/runtime coupling; scp-and-run, nothing to install -- ideal
+  for a read-only root).
+- Deploy: `rsync` the binary to the Pi, then `ssh dancam sudo systemctl restart dancam`.
+  Wrap build + rsync + restart in a `deploy.sh`. VS Code Remote-SSH is handy for
+  poking around the Pi directly.
+
+### Running
+
+- A **systemd unit** (`dancam.service`) runs the service: auto-start on boot (also
+  how the car image auto-records on boot) and restart-on-crash.
+- Logs: `journalctl -u dancam -f`. Under the read-only car image, point logs at
+  `/data` or keep them in RAM -- root is not writable.
+
+### Pointing the app at the unit
+
+- Dev: app (or the mock Pi) and the Pi both on home Wi-Fi; hit
+  `http://dancam.local/v1/...` (port per the transport ADR).
+- Car: the phone joins the Pi's AP and talks to its AP address per the transport ADR.
 
 ## Design decisions (ADRs)
 
@@ -101,3 +173,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   (switched USB accessory source, 5V regulated, dies with the car) and the decision
   to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves
   the crash-safe ADR's deferred supercapacitor question (dropped for this topology).
+- `2026-06-23-service-language-rust.md` (Proposed) -- the Pi service is written in
+  Rust, cross-compiled on the dev host to a single static binary and run under
+  systemd; the camera is driven as a subprocess (`rpicam-vid`), not linked. See the
+  Build / run section above for the dev loop.
