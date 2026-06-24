@@ -24,8 +24,10 @@ app, is documented in [`../app/AGENTS.md`](../app/AGENTS.md).
 - **Camera:** [Arducam 12MP IMX708 Autofocus Wide](https://www.amazon.com/gp/product/B0C5D97DRJ)
   (~30 USD; Camera Module 3 Wide equivalent).
   - 120 deg diagonal FOV, HDR, PDAF autofocus, Sony IMX708, libcamera-native.
-  - Ships with a 22-22pin FPC cable that fits the Zero's connector (the official
-    Raspberry Pi module's bundled cable does NOT fit the Zero -- ours does).
+  - Ships with a 15-22pin FPC cable: 22-pin at the camera, 15-pin at the board.
+    That fits the standard 15-pin CSI port on the Pi 3/4 (incl. the 3 A+), but NOT
+    the Zero / Zero 2 W / Pi 5, whose 22-pin mini-CSI ports need a separate 22-22pin
+    cable (the included one does not fit them).
   - **Operating temp 0 C to +50 C -- this is the system's thermal weak link**, not
     the board. Hot-parked operation is bounded by the sensor, not the Pi.
 
@@ -121,7 +123,10 @@ early swoops) -- not something to fight while iterating.
 ### OS and first flash (once)
 
 - **Raspberry Pi OS Lite, 64-bit** (Bookworm). Lite = headless and lean for 512 MB;
-  Bookworm ships `rpicam-vid` and IMX708 support natively.
+  Bookworm ships `rpicam-vid` natively. Note: only the *official* Camera Module 3
+  IMX708 works out of the box -- our Arducam B0311 variant needs Arducam's driver
+  install (bit.ly/ArduCam_CM3_B0311) and is sensitive to the kernel version, so pin
+  and verify the kernel it targets.
 - Flash with **Raspberry Pi Imager**, pre-setting hostname (`dancam`), SSH on, the
   user, and **home Wi-Fi credentials**. Boot headless, then `ssh dan@dancam.local`
   over the LAN (mDNS). No monitor or keyboard, and no card-shuffling after this.
