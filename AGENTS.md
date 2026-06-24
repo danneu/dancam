@@ -127,6 +127,7 @@ files under each side's `docs/design/` directory. This is the project's ADR
   The date is the day the decision is taken. `{seq}` is what orders ADRs and
   disambiguates decisions made on the same day; the date alone does not sequence
   them.
+- These naming rules are enforced by `just adr-check` (run it after adding an ADR).
 - One decision per file. Prefer short, specific slugs (`crash-safe-recording`,
   `carplay-integration-surface`).
 - Every ADR has this shape:

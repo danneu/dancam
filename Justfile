@@ -13,3 +13,7 @@ raspi-run:
 # Run the mock Pi service on 0.0.0.0:9000 for LAN device testing.
 raspi-run-lan:
     cd raspi/service && DANCAM_BIND=0.0.0.0:9000 cargo run
+
+# Validate ADR filenames: format, per-side contiguous sequence, seq/date order.
+adr-check:
+    bash scripts/check-adrs.sh
