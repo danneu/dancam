@@ -79,18 +79,29 @@ current provisional direction until it is captured.
 ```
 raspi/
   AGENTS.md
+  service/            <- Rust service crate (package/binary `dancam`)
   docs/design/        <- raspi-side ADRs
-  (capture/service/provisioning code to be added)
+  (capture/provisioning code to be added)
 ```
 
 ## Build / run
 
-No code has landed yet -- this is the intended workflow, and the commands below are a
-starting point to firm up (ideally into a `deploy.sh`) once the service exists. The
-service will be written in **Rust** with the camera driven as a subprocess
-(`rpicam-vid`); the rationale is in `docs/design/2026-06-23-service-language-rust.md`.
-Two facts shape the whole workflow: code is **cross-compiled on the dev host** (never
-built on the Pi), and the **dev image differs from the car image**.
+The service lives in `raspi/service/` and is written in **Rust** with the camera driven
+as a subprocess (`rpicam-vid`); the rationale is in
+`docs/design/2026-06-23-service-language-rust.md`. Two facts shape the whole workflow:
+release code is **cross-compiled on the dev host** (never built on the Pi), and the
+**dev image differs from the car image**.
+
+### Local Mac service loop
+
+Use the root `Justfile` for common service tasks. Agents should prefer these commands
+over raw `cargo` commands unless they need to test a lower-level Cargo behavior.
+
+- `just raspi-build` -- build the service for the local host.
+- `just raspi-test` -- run the service test suite.
+- `just raspi-run` -- run the mock Pi service on `127.0.0.1:8080`.
+- `just raspi-run-lan` -- run the mock Pi service on `0.0.0.0:9000` for testing from
+  another LAN device, such as the iPhone.
 
 ### Dev image vs. car image
 
@@ -179,7 +190,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   (switched USB accessory source, 5V regulated, dies with the car) and the decision
   to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves
   the crash-safe ADR's deferred supercapacitor question (dropped for this topology).
-- `2026-06-23-service-language-rust.md` (Proposed) -- the Pi service is written in
+- `2026-06-23-service-language-rust.md` (Accepted) -- the Pi service is written in
   Rust, cross-compiled on the dev host to a single static binary and run under
   systemd; the camera is driven as a subprocess (`rpicam-vid`), not linked. See the
   Build / run section above for the dev loop.
