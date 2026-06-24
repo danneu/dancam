@@ -6,6 +6,14 @@ raspi-build:
 raspi-test:
     cargo test --manifest-path raspi/service/Cargo.toml
 
+# Build the iPhone app for the iOS simulator.
+app-build:
+    xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'generic/platform=iOS Simulator' build
+
+# Run the iPhone app's Swift Testing unit suite.
+app-test:
+    xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' -only-testing:DanCamTests test
+
 # Run the mock Pi service on 127.0.0.1:8080 for local dev.
 raspi-run:
     cd raspi/service && cargo run

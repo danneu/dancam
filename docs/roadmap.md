@@ -25,7 +25,7 @@ mock first.
       the app point at that mock service and get a 200 back. _Foundation for
       everything below without needing the Pi on the desk._
       - [x] Mock Pi service runs locally and answers the health endpoint.
-      - [ ] App can call the mock Pi health endpoint.
+      - [x] App can call the mock Pi health endpoint.
 - [ ] **Swoop `pine` -- Real Pi bring-up.** Hardware track for the same health slice:
       flash Raspberry Pi OS (64-bit), bring up the Wi-Fi AP (hostapd + dnsmasq),
       get the camera visible/capturing at a basic smoke-test level, deploy/run the

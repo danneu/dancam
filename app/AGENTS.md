@@ -30,9 +30,14 @@ is documented in [`../raspi/AGENTS.md`](../raspi/AGENTS.md).
 Decisions here are provisional until captured as an ADR; treat as the current
 direction, not settled law.
 
-- **Language/UI:** Swift, SwiftUI. Target current iOS.
+- **Language/UI:** Swift, UIKit (programmatic, no storyboards). Target current iOS.
+- **Architecture:** bespoke minimal TEA -- pure reducers, a `@MainActor` store,
+  struct-of-closures dependencies, and a hand-written `TestStore`; zero third-party
+  architecture dependencies. See
+  `docs/design/03-2026-06-24-app-ui-architecture.md`.
 - **Local persistence:** SwiftData for clip metadata / incident records / settings
-  (footage itself is pulled on demand and stored as files, not in the store).
+  (provisional; UI-agnostic, decided separately). Footage itself is pulled on demand
+  and stored as files, not in the store.
 - **Playback:** AVFoundation / AVKit.
 - **Networking to the Pi:** the Network framework (`NWConnection`/`NWBrowser`) for
   discovery and control; HTTP for the clip API; MJPEG over HTTP for low-res live
@@ -44,8 +49,11 @@ direction, not settled law.
   CarPlay template framework (Driving Task app category) for the on-screen panel.
 
 When reviewing or writing Swift here, the repo has helper skills: `swiftui-pro`,
-`swift-concurrency-pro`, `swift-testing-pro`, `swiftdata-pro`. Prefer Swift Testing
-over XCTest for new tests.
+`swift-concurrency-pro`, `swift-testing-pro`, `swiftdata-pro`. The load-bearing
+skills for the current app architecture are `swift-concurrency-pro` (effect-runtime
+correctness) and `swift-testing-pro` (TestStore + reducer tests). `swiftui-pro` is not
+used because the app is UIKit. `swiftdata-pro` applies only if/when SwiftData
+persistence lands. Prefer Swift Testing over XCTest for new unit tests.
 
 ## CarPlay
 
@@ -60,15 +68,22 @@ path are in `docs/design/01-2026-06-22-carplay-integration-surface.md`.
 app/
   AGENTS.md
   docs/design/        <- app-side ADRs
-  (Xcode project / Swift package to be added)
+  DanCam/             <- Xcode project and app/test targets
 ```
 
 ## Build / run
 
-Not yet established. When the Xcode project lands, document the exact build/run/test
-commands here (scheme names, simulator vs device, how to point the app at a real Pi
-vs a mock). CarPlay work needs the CarPlay simulator (Xcode > I/O > External Displays
-> CarPlay) and, for device testing, the CarPlay entitlement from Apple.
+The Xcode project is `DanCam`, with scheme `DanCam`.
+
+- Build for simulator: `just app-build`.
+- Run unit tests: `just app-test` (Swift Testing unit suites only; UI tests are left in
+  the project but excluded from this recipe).
+- Interactive run: open `app/DanCam/DanCam.xcodeproj` in Xcode and Cmd-R into an iOS
+  26.5 simulator. Start the mock Pi with `just raspi-run`; the `oak` app points at
+  `http://127.0.0.1:8080`.
+
+CarPlay work needs the CarPlay simulator (Xcode > I/O > External Displays > CarPlay)
+and, for device testing, the CarPlay entitlement from Apple.
 
 ## Design decisions (ADRs)
 
@@ -80,3 +95,5 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   the Pi (NEHotspotConfiguration join, NWConnection Wi-Fi pinning, the hand-rolled
   per-plane HTTP/1.1 client, loopback-HLS playback, App Intents incident-lock). The
   wire contract itself is delegated to the raspi-side ADR of the same name.
+- `03-2026-06-24-app-ui-architecture.md` -- UIKit programmatic UI and the bespoke
+  minimal TEA core used by the app.

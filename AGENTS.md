@@ -61,7 +61,7 @@ dancam/
   AGENTS.md              <- you are here (whole-system overview + conventions)
   Justfile               <- common build/test/run tasks; prefer these over raw commands
   docs/roadmap.md        <- build plan: breadth-first swoops + Icebox
-  app/                   <- iPhone app (Swift / SwiftUI). Has its own AGENTS.md.
+  app/                   <- iPhone app (Swift / UIKit). Has its own AGENTS.md.
     docs/design/         <- app-side ADRs ({seq}-YYYY-MM-DD-{slug}.md)
   raspi/                 <- camera-unit software (Raspberry Pi). Has its own AGENTS.md.
     service/             <- Rust control/media service crate
