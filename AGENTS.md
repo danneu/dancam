@@ -41,6 +41,19 @@ Raspberry Pi Zero 2 W + Arducam IMX708 Autofocus Wide camera. The full spec, par
 links, and prices live in [`raspi/AGENTS.md`](raspi/AGENTS.md). Hardware may change as
 concrete implementation starts.
 
+## Development environment
+
+Dan develops on an **M1 (Apple Silicon) MacBook Pro** running macOS. This is the
+only dev workstation, and it shapes what's easy:
+
+- **iPhone app:** built and run natively in Xcode on this Mac (an Apple Silicon Mac
+  is required for current iOS toolchains and the simulator).
+- **Raspberry Pi:** the microSD is flashed from the laptop. Raspberry Pi Imager
+  runs natively on Apple Silicon; with a USB SD card reader, headless setup
+  (Wi-Fi creds, SSH, hostname) is done via the Imager's OS-customization step, so
+  the Pi can come up first-boot without a monitor/keyboard. Then iterate over SSH
+  on the same Wi-Fi. (`dd` works too, but Imager is the default.)
+
 ## Repository layout
 
 ```
@@ -53,8 +66,11 @@ dancam/
     docs/design/         <- raspi-side ADRs (YYYY-MM-DD-{slug}.md)
 ```
 
-When you work inside `app/` or `raspi/`, read that folder's `AGENTS.md` first --
-it carries the details and constraints specific to that side.
+When you work inside `app/` or `raspi/`, read that folder's AGENTS.md first
+([`app/AGENTS.md`](app/AGENTS.md), [`raspi/AGENTS.md`](raspi/AGENTS.md)) -- it carries
+the details and constraints specific to that side. Each side's file links back here and
+to its sibling, so the three stay navigable (and de-duped: root owns the cross-cutting
+decisions, each side owns its own).
 
 ## Architecture at a glance
 

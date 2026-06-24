@@ -5,8 +5,9 @@ The camera unit is the recorder. Its job is narrow and it should stay that way:
 phone on request.** It is the source of truth for footage. The iPhone app
 (`../app/`) is the UI and brains; the Pi is deliberately dumb.
 
-Read the root `../AGENTS.md` first for the system picture and cross-cutting
-principles. This file covers the camera unit specifically.
+Read the root [`../AGENTS.md`](../AGENTS.md) first for the system picture and
+cross-cutting principles. This file covers the camera unit; its sibling, the iPhone
+app, is documented in [`../app/AGENTS.md`](../app/AGENTS.md).
 
 ## Hardware (v1)
 

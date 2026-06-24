@@ -5,8 +5,9 @@ it connects to the camera unit (`../raspi/`) over Wi-Fi, lets the user preview,
 browse, and pull footage, manages settings, handles incidents, and hosts the
 CarPlay integration.
 
-Read the root `../AGENTS.md` first for the whole-system picture and the cross-cutting
-principles. This file covers the app side specifically.
+Read the root [`../AGENTS.md`](../AGENTS.md) first for the whole-system picture and the
+cross-cutting principles. This file covers the app side; its sibling, the camera unit,
+is documented in [`../raspi/AGENTS.md`](../raspi/AGENTS.md).
 
 ## Responsibilities
 
