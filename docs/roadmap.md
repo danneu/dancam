@@ -19,7 +19,7 @@ fake local server with canned status + sample frames/clips) so app work never bl
 on hardware, and the **real Pi** firmware. Each app swoop should pass against the
 mock first.
 
-- [ ] **Swoop `oak` -- Mock bring-up, no hardware.** Mac-only setup that unblocks
+- [x] **Swoop `oak` -- Mock bring-up, no hardware.** Mac-only setup that unblocks
       app work before the Raspberry Pi arrives: make the mock Pi service runnable
       from the dev machine, give agents a documented local command loop, and let
       the app point at that mock service and get a 200 back. _Foundation for
