@@ -19,11 +19,19 @@ fake local server with canned status + sample frames/clips) so app work never bl
 on hardware, and the **real Pi** firmware. Each app swoop should pass against the
 mock first.
 
-- [ ] **Swoop `oak` -- Bring-up + mock.** Real Pi: flash Raspberry Pi OS (64-bit) with
-      read-only root, bring up the Wi-Fi AP (hostapd + dnsmasq), get the camera
-      capturing, and serve a minimal `GET /v1/health` over HTTP. App: join the AP
-      and get a 200 back. Stand up the **mock Pi** server in parallel. (Skip the
-      hardware half fast if it's already done.) _Foundation for everything below._
+- [ ] **Swoop `oak` -- Mock bring-up, no hardware.** Mac-only setup that unblocks
+      app work before the Raspberry Pi arrives: make the mock Pi service runnable
+      from the dev machine, give agents a documented local command loop, and let
+      the app point at that mock service and get a 200 back. _Foundation for
+      everything below without needing the Pi on the desk._
+      - [x] Mock Pi service runs locally and answers the health endpoint.
+      - [ ] App can call the mock Pi health endpoint.
+- [ ] **Swoop `pine` -- Real Pi bring-up.** Hardware track for the same health slice:
+      flash Raspberry Pi OS (64-bit), bring up the Wi-Fi AP (hostapd + dnsmasq),
+      get the camera visible/capturing at a basic smoke-test level, deploy/run the
+      Rust service on the Pi, serve real `GET /v1/health` over HTTP, and have the
+      app join the AP and get a 200 back. Read-only root can wait until hardening;
+      do not block first hardware contact on the final car-image layout.
 - [ ] **Swoop `fox` -- Live preview on iPhone.** Pi serves `GET /v1/preview/live.mjpeg`
       (MJPEG from the libcamera lores stream, never the H.264 encoder). App joins
       the AP, opens a pinned `NWConnection`, parses `multipart/x-mixed-replace`,
