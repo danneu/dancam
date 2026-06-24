@@ -62,10 +62,10 @@ dancam/
   Justfile               <- common build/test/run tasks; prefer these over raw commands
   docs/roadmap.md        <- build plan: breadth-first swoops + Icebox
   app/                   <- iPhone app (Swift / SwiftUI). Has its own AGENTS.md.
-    docs/design/         <- app-side ADRs (YYYY-MM-DD-{slug}.md)
+    docs/design/         <- app-side ADRs ({seq}-YYYY-MM-DD-{slug}.md)
   raspi/                 <- camera-unit software (Raspberry Pi). Has its own AGENTS.md.
     service/             <- Rust control/media service crate
-    docs/design/         <- raspi-side ADRs (YYYY-MM-DD-{slug}.md)
+    docs/design/         <- raspi-side ADRs ({seq}-YYYY-MM-DD-{slug}.md)
 ```
 
 When you work inside `app/` or `raspi/`, read that folder's AGENTS.md first
@@ -100,10 +100,10 @@ These are settled at the system level. Side-specific ADRs must not contradict th
 - **CarPlay is a voice + status + control surface, NOT a video viewport.** Third-party
   CarPlay apps cannot draw a live camera feed. The live preview stays on the iPhone
   screen. CarPlay gets: voice incident-marking, auto start/stop, a status panel,
-  alerts. See `app/docs/design/2026-06-22-carplay-integration-surface.md`.
+  alerts. See `app/docs/design/01-2026-06-22-carplay-integration-surface.md`.
 - **Recording must survive abrupt power loss.** The car cuts power without warning.
   Corruption resilience is a first-class requirement, solved in layers (format +
-  filesystem + card hardware). See `raspi/docs/design/2026-06-22-crash-safe-recording.md`.
+  filesystem + card hardware). See `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`.
 - **Thermals are a real constraint, not an afterthought.** The unit lives on a
   windshield in Texas heat. The camera sensor (rated to ~50 C) is the weak link,
   not the Pi board (rated to 70 C). See `raspi/AGENTS.md`.
@@ -111,17 +111,22 @@ These are settled at the system level. Side-specific ADRs must not contradict th
   Request/response control plus low-res preview and on-demand clip pull; never on the
   recording path. The transport mechanics (MJPEG preview, resumable ranged pull, SSE
   events) live in the transport ADR.
-  See `raspi/docs/design/2026-06-22-app-pi-transport-and-api.md`.
+  See `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`.
 
 ## Design decisions (ADRs)
 
-Architecture and design decisions are recorded as dated Markdown files under each
-side's `docs/design/` directory. This is the project's ADR ("Architecture Decision
-Record") system.
+Architecture and design decisions are recorded as sequence-prefixed, dated Markdown
+files under each side's `docs/design/` directory. This is the project's ADR
+("Architecture Decision Record") system.
 
 **Convention**
 
-- Filename: `docs/design/YYYY-MM-DD-{slug}.md`, dated the day the decision is taken.
+- Filename: `docs/design/{seq}-YYYY-MM-DD-{slug}.md`. `{seq}` is a two-digit,
+  zero-padded sequence number assigned per side -- each side's `docs/design/`
+  starts at `01`, and a new ADR takes the highest number in that folder plus one.
+  The date is the day the decision is taken. `{seq}` is what orders ADRs and
+  disambiguates decisions made on the same day; the date alone does not sequence
+  them.
 - One decision per file. Prefer short, specific slugs (`crash-safe-recording`,
   `carplay-integration-surface`).
 - Every ADR has this shape:

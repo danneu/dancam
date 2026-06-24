@@ -4,17 +4,17 @@
 - **Date:** 2026-06-22
 - **Owner:** raspi (the Pi serves the wire contract; the canonical copy lives here)
 - **Related:** root `AGENTS.md` (all five cross-cutting principles);
-  `raspi/docs/design/2026-06-22-crash-safe-recording.md` (recording format / the
+  `raspi/docs/design/01-2026-06-22-crash-safe-recording.md` (recording format / the
   footage this transport serves -- this ADR appends a preview-transport supersession
-  note to it); `app/docs/design/2026-06-22-carplay-integration-surface.md` (consumes
+  note to it); `app/docs/design/01-2026-06-22-carplay-integration-surface.md` (consumes
   the incident-lock + offline signal defined here);
-  `app/docs/design/2026-06-22-app-pi-transport-and-api.md` (the app-side companion ADR
+  `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md` (the app-side companion ADR
   that delegates the wire contract to this one);
-  `2026-06-23-storage-ring-buffer-incident-lock.md` (the later ADR that owns the
+  `03-2026-06-23-storage-ring-buffer-incident-lock.md` (the later ADR that owns the
   storage/ring-buffer mechanisms this ADR only calls)
 
 > **Note (2026-06-23):** Editorial pass after the storage ADR
-> (`2026-06-23-storage-ring-buffer-incident-lock.md`) landed. Two changes, no decision
+> (`03-2026-06-23-storage-ring-buffer-incident-lock.md`) landed. Two changes, no decision
 > altered: (1) the repeated "mechanism owned by the storage ADR" reminders are
 > consolidated into the Context paragraph below rather than restated at each endpoint;
 > (2) a *Storage companion fields* subsection is appended to the API surface,
@@ -36,7 +36,7 @@ principles and the two existing ADRs.
 This is the third design decision. The Pi storage ring-buffer / incident-lock
 internals (how segments are protected, reference-counted, force-finalized, and how
 pre-sync locks are held pending resolution) live in a separate ADR,
-`2026-06-23-storage-ring-buffer-incident-lock.md`. This ADR only **calls** that
+`03-2026-06-23-storage-ring-buffer-incident-lock.md`. This ADR only **calls** that
 interface and fixes the observable wire contract around it. **Read every mechanism
 named below with that split in mind:** wherever this ADR describes finalize,
 persistence, pending-resolution, or reference-counting behavior, the storage ADR owns
@@ -233,7 +233,7 @@ clip playback below). This keeps every Pi request on the pinned `NWConnection`.
   push.
 
 **Storage companion fields (reconciled 2026-06-23).** The storage ADR
-(`2026-06-23-storage-ring-buffer-incident-lock.md`) introduced facts the app needs to
+(`03-2026-06-23-storage-ring-buffer-incident-lock.md`) introduced facts the app needs to
 rely on contractually. They are folded into the wire contract here, all additive
 (clients ignore unknown keys, so no version bump):
 

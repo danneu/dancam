@@ -72,7 +72,7 @@ current provisional direction until it is captured.
   unit runs off a switched USB accessory source that dies with the car, so power loss
   is abrupt and unsignaled -- no clean-shutdown path and no supercapacitor; the
   crash-safe layers carry recording integrity. No lithium batteries -- they are a fire
-  risk baking in a hot car. See `docs/design/2026-06-23-power-source-and-shutdown.md`.
+  risk baking in a hot car. See `docs/design/04-2026-06-23-power-source-and-shutdown.md`.
 
 ## Structure (planned)
 
@@ -88,7 +88,7 @@ raspi/
 
 The service lives in `raspi/service/` and is written in **Rust** with the camera driven
 as a subprocess (`rpicam-vid`); the rationale is in
-`docs/design/2026-06-23-service-language-rust.md`. Two facts shape the whole workflow:
+`docs/design/05-2026-06-23-service-language-rust.md`. Two facts shape the whole workflow:
 release code is **cross-compiled on the dev host** (never built on the Pi), and the
 **dev image differs from the car image**.
 
@@ -177,20 +177,20 @@ Cross-compile on the Mac -- 512 MB cannot build a real dependency tree.
 See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 `docs/design/`. Current:
 
-- `2026-06-22-crash-safe-recording.md` -- how recording survives abrupt power loss
+- `01-2026-06-22-crash-safe-recording.md` -- how recording survives abrupt power loss
   (format + filesystem + card hardware layers).
-- `2026-06-22-app-pi-transport-and-api.md` -- the app<->Pi wire contract: transport
+- `02-2026-06-22-app-pi-transport-and-api.md` -- the app<->Pi wire contract: transport
   per plane (control/events/preview/clip-pull), the `/v1` API surface, connection
   lifecycle, WPA2-only auth posture, and the incident-lock idempotency contract. The
   Pi owns this contract; the canonical copy lives here.
-- `2026-06-23-storage-ring-buffer-incident-lock.md` -- the Pi storage model:
+- `03-2026-06-23-storage-ring-buffer-incident-lock.md` -- the Pi storage model:
   segment ring buffer, no-RTC ordering, incident hardlink locks, pre-sync holds,
   caps, rebuild, and the in-process storage service interface.
-- `2026-06-23-power-source-and-shutdown.md` (Proposed) -- the v1 power topology
+- `04-2026-06-23-power-source-and-shutdown.md` (Proposed) -- the v1 power topology
   (switched USB accessory source, 5V regulated, dies with the car) and the decision
   to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves
   the crash-safe ADR's deferred supercapacitor question (dropped for this topology).
-- `2026-06-23-service-language-rust.md` (Accepted) -- the Pi service is written in
+- `05-2026-06-23-service-language-rust.md` (Accepted) -- the Pi service is written in
   Rust, cross-compiled on the dev host to a single static binary and run under
   systemd; the camera is driven as a subprocess (`rpicam-vid`), not linked. See the
   Build / run section above for the dev loop.

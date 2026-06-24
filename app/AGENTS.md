@@ -37,7 +37,7 @@ direction, not settled law.
 - **Networking to the Pi:** the Network framework (`NWConnection`/`NWBrowser`) for
   discovery and control; HTTP for the clip API; MJPEG over HTTP for low-res live
   preview. The transport is decided -- see the app<->Pi transport ADR
-  (`docs/design/2026-06-22-app-pi-transport-and-api.md`) and the canonical wire
+  (`docs/design/02-2026-06-22-app-pi-transport-and-api.md`) and the canonical wire
   contract it delegates to in `raspi/`. (HLS-for-preview and raw-stream options were
   considered and rejected there.)
 - **CarPlay:** the App Intents framework for voice ("save that clip") and the
@@ -52,7 +52,7 @@ over XCTest for new tests.
 The surprising constraint: third-party CarPlay apps **cannot render a live camera
 feed** (no arbitrary-video template), so the live preview stays on the iPhone and
 CarPlay is voice + status + control only. The ranked integration plan and entitlement
-path are in `docs/design/2026-06-22-carplay-integration-surface.md`.
+path are in `docs/design/01-2026-06-22-carplay-integration-surface.md`.
 
 ## Structure (planned)
 
@@ -75,8 +75,8 @@ vs a mock). CarPlay work needs the CarPlay simulator (Xcode > I/O > External Dis
 See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 `docs/design/`. Current:
 
-- `2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
-- `2026-06-22-app-pi-transport-and-api.md` -- the app-side obligations for talking to
+- `01-2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
+- `02-2026-06-22-app-pi-transport-and-api.md` -- the app-side obligations for talking to
   the Pi (NEHotspotConfiguration join, NWConnection Wi-Fi pinning, the hand-rolled
   per-plane HTTP/1.1 client, loopback-HLS playback, App Intents incident-lock). The
   wire contract itself is delegated to the raspi-side ADR of the same name.

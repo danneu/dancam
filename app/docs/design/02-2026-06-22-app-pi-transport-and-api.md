@@ -3,10 +3,10 @@
 - **Status:** Accepted
 - **Date:** 2026-06-22
 - **Owner:** app
-- **Related:** `raspi/docs/design/2026-06-22-app-pi-transport-and-api.md` (the canonical
+- **Related:** `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md` (the canonical
   wire contract -- this ADR delegates to it); root `AGENTS.md` (cross-cutting principle
   "The app<->Pi link is a versioned local API served by the Pi, pinned to Wi-Fi");
-  `app/docs/design/2026-06-22-carplay-integration-surface.md` (the incident-lock and
+  `app/docs/design/01-2026-06-22-carplay-integration-surface.md` (the incident-lock and
   offline alert this ADR's client feeds)
 
 ## Context
@@ -14,7 +14,7 @@
 The iPhone app is the client of the camera unit's local API. The **wire contract** --
 the transports, the `http://<pi>/v1/...` endpoints, the auth posture, versioning, and
 the incident-lock/idempotency semantics -- is owned and served by the Pi and is
-specified in the raspi-side ADR (`raspi/docs/design/2026-06-22-app-pi-transport-and-api.md`).
+specified in the raspi-side ADR (`raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`).
 
 This ADR records the **app-side obligations** that implementing that contract on iOS
 imposes: which iOS frameworks the app uses for discovery, AP join, interface pinning,

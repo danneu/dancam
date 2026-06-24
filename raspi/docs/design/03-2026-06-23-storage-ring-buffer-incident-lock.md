@@ -4,10 +4,10 @@
 - **Date:** 2026-06-23
 - **Owner:** raspi
 - **Related:** root `AGENTS.md` (SD is source of truth; Wi-Fi preview + pull only;
-  recording survives power loss); `2026-06-22-crash-safe-recording.md` (recording
+  recording survives power loss); `01-2026-06-22-crash-safe-recording.md` (recording
   format, filesystem, and power-loss layers);
-  `2026-06-22-app-pi-transport-and-api.md` (wire contract that consumes this
-  storage service); `app/docs/design/2026-06-22-carplay-integration-surface.md`
+  `02-2026-06-22-app-pi-transport-and-api.md` (wire contract that consumes this
+  storage service); `app/docs/design/01-2026-06-22-carplay-integration-surface.md`
   (voice/status/control surface that needs a low-latency lock call)
 
 ## Context
@@ -19,11 +19,11 @@ storage.
 
 Two accepted ADRs constrain this decision:
 
-- `2026-06-22-crash-safe-recording.md` selects short MPEG-TS (`.ts`) segments,
+- `01-2026-06-22-crash-safe-recording.md` selects short MPEG-TS (`.ts`) segments,
   inline SPS/PPS, `fsync()` at segment close, a read-only root filesystem, and a
   separate journaled recording partition. It sketches a ring buffer: delete
   oldest segments as the card fills, but never delete incident-locked segments.
-- `2026-06-22-app-pi-transport-and-api.md` fixes the observable wire contract:
+- `02-2026-06-22-app-pi-transport-and-api.md` fixes the observable wire contract:
   force-finalize on lock, reboot-crossing idempotency, pre-sync incident holds
   with `pending_resolution`, reference-counted union unlock, stable `ETag`s,
   and specific status/clip metadata fields. It deliberately delegates the

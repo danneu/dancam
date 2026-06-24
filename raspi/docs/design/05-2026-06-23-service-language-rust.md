@@ -3,9 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-06-23
 - **Owner:** raspi
-- **Related:** root `AGENTS.md`; `2026-06-22-app-pi-transport-and-api.md` (the wire
-  contract this service implements); `2026-06-22-crash-safe-recording.md` (the
-  read-only root the deploy model must respect); `2026-06-23-storage-ring-buffer-incident-lock.md`
+- **Related:** root `AGENTS.md`; `02-2026-06-22-app-pi-transport-and-api.md` (the wire
+  contract this service implements); `01-2026-06-22-crash-safe-recording.md` (the
+  read-only root the deploy model must respect); `03-2026-06-23-storage-ring-buffer-incident-lock.md`
   (the in-process storage service this binary hosts)
 
 ## Context

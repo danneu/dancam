@@ -8,7 +8,7 @@
 
 > **Note (2026-06-22):** This ADR's **live-preview transport** language -- that the
 > same TS segments feed the iPhone live preview via HLS -- is **superseded by**
-> `2026-06-22-app-pi-transport-and-api.md`, which selects **MJPEG from the camera's
+> `02-2026-06-22-app-pi-transport-and-api.md`, which selects **MJPEG from the camera's
 > lores stream** for live preview (the single H.264 encoder is committed to the 1080p30
 > recording, and low-bitrate H.264 smears the low-light detail the preview exists to
 > assess). Everything else here stands unchanged: the `.ts` recording format/container,
@@ -17,7 +17,7 @@
 
 > **Note (2026-06-23):** The **supercapacitor / clean-shutdown** path in Layer 3 and
 > "Software behavior" (watch a power-good signal; run a clean `shutdown` on power loss)
-> is **resolved and dropped** by `2026-06-23-power-source-and-shutdown.md`. The v1
+> is **resolved and dropped** by `04-2026-06-23-power-source-and-shutdown.md`. The v1
 > power topology is a **switched USB accessory source** that dies with the car and
 > exposes no power-fail signal, so abrupt power loss is the design assumption and there
 > is no clean-shutdown path. The residual FTL risk the supercap would have covered is

@@ -20,9 +20,9 @@ JSON, runnable and curl-able on macOS.
 
 ### Decisions locked (from ADRs + user)
 
-- The **transport/API ADR is `Accepted`** (`2026-06-22-app-pi-transport-and-api.md`,
+- The **transport/API ADR is `Accepted`** (`02-2026-06-22-app-pi-transport-and-api.md`,
   line 3) -- the wire contract is settled; build on it directly.
-- The **service-language ADR is `Proposed`** (`2026-06-23-service-language-rust.md`,
+- The **service-language ADR is `Proposed`** (`05-2026-06-23-service-language-rust.md`,
   line 3). **Decision: flip it to `Accepted` first**, as a one-line `docs(raspi):`
   commit, before code lands on it. (Flipping the Status line is the documented ADR
   lifecycle -- Proposed | Accepted | ... -- not a forbidden silent rewrite; only
@@ -233,7 +233,7 @@ that lock it are one coherent change.)
 ## Commit breakdown (Conventional Commits, scope `raspi`)
 
 1. **`docs(raspi): accept the Pi service-language ADR`**
-   One-line edit to `raspi/docs/design/2026-06-23-service-language-rust.md`:
+   One-line edit to `raspi/docs/design/05-2026-06-23-service-language-rust.md`:
    `- **Status:** Proposed` -> `- **Status:** Accepted`. Gates landing code on it.
 
 2. **`chore(raspi): scaffold the Pi service Cargo project`**
