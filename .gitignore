@@ -17,6 +17,9 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Rust / Raspberry Pi service (raspi/)
+/raspi/service/target/
+
 # Secrets / local config (never commit Wi-Fi creds, keys, etc.)
 *.local
 .env
