@@ -1,6 +1,6 @@
 # ADR: Pi service language and runtime (Rust)
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-23
 - **Owner:** raspi
 - **Related:** root `AGENTS.md`; `2026-06-22-app-pi-transport-and-api.md` (the wire
