@@ -186,9 +186,10 @@ shell, not `rustup target add`.
   aarch64-unknown-linux-musl --manifest-path raspi/service/Cargo.toml` -> a single
   static musl binary (nothing to install on the read-only root; the service-language
   ADR covers why musl/static).
-- Deploy: `./raspi/deploy.sh` -- cross-builds, rsyncs the binary + the systemd unit
-  to the Pi, installs both, enables/restarts the service, and curls `/v1/health`.
-  Idempotent; re-run on every change. Override the target with `DANCAM_HOST=...`.
+- Deploy: `just raspi-deploy` (wraps `./raspi/deploy.sh`) -- cross-builds, rsyncs the
+  binary + the systemd unit to the Pi, installs both, enables/restarts the service,
+  and curls `/v1/health`. Idempotent; re-run on every change. Override the target with
+  `DANCAM_HOST=... just raspi-deploy`.
   VS Code Remote-SSH is handy for poking around the Pi directly.
 
 ### Running

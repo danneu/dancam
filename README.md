@@ -110,7 +110,7 @@ details in [`raspi/AGENTS.md`](raspi/AGENTS.md) "Rust dev loop"). From the repo
 root:
 
 ```sh
-./raspi/deploy.sh
+just raspi-deploy   # wraps ./raspi/deploy.sh
 ```
 
 This ships a static aarch64 binary + the systemd unit (`dancam.service`),

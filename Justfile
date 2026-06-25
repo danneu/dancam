@@ -6,6 +6,10 @@ raspi-build:
 raspi-test:
     cargo test --manifest-path raspi/service/Cargo.toml
 
+# Cross-build and deploy the service to the Pi (override target with DANCAM_HOST=...).
+raspi-deploy:
+    ./raspi/deploy.sh
+
 # Build the iPhone app for the iOS simulator.
 app-build:
     xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'generic/platform=iOS Simulator' build
