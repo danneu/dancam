@@ -164,6 +164,11 @@ To start a new ADR, copy the structure of an existing one in the same folder.
   `just --list` to discover tasks, and prefer those tasks over spelling out raw
   `cargo`/Xcode/etc. commands unless you are deliberately testing the lower-level
   command.
+- **Raspberry Pi setup runbook:** [`README.md`](README.md) is the reproducible
+  fresh-Pi setup guide. Any change that affects real Pi provisioning or onboard
+  state -- packages, `/boot/firmware/config.txt`, Avahi, NetworkManager profiles,
+  systemd units, deploy paths, AP/mDNS behavior, or other config files -- must
+  update the README in the same change with exact commands and verification steps.
 - **Commits:** small and logical; one coherent change per commit. Follow
   [Conventional Commits](https://www.conventionalcommits.org/) -- a `type(scope):
   summary` subject (types: `feat`, `fix`, `docs`, `refactor`, `chore`; scope optional,

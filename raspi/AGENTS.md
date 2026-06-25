@@ -107,6 +107,12 @@ as a subprocess (`rpicam-vid`); the rationale is in
 release code is **cross-compiled on the dev host** (never built on the Pi), and the
 **dev image differs from the car image**.
 
+The root [`README.md`](../README.md) is the fresh-Pi setup runbook. When a raspi
+change requires package installs, boot config, NetworkManager profiles, Avahi
+settings, systemd units, deploy-path changes, AP/mDNS changes, or any other
+onboard state, update the README in the same change with exact reproduction and
+verification steps.
+
 ### Local Mac service loop
 
 Use the root `Justfile` for common service tasks. Agents should prefer these commands

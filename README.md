@@ -90,7 +90,94 @@ Optionally pull the image to the Mac to eyeball focus/orientation:
 scp -i ~/.ssh/<your-key> dan@dancam.local:/tmp/test.jpg ~/Desktop/dancam-test.jpg
 ```
 
-## 5. (Optional) Fix the locale warning
+## 5. Scope mDNS to Wi-Fi
+
+Keep `dancam.local` tied to the reachable Wi-Fi interface. Without this, Avahi can
+publish on loopback before Wi-Fi settles, later detect a stale self-conflict, and
+rename the host to `dancam-2.local`.
+
+On the Pi:
+
+```sh
+sudo cp /etc/avahi/avahi-daemon.conf /etc/avahi/avahi-daemon.conf.dancam-before-wlan0-only
+sudo sed -i 's/^#allow-interfaces=eth0/allow-interfaces=wlan0/' /etc/avahi/avahi-daemon.conf
+grep -n '^allow-interfaces=wlan0$' /etc/avahi/avahi-daemon.conf
+sudo systemctl restart avahi-daemon
+systemctl status avahi-daemon --no-pager
+```
+
+The status should show `running [dancam.local]`, not `dancam-2.local`.
+
+## 6. Create the dev access point profile
+
+The dev image normally joins home Wi-Fi for deploy/debug, but it also has a
+manual NetworkManager hotspot profile for iPhone testing. Pick a dev WPA2
+password and do not commit it anywhere.
+
+On the Pi:
+
+```sh
+read -rsp 'dancam-dev WPA2 password: ' DANCAM_AP_PSK
+echo
+
+sudo nmcli connection add \
+  type wifi \
+  ifname wlan0 \
+  con-name dancam-ap \
+  ssid dancam-dev
+
+sudo nmcli connection modify dancam-ap \
+  connection.autoconnect no \
+  802-11-wireless.mode ap \
+  802-11-wireless.band bg \
+  802-11-wireless.channel 1 \
+  802-11-wireless-security.key-mgmt wpa-psk \
+  802-11-wireless-security.psk "$DANCAM_AP_PSK" \
+  ipv4.method shared \
+  ipv4.addresses 10.42.0.1/24 \
+  ipv6.method ignore
+
+unset DANCAM_AP_PSK
+
+nmcli -f connection.id,connection.autoconnect,802-11-wireless.ssid,802-11-wireless.mode,802-11-wireless.band,802-11-wireless.channel,ipv4.method,ipv4.addresses,ipv6.method connection show dancam-ap
+```
+
+Expected profile values:
+
+```text
+connection.id:                          dancam-ap
+connection.autoconnect:                 no
+802-11-wireless.ssid:                   dancam-dev
+802-11-wireless.mode:                   ap
+802-11-wireless.band:                   bg
+802-11-wireless.channel:                1
+ipv4.method:                            shared
+ipv4.addresses:                         10.42.0.1/24
+ipv6.method:                            ignore
+```
+
+Before flipping the Pi into AP mode over SSH, always arm a systemd-owned return
+timer. Replace the home profile name if `nmcli connection show` reports a
+different one:
+
+```sh
+HOME_WIFI_CONNECTION=netplan-wlan0-peluchonet
+sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up "$HOME_WIFI_CONNECTION"
+sudo nmcli connection up dancam-ap
+```
+
+When the timer fires, inspect it with:
+
+```sh
+journalctl -b -u dancam-restore-home-wifi.service -u dancam-restore-home-wifi.timer
+```
+
+Power cycling also returns this dev image to home Wi-Fi because `dancam-ap` does
+not autoconnect. Do not join `dancam-dev` from the Mac during an active remote
+LLM session if the Mac's only internet path is `peluchonet`; use the iPhone for
+AP testing.
+
+## 7. (Optional) Fix the locale warning
 
 My SSH login warned `cannot change locale (UTF-8)` because the fresh Lite image has no
 UTF-8 locale generated yet. Uncomment `en_US.UTF-8` in `/etc/locale.gen` and rebuild
@@ -103,7 +190,7 @@ sudo locale-gen
 
 Log out and back in -- the warning is gone.
 
-## 6. Deploy and run the service
+## 8. Deploy and run the service
 
 Cross-compile and deploy from the Mac in one command (Nix flake + `deploy.sh`;
 details in [`raspi/AGENTS.md`](raspi/AGENTS.md) "Rust dev loop"). From the repo
@@ -127,3 +214,16 @@ Service management on the Pi:
 systemctl status dancam        # running? enabled for boot?
 journalctl -u dancam -f        # live logs
 ```
+
+## 9. Smoke-test the AP path
+
+With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, join
+`dancam-dev` from the iPhone, and fetch:
+
+```text
+http://10.42.0.1:8080/v1/health
+```
+
+The expected response is the same JSON health payload as the home-LAN
+`dancam.local` URL. The iPhone app's first AP health slice also targets
+`http://10.42.0.1:8080`.
