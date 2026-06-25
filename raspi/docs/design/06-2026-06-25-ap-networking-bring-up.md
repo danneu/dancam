@@ -65,6 +65,15 @@ The selected regulatory/channel facts from bring-up:
 - The scan showed channel 6 as the most congested local option; channel 1 was the
   least-bad choice among 1/6/11 for this desk bring-up.
 
+Scope Avahi/mDNS to `wlan0` with `allow-interfaces=wlan0` in
+`/etc/avahi/avahi-daemon.conf`. The Pi has only one useful client-facing network
+interface, and advertising on loopback during early boot creates a real failure
+mode: Avahi can later treat its stale `dancam.local` publication as a conflict
+when Wi-Fi comes up, rename the host to `dancam-2.local`, and leave
+`dancam.local` unresolved from the Mac. Restricting Avahi to `wlan0` keeps the
+published name tied to the reachable Wi-Fi address in both home-client and AP
+mode.
+
 Before flipping to AP mode over SSH, schedule a detached NetworkManager revert
 owned by systemd:
 
@@ -116,6 +125,13 @@ Verification from this bring-up:
   `10.42.0.97`, then a DHCP release and reacquisition during the leave/rejoin
   test. Therefore no `/etc/NetworkManager/dnsmasq-shared.d/` captive-probe
   NXDOMAIN drop-in is applied in this dev image yet.
+- Follow-up mDNS testing on 2026-06-25 found the Pi advertising as
+  `dancam-2.local` after a boot-time Avahi conflict. `dancam-2.local` resolved
+  and served `/v1/health`, while `dancam.local` timed out. Restarting Avahi
+  reclaimed `dancam.local`; adding `allow-interfaces=wlan0` made the fix survive
+  a reboot and a `dancam-ap` -> `peluchonet` toggle. After the change,
+  `curl http://dancam.local:8080/v1/health` returned `200` and Avahi stayed
+  `running [dancam.local]` with no conflict retry.
 
 During an API-backed coding session, do not use the Mac's only Wi-Fi interface
 as the AP client. Joining `dancam-dev` from the Mac drops `peluchonet` and can

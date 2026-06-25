@@ -157,6 +157,11 @@ early swoops) -- not something to fight while iterating.
   stable in 2.0.10). Editing files on the boot partition is the legacy fallback.
   Boot headless, then `ssh dan@dancam.local` over the LAN (mDNS). No monitor or
   keyboard, and no card-shuffling after this.
+- Scope Avahi/mDNS to the Wi-Fi interface after first boot:
+  set `allow-interfaces=wlan0` in `/etc/avahi/avahi-daemon.conf`, then
+  `sudo systemctl restart avahi-daemon`. Without this, Avahi can publish on
+  loopback before Wi-Fi settles, later detect its own stale `dancam.local`
+  advertisement as a conflict, and rename the host to `dancam-2.local`.
 - Fallback if Wi-Fi is fussy: the data micro-USB port supports gadget mode
   (`g_ether`) -> SSH over the USB cable.
 
@@ -211,7 +216,11 @@ shell, not `rustup target add`.
 
 - Dev: app (or the mock Pi) and the Pi both on home Wi-Fi; hit
   `http://dancam.local:8080/v1/...` (port 8080 per the systemd unit; the transport
-  ADR covers the wire contract).
+  ADR covers the wire contract). If `dancam.local` times out but the raw LAN IP
+  works, check `systemctl status avahi-daemon`: a status like
+  `running [dancam-2.local]` means Avahi conflict-renamed itself. Verify
+  `/etc/avahi/avahi-daemon.conf` contains `allow-interfaces=wlan0`, then restart
+  `avahi-daemon`.
 - AP bring-up / car path: the phone joins the Pi's AP and talks to
   `http://10.42.0.1:8080/v1/...`. The dev AP profile does not autoconnect; schedule a
   detached revert before flipping it over SSH:
