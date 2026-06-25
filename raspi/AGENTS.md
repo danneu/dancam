@@ -123,10 +123,14 @@ early swoops) -- not something to fight while iterating.
 ### OS and first flash (once)
 
 - **Raspberry Pi OS Lite, 64-bit** (Bookworm). Lite = headless and lean for 512 MB;
-  Bookworm ships `rpicam-vid` natively. Note: only the *official* Camera Module 3
-  IMX708 works out of the box -- our Arducam B0311 variant needs Arducam's driver
-  install (bit.ly/ArduCam_CM3_B0311) and is sensitive to the kernel version, so pin
-  and verify the kernel it targets.
+  Bookworm ships `rpicam-vid` and the IMX708 driver in-kernel. Our Arducam B0311 is
+  not auto-detected (it is not an official module), so enable it the mainline way:
+  set `camera_auto_detect=0` and add `dtoverlay=imx708` to `/boot/firmware/config.txt`,
+  then reboot -- no install script, no tuning file, and it survives kernel upgrades.
+  Do NOT use Arducam's legacy `install_pivariety_pkgs.sh` driver: it ships prebuilt
+  per-kernel binaries that break on every `apt upgrade` (the source of the "had to
+  downgrade the kernel" reports). The official Camera Module 3 would auto-detect with
+  no config -- same IMX708 sensor -- if we ever want zero camera setup.
 - Flash with **Raspberry Pi Imager**, pre-setting hostname (`dancam`), SSH on, the
   user, and **home Wi-Fi credentials**. Boot headless, then `ssh dan@dancam.local`
   over the LAN (mDNS). No monitor or keyboard, and no card-shuffling after this.
