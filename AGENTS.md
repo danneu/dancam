@@ -26,6 +26,16 @@ Planning / early implementation. Most of this repo is currently design documenta
 but `raspi/service/` is the first buildable code. Decisions are captured as ADRs
 (see "Design decisions" below) before code lands.
 
+## Working stance: take the ideal solution, not the prescribed one
+
+Docs/notes/ADRs were written ahead of real hardware -- best guesses, not
+commitments. When planning or implementation surfaces a better approach, take it;
+never stay trapped in a solution we spitballed before we had evidence. On every
+pivot, update the record in the same change (amend or supersede the ADR -- see
+"Design decisions"); a pivot that isn't written down is the next trap. The
+"Cross-cutting principles" below are the firmest layer (hard physical constraints) --
+revisit even those if reality disagrees, but at a higher, explicit bar.
+
 ## Roadmap
 
 The build plan lives in **[`docs/roadmap.md`](docs/roadmap.md)** -- it's kept out of
