@@ -26,7 +26,7 @@ mock first.
       everything below without needing the Pi on the desk._
       - [x] Mock Pi service runs locally and answers the health endpoint.
       - [x] App can call the mock Pi health endpoint.
-- [ ] **Swoop `pine` -- Real Pi bring-up.** Hardware track for the same health slice:
+- [x] **Swoop `pine` -- Real Pi bring-up.** Hardware track for the same health slice:
       flash Raspberry Pi OS Lite (64-bit, Trixie), bring up the Wi-Fi AP
       (NetworkManager hotspot, 2.4 GHz), get the camera visible/capturing at a
       basic smoke-test level (`camera_auto_detect=0` + `dtoverlay=imx708`),
@@ -34,6 +34,8 @@ mock first.
       HTTP, and have the app join the AP and get a 200 back. Read-only root can
       wait until hardening; do not block first hardware contact on the final
       car-image layout.
+      - [x] Camera is visible to `rpicam` and captures a JPEG after
+            `camera_auto_detect=0` + `dtoverlay=imx708`.
       - [x] Rust service deploys to the Pi and serves `GET /v1/health` over home
             Wi-Fi.
       - [x] NetworkManager AP profile `dancam-ap` starts `dancam-dev` on channel 1
