@@ -1,0 +1,28 @@
+# systemd unit for the dancam camera-unit service.
+#
+# Installed to /etc/systemd/system/dancam.service by raspi/deploy.sh. Auto-starts
+# on boot (this is also how the car image auto-records on boot) and restarts on
+# crash. Logs go to journald: `journalctl -u dancam -f`.
+#
+# Hardening (dedicated service user, sandboxing, logs off the read-only root) is a
+# later pass -- see raspi/AGENTS.md dev-image-vs-car-image notes.
+
+[Unit]
+Description=dancam camera-unit service (control + media API)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=exec
+# The binary defaults to loopback-only 127.0.0.1:8080. Bind all interfaces so the
+# phone (on the AP) and the Mac (on the LAN) can reach it. 8080 is unprivileged,
+# so no root / CAP_NET_BIND_SERVICE needed.
+Environment=DANCAM_BIND=0.0.0.0:8080
+ExecStart=/usr/local/bin/dancam
+Restart=on-failure
+RestartSec=2
+User=dan
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

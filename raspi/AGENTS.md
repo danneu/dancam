@@ -174,28 +174,37 @@ dev skips this layout entirely -- see the dev-vs-car note above.)
 
 ### Rust dev loop
 
-Cross-compile on the Mac -- 512 MB cannot build a real dependency tree.
+Cross-compile on the Mac -- 512 MB cannot build a real dependency tree. The dev
+machine's Rust is Nix-managed (no `rustup`), so the toolchain comes from a flake dev
+shell, not `rustup target add`.
 
-- One-time: `rustup target add aarch64-unknown-linux-musl`; `brew install zig` plus
-  `cargo install cargo-zigbuild` (or use `cross` with Docker).
-- Build: `cargo zigbuild --release --target aarch64-unknown-linux-musl` -> a single
+- One-time: nothing to install by hand -- `flake.nix` (repo root) pins a Rust
+  toolchain carrying the `aarch64-unknown-linux-musl` target plus `zig` +
+  `cargo-zigbuild` (zig is the cross-linker; the deps are pure Rust, so no C cross-
+  toolchain is needed). Just need Nix with flakes enabled.
+- Build: `nix develop -c cargo zigbuild --release --target
+  aarch64-unknown-linux-musl --manifest-path raspi/service/Cargo.toml` -> a single
   static musl binary (nothing to install on the read-only root; the service-language
   ADR covers why musl/static).
-- Deploy: `rsync` the binary to the Pi, then `ssh dancam sudo systemctl restart dancam`.
-  Wrap build + rsync + restart in a `deploy.sh`. VS Code Remote-SSH is handy for
-  poking around the Pi directly.
+- Deploy: `./raspi/deploy.sh` -- cross-builds, rsyncs the binary + the systemd unit
+  to the Pi, installs both, enables/restarts the service, and curls `/v1/health`.
+  Idempotent; re-run on every change. Override the target with `DANCAM_HOST=...`.
+  VS Code Remote-SSH is handy for poking around the Pi directly.
 
 ### Running
 
-- A **systemd unit** (`dancam.service`) runs the service: auto-start on boot (also
-  how the car image auto-records on boot) and restart-on-crash.
+- A **systemd unit** (`raspi/dancam.service`, installed to `/etc/systemd/system/`
+  by `deploy.sh`) runs the service: auto-start on boot (also how the car image
+  auto-records on boot) and restart-on-crash. It sets `DANCAM_BIND=0.0.0.0:8080` so
+  the service listens on all interfaces; the binary defaults to loopback-only.
 - Logs: `journalctl -u dancam -f`. Under the read-only car image, point logs at
   `/data` or keep them in RAM -- root is not writable.
 
 ### Pointing the app at the unit
 
 - Dev: app (or the mock Pi) and the Pi both on home Wi-Fi; hit
-  `http://dancam.local/v1/...` (port per the transport ADR).
+  `http://dancam.local:8080/v1/...` (port 8080 per the systemd unit; the transport
+  ADR covers the wire contract).
 - Car: the phone joins the Pi's AP and talks to its AP address per the transport ADR.
 
 ## Design decisions (ADRs)
