@@ -34,6 +34,13 @@ mock first.
       HTTP, and have the app join the AP and get a 200 back. Read-only root can
       wait until hardening; do not block first hardware contact on the final
       car-image layout.
+      - [x] Rust service deploys to the Pi and serves `GET /v1/health` over home
+            Wi-Fi.
+      - [x] NetworkManager AP profile `dancam-ap` starts `dancam-dev` on channel 1
+            with gateway `10.42.0.1` and shared-mode DHCP.
+      - [x] A physical iPhone joins `dancam-dev` and gets health JSON from
+            `http://10.42.0.1:8080/v1/health` in Safari.
+      - [x] App running on a physical iPhone renders the AP health response.
 - [ ] **Swoop `fox` -- Live preview on iPhone.** Pi serves `GET /v1/preview/live.mjpeg`
       (MJPEG from the libcamera lores stream, never the H.264 encoder). App joins
       the AP, opens a pinned `NWConnection`, parses `multipart/x-mixed-replace`,

@@ -71,9 +71,15 @@ current provisional direction until it is captured.
   fills; incident-locked segments are exempt from deletion. See the storage
   ring-buffer / incident-lock ADR.
 - **Access point:** a NetworkManager hotspot (`nmcli`, `ipv4.method=shared`) on
-  the 2.4 GHz band so the phone can connect directly with no router. NM shared
-  mode runs its own `dnsmasq` for DHCP/DNS; ADR 02's captive-probe DNS lever is
-  applied through that instance, not a hand-run DNS service.
+  the 2.4 GHz band so the phone can connect directly with no router. The current
+  dev profile is `dancam-ap`: SSID `dancam-dev`, WPA2-PSK entered manually (do not
+  commit the password), channel 1, `ipv4.addresses 10.42.0.1/24`,
+  `ipv6.method ignore`, and `connection.autoconnect no`. NM shared mode runs its own
+  `dnsmasq` for DHCP/DNS; during bring-up it served `10.42.0.10` through
+  `10.42.0.254`. ADR 02's captive-probe DNS lever is applied through that instance,
+  not a hand-run DNS service, but is deferred until persistent no-internet joins need
+  it. The concrete AP decision is in
+  `docs/design/06-2026-06-25-ap-networking-bring-up.md`.
 - **Control + media service:** a small **Rust** service (see the service-language
   ADR) exposing a control API (start/stop, settings, time sync, incident lock) and a
   media API (list/preview/pull clips) to the app.
@@ -119,8 +125,8 @@ Same Raspberry Pi OS base, two configurations:
 | | Dev image (on the desk) | Car image (deployed) |
 |---|---|---|
 | Root filesystem | writable -- edit & restart freely | read-only (overlayfs) |
-| Network | joins home Wi-Fi as a client | runs the AP (NetworkManager hotspot, 2.4 GHz) |
-| Access | `ssh dan@dancam.local` over the LAN | phone joins the Pi's AP |
+| Network | joins home Wi-Fi as a client; AP is a manual `dancam-ap` toggle | runs the AP (NetworkManager hotspot, 2.4 GHz) |
+| Access | `ssh dan@dancam.local` over the LAN; if AP is up, use a separate client, not the Mac's only Wi-Fi interface | phone joins the Pi's AP |
 | Recordings | a folder on root is fine early | dedicated journaled `/data` partition |
 
 The early swoops live in the dev image. Read-only root, AP mode, and the partition
@@ -206,7 +212,11 @@ shell, not `rustup target add`.
 - Dev: app (or the mock Pi) and the Pi both on home Wi-Fi; hit
   `http://dancam.local:8080/v1/...` (port 8080 per the systemd unit; the transport
   ADR covers the wire contract).
-- Car: the phone joins the Pi's AP and talks to its AP address per the transport ADR.
+- AP bring-up / car path: the phone joins the Pi's AP and talks to
+  `http://10.42.0.1:8080/v1/...`. The dev AP profile does not autoconnect; schedule a
+  detached revert before flipping it over SSH:
+  `sudo systemd-run --on-active=5min nmcli connection up netplan-wlan0-peluchonet`.
+  Power cycling also returns the dev image to home Wi-Fi.
 
 ## Design decisions (ADRs)
 

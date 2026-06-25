@@ -30,7 +30,7 @@ that contract with the following obligations.
 ### Transport and connection (iOS frameworks)
 
 - **Discovery:** `NWBrowser` for `_dancam._tcp` (Bonjour), with a fixed AP gateway-IP
-  fallback (e.g. `192.168.4.1`) for the first seconds after association when mDNS is
+  fallback (`10.42.0.1`) for the first seconds after association when mDNS is
   often unresolved.
 - **AP join:** `NEHotspotConfiguration` with **`joinOnce = false`** so the configuration
   **persists** -- the app auto-rejoins the Pi AP across launches and across drives,

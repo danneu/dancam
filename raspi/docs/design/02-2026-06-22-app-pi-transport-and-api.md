@@ -22,6 +22,16 @@
 > `deleted` tombstone marker, lock `source`, `retention` ceiling semantics) so the two
 > docs agree. Append-only per the ADR convention.
 
+> **Note (2026-06-25):** Real AP bring-up reconciled the fixed gateway examples with
+> NetworkManager shared mode. The AP profile now pins `10.42.0.1/24`, so every fixed
+> gateway reference in this contract should be read as `10.42.0.1`: the discovery
+> fallback, the Host allowlist's AP gateway entry, and the app's hardcoded health target
+> for the first hardware proof. The captive-probe DNS lever is deferred for now: an
+> iPhone one-shot Safari fetch to `http://10.42.0.1:8080/v1/health` succeeded without a
+> dnsmasq drop-in, but that does not weaken this ADR's standing requirement for robust
+> persistent no-internet joins. The AP plumbing decision lives in
+> `06-2026-06-25-ap-networking-bring-up.md`.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --
@@ -281,7 +291,7 @@ server, where AVPlayer only ever talks to `127.0.0.1`.
 ### Connection lifecycle
 
 1. **Discovery:** `NWBrowser` for `_dancam._tcp` (Bonjour), with a **fixed AP gateway
-   IP fallback** (e.g. `192.168.4.1`) for the first seconds after association, when
+   IP fallback** (`10.42.0.1`) for the first seconds after association, when
    mDNS is often unresolved.
 2. **Join the Pi AP:** `NEHotspotConfiguration` with `joinOnce = false` so the
    configuration **persists** -- the app auto-rejoins the Pi AP across app launches and
@@ -328,7 +338,7 @@ server, where AVPlayer only ever talks to `127.0.0.1`.
   `http://<pi>/v1/recording/stop`, `/system/reboot`, `/storage/format`. v1 rules,
   enforced Pi-side:
   1. **Host allowlist (primary anti-DNS-rebinding defense, all requests):** reject any
-     request whose `Host` header is not the Pi's AP gateway IP (e.g. `192.168.4.1`) or
+     request whose `Host` header is not the Pi's AP gateway IP (`10.42.0.1`) or
      its mDNS name (e.g. `dancam.local`). This is the rule that stops DNS rebinding: a
      rebound page is *same-origin* to the Pi's IP (so CORS/preflight checks pass and
      `Sec-Fetch-Site: same-origin`), but it still sends `Host: <attacker-domain>`, which

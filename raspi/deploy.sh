@@ -9,6 +9,7 @@
 # Defaults target the dev image (Pi on home Wi-Fi as `dancam.local`). Override via
 # env, e.g.:
 #   DANCAM_HOST=dan@192.168.1.50 ./raspi/deploy.sh
+#   DANCAM_HOST=dan@10.42.0.1 ./raspi/deploy.sh    # while joined to the Pi AP
 #
 # Requires: nix (flakes) on the Mac; SSH access to the Pi; passwordless or
 # interactive sudo on the Pi (the install step uses `ssh -t` so sudo can prompt).
