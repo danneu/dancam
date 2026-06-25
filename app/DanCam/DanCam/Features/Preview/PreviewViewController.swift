@@ -9,9 +9,7 @@ final class PreviewViewController: UIViewController {
     private let startButton = UIButton(type: .system)
     private let stopButton = UIButton(type: .system)
 
-    private var pendingFrame: PreviewFrame?
-    private var isDecoding = false
-    private var latestRenderedSequence = -1
+    private var decodeState = PreviewDecodeState()
 
     init(dependencies: AppDependencies) {
         store = Store(
@@ -95,6 +93,7 @@ final class PreviewViewController: UIViewController {
             statusLabel.text = "Connecting..."
             startButton.isEnabled = false
             stopButton.isEnabled = true
+            decodeState.beginNewStream()
         case .streaming(let frame):
             statusLabel.text = "Streaming"
             startButton.isEnabled = false
@@ -112,34 +111,27 @@ final class PreviewViewController: UIViewController {
     }
 
     private func enqueueDecode(_ frame: PreviewFrame) {
-        guard frame.sequence > latestRenderedSequence else { return }
-
-        pendingFrame = frame
+        decodeState.enqueue(frame)
         startNextDecodeIfNeeded()
     }
 
     private func startNextDecodeIfNeeded() {
-        guard isDecoding == false, let frame = pendingFrame else { return }
+        guard let decode = decodeState.startNextDecode() else { return }
 
-        pendingFrame = nil
-        isDecoding = true
-
-        let jpeg = frame.jpeg
-        let sequence = frame.sequence
+        let generation = decode.generation
+        let jpeg = decode.frame.jpeg
+        let sequence = decode.frame.sequence
 
         Task.detached { [weak self] in
             let image = await UIImage(data: jpeg)?.byPreparingForDisplay()
             await MainActor.run {
-                self?.finishDecode(sequence: sequence, image: image)
+                self?.finishDecode(generation: generation, sequence: sequence, image: image)
             }
         }
     }
 
-    private func finishDecode(sequence: Int, image: UIImage?) {
-        isDecoding = false
-
-        if sequence > latestRenderedSequence {
-            latestRenderedSequence = sequence
+    private func finishDecode(generation: Int, sequence: Int, image: UIImage?) {
+        if decodeState.finishDecode(generation: generation, sequence: sequence) {
             imageView.image = image
         }
 
@@ -152,5 +144,48 @@ final class PreviewViewController: UIViewController {
 
     @objc private func stopTapped() {
         store.send(.stopTapped)
+    }
+}
+
+nonisolated struct PreviewDecodeState {
+    struct Decode {
+        var generation: Int
+        var frame: PreviewFrame
+    }
+
+    private(set) var generation = 0
+    private(set) var latestRenderedSequence = -1
+    private(set) var pendingDecode: Decode?
+    private var isDecoding = false
+
+    mutating func beginNewStream() {
+        generation += 1
+        latestRenderedSequence = -1
+        pendingDecode = nil
+    }
+
+    mutating func enqueue(_ frame: PreviewFrame) {
+        guard frame.sequence > latestRenderedSequence else { return }
+        pendingDecode = Decode(generation: generation, frame: frame)
+    }
+
+    mutating func startNextDecode() -> Decode? {
+        guard isDecoding == false, let decode = pendingDecode else { return nil }
+
+        pendingDecode = nil
+        isDecoding = true
+
+        return decode
+    }
+
+    mutating func finishDecode(generation decodeGeneration: Int, sequence: Int) -> Bool {
+        isDecoding = false
+
+        guard decodeGeneration == generation, sequence > latestRenderedSequence else {
+            return false
+        }
+
+        latestRenderedSequence = sequence
+        return true
     }
 }
