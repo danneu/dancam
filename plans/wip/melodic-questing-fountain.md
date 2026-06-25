@@ -631,3 +631,17 @@ keep-alive pooling is `jet`'s).
 - Removed the generic `Store.send` debug `String(describing:)` logging after it triggered
   Swift runtime traps under Swift Testing while formatting generic state/action values;
   the store behavior is still covered by the existing store tests.
+- On the real Pi, `rpicam-vid --help` exposes the planned MJPEG flags and
+  `rpicam-vid --list-cameras` sees the IMX708 at index 0. A 5-frame hardware sample had
+  exactly 5 SOI and 5 EOI markers, so the existing `JpegSplitter` did not need the
+  nested-marker upgrade.
+- The `dan` account already has the `video` group on the Pi, so the systemd unit only
+  needed `DANCAM_BACKEND=camera`; no `SupplementaryGroups=video` change was required.
+- `just raspi-deploy` works with `DANCAM_HOST=dan@dancam.local`; deploying to the raw
+  `192.168.1.160` IP failed host-key verification because that raw IP was not a trusted
+  known-host entry.
+- Home-LAN preview with the camera backend returned the expected multipart headers and
+  real JPEG bytes. First response bytes arrived in about 226 ms; a 20-second curl
+  received about 2.96 MB. The `rpicam-vid` child was visible under the `dancam` service
+  while streaming and was reaped after client disconnect. SoC temperature sampled around
+  38-39 C during these desk checks.

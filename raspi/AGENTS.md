@@ -214,7 +214,8 @@ shell, not `rustup target add`.
 - A **systemd unit** (`raspi/dancam.service`, installed to `/etc/systemd/system/`
   by `deploy.sh`) runs the service: auto-start on boot (also how the car image
   auto-records on boot) and restart-on-crash. It sets `DANCAM_BIND=0.0.0.0:8080` so
-  the service listens on all interfaces; the binary defaults to loopback-only.
+  the service listens on all interfaces and `DANCAM_BACKEND=camera` so preview uses
+  the real camera; the binary defaults to loopback-only and the mock backend.
 - Logs: `journalctl -u dancam -f`. Under the read-only car image, point logs at
   `/data` or keep them in RAM -- root is not writable.
 

@@ -201,11 +201,49 @@ just raspi-deploy   # wraps ./raspi/deploy.sh
 ```
 
 This ships a static aarch64 binary + the systemd unit (`dancam.service`),
-enables/restarts the service, and curls `/v1/health`. Verify from the Mac over the
-LAN:
+enables/restarts the service, and curls `/v1/health`. The deployed unit sets:
+
+```ini
+Environment=DANCAM_BIND=0.0.0.0:8080
+Environment=DANCAM_BACKEND=camera
+```
+
+`DANCAM_BACKEND=camera` makes `/v1/preview/live.mjpeg` spawn `rpicam-vid` for a
+temporary preview-only MJPEG stream. Local `just raspi-run` still defaults to the
+mock backend and cycles committed test-pattern frames.
+
+Verify from the Mac over the LAN:
 
 ```sh
 curl -i http://dancam.local:8080/v1/health   # expect: 200 OK + x-dancam-proto: 1
+```
+
+Smoke-test live preview from the Mac:
+
+```sh
+curl -i --max-time 2 http://dancam.local:8080/v1/preview/live.mjpeg
+```
+
+Expected headers include:
+
+```text
+HTTP/1.1 200 OK
+content-type: multipart/x-mixed-replace; boundary=dancamframe
+cache-control: no-store
+x-dancam-proto: 1
+```
+
+The stream is unbounded, so `curl --max-time 2` exits by timeout after proving the
+headers. To eyeball the real camera feed, open the same URL in a browser or run:
+
+```sh
+ffplay http://dancam.local:8080/v1/preview/live.mjpeg
+```
+
+To regenerate the local mock preview frames later, run from the repo root:
+
+```sh
+ffmpeg -f lavfi -i testsrc=size=640x480:rate=10 -frames:v 12 -q:v 8 raspi/service/assets/preview/frame_%02d.jpg
 ```
 
 Service management on the Pi:
