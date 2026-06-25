@@ -134,3 +134,12 @@ gap in `newest_ts` flags "possible gap in coverage."
   rather than removing it and is a single higher-stakes always-on component versus four
   contained per-plane parsers. The full tradeoff is recorded in the raspi ADR's
   Alternatives; revisit there first if the hand-rolled client surface proves burdensome.
+
+## Implementation notes
+
+- **2026-06-25:** The first physical AP health slice proved the fixed AP gateway
+  path, then moved the live health base URL behind `AppConfiguration`. For now, the
+  app resolves the camera API base URL from `DANCAM_CAMERA_API_BASE_URL`, then the
+  `DANCAMCameraAPIBaseURL` Info.plist key, then the `http://10.42.0.1:8080` AP
+  fallback. Real `NWBrowser` discovery and Wi-Fi-pinned HTTP remain the later
+  transport implementation behind the same dependency boundary.

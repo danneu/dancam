@@ -215,8 +215,13 @@ shell, not `rustup target add`.
 - AP bring-up / car path: the phone joins the Pi's AP and talks to
   `http://10.42.0.1:8080/v1/...`. The dev AP profile does not autoconnect; schedule a
   detached revert before flipping it over SSH:
-  `sudo systemd-run --on-active=5min nmcli connection up netplan-wlan0-peluchonet`.
-  Power cycling also returns the dev image to home Wi-Fi.
+  `sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up netplan-wlan0-peluchonet`.
+  Use a fresh unit name if that one is already loaded. After it returns, inspect it
+  with
+  `journalctl -b -u dancam-restore-home-wifi.service -u dancam-restore-home-wifi.timer`.
+  Power cycling also returns the dev image to home Wi-Fi. The current dev image keeps
+  only the current boot's journal, so previous-boot AP failures are lost after a
+  reset unless persistent journald is enabled later.
 
 ## Design decisions (ADRs)
 

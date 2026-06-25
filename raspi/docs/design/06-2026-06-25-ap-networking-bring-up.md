@@ -69,15 +69,25 @@ Before flipping to AP mode over SSH, schedule a detached NetworkManager revert
 owned by systemd:
 
 ```sh
-sudo systemd-run --on-active=5min nmcli connection up netplan-wlan0-peluchonet
+sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up netplan-wlan0-peluchonet
 ```
 
 Do not rely on a foreground `sleep && nmcli ...` in the SSH session; the session
 dies when the radio leaves home Wi-Fi. The transient systemd timer survives the
-SSH drop and is the intended automatic return path, but keep the power-cycle
-backstop: one bring-up run returned to home Wi-Fi through the timer, while the
-later physical-app proof did not reappear on the home LAN during agent polling and
-needs follow-up.
+SSH drop and is the intended automatic return path. Use a fresh `--unit` name if
+that unit is already loaded, and inspect the timer/service after return with:
+
+```sh
+journalctl -b -u dancam-restore-home-wifi.service -u dancam-restore-home-wifi.timer
+```
+
+Keep the power-cycle backstop: it always returns this dev image to the autoconnect
+home profile. In follow-up on 2026-06-25, the earlier physical-app proof failure
+could not be proven from logs because the dev image had no previous-boot journal
+after reset. A controlled current-boot test using the named unit and absolute
+`/usr/bin/nmcli` path did succeed: systemd fired the timer, NetworkManager
+deactivated `dancam-ap`, stopped the shared-mode dnsmasq, rejoined `peluchonet`,
+and reacquired `192.168.1.160`.
 
 Verification from this bring-up:
 
@@ -96,6 +106,16 @@ Verification from this bring-up:
   The captive-probe DNS lever remains deferred; this one-shot proof did not need
   it, but it does not disprove ADR 02's requirement for robust persistent
   no-internet joins.
+- A later attempted persistent-iOS test found `dancam-dev` unavailable because the
+  Pi had already reset back to home Wi-Fi; that is not evidence about captive
+  behavior.
+- Follow-up persistent-iOS testing on 2026-06-25 found that a physical iPhone
+  running the latest app could leave and rejoin `dancam-dev`, reconnect to the
+  app, and fetch camera health info without a captive sheet blocking or dropping
+  the association. NetworkManager's shared dnsmasq logged the client lease at
+  `10.42.0.97`, then a DHCP release and reacquisition during the leave/rejoin
+  test. Therefore no `/etc/NetworkManager/dnsmasq-shared.d/` captive-probe
+  NXDOMAIN drop-in is applied in this dev image yet.
 
 During an API-backed coding session, do not use the Mac's only Wi-Fi interface
 as the AP client. Joining `dancam-dev` from the Mac drops `peluchonet` and can
@@ -112,8 +132,9 @@ AP client verification.
 - The AP profile is not the final provisioning story. Per-unit random SSID/PSK
   plus QR-based onboarding remains a later hardening pass.
 - Persistent no-internet behavior is still open. The dnsmasq captive-probe lever
-  should be applied only when a persistent join test shows it is needed, and then
-  verified on-device.
+  should be applied only if future persistent join tests show it is needed, and
+  then verified on-device. The current physical iPhone reconnect test did not
+  require it.
 - The current app health slice targets the AP gateway directly. Discovery,
   per-unit provisioning, and a configurable base URL remain later app work.
 

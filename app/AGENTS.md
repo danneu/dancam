@@ -79,8 +79,9 @@ The Xcode project is `DanCam`, with scheme `DanCam`.
 - Run unit tests: `just app-test` (Swift Testing unit suites only; UI tests are left in
   the project but excluded from this recipe).
 - Interactive run: open `app/DanCam/DanCam.xcodeproj` in Xcode and Cmd-R into an iOS
-  26.5 simulator. Start the mock Pi with `just raspi-run`; the `oak` app points at
-  `http://127.0.0.1:8080`.
+  26.5 simulator. The live app defaults to the Pi AP gateway
+  `http://10.42.0.1:8080`; set `DANCAM_CAMERA_API_BASE_URL=http://127.0.0.1:8080` in
+  the scheme environment when running against the local mock Pi from `just raspi-run`.
 
 CarPlay work needs the CarPlay simulator (Xcode > I/O > External Displays > CarPlay)
 and, for device testing, the CarPlay entitlement from Apple.

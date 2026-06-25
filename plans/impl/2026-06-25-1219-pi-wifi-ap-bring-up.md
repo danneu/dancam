@@ -235,16 +235,34 @@ Keep the record truthful as hardware reveals reality:
 - The captive-probe DNS lever was left unapplied because the one-shot Safari fetch and
   physical app fetch both worked after joining `dancam-dev`; the docs keep it as
   deferred rather than unnecessary.
+- Follow-up investigation found no previous-boot journal after reset, so the final
+  physical-app restore failure cannot be proven from Pi logs. A controlled current-boot
+  test with
+  `sudo systemd-run --unit=dancam-restore-home-wifi-test --on-active=90s /usr/bin/nmcli connection up netplan-wlan0-peluchonet`
+  succeeded: the timer fired, NetworkManager deactivated `dancam-ap`, stopped
+  shared-mode dnsmasq, rejoined `peluchonet`, and got the `192.168.1.160` lease.
+  Use the named-unit and absolute-path command form in docs going forward.
+- Follow-up persistent-iOS testing found that the iPhone could leave and rejoin
+  `dancam-dev`, then reconnect in the app and show camera info without a captive
+  sheet blocking or dropping the association. The dnsmasq captive-probe NXDOMAIN
+  drop-in remains unapplied. Pi logs showed the iPhone lease at `10.42.0.97`,
+  plus DHCP release/reacquisition across the leave/rejoin test. The 12-minute
+  named restore timer fired and returned the Pi to `peluchonet` at
+  `192.168.1.160`.
 
 ## Follow Up
 
 - Validate persistent iOS no-internet AP behavior for `dancam-dev`; if the Captive
   Network Assistant blocks or destabilizes reconnects, add and verify a
-  `/etc/NetworkManager/dnsmasq-shared.d/` captive-probe NXDOMAIN drop-in.
+  `/etc/NetworkManager/dnsmasq-shared.d/` captive-probe NXDOMAIN drop-in. Follow-up:
+  iPhone leave/rejoin worked and the app reconnected without captive blocking, so no
+  drop-in was applied.
 - Investigate why `sudo systemd-run --on-active=5min nmcli connection up
   netplan-wlan0-peluchonet` did not return the Pi to `peluchonet` during the final
   physical-app AP proof; keep power-cycle as the recovery backstop until this is
-  understood.
+  understood. Follow-up: previous-boot logs were unavailable after reset, but the
+  named-unit absolute-path timer form was verified in the current boot.
 - Replace the hardcoded `http://10.42.0.1:8080` health base URL in
   `app/DanCam/DanCam/App/AppDependencies.swift` with the planned discovery/configuration
-  path after the first AP health slice.
+  path after the first AP health slice. Follow-up: replaced by `AppConfiguration`
+  resolving environment, Info.plist, then AP-gateway fallback.
