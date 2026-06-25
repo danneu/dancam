@@ -42,7 +42,22 @@ Confirm it came up as the 64-bit Trixie kernel (`aarch64` / `v8` = 64-bit):
 uname -a
 ```
 
-## 3. Enable the camera (IMX708)
+## 3. Update packages
+
+A fresh Lite image is already a bit behind. Refresh the package index, upgrade what's
+installed, then add anything you want on the Pi (e.g. `vim`):
+
+```sh
+# refresh the package index, then upgrade everything already installed
+sudo apt update && sudo apt full-upgrade -y
+
+# install vim, or any other packages you might want on the Pi
+sudo apt install -y vim
+```
+
+If the upgrade pulls a new kernel/firmware, `sudo reboot` to pick it up.
+
+## 4. Enable the camera (IMX708)
 
 The Arducam IMX708 is not an official module, so it is not auto-detected. Turn
 auto-detect off and load the in-kernel overlay in `/boot/firmware/config.txt`:
@@ -75,7 +90,7 @@ Optionally pull the image to the Mac to eyeball focus/orientation:
 scp -i ~/.ssh/<your-key> dan@dancam.local:/tmp/test.jpg ~/Desktop/dancam-test.jpg
 ```
 
-## 4. (Optional) Fix the locale warning
+## 5. (Optional) Fix the locale warning
 
 My SSH login warned `cannot change locale (UTF-8)` because the fresh Lite image has no
 UTF-8 locale generated yet. Uncomment `en_US.UTF-8` in `/etc/locale.gen` and rebuild
@@ -88,7 +103,7 @@ sudo locale-gen
 
 Log out and back in -- the warning is gone.
 
-## 5. Deploy and run the service
+## 6. Deploy and run the service
 
 Cross-compile and deploy from the Mac in one command (Nix flake + `deploy.sh`;
 details in [`raspi/AGENTS.md`](raspi/AGENTS.md) "Rust dev loop"). From the repo
