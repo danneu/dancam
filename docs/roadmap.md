@@ -99,3 +99,12 @@ swoop can drop into the list above unchanged. Unordered.
       **very low priority**: the on-phone "save this moment" button (swoop `nova`)
       already covers the core need, so hands-free voice marking is just convenience on
       top. Revisit only if voice marking proves worth it in the car.
+- [ ] **Swoop `wren` -- Per-unit AP security provisioning.** Replace the single
+      hand-typed dev PSK with a per-unit random SSID/PSK generated at provisioning
+      time, delivered to the phone via QR-based onboarding
+      (`NEHotspotConfiguration`), so every unit ships with a unique strong secret
+      instead of a shared dev password. This -- not WPA2-vs-WPA3 -- is the real
+      security win for the link (ADR 02's v1 trust boundary; ADR 06 Consequences
+      already flags it as a later hardening pass). Parked until there is a
+      production/car image to provision; the dev AP's WPA2-AES + manual PSK is
+      sufficient for the dev loop.

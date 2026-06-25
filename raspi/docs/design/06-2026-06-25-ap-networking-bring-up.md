@@ -1,6 +1,7 @@
 # ADR: AP networking bring-up
 
 - **Status:** Accepted
+- **Amended:** 2026-06-25 -- cipher pinned to RSN/CCMP (AES); no TKIP/WPA1.
 - **Date:** 2026-06-25
 - **Owner:** raspi
 - **Related:** root `AGENTS.md`; `02-2026-06-22-app-pi-transport-and-api.md`
@@ -26,7 +27,12 @@ by default:
 
 - `802-11-wireless.mode ap`
 - SSID `dancam-dev`
-- WPA2-PSK with a manually-entered dev password
+- WPA2-PSK pinned to AES (RSN proto, CCMP pairwise + group; no TKIP/WPA1)
+  with a manually-entered dev password:
+  - `802-11-wireless-security.key-mgmt wpa-psk`
+  - `802-11-wireless-security.proto rsn`
+  - `802-11-wireless-security.pairwise ccmp`
+  - `802-11-wireless-security.group ccmp`
 - `802-11-wireless.band bg`
 - pinned channel `1`
 - `ipv4.method shared`
@@ -145,6 +151,12 @@ AP client verification.
   return to home Wi-Fi.
 - App and operator docs can target the stable AP gateway
   `http://10.42.0.1:8080`.
+- Amendment record, 2026-06-25: pinning CCMP-only removes TKIP from the AP
+  beacon, which clears iOS's "Weak Security (WPA/WPA2 TKIP)" warning.
+- WPA3-SAE was considered and deferred. It is out of scope for this warning fix,
+  would need a separate AP-mode validation pass on the Zero 2 W, and adds
+  negligible practical gain for this local preview-and-pull link with a strong
+  WPA2-AES PSK.
 - The AP profile is not the final provisioning story. Per-unit random SSID/PSK
   plus QR-based onboarding remains a later hardening pass.
 - Persistent no-internet behavior is still open. The dnsmasq captive-probe lever

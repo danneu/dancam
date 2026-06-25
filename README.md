@@ -112,7 +112,8 @@ The status should show `running [dancam.local]`, not `dancam-2.local`.
 
 The dev image normally joins home Wi-Fi for deploy/debug, but it also has a
 manual NetworkManager hotspot profile for iPhone testing. Pick a dev WPA2
-password and do not commit it anywhere.
+password and do not commit it anywhere. The profile pins WPA2-AES (RSN/CCMP,
+no TKIP) so iOS does not show a weak-security warning.
 
 On the Pi:
 
@@ -133,6 +134,9 @@ sudo nmcli connection modify dancam-ap \
   802-11-wireless.channel 1 \
   802-11-wireless-security.key-mgmt wpa-psk \
   802-11-wireless-security.psk "$DANCAM_AP_PSK" \
+  802-11-wireless-security.proto rsn \
+  802-11-wireless-security.pairwise ccmp \
+  802-11-wireless-security.group ccmp \
   ipv4.method shared \
   ipv4.addresses 10.42.0.1/24 \
   ipv6.method ignore
@@ -140,6 +144,7 @@ sudo nmcli connection modify dancam-ap \
 unset DANCAM_AP_PSK
 
 nmcli -f connection.id,connection.autoconnect,802-11-wireless.ssid,802-11-wireless.mode,802-11-wireless.band,802-11-wireless.channel,ipv4.method,ipv4.addresses,ipv6.method connection show dancam-ap
+nmcli -f 802-11-wireless-security.key-mgmt,802-11-wireless-security.proto,802-11-wireless-security.pairwise,802-11-wireless-security.group connection show dancam-ap
 ```
 
 Expected profile values:
@@ -155,6 +160,21 @@ ipv4.method:                            shared
 ipv4.addresses:                         10.42.0.1/24
 ipv6.method:                            ignore
 ```
+
+Expected security values:
+
+```text
+802-11-wireless-security.key-mgmt:      wpa-psk
+802-11-wireless-security.proto:         rsn
+802-11-wireless-security.pairwise:      ccmp
+802-11-wireless-security.group:         ccmp
+```
+
+The cipher settings take effect the next time `dancam-ap` is activated. If the AP
+is already up, run `sudo nmcli connection down dancam-ap` and then
+`sudo nmcli connection up dancam-ap` (or `sudo nmcli device reapply wlan0`);
+otherwise the live beacon can still advertise the old WPA/WPA2 TKIP-capable
+profile and iOS may keep showing the warning.
 
 Before flipping the Pi into AP mode over SSH, always arm a systemd-owned return
 timer. Replace the home profile name if `nmcli connection show` reports a

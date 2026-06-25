@@ -72,8 +72,9 @@ current provisional direction until it is captured.
   ring-buffer / incident-lock ADR.
 - **Access point:** a NetworkManager hotspot (`nmcli`, `ipv4.method=shared`) on
   the 2.4 GHz band so the phone can connect directly with no router. The current
-  dev profile is `dancam-ap`: SSID `dancam-dev`, WPA2-PSK entered manually (do not
-  commit the password), channel 1, `ipv4.addresses 10.42.0.1/24`,
+  dev profile is `dancam-ap`: SSID `dancam-dev`, WPA2-PSK pinned to AES
+  (RSN/CCMP, no TKIP) and entered manually (do not commit the password), channel
+  1, `ipv4.addresses 10.42.0.1/24`,
   `ipv6.method ignore`, and `connection.autoconnect no`. NM shared mode runs its own
   `dnsmasq` for DHCP/DNS; during bring-up it served `10.42.0.10` through
   `10.42.0.254`. ADR 02's captive-probe DNS lever is applied through that instance,
