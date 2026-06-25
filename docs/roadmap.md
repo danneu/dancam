@@ -27,11 +27,13 @@ mock first.
       - [x] Mock Pi service runs locally and answers the health endpoint.
       - [x] App can call the mock Pi health endpoint.
 - [ ] **Swoop `pine` -- Real Pi bring-up.** Hardware track for the same health slice:
-      flash Raspberry Pi OS (64-bit), bring up the Wi-Fi AP (hostapd + dnsmasq),
-      get the camera visible/capturing at a basic smoke-test level, deploy/run the
-      Rust service on the Pi, serve real `GET /v1/health` over HTTP, and have the
-      app join the AP and get a 200 back. Read-only root can wait until hardening;
-      do not block first hardware contact on the final car-image layout.
+      flash Raspberry Pi OS Lite (64-bit, Trixie), bring up the Wi-Fi AP
+      (NetworkManager hotspot, 2.4 GHz), get the camera visible/capturing at a
+      basic smoke-test level (`camera_auto_detect=0` + `dtoverlay=imx708`),
+      deploy/run the Rust service on the Pi, serve real `GET /v1/health` over
+      HTTP, and have the app join the AP and get a 200 back. Read-only root can
+      wait until hardening; do not block first hardware contact on the final
+      car-image layout.
 - [ ] **Swoop `fox` -- Live preview on iPhone.** Pi serves `GET /v1/preview/live.mjpeg`
       (MJPEG from the libcamera lores stream, never the H.264 encoder). App joins
       the AP, opens a pinned `NWConnection`, parses `multipart/x-mixed-replace`,

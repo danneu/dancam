@@ -259,7 +259,7 @@ reviewable apart from the first endpoint.
 ## Out of scope (later swoops / deepening passes -- noted, not built here)
 
 Cross-compile to aarch64 musl (`cargo-zigbuild`/`cross`), the systemd unit + `deploy.sh`,
-read-only root, hostapd/dnsmasq AP, Bonjour `_dancam._tcp` advertisement, the transport
+read-only root, NetworkManager-hotspot AP, Bonjour `_dancam._tcp` advertisement, the transport
 ADR's HTTP security hardening (Host allowlist + `421`, Sec-Fetch/Origin, no CORS),
 real `rpicam-vid` capture, MJPEG preview, recording control, clip pull + SD storage, SSE
 events, and the other `/v1` endpoints (`status`, `capabilities`, `time`, ...). Each grows

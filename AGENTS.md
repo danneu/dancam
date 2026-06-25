@@ -51,8 +51,9 @@ only dev workstation, and it shapes what's easy:
 - **Raspberry Pi:** the microSD is flashed from the laptop. Raspberry Pi Imager
   runs natively on Apple Silicon; with a USB SD card reader, headless setup
   (Wi-Fi creds, SSH, hostname) is done via the Imager's OS-customization step, so
-  the Pi can come up first-boot without a monitor/keyboard. Then iterate over SSH
-  on the same Wi-Fi. (`dd` works too, but Imager is the default.)
+  use current Raspberry Pi Imager (2.0.10+) for Trixie's cloud-init provisioning.
+  Then the Pi can come up first-boot without a monitor/keyboard and you iterate
+  over SSH on the same Wi-Fi. (`dd` works too, but Imager is the default.)
 
 ## Repository layout
 

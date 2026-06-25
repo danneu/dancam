@@ -24,10 +24,14 @@ app, is documented in [`../app/AGENTS.md`](../app/AGENTS.md).
 - **Camera:** [Arducam 12MP IMX708 Autofocus Wide](https://www.amazon.com/gp/product/B0C5D97DRJ)
   (~30 USD; Camera Module 3 Wide equivalent).
   - 120 deg diagonal FOV, HDR, PDAF autofocus, Sony IMX708, libcamera-native.
-  - Ships with a 15-22pin FPC cable: 22-pin at the camera, 15-pin at the board.
-    That fits the standard 15-pin CSI port on the Pi 3/4 (incl. the 3 A+), but NOT
-    the Zero / Zero 2 W / Pi 5, whose 22-pin mini-CSI ports need a separate 22-22pin
-    cable (the included one does not fit them).
+  - Ships with a 15-22pin "Standard-Mini" FPC cable: 15-pin at the camera, 22-pin
+    at the board. The 22-pin end plugs into the Zero 2 W's mini-CSI port (same
+    connector as the Pi 5 and Compute Modules), and the 15-pin end plugs into the
+    camera. A standard Pi 3/4's 15-pin CSI port would instead need a 15-15
+    "Standard-Standard" cable.
+  - This is not an official module, so it is not auto-detected. Enable it with
+    `camera_auto_detect=0` and `dtoverlay=imx708` in `/boot/firmware/config.txt`;
+    full steps live in "OS and first flash".
   - **Operating temp 0 C to +50 C -- this is the system's thermal weak link**, not
     the board. Hot-parked operation is bounded by the sensor, not the Pi.
 
@@ -55,9 +59,10 @@ this ecosystem, and autofocus tops out at 120 deg (wider needs a fixed-focus M12
 Most of this is now settled in ADRs (linked per item below); the remainder is the
 current provisional direction until it is captured.
 
-- **OS:** Raspberry Pi OS (64-bit), with a **read-only root filesystem** (overlayfs)
-  so power loss can never corrupt the OS. Footage goes on a **separate journaled
-  partition** (ext4 or F2FS). See the crash-safe recording ADR.
+- **OS:** Raspberry Pi OS Lite, 64-bit (Trixie / Debian 13), with a **read-only
+  root filesystem** (overlayfs) so power loss can never corrupt the OS. Footage
+  goes on a **separate journaled partition** (ext4 or F2FS). See the crash-safe
+  recording ADR.
 - **Capture/encode:** `rpicam-vid` (libcamera), driven as a **subprocess** by the
   Rust service (never linked -- see the service-language ADR). Output segmented
   MPEG-TS (`.ts`) with inline headers -- truncation-tolerant and HLS-native for the
@@ -65,8 +70,10 @@ current provisional direction until it is captured.
 - **Storage model:** a **ring buffer** of short segments; oldest deleted as the card
   fills; incident-locked segments are exempt from deletion. See the storage
   ring-buffer / incident-lock ADR.
-- **Access point:** hostapd + dnsmasq (or equivalent) so the phone can connect
-  directly with no router.
+- **Access point:** a NetworkManager hotspot (`nmcli`, `ipv4.method=shared`) on
+  the 2.4 GHz band so the phone can connect directly with no router. NM shared
+  mode runs its own `dnsmasq` for DHCP/DNS; ADR 02's captive-probe DNS lever is
+  applied through that instance, not a hand-run DNS service.
 - **Control + media service:** a small **Rust** service (see the service-language
   ADR) exposing a control API (start/stop, settings, time sync, incident lock) and a
   media API (list/preview/pull clips) to the app.
@@ -112,7 +119,7 @@ Same Raspberry Pi OS base, two configurations:
 | | Dev image (on the desk) | Car image (deployed) |
 |---|---|---|
 | Root filesystem | writable -- edit & restart freely | read-only (overlayfs) |
-| Network | joins home Wi-Fi as a client | runs the AP (hostapd + dnsmasq) |
+| Network | joins home Wi-Fi as a client | runs the AP (NetworkManager hotspot, 2.4 GHz) |
 | Access | `ssh dan@dancam.local` over the LAN | phone joins the Pi's AP |
 | Recordings | a folder on root is fine early | dedicated journaled `/data` partition |
 
@@ -122,18 +129,28 @@ early swoops) -- not something to fight while iterating.
 
 ### OS and first flash (once)
 
-- **Raspberry Pi OS Lite, 64-bit** (Bookworm). Lite = headless and lean for 512 MB;
-  Bookworm ships `rpicam-vid` and the IMX708 driver in-kernel. Our Arducam B0311 is
-  not auto-detected (it is not an official module), so enable it the mainline way:
-  set `camera_auto_detect=0` and add `dtoverlay=imx708` to `/boot/firmware/config.txt`,
-  then reboot -- no install script, no tuning file, and it survives kernel upgrades.
-  Do NOT use Arducam's legacy `install_pivariety_pkgs.sh` driver: it ships prebuilt
-  per-kernel binaries that break on every `apt upgrade` (the source of the "had to
-  downgrade the kernel" reports). The official Camera Module 3 would auto-detect with
-  no config -- same IMX708 sensor -- if we ever want zero camera setup.
-- Flash with **Raspberry Pi Imager**, pre-setting hostname (`dancam`), SSH on, the
-  user, and **home Wi-Fi credentials**. Boot headless, then `ssh dan@dancam.local`
-  over the LAN (mDNS). No monitor or keyboard, and no card-shuffling after this.
+- **Raspberry Pi OS Lite, 64-bit** (Trixie / Debian 13; the 2026-06-18 build,
+  kernel 6.18 LTS). Lite = headless and lean for 512 MB; Trixie ships
+  `rpicam-vid` and the IMX708 driver in-kernel. Our Arducam B0311 is not
+  auto-detected (it is not an official module), so enable it with the kernel's
+  in-tree overlay: set `camera_auto_detect=0` and add `dtoverlay=imx708` to
+  `/boot/firmware/config.txt`, then reboot -- no install script, no tuning file,
+  and it survives kernel upgrades. Do NOT use Arducam's legacy
+  `install_pivariety_pkgs.sh` driver: it ships prebuilt per-kernel binaries that
+  break on every `apt upgrade` (the source of the "had to downgrade the kernel"
+  reports). The official Camera Module 3 would auto-detect with no config -- same
+  IMX708 sensor -- if we ever want zero camera setup. On this 512 MB board,
+  camera/codec buffers come from CMA; the old `gpu_mem` split is obsolete. If
+  `rpicam` reports buffer-allocation failures, raise CMA with a `config.txt`
+  overlay such as `dtoverlay=cma,cma-size=...`, not `gpu_mem`.
+- Flash with **current Raspberry Pi Imager (2.0.10 or newer)**, pre-setting
+  hostname (`dancam`), SSH on, the user, and **home Wi-Fi credentials**. Current
+  Trixie images use cloud-init for first-boot customization: Imager 1.9.x cannot
+  customize Trixie, and the 2.0.6-2.0.8 stable releases can leave headless SSH off
+  by emitting the deprecated `enable_ssh` key (fixed in the 2.0.9 prerelease and
+  stable in 2.0.10). Editing files on the boot partition is the legacy fallback.
+  Boot headless, then `ssh dan@dancam.local` over the LAN (mDNS). No monitor or
+  keyboard, and no card-shuffling after this.
 - Fallback if Wi-Fi is fussy: the data micro-USB port supports gadget mode
   (`g_ether`) -> SSH over the USB cable.
 
