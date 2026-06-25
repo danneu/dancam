@@ -5,12 +5,13 @@ import Testing
 struct AppConfigurationTests {
     @Test func defaultConfigurationUsesAPGatewayFallback() throws {
         let expected = try #require(URL(string: "http://10.42.0.1:8080"))
-        let url = AppConfiguration.configuredCameraAPIBaseURL(
+        let configuration = AppConfiguration.live(
             environment: [:],
             infoDictionary: [:]
         )
 
-        #expect(url == expected)
+        #expect(configuration.cameraAPIBaseURL == expected)
+        #expect(configuration.cameraAPIInterfacePinning == .wifi)
     }
 
     @Test func environmentOverrideWinsOverInfoPlistOverride() throws {
@@ -51,5 +52,38 @@ struct AppConfigurationTests {
         )
 
         #expect(url == expected)
+    }
+
+    @Test func loopbackBaseURLDefaultsToDisabledPinning() throws {
+        let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
+        let pinning = AppConfiguration.configuredCameraAPIInterfacePinning(
+            environment: [:],
+            infoDictionary: [:],
+            baseURL: baseURL
+        )
+
+        #expect(pinning == .disabled)
+    }
+
+    @Test func explicitEnvironmentPinningOverrideWinsOverInfoPlist() throws {
+        let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
+        let pinning = AppConfiguration.configuredCameraAPIInterfacePinning(
+            environment: [AppConfiguration.cameraAPIPinWiFiEnvironmentKey: "1"],
+            infoDictionary: [AppConfiguration.cameraAPIPinWiFiInfoKey: false],
+            baseURL: baseURL
+        )
+
+        #expect(pinning == .wifi)
+    }
+
+    @Test func explicitInfoPlistPinningOverrideIsUsedWhenEnvironmentIsMissing() throws {
+        let baseURL = try #require(URL(string: "http://10.42.0.1:8080"))
+        let pinning = AppConfiguration.configuredCameraAPIInterfacePinning(
+            environment: [:],
+            infoDictionary: [AppConfiguration.cameraAPIPinWiFiInfoKey: false],
+            baseURL: baseURL
+        )
+
+        #expect(pinning == .disabled)
     }
 }

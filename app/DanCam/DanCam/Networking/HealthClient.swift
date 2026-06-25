@@ -18,24 +18,35 @@ nonisolated enum HealthError: Error, Equatable {
 }
 
 nonisolated struct HealthClient {
-    var fetch: () async throws -> HealthResponse
+    typealias OpenByteStream = @Sendable (URL, Data) async throws -> AsyncThrowingStream<Data, Error>
+
+    var fetch: @Sendable () async throws -> HealthResponse
 
     static func live(
         baseURL: URL = URL(string: "http://127.0.0.1:8080")!,
-        transport: @escaping (URLRequest) async throws -> (Data, URLResponse) = { request in
-            try await URLSession.shared.data(for: request)
+        pinning: InterfacePinning = .disabled
+    ) -> HealthClient {
+        live(baseURL: baseURL, pinning: pinning) { url, request in
+            try await NWByteStream.open(url: url, request: request, pinning: pinning)
         }
+    }
+
+    static func live(
+        baseURL: URL,
+        pinning: InterfacePinning = .disabled,
+        openByteStream: @escaping OpenByteStream
     ) -> HealthClient {
         HealthClient {
             let requestURL = baseURL.appending(path: "v1/health")
-            var request = URLRequest(url: requestURL)
-            request.httpMethod = "GET"
 
+            let head: HTTPResponseHead
             let data: Data
-            let response: URLResponse
 
             do {
-                (data, response) = try await transport(request)
+                (head, data) = try await HTTPRequestResponse.get(
+                    url: requestURL,
+                    openByteStream: openByteStream
+                )
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as URLError where error.code == .cancelled {
@@ -44,12 +55,8 @@ nonisolated struct HealthClient {
                 throw HealthError.transport(error.localizedDescription)
             }
 
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw HealthError.transport("Missing HTTP response")
-            }
-
-            guard (200...299).contains(httpResponse.statusCode) else {
-                throw HealthError.http(httpResponse.statusCode)
+            guard (200...299).contains(head.statusCode) else {
+                throw HealthError.http(head.statusCode)
             }
 
             do {

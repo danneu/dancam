@@ -46,11 +46,8 @@ final class Store<State, Action, Dependencies> {
     }
 
     func send(_ action: Action) {
-        let oldState = String(describing: state)
         let effect = reduce(&state, action, dependencies)
-        let newState = String(describing: state)
 
-        print("DanCam action=\(String(describing: action)) state=\(oldState) -> \(newState)")
         notifyObservers()
         execute(effect)
     }

@@ -14,6 +14,8 @@ use crate::backend::Backend;
 
 pub mod backend;
 mod health;
+mod jpeg;
+pub mod preview;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -38,6 +40,7 @@ impl AppState {
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health::health))
+        .route("/v1/preview/live.mjpeg", get(preview::live_mjpeg))
         .layer(middleware::from_fn_with_state(state.clone(), proto_headers))
         .with_state(state)
 }

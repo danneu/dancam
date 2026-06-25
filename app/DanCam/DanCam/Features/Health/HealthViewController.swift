@@ -1,6 +1,7 @@
 import UIKit
 
 final class HealthViewController: UIViewController {
+    private let dependencies: AppDependencies
     private let store: Store<HealthFeature.State, HealthFeature.Action, AppDependencies>
     private var observation: StoreObservation?
 
@@ -11,8 +12,10 @@ final class HealthViewController: UIViewController {
     private let timeLabel = UILabel()
     private let errorLabel = UILabel()
     private let reloadButton = UIButton(type: .system)
+    private let previewButton = UIButton(type: .system)
 
     init(dependencies: AppDependencies) {
+        self.dependencies = dependencies
         store = Store(
             initialState: .idle,
             dependencies: dependencies,
@@ -55,6 +58,9 @@ final class HealthViewController: UIViewController {
         reloadButton.setTitle("Reload", for: .normal)
         reloadButton.addTarget(self, action: #selector(reloadTapped), for: .touchUpInside)
 
+        previewButton.setTitle("Live preview", for: .normal)
+        previewButton.addTarget(self, action: #selector(previewTapped), for: .touchUpInside)
+
         let stack = UIStackView(arrangedSubviews: [
             statusLabel,
             bootIdLabel,
@@ -63,6 +69,7 @@ final class HealthViewController: UIViewController {
             timeLabel,
             errorLabel,
             reloadButton,
+            previewButton,
         ])
         stack.axis = .vertical
         stack.spacing = 12
@@ -110,5 +117,12 @@ final class HealthViewController: UIViewController {
 
     @objc private func reloadTapped() {
         store.send(.reload)
+    }
+
+    @objc private func previewTapped() {
+        navigationController?.pushViewController(
+            PreviewViewController(dependencies: dependencies),
+            animated: true
+        )
     }
 }

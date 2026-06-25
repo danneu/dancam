@@ -1,6 +1,10 @@
 use std::env;
 
-use dancam::{app, backend::MockBackend, resolve_boot_id, AppState};
+use dancam::{
+    app,
+    backend::{MockBackend, RpicamBackend},
+    resolve_boot_id, AppState,
+};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -10,7 +14,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = env::var("DANCAM_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     let listener = TcpListener::bind(&bind).await?;
     let local_addr = listener.local_addr()?;
-    let state = AppState::new(resolve_boot_id(), MockBackend);
+    let boot_id = resolve_boot_id();
+    let state = match env::var("DANCAM_BACKEND").as_deref() {
+        Ok("camera") => AppState::new(boot_id, RpicamBackend),
+        Ok("mock") | Err(_) => AppState::new(boot_id, MockBackend),
+        Ok(other) => {
+            tracing::error!(backend = other, "unknown DANCAM_BACKEND");
+            std::process::exit(1);
+        }
+    };
 
     tracing::info!(%local_addr, "listening");
 
