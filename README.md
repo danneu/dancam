@@ -265,3 +265,14 @@ http://10.42.0.1:8080/v1/health
 The expected response is the same JSON health payload as the home-LAN
 `dancam.local` URL. The iPhone app's first AP health slice also targets
 `http://10.42.0.1:8080`.
+
+For app testing from Xcode, install/run the app on the iPhone while the phone is still
+on the home Wi-Fi network, then switch only the iPhone to `dancam-dev`. Leave the
+shared scheme without a `DANCAM_PIN_WIFI` override for the real AP path: the default
+`http://10.42.0.1:8080` base URL derives to Wi-Fi pinning for both health and preview.
+Use `DANCAM_PIN_WIFI=0` only for an explicit unpinned diagnostic pass.
+
+In the app, verify that the home screen health fetch succeeds, then open Live preview
+and confirm that the camera feed is moving. Stop then Start should resume the stream.
+In the 2026-06-25 `fox` spike, this worked over `dancam-dev` with cellular left on; no
+captive sheet was observed.

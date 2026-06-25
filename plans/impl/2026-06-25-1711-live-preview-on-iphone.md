@@ -645,3 +645,11 @@ keep-alive pooling is `jet`'s).
   received about 2.96 MB. The `rpicam-vid` child was visible under the `dancam` service
   while streaming and was reaped after client disconnect. SoC temperature sampled around
   38-39 C during these desk checks.
+- The Phase 4 AP device run passed twice: first with `DANCAM_PIN_WIFI=0` to isolate
+  basic AP connectivity, then with the override removed so the AP gateway default used
+  Wi-Fi pinning. The pinned run loaded health and live preview over `dancam-dev` with
+  cellular left on, no captive sheet observed, and Stop -> Start resumed after the
+  decode-state reset fix.
+- Phase 5 records that `fox` proved the MJPEG wire path and pinned AP routing, but not
+  preview-from-lores concurrent with 1080p30 H.264 recording; that remains `jet`'s
+  headline risk.

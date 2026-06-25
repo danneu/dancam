@@ -143,3 +143,11 @@ gap in `newest_ts` flags "possible gap in coverage."
   `DANCAMCameraAPIBaseURL` Info.plist key, then the `http://10.42.0.1:8080` AP
   fallback. Real `NWBrowser` discovery and Wi-Fi-pinned HTTP remain the later
   transport implementation behind the same dependency boundary.
+- **2026-06-25:** Swoop `fox` moved both health and live preview onto the raw
+  `NWConnection` HTTP client. On a physical iPhone joined to `dancam-dev`, the first
+  pass with `DANCAM_PIN_WIFI=0` proved basic AP connectivity and preview rendering.
+  The pinned pass removed that override, left cellular on, and still loaded health plus
+  moving live preview from `http://10.42.0.1:8080`; this validates Wi-Fi pinning for the
+  `fox` health and preview planes. No Local Network prompt or captive sheet was
+  observed during the AP runs. Stop -> Start initially exposed a preview decode-state
+  restart bug, fixed by resetting sequence ordering for each new stream generation.

@@ -43,18 +43,22 @@ mock first.
       - [x] A physical iPhone joins `dancam-dev` and gets health JSON from
             `http://10.42.0.1:8080/v1/health` in Safari.
       - [x] App running on a physical iPhone renders the AP health response.
-- [ ] **Swoop `fox` -- Live preview on iPhone.** Pi serves `GET /v1/preview/live.mjpeg`
-      (MJPEG from the libcamera lores stream, never the H.264 encoder). App joins
-      the AP, opens a pinned `NWConnection`, parses `multipart/x-mixed-replace`,
-      and shows the live view on screen. _This is the first "it works!" moment._
-      Preview here need not run while recording (sidesteps the headline spike);
-      _spike: confirm `NWConnection` Wi-Fi pinning + no-internet-AP / captive-probe
-      handling behaves._
+- [x] **Swoop `fox` -- Live preview on iPhone.** Pi serves
+      `GET /v1/preview/live.mjpeg`; for this swoop the real camera backend uses a
+      temporary preview-only MJPEG stream from `rpicam-vid`, not the later
+      lores-while-recording path. App joins the AP, opens a pinned `NWConnection`,
+      parses `multipart/x-mixed-replace`, and shows the live view on screen. _This is
+      the first "it works!" moment._ Preview here need not run while recording
+      (sidesteps the headline spike); _spike confirmed: `NWConnection` Wi-Fi pinning
+      reached the Pi over the no-internet AP with cellular on, and no captive sheet was
+      observed._
 - [ ] **Swoop `jet` -- Recording control + live status.** Start/stop recording buttons
       in the app (`POST /v1/recording/start|stop`); a status readout (recording
       on/off, storage left, temps) that updates as it changes (SSE
       `GET /v1/events`). _Spike: can MJPEG preview run concurrently with the
-      1080p30 H.264 recording? If not, preview falls back to "when stopped."_
+      1080p30 H.264 recording? If not, preview falls back to "when stopped." `fox`
+      did not validate this: preview-from-lores concurrent with H.264 recording remains
+      `jet`'s headline risk._
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
       (missing / unformatted / wrong filesystem); auto-format on first insert;
       format-from-app with a double-confirm (`POST /v1/storage/format`).

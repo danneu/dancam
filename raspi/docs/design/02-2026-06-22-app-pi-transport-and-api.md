@@ -32,6 +32,22 @@
 > persistent no-internet joins. The AP plumbing decision lives in
 > `06-2026-06-25-ap-networking-bring-up.md`.
 
+> **Note (2026-06-25):** Swoop `fox` validated the live-preview wire path and the
+> no-internet AP routing path on real hardware, but deliberately did not validate
+> concurrent preview while recording. The deployed service used
+> `DANCAM_BACKEND=camera`, spawning `rpicam-vid --codec mjpeg` for a temporary
+> preview-only stream from the camera's main path. Over the home LAN, the endpoint
+> returned the expected multipart headers and real JPEG bytes; first response bytes
+> arrived in about 226 ms, a 20-second curl received about 2.96 MB, and the Pi SoC was
+> around 38-39 C during desk checks. Over the `dancam-dev` AP, the iPhone app loaded
+> health and live preview first with `DANCAM_PIN_WIFI=0` for an unpinned diagnostic
+> pass, then again with the override removed so the AP gateway default was Wi-Fi-pinned.
+> The pinned pass succeeded with cellular left on, no captive sheet was observed, and
+> Stop -> Start resumed after the app reset preview decode state on stream restart.
+> Therefore spike 3 below is satisfied for `fox`; spike 1 remains open for `jet`
+> because the lores-substream path concurrent with 1080p30 H.264 recording is still
+> unvalidated.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --
