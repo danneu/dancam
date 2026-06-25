@@ -31,3 +31,4 @@ secrets/
 *.ts
 *.mp4
 recordings/
+/plans/wip
