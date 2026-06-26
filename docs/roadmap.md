@@ -78,7 +78,7 @@ mock first.
             thumbnails, selection, and pull/download stay in `lime`.
       - [x] Start with polling `status`/`clips`; add `GET /v1/events` only if polling
             makes the dashboard or later CarPlay status panel worse.
-- [ ] **Swoop `loam` -- Declarative Pi provisioning.** Replace the manual README
+- [x] **Swoop `loam` -- Declarative Pi provisioning.** Replace the manual README
       bring-up runbook (the apt / config.txt / avahi / locale / nmcli steps `pine`
       established by hand) with one idempotent Ansible playbook, run from the Nix
       shell over SSH. `just raspi-provision` converges a freshly-flashed Pi to the
@@ -90,10 +90,10 @@ mock first.
             the `raspi-provision` / `-check` / `-lint` Just recipes exist.
       - [x] Flat playbook (`raspi/ansible/site.yml`, 8 tasks + 2 handlers) passes the
             Mac-only gate: `just raspi-provision-lint` green (syntax-check + ansible-lint).
-      - [ ] One `just raspi-provision` converges a fresh Pi (apt, camera overlay, mDNS
+      - [x] One `just raspi-provision` converges a fresh Pi (apt, camera overlay, mDNS
             scope, locale, AP profile, `video` group) + one reboot; a re-run prints
             `changed=0` (idempotency gate -- catches the nmcli cipher-list churn).
-      - [ ] Real-Pi regression checks pass: picamera2 imports, `allow-interfaces=wlan0`
+      - [x] Real-Pi regression checks pass: picamera2 imports, `allow-interfaces=wlan0`
             (no spaces), AP cipher pins `rsn`/`ccmp`/`ccmp`, iPhone joins `dancam-dev`,
             `just raspi-deploy` unchanged, `groups dan` includes `video`.
       - [x] Docs land in lockstep: ADR 09 (`just adr-check` green), README renumbered to
