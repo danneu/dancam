@@ -52,13 +52,14 @@ mock first.
       (sidesteps the headline spike); _spike confirmed: `NWConnection` Wi-Fi pinning
       reached the Pi over the no-internet AP with cellular on, and no captive sheet was
       observed._
-- [ ] **Swoop `jet` -- Recording control + live status.** Start/stop recording buttons
-      in the app (`POST /v1/recording/start|stop`); a status readout (recording
-      on/off, storage left, temps) that updates as it changes (SSE
-      `GET /v1/events`). _Spike: can MJPEG preview run concurrently with the
-      1080p30 H.264 recording? If not, preview falls back to "when stopped." `fox`
-      did not validate this: preview-from-lores concurrent with H.264 recording remains
-      `jet`'s headline risk._
+- [ ] **Swoop `jet` -- Recording control + live status.** Lean code path landed:
+      a Picamera2 camera-owner subprocess, supervised Rust fan-out, `POST
+      /v1/recording/start|stop`, real `/v1/health.recording`, mutation hardening for
+      the new POSTs, and app Record / Stop Recording controls on the live-preview
+      screen. Still open before checking this swoop off: Dan's mock end-to-end eyes-on
+      pass, the real Zero 2 W + IMX708 concurrency/thermal/RAM spike, and the real-Pi
+      end-to-end pass. Deferred from the lean slice: SSE `GET /v1/events`, storage and
+      temperature status, `GET /v1/status`, and `GET /v1/capabilities.preview.concurrent`.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
       (missing / unformatted / wrong filesystem); auto-format on first insert;
       format-from-app with a double-confirm (`POST /v1/storage/format`).
@@ -83,9 +84,11 @@ mock first.
 - [ ] **Swoop `vine` -- Power-loss hardening for real.** Power-good GPIO + clean
       shutdown; supercap go/no-go; validate crash recovery in the actual car.
 - [ ] **Later / deepening passes.** Thermal-behavior policy (what recording does at
-      the sensor's 50 C limit); HDR tuning; auth hardening (token, then pinned-cert
-      TLS); GPS time source; parked / sentry mode (gated on a future constant-power
-      topology -- v1 power is switched / drive-only, see the power-source ADR).
+      the sensor's 50 C limit); replace the Python Picamera2 camera owner with an
+      all-Rust camera binary before or during the read-only car-image pass; HDR tuning;
+      auth hardening (token, then pinned-cert TLS); GPS time source; parked / sentry
+      mode (gated on a future constant-power topology -- v1 power is switched /
+      drive-only, see the power-source ADR).
 
 ## Icebox (someday-maybe -- parked, not on the near path)
 

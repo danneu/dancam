@@ -28,6 +28,32 @@ nonisolated enum HTTPRequestEncoder {
         return Data(lines.joined(separator: "\r\n").utf8)
     }
 
+    static func post(
+        url: URL,
+        body: Data,
+        extraHeaders: [(String, String)] = []
+    ) throws -> Data {
+        guard let host = url.host else {
+            throw HTTPRequestEncodingError.missingHost
+        }
+
+        let path = requestPath(for: url)
+        let hostHeader = try hostHeader(host: host, port: url.port, scheme: url.scheme)
+
+        var lines = [
+            "POST \(path) HTTP/1.1",
+            "Host: \(hostHeader)",
+        ]
+        lines.append(contentsOf: extraHeaders.map { "\($0.0): \($0.1)" })
+        lines.append("Content-Length: \(body.count)")
+        lines.append("")
+        lines.append("")
+
+        var request = Data(lines.joined(separator: "\r\n").utf8)
+        request.append(body)
+        return request
+    }
+
     private static func requestPath(for url: URL) -> String {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         var path = components?.percentEncodedPath ?? url.path

@@ -21,7 +21,7 @@ pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         boot_id: state.boot_id.to_string(),
         uptime_s: state.started.elapsed().as_secs(),
-        recording: state.backend.recording(),
+        recording: state.backend.status().recording,
         t_ms,
     })
 }

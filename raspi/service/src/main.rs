@@ -2,7 +2,8 @@ use std::env;
 
 use dancam::{
     app,
-    backend::{MockBackend, RpicamBackend},
+    backend::MockBackend,
+    camera::{CameraConfig, CameraProcess, SupervisorControl},
     resolve_boot_id, AppState,
 };
 use tokio::net::TcpListener;
@@ -15,20 +16,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(&bind).await?;
     let local_addr = listener.local_addr()?;
     let boot_id = resolve_boot_id();
-    let state = match env::var("DANCAM_BACKEND").as_deref() {
-        Ok("camera") => AppState::new(boot_id, RpicamBackend),
-        Ok("mock") | Err(_) => AppState::new(boot_id, MockBackend),
-        Ok(other) => {
-            tracing::error!(backend = other, "unknown DANCAM_BACKEND");
-            std::process::exit(1);
-        }
-    };
+    let (state, supervisor): (AppState, Option<SupervisorControl>) =
+        match env::var("DANCAM_BACKEND").as_deref() {
+            Ok("camera") => {
+                let (backend, supervisor) = CameraProcess::spawn(CameraConfig::from_env());
+                (AppState::new(boot_id, backend), Some(supervisor))
+            }
+            Ok("mock") | Err(_) => (AppState::new(boot_id, MockBackend::new()), None),
+            Ok(other) => {
+                tracing::error!(backend = other, "unknown DANCAM_BACKEND");
+                std::process::exit(1);
+            }
+        };
 
     tracing::info!(%local_addr, "listening");
 
     axum::serve(listener, app(state))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    if let Some(supervisor) = supervisor {
+        supervisor.shutdown().await;
+    }
 
     Ok(())
 }

@@ -1,10 +1,15 @@
-use std::{pin::Pin, process::Stdio, time::Duration};
+use std::{pin::Pin, time::Duration};
 
+use async_trait::async_trait;
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use bytes::Bytes;
-use tokio::{io::AsyncReadExt, process::Command, sync::mpsc};
-use tokio_stream::{wrappers::ReceiverStream, Stream};
+use tokio::sync::{broadcast, watch};
+use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
-use crate::jpeg::JpegSplitter;
+use crate::status::{CameraState, Status};
 
 pub type FrameStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
 
@@ -23,128 +28,107 @@ const MOCK_FRAME_BYTES: [&[u8]; 12] = [
     include_bytes!("../assets/preview/frame_11.jpg"),
 ];
 
+#[async_trait]
 pub trait Backend: Send + Sync + 'static {
-    fn recording(&self) -> bool;
     fn preview_frames(&self) -> FrameStream;
+    async fn start_recording(&self) -> Result<(), BackendError>;
+    async fn stop_recording(&self) -> Result<(), BackendError>;
+    fn status(&self) -> Status;
 }
 
-pub struct MockBackend;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendError {
+    CameraOffline,
+    Timeout,
+    Channel,
+}
 
+impl IntoResponse for BackendError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            BackendError::CameraOffline => (StatusCode::SERVICE_UNAVAILABLE, "camera offline"),
+            BackendError::Timeout => (StatusCode::GATEWAY_TIMEOUT, "camera command timed out"),
+            BackendError::Channel => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "camera command channel closed",
+            ),
+        };
+
+        (status, message).into_response()
+    }
+}
+
+#[derive(Clone)]
+pub struct MockBackend {
+    frames_tx: broadcast::Sender<Bytes>,
+    status_tx: watch::Sender<Status>,
+    status_rx: watch::Receiver<Status>,
+}
+
+impl MockBackend {
+    pub fn new() -> Self {
+        let (frames_tx, _) = broadcast::channel(8);
+        let (status_tx, status_rx) = watch::channel(Status {
+            recording: false,
+            camera_state: CameraState::Running,
+        });
+
+        spawn_mock_frames(frames_tx.clone());
+
+        Self {
+            frames_tx,
+            status_tx,
+            status_rx,
+        }
+    }
+}
+
+impl Default for MockBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
 impl Backend for MockBackend {
-    fn recording(&self) -> bool {
-        false
+    fn preview_frames(&self) -> FrameStream {
+        Box::pin(BroadcastStream::new(self.frames_tx.subscribe()).filter_map(|result| result.ok()))
     }
 
-    fn preview_frames(&self) -> FrameStream {
-        let (tx, rx) = mpsc::channel(4);
-
-        tokio::spawn(async move {
-            let mut frames = MOCK_FRAME_BYTES.iter().cycle();
-            let mut interval = tokio::time::interval(Duration::from_millis(100));
-
-            loop {
-                interval.tick().await;
-
-                let frame = frames
-                    .next()
-                    .expect("cycled mock frames should never be exhausted");
-
-                if tx.send(Bytes::from_static(frame)).await.is_err() {
-                    break;
-                }
-            }
+    async fn start_recording(&self) -> Result<(), BackendError> {
+        let _ = self.status_tx.send(Status {
+            recording: true,
+            camera_state: CameraState::Running,
         });
+        Ok(())
+    }
 
-        Box::pin(ReceiverStream::new(rx))
+    async fn stop_recording(&self) -> Result<(), BackendError> {
+        let _ = self.status_tx.send(Status {
+            recording: false,
+            camera_state: CameraState::Running,
+        });
+        Ok(())
+    }
+
+    fn status(&self) -> Status {
+        self.status_rx.borrow().clone()
     }
 }
 
-pub struct RpicamBackend;
+fn spawn_mock_frames(frames_tx: broadcast::Sender<Bytes>) {
+    tokio::spawn(async move {
+        let mut frames = MOCK_FRAME_BYTES.iter().cycle();
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
 
-impl Backend for RpicamBackend {
-    fn recording(&self) -> bool {
-        false
-    }
+        loop {
+            interval.tick().await;
 
-    fn preview_frames(&self) -> FrameStream {
-        let (tx, rx) = mpsc::channel(4);
+            let frame = frames
+                .next()
+                .expect("cycled mock frames should never be exhausted");
 
-        tokio::spawn(async move {
-            let mut child = match Command::new("rpicam-vid")
-                .args([
-                    "-n",
-                    "-t",
-                    "0",
-                    "--codec",
-                    "mjpeg",
-                    "--width",
-                    "640",
-                    "--height",
-                    "480",
-                    "--framerate",
-                    "10",
-                    "--quality",
-                    "50",
-                    "--flush",
-                    "-o",
-                    "-",
-                ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .kill_on_drop(true)
-                .spawn()
-            {
-                Ok(child) => child,
-                Err(error) => {
-                    tracing::error!(%error, "failed to start rpicam-vid preview");
-                    return;
-                }
-            };
-
-            let Some(mut stdout) = child.stdout.take() else {
-                tracing::error!("rpicam-vid preview stdout was not piped");
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                return;
-            };
-
-            let mut splitter = JpegSplitter::new();
-            let mut buffer = [0_u8; 8192];
-            let mut receiver_closed = false;
-
-            loop {
-                tokio::select! {
-                    _ = tx.closed() => {
-                        receiver_closed = true;
-                    }
-                    read_result = stdout.read(&mut buffer) => {
-                        match read_result {
-                            Ok(0) => break,
-                            Ok(bytes_read) => {
-                                for frame in splitter.push(&buffer[..bytes_read]) {
-                                    if tx.send(Bytes::from(frame)).await.is_err() {
-                                        receiver_closed = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, "failed reading rpicam-vid preview stdout");
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if receiver_closed {
-                    break;
-                }
-            }
-
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-        });
-
-        Box::pin(ReceiverStream::new(rx))
-    }
+            let _ = frames_tx.send(Bytes::from_static(frame));
+        }
+    });
 }

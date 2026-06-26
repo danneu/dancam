@@ -1,5 +1,6 @@
 use std::pin::Pin;
 
+use async_trait::async_trait;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -10,8 +11,9 @@ use tokio_stream::Stream;
 use tower::ServiceExt;
 
 use dancam::{
-    backend::{Backend, FrameStream},
+    backend::{Backend, BackendError, FrameStream},
     preview::frame_part,
+    status::{CameraState, Status},
     AppState,
 };
 
@@ -21,14 +23,26 @@ struct StubBackend {
     frames: Vec<Bytes>,
 }
 
+#[async_trait]
 impl Backend for StubBackend {
-    fn recording(&self) -> bool {
-        false
-    }
-
     fn preview_frames(&self) -> FrameStream {
         let frames = self.frames.clone();
         Box::pin(tokio_stream::iter(frames)) as Pin<Box<dyn Stream<Item = Bytes> + Send>>
+    }
+
+    async fn start_recording(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    async fn stop_recording(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    fn status(&self) -> Status {
+        Status {
+            recording: false,
+            camera_state: CameraState::Running,
+        }
     }
 }
 
@@ -45,6 +59,7 @@ async fn live_mjpeg_streams_multipart_frames_in_order() {
         .oneshot(
             Request::builder()
                 .uri("/v1/preview/live.mjpeg")
+                .header("Host", "localhost:8080")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -73,6 +88,7 @@ async fn live_mjpeg_carries_proto_headers() {
         .oneshot(
             Request::builder()
                 .uri("/v1/preview/live.mjpeg")
+                .header("Host", "localhost:8080")
                 .body(Body::empty())
                 .unwrap(),
         )

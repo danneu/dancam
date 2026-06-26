@@ -2,20 +2,31 @@ import UIKit
 
 final class PreviewViewController: UIViewController {
     private let store: Store<PreviewFeature.State, PreviewFeature.Action, AppDependencies>
+    private let recordingStore: Store<RecordingFeature.State, RecordingFeature.Action, AppDependencies>
     private var observation: StoreObservation?
+    private var recordingObservation: StoreObservation?
 
     private let imageView = UIImageView()
     private let statusLabel = UILabel()
     private let startButton = UIButton(type: .system)
     private let stopButton = UIButton(type: .system)
+    private let recordButton = UIButton(type: .system)
+    private let recDot = UIView()
+    private let recLabel = UILabel()
 
     private var decodeState = PreviewDecodeState()
+    private var recordingState = RecordingFeature.State.unknown
 
     init(dependencies: AppDependencies) {
         store = Store(
             initialState: .idle,
             dependencies: dependencies,
             reduce: PreviewFeature.reduce
+        )
+        recordingStore = Store(
+            initialState: .unknown,
+            dependencies: dependencies,
+            reduce: RecordingFeature.reduce
         )
         super.init(nibName: nil, bundle: nil)
     }
@@ -34,11 +45,15 @@ final class PreviewViewController: UIViewController {
         observation = store.observe { [weak self] state in
             self?.render(state)
         }
+        recordingObservation = recordingStore.observe { [weak self] state in
+            self?.renderRecording(state)
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         store.send(.onAppear)
+        recordingStore.send(.onAppear)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -61,12 +76,36 @@ final class PreviewViewController: UIViewController {
         stopButton.setTitle("Stop", for: .normal)
         stopButton.addTarget(self, action: #selector(stopTapped), for: .touchUpInside)
 
+        recordButton.setTitle("Record", for: .normal)
+        recordButton.addTarget(self, action: #selector(recordTapped), for: .touchUpInside)
+
+        recDot.backgroundColor = .systemRed
+        recDot.layer.cornerRadius = 5
+        recDot.translatesAutoresizingMaskIntoConstraints = false
+        recDot.widthAnchor.constraint(equalToConstant: 10).isActive = true
+        recDot.heightAnchor.constraint(equalToConstant: 10).isActive = true
+
+        recLabel.text = "REC"
+        recLabel.font = .preferredFont(forTextStyle: .caption1)
+        recLabel.adjustsFontForContentSizeCategory = true
+
+        let recIndicator = UIStackView(arrangedSubviews: [recDot, recLabel])
+        recIndicator.axis = .horizontal
+        recIndicator.alignment = .center
+        recIndicator.spacing = 6
+
         let controls = UIStackView(arrangedSubviews: [startButton, stopButton])
         controls.axis = .horizontal
         controls.spacing = 16
         controls.distribution = .fillEqually
 
-        let stack = UIStackView(arrangedSubviews: [imageView, statusLabel, controls])
+        let recordingControls = UIStackView(arrangedSubviews: [recordButton, recIndicator])
+        recordingControls.axis = .horizontal
+        recordingControls.alignment = .center
+        recordingControls.spacing = 16
+        recordingControls.distribution = .fillProportionally
+
+        let stack = UIStackView(arrangedSubviews: [imageView, statusLabel, controls, recordingControls])
         stack.axis = .vertical
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -110,6 +149,43 @@ final class PreviewViewController: UIViewController {
         }
     }
 
+    private func renderRecording(_ state: RecordingFeature.State) {
+        recordingState = state
+
+        switch state {
+        case .unknown:
+            recordButton.setTitle("Record", for: .normal)
+            recordButton.isEnabled = false
+            recDot.isHidden = true
+            recLabel.isHidden = true
+        case .idle:
+            recordButton.setTitle("Record", for: .normal)
+            recordButton.isEnabled = true
+            recDot.isHidden = true
+            recLabel.isHidden = true
+        case .starting:
+            recordButton.setTitle("Starting", for: .normal)
+            recordButton.isEnabled = false
+            recDot.isHidden = false
+            recLabel.isHidden = false
+        case .recording:
+            recordButton.setTitle("Stop Recording", for: .normal)
+            recordButton.isEnabled = true
+            recDot.isHidden = false
+            recLabel.isHidden = false
+        case .stopping:
+            recordButton.setTitle("Stopping", for: .normal)
+            recordButton.isEnabled = false
+            recDot.isHidden = false
+            recLabel.isHidden = false
+        case .failed:
+            recordButton.setTitle("Record", for: .normal)
+            recordButton.isEnabled = true
+            recDot.isHidden = true
+            recLabel.isHidden = true
+        }
+    }
+
     private func enqueueDecode(_ frame: PreviewFrame) {
         decodeState.enqueue(frame)
         startNextDecodeIfNeeded()
@@ -144,6 +220,17 @@ final class PreviewViewController: UIViewController {
 
     @objc private func stopTapped() {
         store.send(.stopTapped)
+    }
+
+    @objc private func recordTapped() {
+        switch recordingState {
+        case .recording:
+            recordingStore.send(.stopTapped)
+        case .unknown, .idle, .failed:
+            recordingStore.send(.startTapped)
+        case .starting, .stopping:
+            break
+        }
     }
 }
 

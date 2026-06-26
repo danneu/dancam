@@ -25,24 +25,28 @@ cd "$REPO_ROOT"
 
 BIN="raspi/service/target/$TARGET/release/dancam"
 UNIT="raspi/dancam.service"
+CAMERA="raspi/camera/camera.py"
 
 echo "==> cross-building $TARGET release binary"
 nix develop -c cargo zigbuild --release --target "$TARGET" \
   --manifest-path raspi/service/Cargo.toml
 
-echo "==> shipping binary + unit to $HOST"
+echo "==> shipping binary + unit + camera process to $HOST"
 rsync -avz -e "ssh -i $SSH_KEY" "$BIN" "$HOST:/tmp/dancam.new"
 rsync -avz -e "ssh -i $SSH_KEY" "$UNIT" "$HOST:/tmp/dancam.service"
+rsync -avz -e "ssh -i $SSH_KEY" "$CAMERA" "$HOST:/tmp/dancam-camera.py"
 
 echo "==> installing + restarting on $HOST (sudo may prompt)"
 ssh -t -i "$SSH_KEY" "$HOST" '
   set -e
   sudo install -m 0755 /tmp/dancam.new /usr/local/bin/dancam
+  sudo install -d /usr/local/lib/dancam
+  sudo install -m 0755 /tmp/dancam-camera.py /usr/local/lib/dancam/camera.py
   sudo install -m 0644 /tmp/dancam.service /etc/systemd/system/dancam.service
   sudo systemctl daemon-reload
   sudo systemctl enable dancam
   sudo systemctl restart dancam
-  rm -f /tmp/dancam.new /tmp/dancam.service
+  rm -f /tmp/dancam.new /tmp/dancam.service /tmp/dancam-camera.py
 '
 
 echo "==> health check"

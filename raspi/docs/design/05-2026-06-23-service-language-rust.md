@@ -8,6 +8,15 @@
   read-only root the deploy model must respect); `03-2026-06-23-storage-ring-buffer-incident-lock.md`
   (the in-process storage service this binary hosts)
 
+> **Note (2026-06-25):** The subprocess-boundary decision stands, but the specific
+> camera subprocess is **partly superseded by**
+> `07-2026-06-25-picamera2-camera-owner.md`. `jet` replaces the preview-only
+> `rpicam-vid` subprocess with a Python Picamera2 camera owner so one process can own
+> libcamera and emit concurrent recording + preview streams. The service remains Rust;
+> the reopened cost is carrying the Python/Picamera2/numpy stack on the dev image and
+> either baking it into the future read-only car image or replacing it with the planned
+> all-Rust camera owner first.
+
 ## Context
 
 The camera unit runs one small, long-lived service that implements the app<->Pi

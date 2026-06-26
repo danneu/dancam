@@ -21,6 +21,9 @@ Environment=DANCAM_BIND=0.0.0.0:8080
 # The deployed Pi uses the real camera backend. Local cargo runs default to the
 # mock backend unless DANCAM_BACKEND=camera is set explicitly.
 Environment=DANCAM_BACKEND=camera
+# Dev-image recording directory. The camera process creates it on startup; the
+# car image later points this at the journaled footage partition.
+Environment=DANCAM_REC_DIR=/home/dan/rec
 ExecStart=/usr/local/bin/dancam
 Restart=on-failure
 RestartSec=2

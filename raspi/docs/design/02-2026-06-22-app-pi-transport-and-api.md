@@ -48,6 +48,19 @@
 > because the lores-substream path concurrent with 1080p30 H.264 recording is still
 > unvalidated.
 
+> **Note (2026-06-25):** Swoop `jet` implements the lean recording-control slice with
+> a single Picamera2 camera owner supervised by the Rust service. `POST
+> /v1/recording/start` and `/v1/recording/stop` now exist, `/v1/health.recording`
+> reflects real backend state, and live preview is fanned out from the child process
+> rather than spawning a per-request camera command. The minimal mutation hardening
+> required for these first state-changing endpoints is also implemented: global Host
+> allowlisting plus `Content-Type: application/json` and non-empty `Idempotency-Key`
+> on recording mutations. `Origin` / `Sec-Fetch-Site`, the reserved bearer token,
+> pinned-cert TLS, `GET /v1/events`, `GET /v1/status`, and
+> `GET /v1/capabilities.preview.concurrent` remain deferred. The hardware spike still
+> must validate that the Picamera2 lores preview stays smooth while 1080p30 H.264
+> recording runs on the Zero 2 W.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --

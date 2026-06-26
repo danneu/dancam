@@ -24,6 +24,14 @@
 > handled by the PLP-rated card (Layer 3). The `.ts` format, segmentation, filesystem,
 > and PLP-card layers here stand unchanged. Append-only per the ADR convention.
 
+> **Note (2026-06-25):** `07-2026-06-25-picamera2-camera-owner.md` changes the
+> implementation that produces recordings, not this ADR's recording-format decision.
+> `jet` records with Picamera2's `H264Encoder` feeding `FfmpegOutput` segment muxing,
+> with inline headers and MPEG-TS `.ts` segments. The `.ts` / short-segment /
+> truncation-tolerant container choice remains unchanged; full crash-safe storage
+> hardening (ring buffer, journaled data partition, read-only root, PLP validation) is
+> still owned by the later hardening pass.
+
 ## Context
 
 The camera unit is powered from the car. When the engine goes off, power is cut

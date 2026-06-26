@@ -63,10 +63,12 @@ current provisional direction until it is captured.
   root filesystem** (overlayfs) so power loss can never corrupt the OS. Footage
   goes on a **separate journaled partition** (ext4 or F2FS). See the crash-safe
   recording ADR.
-- **Capture/encode:** `rpicam-vid` (libcamera), driven as a **subprocess** by the
-  Rust service (never linked -- see the service-language ADR). Output segmented
-  MPEG-TS (`.ts`) with inline headers -- truncation-tolerant and HLS-native for the
-  iPhone. See the crash-safe recording ADR for why TS over raw H.264 / MP4.
+- **Capture/encode:** a single Picamera2 camera-owner subprocess, supervised by the
+  Rust service over stdio (never linked -- see the service-language ADR and the
+  Picamera2 camera-owner ADR). It owns libcamera once, emits low-res MJPEG preview
+  from the lores stream, and writes segmented MPEG-TS (`.ts`) recordings with inline
+  headers under `DANCAM_REC_DIR` -- truncation-tolerant and HLS-native for the iPhone.
+  See the crash-safe recording ADR for why TS over raw H.264 / MP4.
 - **Storage model:** a **ring buffer** of short segments; oldest deleted as the card
   fills; incident-locked segments are exempt from deletion. See the storage
   ring-buffer / incident-lock ADR.
@@ -95,16 +97,17 @@ current provisional direction until it is captured.
 ```
 raspi/
   AGENTS.md
+  camera/             <- Picamera2 camera-owner subprocess (`camera.py`)
   service/            <- Rust service crate (package/binary `dancam`)
   docs/design/        <- raspi-side ADRs
-  (capture/provisioning code to be added)
 ```
 
 ## Build / run
 
 The service lives in `raspi/service/` and is written in **Rust** with the camera driven
-as a subprocess (`rpicam-vid`); the rationale is in
-`docs/design/05-2026-06-23-service-language-rust.md`. Two facts shape the whole workflow:
+as a supervised subprocess; the rationale is in
+`docs/design/05-2026-06-23-service-language-rust.md` and the current Picamera2 owner is
+specified in `docs/design/07-2026-06-25-picamera2-camera-owner.md`. Two facts shape the whole workflow:
 release code is **cross-compiled on the dev host** (never built on the Pi), and the
 **dev image differs from the car image**.
 
@@ -260,5 +263,8 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   the crash-safe ADR's deferred supercapacitor question (dropped for this topology).
 - `05-2026-06-23-service-language-rust.md` (Accepted) -- the Pi service is written in
   Rust, cross-compiled on the dev host to a single static binary and run under
-  systemd; the camera is driven as a subprocess (`rpicam-vid`), not linked. See the
-  Build / run section above for the dev loop.
+  systemd; the camera is driven as a subprocess, not linked. See the Build / run
+  section above for the dev loop.
+- `07-2026-06-25-picamera2-camera-owner.md` (Accepted) -- the camera subprocess is a
+  Picamera2 owner for `jet`, with a fixed stdout/stdin/stderr contract so a future
+  all-Rust camera binary can replace it without changing the HTTP API.

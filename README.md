@@ -90,7 +90,22 @@ Optionally pull the image to the Mac to eyeball focus/orientation:
 scp -i ~/.ssh/<your-key> dan@dancam.local:/tmp/test.jpg ~/Desktop/dancam-test.jpg
 ```
 
-## 5. Scope mDNS to Wi-Fi
+## 5. Install the camera process dependencies
+
+The production camera owner is a Python Picamera2 subprocess supervised by the
+Rust service. Install Picamera2 from apt, not pip, so it matches the Raspberry Pi
+OS libcamera stack:
+
+```sh
+sudo apt install -y --no-install-recommends python3-picamera2 ffmpeg
+python3 -c "from picamera2 import Picamera2; print('ok')"
+```
+
+The package pulls the Python libcamera bindings, numpy, and simplejpeg without the
+desktop GUI recommends. The camera overlay from section 4 must already be enabled
+before the import/open path is useful on the Pi.
+
+## 6. Scope mDNS to Wi-Fi
 
 Keep `dancam.local` tied to the reachable Wi-Fi interface. Without this, Avahi can
 publish on loopback before Wi-Fi settles, later detect a stale self-conflict, and
@@ -108,7 +123,7 @@ systemctl status avahi-daemon --no-pager
 
 The status should show `running [dancam.local]`, not `dancam-2.local`.
 
-## 6. Create the dev access point profile
+## 7. Create the dev access point profile
 
 The dev image normally joins home Wi-Fi for deploy/debug, but it also has a
 manual NetworkManager hotspot profile for iPhone testing. Pick a dev WPA2
@@ -197,7 +212,7 @@ not autoconnect. Do not join `dancam-dev` from the Mac during an active remote
 LLM session if the Mac's only internet path is `peluchonet`; use the iPhone for
 AP testing.
 
-## 7. (Optional) Fix the locale warning
+## 8. (Optional) Fix the locale warning
 
 My SSH login warned `cannot change locale (UTF-8)` because the fresh Lite image has no
 UTF-8 locale generated yet. Uncomment `en_US.UTF-8` in `/etc/locale.gen` and rebuild
@@ -210,7 +225,7 @@ sudo locale-gen
 
 Log out and back in -- the warning is gone.
 
-## 8. Deploy and run the service
+## 9. Deploy and run the service
 
 Cross-compile and deploy from the Mac in one command (Nix flake + `deploy.sh`;
 details in [`raspi/AGENTS.md`](raspi/AGENTS.md) "Rust dev loop"). From the repo
@@ -220,17 +235,21 @@ root:
 just raspi-deploy   # wraps ./raspi/deploy.sh
 ```
 
-This ships a static aarch64 binary + the systemd unit (`dancam.service`),
+This ships a static aarch64 binary, the camera process
+(`/usr/local/lib/dancam/camera.py`), and the systemd unit (`dancam.service`),
 enables/restarts the service, and curls `/v1/health`. The deployed unit sets:
 
 ```ini
 Environment=DANCAM_BIND=0.0.0.0:8080
 Environment=DANCAM_BACKEND=camera
+Environment=DANCAM_REC_DIR=/home/dan/rec
 ```
 
-`DANCAM_BACKEND=camera` makes `/v1/preview/live.mjpeg` spawn `rpicam-vid` for a
-temporary preview-only MJPEG stream. Local `just raspi-run` still defaults to the
-mock backend and cycles committed test-pattern frames.
+`DANCAM_BACKEND=camera` makes the service spawn one long-lived Picamera2 owner
+process. That process owns libcamera, emits low-res MJPEG preview on stdout, and
+writes H.264 MPEG-TS recording segments under `DANCAM_REC_DIR`. Local
+`just raspi-run` still defaults to the mock backend and cycles committed
+test-pattern frames.
 
 Verify from the Mac over the LAN:
 
@@ -260,6 +279,53 @@ headers. To eyeball the real camera feed, open the same URL in a browser or run:
 ffplay http://dancam.local:8080/v1/preview/live.mjpeg
 ```
 
+Smoke-test the camera owner directly on the Pi before trusting a longer run:
+
+```sh
+rm -rf /home/dan/rec-smoke
+rm -f /tmp/dancam-camera-commands /tmp/dancam-preview.mjpeg /tmp/dancam-camera-events.log
+mkfifo /tmp/dancam-camera-commands
+python3 /usr/local/lib/dancam/camera.py \
+  --rec-dir /home/dan/rec-smoke \
+  --preview-fps 10 \
+  < /tmp/dancam-camera-commands \
+  > /tmp/dancam-preview.mjpeg \
+  2> /tmp/dancam-camera-events.log &
+CAMERA_PID=$!
+exec 3> /tmp/dancam-camera-commands
+printf '{"cmd":"start_recording"}\n' >&3
+sleep 35
+printf '{"cmd":"stop_recording"}\n' >&3
+printf '{"cmd":"start_recording"}\n' >&3
+sleep 5
+printf '{"cmd":"stop_recording"}\n{"cmd":"shutdown"}\n' >&3
+exec 3>&-
+wait "$CAMERA_PID"
+grep -E '"ready"|"recording_started"|"recording_stopped"' /tmp/dancam-camera-events.log
+ls -lh /home/dan/rec-smoke/seg_*.ts
+ffmpeg -v error -i /home/dan/rec-smoke/seg_00000.ts -f null -
+rm -f /tmp/dancam-camera-commands
+```
+
+For the real `jet` gate, run a longer room-temperature and warm soak, inspect CPU,
+free memory/swap activity, SoC and sensor temperatures, preview smoothness, and
+verify the second start/stop cycle continues segment numbering instead of
+overwriting the first session.
+
+Because the smoke command runs as the interactive `dan` user but deployment runs
+under systemd with no login session, also verify the unit can open the camera:
+
+```sh
+id dan
+ls -l /dev/video11 /dev/dma_heap/* 2>/dev/null
+sudo systemctl restart dancam
+journalctl -u dancam -n 80 --no-pager | grep '"ready"'
+```
+
+`dan` must have group access to `/dev/video11` for hardware MJPEG and
+`/dev/dma_heap/*` for libcamera buffers. The journal check proves the systemd
+context, not just an interactive shell, can start the camera process.
+
 To regenerate the local mock preview frames later, run from the repo root:
 
 ```sh
@@ -273,7 +339,7 @@ systemctl status dancam        # running? enabled for boot?
 journalctl -u dancam -f        # live logs
 ```
 
-## 9. Smoke-test the AP path
+## 10. Smoke-test the AP path
 
 With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, join
 `dancam-dev` from the iPhone, and fetch:

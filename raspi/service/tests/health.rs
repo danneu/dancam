@@ -11,7 +11,7 @@ use dancam::{backend::MockBackend, AppState};
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 
 fn state() -> AppState {
-    AppState::new(BOOT_ID.to_string(), MockBackend)
+    AppState::new(BOOT_ID.to_string(), MockBackend::new())
 }
 
 #[tokio::test]
@@ -20,6 +20,7 @@ async fn health_returns_wire_contract() {
         .oneshot(
             Request::builder()
                 .uri("/v1/health")
+                .header("Host", "localhost:8080")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -58,6 +59,7 @@ async fn unknown_path_still_carries_proto_headers() {
         .oneshot(
             Request::builder()
                 .uri("/v1/nope")
+                .header("Host", "localhost:8080")
                 .body(Body::empty())
                 .unwrap(),
         )
