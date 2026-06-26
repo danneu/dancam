@@ -25,6 +25,9 @@ venv/
 .env
 secrets/
 
+# Claude Code personal/local settings (shared config lives in settings.json)
+.claude/settings.local.json
+
 # Logs and captured media (never commit footage)
 *.log
 *.h264
