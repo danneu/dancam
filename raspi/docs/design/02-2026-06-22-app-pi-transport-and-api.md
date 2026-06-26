@@ -251,6 +251,18 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   would need a capture off the main stream that contends with the H.264 encoder/ISP
   (thermal cost); that is **out of v1 scope** and, if ever wanted, folds into spike 1.
 
+> **Note (2026-06-26):** Preview fan-out from the child process is **latest-frame-wins
+> (conflating), not buffered**. A consumer that falls behind the live edge resumes on
+> the newest frame; intermediate frames are dropped, never replayed. It is implemented
+> with a `tokio` `watch` slot (a single "latest value" cell), not a `broadcast` ring.
+> **Why:** over the congested 2.4 GHz link a replayed backlog is pure waste -- under
+> `multipart/x-mixed-replace` each stale frame is immediately overwritten by the next,
+> so catch-up spends bandwidth on frames that exist only to be replaced and *adds*
+> latency right after a stall. **Flip condition:** revisit if preview fps rises
+> materially above the ~10 fps default -- on the contended Zero 2 W a higher rate could
+> make even a healthy consumer skip frames, at which point a small bounded buffer may be
+> worth reintroducing.
+
 **Clips**
 
 - `GET /v1/clips?from=&to=&limit=&cursor=&order=` -- windowed / paginated metadata

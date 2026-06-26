@@ -6,8 +6,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
-use tokio::sync::{broadcast, watch};
-use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
+use tokio::sync::watch;
+use tokio_stream::{wrappers::WatchStream, Stream, StreamExt};
 
 use crate::status::{CameraState, Status};
 
@@ -60,14 +60,14 @@ impl IntoResponse for BackendError {
 
 #[derive(Clone)]
 pub struct MockBackend {
-    frames_tx: broadcast::Sender<Bytes>,
+    frames_tx: watch::Sender<Option<Bytes>>,
     status_tx: watch::Sender<Status>,
     status_rx: watch::Receiver<Status>,
 }
 
 impl MockBackend {
     pub fn new() -> Self {
-        let (frames_tx, _) = broadcast::channel(8);
+        let (frames_tx, _) = watch::channel::<Option<Bytes>>(None);
         let (status_tx, status_rx) = watch::channel(Status {
             recording: false,
             camera_state: CameraState::Running,
@@ -92,7 +92,7 @@ impl Default for MockBackend {
 #[async_trait]
 impl Backend for MockBackend {
     fn preview_frames(&self) -> FrameStream {
-        Box::pin(BroadcastStream::new(self.frames_tx.subscribe()).filter_map(|result| result.ok()))
+        Box::pin(WatchStream::new(self.frames_tx.subscribe()).filter_map(|frame| frame))
     }
 
     async fn start_recording(&self) -> Result<(), BackendError> {
@@ -116,7 +116,7 @@ impl Backend for MockBackend {
     }
 }
 
-fn spawn_mock_frames(frames_tx: broadcast::Sender<Bytes>) {
+fn spawn_mock_frames(frames_tx: watch::Sender<Option<Bytes>>) {
     tokio::spawn(async move {
         let mut frames = MOCK_FRAME_BYTES.iter().cycle();
         let mut interval = tokio::time::interval(Duration::from_millis(100));
@@ -128,7 +128,7 @@ fn spawn_mock_frames(frames_tx: broadcast::Sender<Bytes>) {
                 .next()
                 .expect("cycled mock frames should never be exhausted");
 
-            let _ = frames_tx.send(Bytes::from_static(frame));
+            frames_tx.send_replace(Some(Bytes::from_static(frame)));
         }
     });
 }

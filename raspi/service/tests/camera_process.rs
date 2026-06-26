@@ -11,6 +11,7 @@ use tokio::{
     process::{ChildStderr, Command},
     sync::mpsc,
 };
+use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use dancam::{
@@ -200,7 +201,7 @@ async fn python_fake_contract_creates_rec_dir_and_continues_segments() {
 }
 
 #[tokio::test]
-async fn supervisor_confirms_start_stop_and_records_with_stalled_subscriber() {
+async fn supervisor_confirms_start_stop_and_records_with_idle_preview_subscriber() {
     if !python3_available().await {
         return;
     }
@@ -224,7 +225,7 @@ async fn supervisor_confirms_start_stop_and_records_with_stalled_subscriber() {
     backend.start_recording().await.unwrap();
     backend.stop_recording().await.unwrap();
 
-    let _stalled_subscriber = backend.preview_frames();
+    let _preview_subscriber = backend.preview_frames();
     backend.start_recording().await.unwrap();
     backend.stop_recording().await.unwrap();
 
@@ -263,6 +264,105 @@ async fn supervisor_marks_child_restarting_after_crash() {
 
     wait_for_camera_state(&backend, CameraState::Running).await;
     wait_for_camera_state(&backend, CameraState::Restarting).await;
+
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn preview_subscriber_gets_cached_latest_frame_on_connect() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("preview-cached-frame");
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "0.2".to_string(),
+        ],
+    );
+    let (backend, control) = CameraProcess::spawn(config);
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    // The fake camera emits its first preview frame at startup (~coincident with
+    // Running) and the next only ~5 s later (--preview-fps 0.2). Sleep ~1 s with no
+    // subscriber: long enough that the immediate first frame is produced and stored,
+    // far short of the ~5 s gap to the next tick.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Attach ~4 s before the next live tick. A broadcast channel never replays
+    // pre-subscribe frames, so it would deliver nothing until that tick and blow the
+    // deadline; the watch slot returns the cached latest frame at once. Passing proves
+    // both no-subscriber production is retained (send_replace, not send) and a new
+    // subscriber gets the cached latest immediately (WatchStream::new).
+    let mut frames = backend.preview_frames();
+    let frame = tokio::time::timeout(Duration::from_millis(400), frames.next())
+        .await
+        .expect("cached latest frame should arrive immediately")
+        .expect("preview stream should yield a frame");
+    assert!(frame.starts_with(&[0xff, 0xd8]));
+
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn preview_slot_cleared_while_child_restarting() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("preview-clear-on-restart");
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "10".to_string(),
+            "--fake-crash-after".to_string(),
+            "4".to_string(),
+        ],
+    );
+    let (backend, control) = CameraProcess::spawn(config);
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    // The child emits a preview frame at startup, so the slot is Some before it
+    // crashes. Confirm a frame is produced (this read lands on the first child's cached
+    // frame, or -- if it races the fast crash -- the next child's frame; either proves
+    // the producer ran and the slot was populated).
+    let mut frames = backend.preview_frames();
+    let frame = tokio::time::timeout(Duration::from_secs(2), frames.next())
+        .await
+        .expect("preview slot should yield a produced frame")
+        .expect("preview stream should yield a frame");
+    assert!(frame.starts_with(&[0xff, 0xd8]));
+
+    // After the crash the ChildOutcome::Exited arm clears the slot to None before the
+    // backoff sleep, so by the time Restarting is observable the slot is empty.
+    wait_for_camera_state(&backend, CameraState::Restarting).await;
+
+    // A fresh subscriber during the restart backoff window must not be handed the stale
+    // pre-crash frame: the slot is None, so it pends until the next child produces a
+    // frame (>= the 250 ms backoff away), well past this 150 ms deadline. Without the
+    // clear, WatchStream::new would hand it the stale frame at ~0 ms and this would fail.
+    let mut probe = backend.preview_frames();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), probe.next())
+            .await
+            .is_err(),
+        "restart-window subscriber must not receive the stale pre-crash frame"
+    );
 
     control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);

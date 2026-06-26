@@ -9,9 +9,9 @@ use bytes::Bytes;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStderr, ChildStdout, Command as TokioCommand},
-    sync::{broadcast, mpsc, oneshot, watch},
+    sync::{mpsc, oneshot, watch},
 };
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 use crate::{
     backend::{Backend, BackendError, FrameStream},
@@ -19,7 +19,6 @@ use crate::{
     status::{CameraState, ChildEvent, Status},
 };
 
-const FRAME_CAPACITY: usize = 8;
 const COMMAND_CAPACITY: usize = 8;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -69,7 +68,7 @@ impl CameraConfig {
 
 #[derive(Clone)]
 pub struct CameraBackend {
-    frames_tx: broadcast::Sender<Bytes>,
+    frames_tx: watch::Sender<Option<Bytes>>,
     status_rx: watch::Receiver<Status>,
     commands_tx: mpsc::Sender<Command>,
 }
@@ -78,7 +77,7 @@ pub struct CameraProcess;
 
 impl CameraProcess {
     pub fn spawn(config: CameraConfig) -> (CameraBackend, SupervisorControl) {
-        let (frames_tx, _) = broadcast::channel(FRAME_CAPACITY);
+        let (frames_tx, _) = watch::channel::<Option<Bytes>>(None);
         let (status_tx, status_rx) = watch::channel(Status::starting());
         let (commands_tx, commands_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -124,7 +123,7 @@ impl SupervisorControl {
 #[async_trait]
 impl Backend for CameraBackend {
     fn preview_frames(&self) -> FrameStream {
-        Box::pin(BroadcastStream::new(self.frames_tx.subscribe()).filter_map(|result| result.ok()))
+        Box::pin(WatchStream::new(self.frames_tx.subscribe()).filter_map(|frame| frame))
     }
 
     async fn start_recording(&self) -> Result<(), BackendError> {
@@ -211,7 +210,7 @@ struct Command {
 
 async fn supervise(
     config: CameraConfig,
-    frames_tx: broadcast::Sender<Bytes>,
+    frames_tx: watch::Sender<Option<Bytes>>,
     status_tx: watch::Sender<Status>,
     mut commands_rx: mpsc::Receiver<Command>,
     mut shutdown_rx: oneshot::Receiver<()>,
@@ -234,10 +233,12 @@ async fn supervise(
                 .await
                 {
                     ChildOutcome::Shutdown => {
+                        frames_tx.send_replace(None);
                         let _ = status_tx.send(Status::offline());
                         return;
                     }
                     ChildOutcome::Exited => {
+                        frames_tx.send_replace(None);
                         let _ = status_tx.send(Status::restarting());
                     }
                 }
@@ -248,6 +249,7 @@ async fn supervise(
             }
             Err(error) => {
                 tracing::error!(%error, "failed to start camera child");
+                frames_tx.send_replace(None);
                 let _ = status_tx.send(Status::restarting());
             }
         }
@@ -280,7 +282,7 @@ enum ChildOutcome {
 
 async fn run_child(
     mut child: Child,
-    frames_tx: broadcast::Sender<Bytes>,
+    frames_tx: watch::Sender<Option<Bytes>>,
     status_tx: watch::Sender<Status>,
     commands_rx: &mut mpsc::Receiver<Command>,
     shutdown_rx: &mut oneshot::Receiver<()>,
@@ -354,7 +356,7 @@ async fn write_command(
     stdin.flush().await.map_err(|_| BackendError::CameraOffline)
 }
 
-async fn drain_stdout(mut stdout: ChildStdout, frames_tx: broadcast::Sender<Bytes>) {
+async fn drain_stdout(mut stdout: ChildStdout, frames_tx: watch::Sender<Option<Bytes>>) {
     let mut splitter = JpegSplitter::new();
     let mut buffer = [0_u8; 8192];
 
@@ -363,7 +365,7 @@ async fn drain_stdout(mut stdout: ChildStdout, frames_tx: broadcast::Sender<Byte
             Ok(0) => return,
             Ok(bytes_read) => {
                 for frame in splitter.push(&buffer[..bytes_read]) {
-                    let _ = frames_tx.send(Bytes::from(frame));
+                    frames_tx.send_replace(Some(Bytes::from(frame)));
                 }
             }
             Err(error) => {
