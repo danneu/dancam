@@ -4,33 +4,26 @@ import Testing
 
 @MainActor
 struct RecordingFeatureTests {
-    @Test func onAppearSeedsRecordingStateFromStatus() async {
-        let status = StatusResponse.recording(true)
+    @Test func statusObservedSeedsRecordingState() async {
         let store = TestStore(
             initialState: RecordingFeature.State.unknown,
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError() }),
-                status: StatusClient(fetch: { status }),
                 recording: RecordingClient(start: { fatalError() }, stop: { fatalError() })
             ),
             reduce: RecordingFeature.reduce
         )
 
-        await store.send(.onAppear) {
-            $0 = .unknown
-        }
-        await store.receive(.statusResponse(.success(status))) {
+        await store.send(.statusObserved(recording: true)) {
             $0 = .recording
         }
     }
 
-    @Test func startTappedStartsRecordingThenRefreshesStatus() async {
-        let status = StatusResponse.recording(true)
+    @Test func startTappedStartsRecording() async {
         let store = TestStore(
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError() }),
-                status: StatusClient(fetch: { status }),
                 recording: RecordingClient(start: {}, stop: { fatalError() })
             ),
             reduce: RecordingFeature.reduce
@@ -42,18 +35,13 @@ struct RecordingFeatureTests {
         await store.receive(.recordingResponse(.success(true))) {
             $0 = .recording
         }
-        await store.receive(.statusResponse(.success(status))) {
-            $0 = .recording
-        }
     }
 
-    @Test func stopTappedStopsRecordingThenRefreshesStatus() async {
-        let status = StatusResponse.recording(false)
+    @Test func stopTappedStopsRecording() async {
         let store = TestStore(
             initialState: RecordingFeature.State.recording,
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError() }),
-                status: StatusClient(fetch: { status }),
                 recording: RecordingClient(start: { fatalError() }, stop: {})
             ),
             reduce: RecordingFeature.reduce
@@ -63,9 +51,6 @@ struct RecordingFeatureTests {
             $0 = .stopping
         }
         await store.receive(.recordingResponse(.success(false))) {
-            $0 = .idle
-        }
-        await store.receive(.statusResponse(.success(status))) {
             $0 = .idle
         }
     }
@@ -108,18 +93,16 @@ struct RecordingFeatureTests {
         #expect(store.state == .starting)
         store.expectNoReceivedActions()
     }
-}
 
-private extension StatusResponse {
-    static func recording(_ isRecording: Bool) -> StatusResponse {
-        StatusResponse(
-            recording: isRecording,
-            cameraState: .running,
-            bootId: "boot-123",
-            uptimeS: 42,
-            storage: nil,
-            tempC: TempC(soc: nil, sensor: nil),
-            mem: nil
+    @Test func statusObservedIgnoredWhileStarting() async {
+        let store = TestStore(
+            initialState: RecordingFeature.State.starting,
+            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            reduce: RecordingFeature.reduce
         )
+
+        await store.send(.statusObserved(recording: false))
+
+        #expect(store.state == .starting)
     }
 }

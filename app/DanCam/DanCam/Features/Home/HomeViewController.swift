@@ -1,14 +1,14 @@
 import UIKit
 
-final class HomeViewController: UIViewController, UITableViewDataSource {
+final class HomeViewController: UIViewController, UITableViewDataSource, ConnectionResumable {
     private let dependencies: AppDependencies
+    private let monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
     private let previewViewController: PreviewViewController
     private let recordingStore: Store<RecordingFeature.State, RecordingFeature.Action, AppDependencies>
-    private let statusStore: Store<StatusFeature.State, StatusFeature.Action, AppDependencies>
     private let clipsStore: Store<ClipsFeature.State, ClipsFeature.Action, AppDependencies>
 
     private var recordingObservation: StoreObservation?
-    private var statusObservation: StoreObservation?
+    private var connectionObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
 
     private let statusPillsStack = UIStackView()
@@ -18,26 +18,28 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
     private let recPill = StatusPillView(caption: "REC", dotColor: .systemRed)
     private let clipsHeaderLabel = UILabel()
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
+    private let refreshControl = UIRefreshControl()
     private let emptyClipsBackgroundView = UIView()
     private let emptyClipsView = UIStackView()
     private let emptyClipsImageView = UIImageView(image: UIImage(systemName: "film"))
     private let emptyClipsLabel = UILabel()
 
     private var recordingState = RecordingFeature.State.unknown
+    private var observedRecording: Bool?
     private var clips: [Clip] = []
+    private var refreshGate = RefreshGate()
 
-    init(dependencies: AppDependencies) {
+    init(
+        dependencies: AppDependencies,
+        monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
+    ) {
         self.dependencies = dependencies
+        self.monitor = monitor
         previewViewController = PreviewViewController(dependencies: dependencies)
         recordingStore = Store(
             initialState: .unknown,
             dependencies: dependencies,
             reduce: RecordingFeature.reduce
-        )
-        statusStore = Store(
-            initialState: .idle,
-            dependencies: dependencies,
-            reduce: StatusFeature.reduce
         )
         clipsStore = Store(
             initialState: .idle,
@@ -73,8 +75,8 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         recordingObservation = recordingStore.observe { [weak self] state in
             self?.renderRecording(state)
         }
-        statusObservation = statusStore.observe { [weak self] state in
-            self?.renderStatus(state)
+        connectionObservation = monitor.observe { [weak self] state in
+            self?.renderConnection(state)
         }
         clipsObservation = clipsStore.observe { [weak self] state in
             self?.renderClips(state)
@@ -83,15 +85,17 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        recordingStore.send(.onAppear)
-        statusStore.send(.onAppear)
         clipsStore.send(.onAppear)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        statusStore.send(.onDisappear)
         clipsStore.send(.onDisappear)
+    }
+
+    func resumeLiveWork() {
+        clipsStore.send(.refresh)
+        previewViewController.reconnect()
     }
 
     private func configureViews() {
@@ -196,6 +200,8 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         clipsTableView.rowHeight = UITableView.automaticDimension
         clipsTableView.estimatedRowHeight = 56
         clipsTableView.tableFooterView = UIView()
+        refreshControl.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
+        clipsTableView.refreshControl = refreshControl
         clipsTableView.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
@@ -204,23 +210,18 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         ])
     }
 
-    private func renderStatus(_ state: StatusFeature.State) {
+    private func renderConnection(_ state: ConnectionFeature.State) {
         tempWarningPill.isHidden = true
         errorPill.isHidden = true
 
-        switch state {
-        case .idle, .loading:
-            break
-        case .loaded(let response):
+        if let response = state.lastStatus {
             renderTempWarning(sensor: response.tempC.sensor)
             renderCameraError(response: response)
-        case .failed:
-            errorPill.configure(
-                caption: "Can't reach camera",
-                dotColor: .systemRed,
-                backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
-            )
-            errorPill.isHidden = false
+
+            if observedRecording != response.recording {
+                observedRecording = response.recording
+                recordingStore.send(.statusObserved(recording: response.recording))
+            }
         }
 
         statusPillsStack.isHidden = tempWarningPill.isHidden && errorPill.isHidden
@@ -274,13 +275,15 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
     }
 
     private func renderClips(_ state: ClipsFeature.State) {
+        if refreshGate.handle(state) {
+            refreshControl.endRefreshing()
+        }
+
         switch state {
-        case .idle, .loading:
-            clips = []
         case .loaded(let clips):
             self.clips = clips
-        case .failed:
-            clips = []
+        case .idle, .loading, .failed:
+            break
         }
 
         clipsTableView.backgroundView = clips.isEmpty ? emptyClipsBackgroundView : nil
@@ -300,9 +303,15 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
 
     @objc private func debugTapped() {
         navigationController?.pushViewController(
-            HealthViewController(dependencies: dependencies),
+            HealthViewController(dependencies: dependencies, monitor: monitor),
             animated: true
         )
+    }
+
+    @objc private func refreshPulled() {
+        resumeLiveWork()
+        monitor.send(.poll)
+        refreshGate.begin()
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {

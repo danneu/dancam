@@ -3,7 +3,7 @@ import Testing
 
 struct HealthTelemetryTests {
     @Test func loadedStateRendersAllTelemetryRows() {
-        let rows = HealthTelemetry.rows(for: .loaded(StatusResponse(
+        let rows = HealthTelemetry.rows(for: StatusResponse(
             recording: true,
             cameraState: .running,
             bootId: "boot-123",
@@ -11,7 +11,7 @@ struct HealthTelemetryTests {
             storage: Storage(used: 1_000, total: 4_000),
             tempC: TempC(soc: 51.2, sensor: 52.3),
             mem: Mem(total: 1_000_000, available: 500_000, swapTotal: 0, swapUsed: 1_000)
-        )))
+        ))
 
         #expect(rows.map { $0.label } == [
             "SoC temp",
@@ -38,7 +38,7 @@ struct HealthTelemetryTests {
     }
 
     @Test func loadedStateRendersPlaceholdersForMissingTelemetry() {
-        let rows = HealthTelemetry.rows(for: .loaded(StatusResponse(
+        let rows = HealthTelemetry.rows(for: StatusResponse(
             recording: false,
             cameraState: .running,
             bootId: "boot-123",
@@ -46,22 +46,14 @@ struct HealthTelemetryTests {
             storage: nil,
             tempC: TempC(soc: nil, sensor: nil),
             mem: nil
-        )))
+        ))
 
         #expect(rows.map { $0.value } == Array(repeating: "--", count: 9))
     }
 
-    @Test func nonLoadedStatesRenderPlaceholders() {
-        let states: [StatusFeature.State] = [
-            .idle,
-            .loading,
-            .failed("lost"),
-        ]
+    @Test func nilStatusRendersPlaceholders() {
+        let rows = HealthTelemetry.rows(for: nil)
 
-        for state in states {
-            let rows = HealthTelemetry.rows(for: state)
-
-            #expect(rows.map { $0.value } == Array(repeating: "--", count: 9))
-        }
+        #expect(rows.map { $0.value } == Array(repeating: "--", count: 9))
     }
 }

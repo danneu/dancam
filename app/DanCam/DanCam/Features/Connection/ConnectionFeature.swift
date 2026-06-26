@@ -1,21 +1,27 @@
 import Foundation
 
-enum StatusFeature {
-    enum State: Equatable {
-        case idle
-        case loading
-        case loaded(StatusResponse)
-        case failed(String)
+enum ConnectionFeature {
+    struct State: Equatable {
+        var connectivity: Connectivity = .connecting
+        var consecutiveFailures = 0
+        var lastStatus: StatusResponse?
+    }
+
+    nonisolated enum Connectivity: Equatable {
+        case connecting
+        case connected
+        case disconnected
     }
 
     enum Action: Equatable {
-        case onAppear
-        case onDisappear
+        case start
+        case stop
         case poll
         case statusResponse(Result<StatusResponse, StatusError>)
     }
 
-    private static let pollID = "status-poll"
+    static let failureThreshold = 3
+    private static let pollID = "connection-poll"
     private static let pollInterval = Duration.milliseconds(1500)
 
     static func reduce(
@@ -24,21 +30,27 @@ enum StatusFeature {
         dependencies: AppDependencies
     ) -> Effect<Action> {
         switch action {
-        case .onAppear, .poll:
-            if case .idle = state {
-                state = .loading
-            }
+        case .start:
+            state.consecutiveFailures = 0
             return fetchEffect(dependencies: dependencies)
 
-        case .onDisappear:
+        case .stop:
             return .cancel(id: pollID)
 
+        case .poll:
+            return fetchEffect(dependencies: dependencies)
+
         case .statusResponse(.success(let response)):
-            state = .loaded(response)
+            state.connectivity = .connected
+            state.consecutiveFailures = 0
+            state.lastStatus = response
             return schedulePoll(dependencies: dependencies)
 
-        case .statusResponse(.failure(let error)):
-            state = .failed(error.displayMessage)
+        case .statusResponse(.failure):
+            state.consecutiveFailures += 1
+            if state.consecutiveFailures >= failureThreshold {
+                state.connectivity = .disconnected
+            }
             return schedulePoll(dependencies: dependencies)
         }
     }

@@ -153,9 +153,11 @@ mock first.
       force-finalizes the open segment and protects the window. Start with a dumb
       hardlink lock; _deepen toward the storage ADR (idempotency, pre-sync holds)
       later._
-- [ ] **Swoop `opal` -- Connection robustness.** Persistent auto-rejoin
-      (`NEHotspotConfiguration`, `joinOnce = false`); offline detection via missed
-      heartbeats -> alert; back-off reconnect; resume pulls across drops.
+- [ ] **Swoop `opal` -- Connection robustness.** App-side ambient connection UX has
+      landed: a scene-scoped `/v1/status` monitor, persistent nav-bar indicator,
+      missed-heartbeat offline detection, foreground/reconnect recovery, and preview
+      back-off reconnect. Remaining: persistent auto-rejoin (`NEHotspotConfiguration`,
+      `joinOnce = false`), Wi-Fi reconnect back-off, and resumable pulls across drops.
 - [ ] **Swoop `reef` -- CarPlay auto start/stop** on CarPlay connect/disconnect.
 - [ ] **Swoop `sage` -- CarPlay status panel** (Driving Task template). _Gated on the
       Apple entitlement; the product must be useful without it._

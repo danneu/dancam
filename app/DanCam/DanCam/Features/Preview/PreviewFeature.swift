@@ -1,12 +1,17 @@
 import Foundation
 
 enum PreviewFeature {
-    enum State: Equatable {
-        case idle
-        case connecting
-        case streaming(PreviewFrame)
-        case stopped
-        case failed(String)
+    struct State: Equatable {
+        enum Phase: Equatable {
+            case idle
+            case connecting
+            case streaming(PreviewFrame)
+            case stopped
+            case failed(String)
+        }
+
+        var phase: Phase = .idle
+        var reconnectAttempt = 0
     }
 
     enum Action: Equatable {
@@ -14,10 +19,14 @@ enum PreviewFeature {
         case startTapped
         case onDisappear
         case stopTapped
+        case reconnectNow
+        case reconnect
         case frameReceived(PreviewFrame)
         case streamFinished
         case streamFailed(PreviewError)
     }
+
+    private static let streamID = "preview"
 
     static func reduce(
         state: inout State,
@@ -25,45 +34,73 @@ enum PreviewFeature {
         dependencies: AppDependencies
     ) -> Effect<Action> {
         switch action {
-        case .onAppear, .startTapped:
-            state = .connecting
-            return .run(id: "preview", cancelInFlight: true) { send in
-                do {
-                    for try await frame in dependencies.preview.connect() {
-                        guard Task.isCancelled == false else { return }
-                        await send(.frameReceived(frame))
-                    }
+        case .onAppear, .startTapped, .reconnectNow:
+            state.phase = .connecting
+            state.reconnectAttempt = 0
+            return connectEffect(dependencies: dependencies)
 
-                    guard Task.isCancelled == false else { return }
-                    await send(.streamFinished)
-                } catch is CancellationError {
-                    return
-                } catch let error as URLError where error.code == .cancelled {
-                    return
-                } catch let error as PreviewError {
-                    guard Task.isCancelled == false else { return }
-                    await send(.streamFailed(error))
-                } catch {
-                    guard Task.isCancelled == false else { return }
-                    await send(.streamFailed(.connectionFailed(error.localizedDescription)))
-                }
-            }
+        case .reconnect:
+            state.phase = .connecting
+            return connectEffect(dependencies: dependencies)
 
         case .onDisappear, .stopTapped:
-            state = .stopped
-            return .cancel(id: "preview")
+            state.phase = .stopped
+            return .cancel(id: streamID)
 
         case .frameReceived(let frame):
-            state = .streaming(frame)
+            state.phase = .streaming(frame)
+            state.reconnectAttempt = 0
             return .none
 
         case .streamFinished:
-            state = .stopped
-            return .none
+            state.phase = .stopped
+            state.reconnectAttempt += 1
+            return scheduleReconnect(attempt: state.reconnectAttempt, dependencies: dependencies)
 
         case .streamFailed(let error):
-            state = .failed(error.displayMessage)
-            return .none
+            state.phase = .failed(error.displayMessage)
+            state.reconnectAttempt += 1
+            return scheduleReconnect(attempt: state.reconnectAttempt, dependencies: dependencies)
         }
+    }
+
+    private static func connectEffect(dependencies: AppDependencies) -> Effect<Action> {
+        .run(id: streamID, cancelInFlight: true) { send in
+            do {
+                for try await frame in dependencies.preview.connect() {
+                    guard Task.isCancelled == false else { return }
+                    await send(.frameReceived(frame))
+                }
+
+                guard Task.isCancelled == false else { return }
+                await send(.streamFinished)
+            } catch is CancellationError {
+                return
+            } catch let error as URLError where error.code == .cancelled {
+                return
+            } catch let error as PreviewError {
+                guard Task.isCancelled == false else { return }
+                await send(.streamFailed(error))
+            } catch {
+                guard Task.isCancelled == false else { return }
+                await send(.streamFailed(.connectionFailed(error.localizedDescription)))
+            }
+        }
+    }
+
+    private static func scheduleReconnect(
+        attempt: Int,
+        dependencies: AppDependencies
+    ) -> Effect<Action> {
+        .run(id: streamID, cancelInFlight: true) { send in
+            await dependencies.sleep(backoff(for: attempt))
+            guard Task.isCancelled == false else { return }
+            await send(.reconnect)
+        }
+    }
+
+    private static func backoff(for attempt: Int) -> Duration {
+        let cappedExponent = max(0, min(attempt - 1, 3))
+        return .seconds(1 << cappedExponent)
     }
 }

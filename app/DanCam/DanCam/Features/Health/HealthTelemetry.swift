@@ -3,8 +3,8 @@ import Foundation
 typealias TelemetryRow = (label: String, value: String)
 
 nonisolated enum HealthTelemetry {
-    static func rows(for state: StatusFeature.State) -> [TelemetryRow] {
-        guard case .loaded(let response) = state else {
+    static func rows(for status: StatusResponse?) -> [TelemetryRow] {
+        guard let response = status else {
             return placeholderRows()
         }
 

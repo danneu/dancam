@@ -11,7 +11,7 @@ final class PreviewViewController: UIViewController {
 
     init(dependencies: AppDependencies) {
         store = Store(
-            initialState: .idle,
+            initialState: PreviewFeature.State(),
             dependencies: dependencies,
             reduce: PreviewFeature.reduce
         )
@@ -44,6 +44,10 @@ final class PreviewViewController: UIViewController {
         store.send(.onDisappear)
     }
 
+    func reconnect() {
+        store.send(.reconnectNow)
+    }
+
     private func configureViews() {
         imageView.backgroundColor = .black
         imageView.contentMode = .scaleAspectFit
@@ -68,7 +72,7 @@ final class PreviewViewController: UIViewController {
     }
 
     private func render(_ state: PreviewFeature.State) {
-        switch state {
+        switch state.phase {
         case .idle:
             statusPill.isHidden = true
         case .connecting:

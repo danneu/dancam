@@ -2,9 +2,9 @@ import UIKit
 
 final class HealthViewController: UIViewController {
     private let store: Store<HealthFeature.State, HealthFeature.Action, AppDependencies>
-    private let statusStore: Store<StatusFeature.State, StatusFeature.Action, AppDependencies>
+    private let monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
     private var observation: StoreObservation?
-    private var statusObservation: StoreObservation?
+    private var connectionObservation: StoreObservation?
 
     private let scrollView = UIScrollView()
     private let statusLabel = UILabel()
@@ -17,17 +17,16 @@ final class HealthViewController: UIViewController {
     private let errorLabel = UILabel()
     private let reloadButton = UIButton(type: .system)
 
-    init(dependencies: AppDependencies) {
+    init(
+        dependencies: AppDependencies,
+        monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
+    ) {
         store = Store(
             initialState: .idle,
             dependencies: dependencies,
             reduce: HealthFeature.reduce
         )
-        statusStore = Store(
-            initialState: .idle,
-            dependencies: dependencies,
-            reduce: StatusFeature.reduce
-        )
+        self.monitor = monitor
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -46,20 +45,10 @@ final class HealthViewController: UIViewController {
         observation = store.observe { [weak self] state in
             self?.render(state)
         }
-        statusObservation = statusStore.observe { [weak self] state in
+        connectionObservation = monitor.observe { [weak self] state in
             self?.renderTelemetry(state)
         }
         store.send(.onAppear)
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        statusStore.send(.onAppear)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        statusStore.send(.onDisappear)
     }
 
     private func configureViews() {
@@ -151,13 +140,13 @@ final class HealthViewController: UIViewController {
         timeLabel.text = "Pi time: \(response.map { "\($0.tMs) ms" } ?? "--")"
     }
 
-    private func renderTelemetry(_ state: StatusFeature.State) {
+    private func renderTelemetry(_ state: ConnectionFeature.State) {
         for view in telemetryStack.arrangedSubviews {
             telemetryStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
 
-        for row in HealthTelemetry.rows(for: state) {
+        for row in HealthTelemetry.rows(for: state.lastStatus) {
             let label = UILabel()
             label.font = .preferredFont(forTextStyle: .body)
             label.adjustsFontForContentSizeCategory = true

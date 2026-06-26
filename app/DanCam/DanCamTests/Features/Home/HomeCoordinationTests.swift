@@ -18,4 +18,19 @@ struct HomeCoordinationTests {
             )
         }
     }
+
+    @Test func refreshGateOnlyEndsAfterBegunRefreshReceivesResult() {
+        var gate = RefreshGate()
+
+        #expect(gate.handle(.loaded([])) == false)
+
+        gate.begin()
+        #expect(gate.handle(.loading) == false)
+        #expect(gate.handle(.loaded([])) == true)
+        #expect(gate.handle(.loaded([])) == false)
+
+        gate.begin()
+        #expect(gate.handle(.failed("lost")) == true)
+        #expect(gate.handle(.loaded([])) == false)
+    }
 }
