@@ -249,7 +249,7 @@ Environment=DANCAM_REC_DIR=/home/dan/rec
 process. That process owns libcamera, emits low-res MJPEG preview on stdout, and
 writes H.264 MPEG-TS recording segments under `DANCAM_REC_DIR`. It also locks the
 IMX708 lens to infinity with autofocus disabled; see
-`raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`. Local `just raspi-run`
+`raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`. Local `just raspi-mock`
 still defaults to the mock backend and cycles committed test-pattern frames.
 
 Verify from the Mac over the LAN:

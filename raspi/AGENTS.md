@@ -126,8 +126,8 @@ over raw `cargo` commands unless they need to test a lower-level Cargo behavior.
 
 - `just raspi-build` -- build the service for the local host.
 - `just raspi-test` -- run the service test suite.
-- `just raspi-run` -- run the mock Pi service on `127.0.0.1:8080`.
-- `just raspi-run-lan` -- run the mock Pi service on `0.0.0.0:9000` for testing from
+- `just raspi-mock` -- run the mock Pi service on `127.0.0.1:8080`.
+- `just raspi-mock-lan` -- run the mock Pi service on `0.0.0.0:9000` for testing from
   another LAN device, such as the iPhone.
 
 ### Dev image vs. car image

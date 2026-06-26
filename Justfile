@@ -19,11 +19,11 @@ app-test:
     xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' -only-testing:DanCamTests test
 
 # Run the mock Pi service on 127.0.0.1:8080 for local dev.
-raspi-run:
+raspi-mock:
     cd raspi/service && cargo run
 
 # Run the mock Pi service on 0.0.0.0:9000 for LAN device testing.
-raspi-run-lan:
+raspi-mock-lan:
     cd raspi/service && DANCAM_BIND=0.0.0.0:9000 cargo run
 
 # Validate ADR filenames: format, per-side contiguous sequence, seq/date order.
