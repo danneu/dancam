@@ -3,11 +3,10 @@
 A do-it-yourself dashcam system built around an iPhone. Three parts work together:
 
 1. **Camera unit** (`raspi/`) -- a Raspberry Pi + wide-angle camera that records
-   continuously to its own microSD card. It is the recorder and the source of
-   truth for footage.
+   continuously to its own microSD card.
 2. **iPhone app** (`app/`) -- the primary UI and "brains." Connects to the camera
    unit over Wi-Fi to preview, browse, and pull clips, manage settings, and handle
-   incidents. The system may require the iPhone to be useful.
+   incidents.
 3. **CarPlay integration** -- a layer inside the iPhone app that exposes a small,
    safe surface to the car screen: voice control, status, and start/stop. (It is
    part of the app target; it does not live in a separate folder.)
@@ -15,21 +14,11 @@ A do-it-yourself dashcam system built around an iPhone. Three parts work togethe
 The project is **iPhone-only** and the app owns the product experience. The Pi is
 deliberately dumb: capture, encode, store safely, and serve footage on request.
 
-Dan (the software engineer) wants to develop this dashcam for fun and see if he
-can make a good-enough dashcam + iphone + carplay implementation. Once working
-in the real world in his car, he might consider upgrades (better resolution,
-better hardware, better camera, etc).
-
-## Status
-
-Planning / early implementation. Most of this repo is currently design documentation,
-but `raspi/service/` is the first buildable code. Decisions are captured as ADRs
-(see "Design decisions" below) before code lands.
-
 ## Working stance: take the ideal solution, not the prescribed one
 
-Docs/notes/ADRs were written ahead of real hardware -- best guesses, not
-commitments. When planning or implementation surfaces a better approach, take it;
+Early implementation: most of this repo is design documentation, but `raspi/service/`
+is the first buildable code. Docs/notes/ADRs were written ahead of real hardware --
+best guesses, not commitments. When planning or implementation surfaces a better approach, take it;
 never stay trapped in a solution we spitballed before we had evidence. On every
 pivot, update the record in the same change (amend or supersede the ADR -- see
 "Design decisions"); a pivot that isn't written down is the next trap. The
@@ -38,32 +27,27 @@ revisit even those if reality disagrees, but at a higher, explicit bar.
 
 ## Roadmap
 
-The build plan lives in **[`docs/roadmap.md`](docs/roadmap.md)** -- it's kept out of
-this file so AGENTS.md stays lean (this file is loaded into every agent context).
-That doc holds the **breadth-first swoops** (thin end-to-end Pi -> Wi-Fi -> app
-slices, deepened on later passes; codenamed `oak`, `fox`, ... so they reorder without
-renumbering), the default order and mock-Pi / real-Pi tracks, and an **Icebox** of
-parked someday-maybe swoops. Read it before deciding what to build next.
+The build plan lives in **[`docs/roadmap.md`](docs/roadmap.md)**: the **breadth-first
+swoops** (thin end-to-end Pi -> Wi-Fi -> app slices, deepened on later passes;
+codenamed `oak`, `fox`, ... so they reorder without renumbering), the default order
+and mock-Pi / real-Pi tracks, and an **Icebox** of parked someday-maybe swoops. Read
+it before deciding what to build next.
 
 ## Hardware (tentative)
 
-Raspberry Pi Zero 2 W + Arducam IMX708 Autofocus Wide camera. The full spec, part
-links, and prices live in [`raspi/AGENTS.md`](raspi/AGENTS.md). Hardware may change as
-concrete implementation starts.
+Pi Zero 2 W + Arducam IMX708 Autofocus Wide camera; full spec, part links, and prices
+in [`raspi/AGENTS.md`](raspi/AGENTS.md). May change as concrete implementation starts.
 
 ## Development environment
 
-Dan develops on an **M1 (Apple Silicon) MacBook Pro** running macOS. This is the
-only dev workstation, and it shapes what's easy:
+Dan develops on an **M1 (Apple Silicon) MacBook Pro** running macOS -- the only dev
+workstation.
 
 - **iPhone app:** built and run natively in Xcode on this Mac (an Apple Silicon Mac
   is required for current iOS toolchains and the simulator).
-- **Raspberry Pi:** the microSD is flashed from the laptop. Raspberry Pi Imager
-  runs natively on Apple Silicon; with a USB SD card reader, headless setup
-  (Wi-Fi creds, SSH, hostname) is done via the Imager's OS-customization step, so
-  use current Raspberry Pi Imager (2.0.10+) for Trixie's cloud-init provisioning.
-  Then the Pi can come up first-boot without a monitor/keyboard and you iterate
-  over SSH on the same Wi-Fi. (`dd` works too, but Imager is the default.)
+- **Raspberry Pi:** flash the microSD from the laptop with Raspberry Pi Imager 2.0.10+
+  (headless OS-customization sets Wi-Fi/SSH/hostname for first-boot without a monitor,
+  then iterate over SSH); see [`README.md`](README.md) for the full runbook.
 
 ## Repository layout
 
@@ -88,30 +72,15 @@ decisions, each side owns its own).
 
 ## References
 
-`references/` holds read-only clones of upstream source we build against, so agents and
-humans can read the *exact* API we target. It is git-ignored (large, regenerable) --
-seed or refresh it with `just fetch-references`. Versions are pinned in
-`scripts/fetch-references.sh` to match what the Pi actually runs; run
-`just references-pi-version` to confirm the Pi's installed version before establishing or
+`references/` holds read-only clones of upstream source we build against, so we target
+the exact API. Git-ignored; seed or refresh with `just fetch-references`. Versions are
+pinned in `scripts/fetch-references.sh` to match what the Pi runs; run
+`just references-pi-version` to confirm the Pi's installed version before setting or
 bumping a pin.
 
 - **picamera2** (`references/picamera2/`) -- Raspberry Pi camera stack imported by the Pi
   camera process (`raspi/camera/camera.py`). Pinned to the `python3-picamera2` version on
   Raspberry Pi OS Trixie. Upstream: https://github.com/raspberrypi/picamera2
-
-## Architecture at a glance
-
-```
-[ Camera unit (raspi) ]                         [ iPhone (app) ]
-  camera -> encode -> crash-safe ring buffer       live preview (when stopped/safe)
-  on microSD (source of truth)                     browse + pull selected clips
-        |                                           incident review
-        |  Wi-Fi (Pi runs an access point)          settings / control
-        +----------- 2.4 GHz link ----------------> CarPlay surface (voice/status/control)
-```
-
-Key data-flow rule: the microSD is the system of record; Wi-Fi carries only preview
-and selective pull (the "SD is the source of truth" principle below).
 
 ## Cross-cutting principles (the decisions that shape everything)
 
@@ -146,28 +115,17 @@ files under each side's `docs/design/` directory. This is the project's ADR
 
 **Convention**
 
-- Filename: `docs/design/{seq}-YYYY-MM-DD-{slug}.md`. `{seq}` is a two-digit,
-  zero-padded sequence number assigned per side -- each side's `docs/design/`
-  starts at `01`, and a new ADR takes the highest number in that folder plus one.
-  The date is the day the decision is taken. `{seq}` is what orders ADRs and
-  disambiguates decisions made on the same day; the date alone does not sequence
-  them.
-- These naming rules are enforced by `just adr-check` (run it after adding an ADR).
-- One decision per file. Prefer short, specific slugs (`crash-safe-recording`,
-  `carplay-integration-surface`).
-- Every ADR has this shape:
-  - **Title** (`# ADR: ...`)
-  - **Status** -- Proposed | Accepted | Superseded by <file> | Deprecated
-  - **Context** -- the forces and constraints in play
-  - **Decision** -- what we are doing, stated plainly
-  - **Consequences** -- what this makes easy, hard, or risky; follow-ups
-  - **Alternatives considered** -- options rejected and why
-- ADRs are append-only history. To change a decision, write a new ADR and mark the
-  old one `Superseded by ...`; do not silently rewrite the old one.
+- Filename: `docs/design/{seq}-YYYY-MM-DD-{slug}.md`, date = day the decision is
+  taken, slug short and specific (`crash-safe-recording`). `{seq}` = two-digit
+  per-side sequence (each side starts at `01`, new ADR = highest in that folder + 1);
+  it orders ADRs and breaks ties on same-day decisions. Enforced by `just adr-check`.
+- One decision per file. Shape: Title (`# ADR: ...`) / Status (Proposed | Accepted |
+  Superseded by <file> | Deprecated) / Context / Decision / Consequences /
+  Alternatives considered.
+- Append-only history: to change a decision, write a new ADR and mark the old one
+  `Superseded by ...`; never silently rewrite it.
 - System-wide decisions that span both sides are summarized under "Cross-cutting
   principles" above and link to the owning ADR.
-
-To start a new ADR, copy the structure of an existing one in the same folder.
 
 ## Conventions
 
