@@ -37,3 +37,7 @@ fetch-references:
 # Print the picamera2 version installed on the Pi (confirm/bump the pin in scripts/fetch-references.sh).
 references-pi-version:
     bash scripts/references-pi-version.sh
+
+# Report what's using the Pi's RAM: free/top processes/GPU+CMA reservations/swap (override target with DANCAM_HOST=...).
+pi-mem:
+    bash scripts/pi-mem.sh
