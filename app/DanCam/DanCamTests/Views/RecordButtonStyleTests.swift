@@ -9,15 +9,16 @@ struct RecordButtonStyleTests {
                 title: String,
                 image: String?,
                 enabled: Bool,
-                busy: Bool
+                busy: Bool,
+                treatment: RecordButtonTreatment
             )
         ] = [
-            (.unknown, "Record", "record.circle", false, false),
-            (.idle, "Record", "record.circle", true, false),
-            (.failed("lost"), "Record", "record.circle", true, false),
-            (.starting, "Starting", nil, false, true),
-            (.recording, "Stop", "stop.fill", true, false),
-            (.stopping, "Stopping", nil, false, true),
+            (.unknown, "Record", "record.circle", false, false, .record),
+            (.idle, "Record", "record.circle", true, false, .record),
+            (.failed("lost"), "Record", "record.circle", true, false, .record),
+            (.starting, "Starting", nil, false, true, .record),
+            (.recording, "Stop", "stop.fill", true, false, .neutral),
+            (.stopping, "Stopping", nil, false, true, .neutral),
         ]
 
         for testCase in cases {
@@ -27,6 +28,7 @@ struct RecordButtonStyleTests {
             #expect(style.systemImage == testCase.image)
             #expect(style.isEnabled == testCase.enabled)
             #expect(style.showsActivityIndicator == testCase.busy)
+            #expect(style.treatment == testCase.treatment)
         }
     }
 }

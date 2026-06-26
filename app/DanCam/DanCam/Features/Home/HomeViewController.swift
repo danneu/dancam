@@ -11,9 +11,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
     private var statusObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
 
-    private let storageChipView = UIView()
-    private let storageProgressView = UIProgressView(progressViewStyle: .bar)
-    private let storageFreeLabel = UILabel()
+    private let statusPillsStack = UIStackView()
     private let tempWarningPill = StatusPillView()
     private let errorPill = StatusPillView()
     private let recordButton = RecordButton(frame: .zero)
@@ -98,7 +96,6 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
 
     private func configureViews() {
         configurePreview()
-        configureStorageChip()
         configureStatusPills()
         configureClipsTable()
 
@@ -106,22 +103,13 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         recordButton.apply(.unknown)
         recordButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let belowPreviewStack = UIStackView(arrangedSubviews: [
-            storageChipView,
-            tempWarningPill,
-            errorPill,
-        ])
-        belowPreviewStack.axis = .vertical
-        belowPreviewStack.alignment = .leading
-        belowPreviewStack.spacing = 8
-
         let recordButtonRow = UIView()
         recordButtonRow.translatesAutoresizingMaskIntoConstraints = false
         recordButtonRow.addSubview(recordButton)
 
         let stack = UIStackView(arrangedSubviews: [
             previewViewController.view,
-            belowPreviewStack,
+            statusPillsStack,
             recordButtonRow,
             clipsHeaderLabel,
             clipsTableView,
@@ -167,44 +155,14 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         previewViewController.view.addSubview(recPill)
     }
 
-    private func configureStorageChip() {
-        storageChipView.isAccessibilityElement = true
-        storageChipView.backgroundColor = .secondarySystemBackground
-        storageChipView.layer.cornerRadius = 12
-        storageChipView.layer.cornerCurve = .continuous
-        storageChipView.directionalLayoutMargins = NSDirectionalEdgeInsets(
-            top: 8,
-            leading: 10,
-            bottom: 8,
-            trailing: 10
-        )
-
-        storageProgressView.progressTintColor = .systemGreen
-        storageProgressView.trackTintColor = .tertiarySystemFill
-
-        storageFreeLabel.font = .preferredFont(forTextStyle: .subheadline)
-        storageFreeLabel.adjustsFontForContentSizeCategory = true
-        storageFreeLabel.textColor = .secondaryLabel
-
-        let stack = UIStackView(arrangedSubviews: [storageProgressView, storageFreeLabel])
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = 10
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        storageChipView.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            storageProgressView.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
-
-            stack.leadingAnchor.constraint(equalTo: storageChipView.layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: storageChipView.layoutMarginsGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: storageChipView.layoutMarginsGuide.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: storageChipView.layoutMarginsGuide.bottomAnchor),
-        ])
-    }
-
     private func configureStatusPills() {
+        statusPillsStack.axis = .vertical
+        statusPillsStack.alignment = .leading
+        statusPillsStack.spacing = 8
+        statusPillsStack.isHidden = true
+        statusPillsStack.addArrangedSubview(tempWarningPill)
+        statusPillsStack.addArrangedSubview(errorPill)
+
         tempWarningPill.isHidden = true
         errorPill.isHidden = true
     }
@@ -252,13 +210,11 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
 
         switch state {
         case .idle, .loading:
-            renderStorageChip(storage: nil)
+            break
         case .loaded(let response):
-            renderStorageChip(storage: response.storage)
             renderTempWarning(sensor: response.tempC.sensor)
             renderCameraError(response: response)
         case .failed:
-            renderStorageChip(storage: nil)
             errorPill.configure(
                 caption: "Can't reach camera",
                 dotColor: .systemRed,
@@ -266,22 +222,8 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
             )
             errorPill.isHidden = false
         }
-    }
 
-    private func renderStorageChip(storage: Storage?) {
-        guard let storage else {
-            storageFreeLabel.text = "--"
-            storageProgressView.progress = 0
-            storageChipView.alpha = 0.55
-            storageChipView.accessibilityLabel = "Storage unavailable"
-            return
-        }
-
-        let display = Formatters.storageDisplay(storage)
-        storageFreeLabel.text = "\(display.freeText) free"
-        storageProgressView.progress = Float(display.usedFraction)
-        storageChipView.alpha = 1
-        storageChipView.accessibilityLabel = "\(display.freeText) free"
+        statusPillsStack.isHidden = tempWarningPill.isHidden && errorPill.isHidden
     }
 
     private func renderTempWarning(sensor: Double?) {

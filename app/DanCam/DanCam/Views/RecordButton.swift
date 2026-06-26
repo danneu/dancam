@@ -1,5 +1,10 @@
 import UIKit
 
+nonisolated enum RecordButtonTreatment: Equatable {
+    case record
+    case neutral
+}
+
 nonisolated enum RecordButtonStyle {
     static func from(
         _ state: RecordingFeature.State
@@ -7,19 +12,20 @@ nonisolated enum RecordButtonStyle {
         title: String,
         systemImage: String?,
         isEnabled: Bool,
-        showsActivityIndicator: Bool
+        showsActivityIndicator: Bool,
+        treatment: RecordButtonTreatment
     ) {
         switch state {
         case .unknown:
-            return ("Record", "record.circle", false, false)
+            return ("Record", "record.circle", false, false, .record)
         case .idle, .failed:
-            return ("Record", "record.circle", true, false)
+            return ("Record", "record.circle", true, false, .record)
         case .starting:
-            return ("Starting", nil, false, true)
+            return ("Starting", nil, false, true, .record)
         case .recording:
-            return ("Stop", "stop.fill", true, false)
+            return ("Stop", "stop.fill", true, false, .neutral)
         case .stopping:
-            return ("Stopping", nil, false, true)
+            return ("Stopping", nil, false, true, .neutral)
         }
     }
 }
@@ -47,8 +53,14 @@ final class RecordButton: UIButton {
         }
         configuration.imagePadding = 8
         configuration.cornerStyle = .capsule
-        configuration.baseBackgroundColor = .systemRed
-        configuration.baseForegroundColor = .white
+        switch style.treatment {
+        case .record:
+            configuration.baseBackgroundColor = .systemRed
+            configuration.baseForegroundColor = .white
+        case .neutral:
+            configuration.baseBackgroundColor = .systemGray5
+            configuration.baseForegroundColor = .systemRed
+        }
         configuration.showsActivityIndicator = style.showsActivityIndicator
         configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
