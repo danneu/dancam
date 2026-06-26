@@ -24,13 +24,6 @@
         upgrade: full
       notify: Reboot host
 
-    - name: Install operator-convenience packages
-      # Operator convenience; the only non-load-bearing add (vs. the camera runtime
-      # deps in the next task).
-      ansible.builtin.apt:
-        name: [vim]
-        state: present
-
     - name: Install the camera process runtime dependencies
       # LOAD-BEARING runtime deps of jet's camera owner: raspi/camera/camera.py
       # imports picamera2 and shells out to ffmpeg (FfmpegOutput) to mux the H.264

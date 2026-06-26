@@ -88,7 +88,7 @@ mock first.
       The "it works" moment is a re-run printing `changed=0`._
       - [x] Ansible ships in the Nix shell (`nix develop -c ansible --version`) and
             the `raspi-provision` / `-check` / `-lint` Just recipes exist.
-      - [x] Flat playbook (`raspi/ansible/site.yml`, 9 tasks + 2 handlers) passes the
+      - [x] Flat playbook (`raspi/ansible/site.yml`, 8 tasks + 2 handlers) passes the
             Mac-only gate: `just raspi-provision-lint` green (syntax-check + ansible-lint).
       - [ ] One `just raspi-provision` converges a fresh Pi (apt, camera overlay, mDNS
             scope, locale, AP profile, `video` group) + one reboot; a re-run prints
