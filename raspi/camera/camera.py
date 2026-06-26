@@ -56,6 +56,19 @@ def ensure_rec_dir(rec_dir: Path) -> None:
         raise RuntimeError(f"{rec_dir} is not writable")
 
 
+def recording_ffmpeg_output(rec_dir: Path, segment_start_number: int) -> str:
+    pattern = rec_dir / "seg_%05d.ts"
+    return (
+        "-bsf:v setts=pts=N*DURATION:dts=N*DURATION "
+        "-f segment "
+        "-segment_time 30 "
+        "-segment_format mpegts "
+        "-reset_timestamps 1 "
+        f"-segment_start_number {segment_start_number} "
+        f"{pattern}"
+    )
+
+
 def emit_event(event: str, **fields: Any) -> None:
     payload = {"event": event}
     payload.update(fields)
@@ -68,6 +81,22 @@ def run_self_test() -> int:
     assert compute_skip(30, 15) == 2
     assert compute_skip(30, 30) == 1
     assert compute_skip(30, 60) == 1
+    output = recording_ffmpeg_output(Path("/rec"), 7)
+    assert output.split() == [
+        "-bsf:v",
+        "setts=pts=N*DURATION:dts=N*DURATION",
+        "-f",
+        "segment",
+        "-segment_time",
+        "30",
+        "-segment_format",
+        "mpegts",
+        "-reset_timestamps",
+        "1",
+        "-segment_start_number",
+        "7",
+        "/rec/seg_%05d.ts",
+    ]
     return 0
 
 
@@ -278,15 +307,7 @@ class RealCameraDriver:
         from picamera2.outputs import FfmpegOutput
 
         index = next_segment_index(self.rec_dir)
-        pattern = self.rec_dir / "seg_%05d.ts"
-        output = (
-            "-f segment "
-            "-segment_time 30 "
-            "-segment_format mpegts "
-            "-reset_timestamps 1 "
-            f"-segment_start_number {index} "
-            f"{pattern}"
-        )
+        output = recording_ffmpeg_output(self.rec_dir, index)
         self.h264_encoder = H264Encoder(bitrate=10_000_000, repeat=True, iperiod=30)
         self.picam2.start_encoder(
             self.h264_encoder,
