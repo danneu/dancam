@@ -2,10 +2,22 @@ import Testing
 @testable import DanCam
 
 struct ConnectionCoordinationTests {
-    @Test func didReconnectOnlyWhenEnteringConnected() {
+    @Test func presentationMapsCaptionAndTone() {
+        let cases: [(ConnectionFeature.Connectivity, ConnectionCoordination.StripPresentation)] = [
+            (.connecting, .init(caption: "Connecting", tone: .neutral)),
+            (.connected, .init(caption: "Connected", tone: .positive)),
+            (.disconnected, .init(caption: "Not connected", tone: .negative)),
+        ]
+
+        for (connectivity, expected) in cases {
+            #expect(ConnectionCoordination.presentation(for: connectivity) == expected)
+        }
+    }
+
+    @Test func resumesLiveWorkOnlyFromDisconnected() {
         let cases: [(ConnectionFeature.Connectivity, ConnectionFeature.Connectivity, Bool)] = [
-            (.connecting, .connected, true),
             (.disconnected, .connected, true),
+            (.connecting, .connected, false),
             (.connected, .connected, false),
             (.connected, .disconnected, false),
             (.disconnected, .disconnected, false),
@@ -13,13 +25,7 @@ struct ConnectionCoordinationTests {
         ]
 
         for (previous, next, expected) in cases {
-            #expect(ConnectionCoordination.didReconnect(from: previous, to: next) == expected)
+            #expect(ConnectionCoordination.shouldResumeLiveWork(from: previous, to: next) == expected)
         }
-    }
-
-    @Test func captionsMatchConnectivityStates() {
-        #expect(ConnectionCoordination.caption(for: .connecting) == "Connecting")
-        #expect(ConnectionCoordination.caption(for: .connected) == "Connected")
-        #expect(ConnectionCoordination.caption(for: .disconnected) == "Not connected")
     }
 }

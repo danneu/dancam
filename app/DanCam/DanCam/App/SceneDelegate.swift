@@ -3,7 +3,7 @@ import UIKit
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     private var connectionStore: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>?
-    private var indicatorCoordinator: ConnectionIndicatorCoordinator?
+    private var shell: AppShellViewController?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
@@ -17,29 +17,26 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let window = UIWindow(windowScene: windowScene)
         let rootViewController = HomeViewController(dependencies: dependencies, monitor: connectionStore)
         let navigationController = UINavigationController(rootViewController: rootViewController)
-        let indicatorCoordinator = ConnectionIndicatorCoordinator(store: connectionStore)
+        let shell = AppShellViewController(
+            navigationController: navigationController,
+            monitor: connectionStore
+        )
 
-        window.rootViewController = navigationController
+        window.rootViewController = shell
         self.window = window
         self.connectionStore = connectionStore
-        self.indicatorCoordinator = indicatorCoordinator
+        self.shell = shell
         window.makeKeyAndVisible()
         rootViewController.loadViewIfNeeded()
-        indicatorCoordinator.attach(to: navigationController)
         connectionStore.send(.start)
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
         connectionStore?.send(.start)
-        topViewController()?.resumeLiveWork()
+        (shell?.topViewController as? ConnectionResumable)?.resumeLiveWork()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
         connectionStore?.send(.stop)
-    }
-
-    private func topViewController() -> ConnectionResumable? {
-        let navigationController = window?.rootViewController as? UINavigationController
-        return navigationController?.topViewController as? ConnectionResumable
     }
 }

@@ -154,7 +154,7 @@ mock first.
       hardlink lock; _deepen toward the storage ADR (idempotency, pre-sync holds)
       later._
 - [ ] **Swoop `opal` -- Connection robustness.** App-side ambient connection UX has
-      landed: a scene-scoped `/v1/status` monitor, persistent nav-bar indicator,
+      landed: a scene-scoped `/v1/status` monitor, persistent connection status strip,
       missed-heartbeat offline detection, foreground/reconnect recovery, and preview
       back-off reconnect. Remaining: persistent auto-rejoin (`NEHotspotConfiguration`,
       `joinOnce = false`), Wi-Fi reconnect back-off, and resumable pulls across drops.

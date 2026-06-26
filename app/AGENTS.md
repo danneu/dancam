@@ -98,6 +98,8 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   wire contract itself is delegated to the raspi-side ADR of the same name.
 - `03-2026-06-24-app-ui-architecture.md` -- UIKit programmatic UI and the bespoke
   minimal TEA core used by the app.
-- `04-2026-06-26-connection-monitor-and-indicator.md` -- the app-scoped `/v1/status`
-  monitor, ambient navigation-bar connection pill, asymmetric disconnect debounce, and
-  foreground/reconnect recovery hook.
+- `04-2026-06-26-connection-monitor-and-indicator.md` -- superseded by ADR 05; recorded
+  the app-scoped `/v1/status` monitor, ambient navigation-bar connection pill,
+  asymmetric disconnect debounce, and foreground/reconnect recovery hook.
+- `05-2026-06-26-app-shell-status-strip.md` -- keeps the app-scoped connection monitor
+  and replaces the navigation-bar pill with a persistent shell-owned status strip.

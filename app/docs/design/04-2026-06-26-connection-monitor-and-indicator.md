@@ -1,6 +1,6 @@
 # ADR: connection monitor and indicator
 
-- **Status:** Accepted
+- **Status:** Superseded by 05-2026-06-26-app-shell-status-strip.md
 - **Date:** 2026-06-26
 - **Owner:** app
 - **Related:** root `AGENTS.md`; `app/AGENTS.md`;

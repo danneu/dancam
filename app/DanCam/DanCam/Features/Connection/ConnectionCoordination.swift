@@ -1,19 +1,30 @@
 nonisolated enum ConnectionCoordination {
-    static func didReconnect(
+    enum Tone: Equatable {
+        case neutral
+        case positive
+        case negative
+    }
+
+    struct StripPresentation: Equatable {
+        let caption: String
+        let tone: Tone
+    }
+
+    static func presentation(for connectivity: ConnectionFeature.Connectivity) -> StripPresentation {
+        switch connectivity {
+        case .connecting:
+            StripPresentation(caption: "Connecting", tone: .neutral)
+        case .connected:
+            StripPresentation(caption: "Connected", tone: .positive)
+        case .disconnected:
+            StripPresentation(caption: "Not connected", tone: .negative)
+        }
+    }
+
+    static func shouldResumeLiveWork(
         from previous: ConnectionFeature.Connectivity,
         to next: ConnectionFeature.Connectivity
     ) -> Bool {
-        next == .connected && previous != .connected
-    }
-
-    static func caption(for connectivity: ConnectionFeature.Connectivity) -> String {
-        switch connectivity {
-        case .connecting:
-            "Connecting"
-        case .connected:
-            "Connected"
-        case .disconnected:
-            "Not connected"
-        }
+        previous == .disconnected && next == .connected
     }
 }
