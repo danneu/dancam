@@ -20,6 +20,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
     private let recPill = StatusPillView(caption: "REC", dotColor: .systemRed)
     private let clipsHeaderLabel = UILabel()
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
+    private let emptyClipsBackgroundView = UIView()
     private let emptyClipsView = UIStackView()
     private let emptyClipsImageView = UIImageView(image: UIImage(systemName: "film"))
     private let emptyClipsLabel = UILabel()
@@ -219,13 +220,18 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         emptyClipsLabel.text = "No clips yet"
         emptyClipsLabel.font = .preferredFont(forTextStyle: .subheadline)
         emptyClipsLabel.adjustsFontForContentSizeCategory = true
+        emptyClipsLabel.numberOfLines = 0
+        emptyClipsLabel.textAlignment = .center
         emptyClipsLabel.textColor = .secondaryLabel
 
         emptyClipsView.axis = .vertical
         emptyClipsView.alignment = .center
         emptyClipsView.spacing = 8
+        emptyClipsView.translatesAutoresizingMaskIntoConstraints = false
         emptyClipsView.addArrangedSubview(emptyClipsImageView)
         emptyClipsView.addArrangedSubview(emptyClipsLabel)
+
+        emptyClipsBackgroundView.addSubview(emptyClipsView)
 
         clipsTableView.dataSource = self
         clipsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "clip")
@@ -233,6 +239,11 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         clipsTableView.estimatedRowHeight = 56
         clipsTableView.tableFooterView = UIView()
         clipsTableView.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            emptyClipsView.centerXAnchor.constraint(equalTo: emptyClipsBackgroundView.centerXAnchor),
+            emptyClipsView.centerYAnchor.constraint(equalTo: emptyClipsBackgroundView.centerYAnchor),
+        ])
     }
 
     private func renderStatus(_ state: StatusFeature.State) {
@@ -330,7 +341,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
             clips = []
         }
 
-        clipsTableView.backgroundView = clips.isEmpty ? emptyClipsView : nil
+        clipsTableView.backgroundView = clips.isEmpty ? emptyClipsBackgroundView : nil
         clipsTableView.reloadData()
     }
 
