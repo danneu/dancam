@@ -72,6 +72,10 @@ app-test:
 raspi-mock:
     cd raspi/service && cargo run
 
+# Run the mock Pi service with a sample finished clip available from /v1/clips.
+raspi-mock-clips:
+    cd raspi/service && DANCAM_REC_DIR=assets/clips cargo run
+
 # Run the mock Pi service on 0.0.0.0:9000 for LAN device testing.
 raspi-mock-lan:
     cd raspi/service && DANCAM_BIND=0.0.0.0:9000 cargo run

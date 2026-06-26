@@ -4,6 +4,7 @@ struct AppDependencies {
     var health: HealthClient
     var status: StatusClient
     var clips: ClipsClient
+    var clipPull: ClipPullClient
     var preview: PreviewClient
     var recording: RecordingClient
     var sleep: @Sendable (Duration) async -> Void
@@ -12,6 +13,7 @@ struct AppDependencies {
         health: HealthClient,
         status: StatusClient = .noop,
         clips: ClipsClient = .noop,
+        clipPull: ClipPullClient = .noop,
         preview: PreviewClient = .noop,
         recording: RecordingClient = .noop,
         sleep: @escaping @Sendable (Duration) async -> Void = { duration in
@@ -21,6 +23,7 @@ struct AppDependencies {
         self.health = health
         self.status = status
         self.clips = clips
+        self.clipPull = clipPull
         self.preview = preview
         self.recording = recording
         self.sleep = sleep
@@ -36,6 +39,10 @@ struct AppDependencies {
             pinning: configuration.cameraAPIInterfacePinning
         )
         clips = .live(
+            baseURL: configuration.cameraAPIBaseURL,
+            pinning: configuration.cameraAPIInterfacePinning
+        )
+        clipPull = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning
         )

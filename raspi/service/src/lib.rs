@@ -63,6 +63,7 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/health", get(health::health))
         .route("/v1/status", get(status::status))
         .route("/v1/clips", get(clips::list_clips))
+        .route("/v1/clips/{id}", get(clips::serve_clip))
         .route("/v1/preview/live.mjpeg", get(preview::live_mjpeg))
         .route("/v1/recording/start", post(recording::start))
         .route("/v1/recording/stop", post(recording::stop))

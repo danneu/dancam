@@ -1,6 +1,6 @@
 import UIKit
 
-final class HomeViewController: UIViewController, UITableViewDataSource, ConnectionResumable {
+final class HomeViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, ConnectionResumable {
     private let dependencies: AppDependencies
     private let store: AppStore
     private let previewViewController: PreviewViewController
@@ -187,6 +187,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, Connect
         emptyClipsBackgroundView.addSubview(emptyClipsView)
 
         clipsTableView.dataSource = self
+        clipsTableView.delegate = self
         clipsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "clip")
         clipsTableView.rowHeight = UITableView.automaticDimension
         clipsTableView.estimatedRowHeight = 56
@@ -301,7 +302,17 @@ final class HomeViewController: UIViewController, UITableViewDataSource, Connect
         content.secondaryTextProperties.adjustsFontForContentSizeCategory = true
         content.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = content
-        cell.selectionStyle = .none
+        cell.selectionStyle = .default
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard clips.indices.contains(indexPath.row) else { return }
+
+        navigationController?.pushViewController(
+            ClipViewerViewController(dependencies: dependencies, clip: clips[indexPath.row]),
+            animated: true
+        )
     }
 }

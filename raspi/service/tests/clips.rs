@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, pin::Pin};
 use async_trait::async_trait;
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{header, Request, StatusCode},
 };
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -119,8 +119,84 @@ async fn clips_route_returns_empty_for_missing_dir() {
     assert_eq!(json["next_cursor"], Value::Null);
 }
 
+#[tokio::test]
+async fn serve_clip_returns_exact_bytes_and_headers() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+
+    let response = dancam::app(state(rec_dir.path.clone(), false))
+        .oneshot(clip_request("/v1/clips/7"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/mp2t")
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok()),
+        Some("10")
+    );
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body, Bytes::from_static(b"clip-bytes"));
+}
+
+#[tokio::test]
+async fn serve_clip_excludes_open_segment_while_recording() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00006.ts", b"finished");
+    rec_dir.write("seg_00007.ts", b"open");
+    let app = dancam::app(state(rec_dir.path.clone(), true));
+
+    let open_response = app
+        .clone()
+        .oneshot(clip_request("/v1/clips/7"))
+        .await
+        .unwrap();
+    assert_eq!(open_response.status(), StatusCode::NOT_FOUND);
+
+    let finished_response = app.oneshot(clip_request("/v1/clips/6")).await.unwrap();
+    assert_eq!(finished_response.status(), StatusCode::OK);
+    let body = finished_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    assert_eq!(body, Bytes::from_static(b"finished"));
+}
+
+#[tokio::test]
+async fn serve_clip_returns_not_found_for_missing_id() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+
+    let response = dancam::app(state(rec_dir.path.clone(), false))
+        .oneshot(clip_request("/v1/clips/8"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 fn state(rec_dir: PathBuf, recording: bool) -> AppState {
     AppState::new(BOOT_ID.to_string(), StubBackend { recording }).with_rec_dir(rec_dir)
+}
+
+fn clip_request(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .header("Host", "localhost:8080")
+        .body(Body::empty())
+        .unwrap()
 }
 
 struct TempRecDir {
