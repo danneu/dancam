@@ -31,3 +31,6 @@ secrets/
 *.ts
 *.mp4
 recordings/
+
+# Third-party source references (seeded via `just fetch-references`)
+references/

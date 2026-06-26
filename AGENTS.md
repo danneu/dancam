@@ -77,6 +77,7 @@ dancam/
   raspi/                 <- camera-unit software (Raspberry Pi). Has its own AGENTS.md.
     service/             <- Rust control/media service crate
     docs/design/         <- raspi-side ADRs ({seq}-YYYY-MM-DD-{slug}.md)
+  references/            <- third-party source clones (git-ignored; `just fetch-references`)
 ```
 
 When you work inside `app/` or `raspi/`, read that folder's AGENTS.md first
@@ -84,6 +85,19 @@ When you work inside `app/` or `raspi/`, read that folder's AGENTS.md first
 the details and constraints specific to that side. Each side's file links back here and
 to its sibling, so the three stay navigable (and de-duped: root owns the cross-cutting
 decisions, each side owns its own).
+
+## References
+
+`references/` holds read-only clones of upstream source we build against, so agents and
+humans can read the *exact* API we target. It is git-ignored (large, regenerable) --
+seed or refresh it with `just fetch-references`. Versions are pinned in
+`scripts/fetch-references.sh` to match what the Pi actually runs; run
+`just references-pi-version` to confirm the Pi's installed version before establishing or
+bumping a pin.
+
+- **picamera2** (`references/picamera2/`) -- Raspberry Pi camera stack imported by the Pi
+  camera process (`raspi/camera/camera.py`). Pinned to the `python3-picamera2` version on
+  Raspberry Pi OS Trixie. Upstream: https://github.com/raspberrypi/picamera2
 
 ## Architecture at a glance
 

@@ -29,3 +29,11 @@ raspi-run-lan:
 # Validate ADR filenames: format, per-side contiguous sequence, seq/date order.
 adr-check:
     bash scripts/check-adrs.sh
+
+# Seed/refresh third-party source references into references/ (pinned to the Pi's versions).
+fetch-references:
+    bash scripts/fetch-references.sh
+
+# Print the picamera2 version installed on the Pi (confirm/bump the pin in scripts/fetch-references.sh).
+references-pi-version:
+    bash scripts/references-pi-version.sh
