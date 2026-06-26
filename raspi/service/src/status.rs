@@ -1,3 +1,10 @@
+use axum::{extract::State, Json};
+
+use crate::{
+    sysfacts::{self, DiskUsage, MemInfo},
+    AppState,
+};
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct Status {
     pub recording: bool,
@@ -53,6 +60,40 @@ pub enum ChildEvent {
         #[serde(default)]
         detail: String,
     },
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct StatusResponse {
+    pub recording: bool,
+    pub camera_state: CameraState,
+    pub boot_id: String,
+    pub uptime_s: u64,
+    pub storage: Option<DiskUsage>,
+    pub temp_c: TempC,
+    pub mem: Option<MemInfo>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, PartialEq)]
+pub struct TempC {
+    pub soc: Option<f32>,
+    pub sensor: Option<f32>,
+}
+
+pub async fn status(State(state): State<AppState>) -> Json<StatusResponse> {
+    let backend_status = state.backend.status();
+
+    Json(StatusResponse {
+        recording: backend_status.recording,
+        camera_state: backend_status.camera_state,
+        boot_id: state.boot_id.to_string(),
+        uptime_s: state.started.elapsed().as_secs(),
+        storage: sysfacts::disk_usage(&state.rec_dir),
+        temp_c: TempC {
+            soc: sysfacts::soc_temp_c(),
+            sensor: None,
+        },
+        mem: sysfacts::mem_info(),
+    })
 }
 
 #[cfg(test)]

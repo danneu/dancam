@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 use dancam::{
     app,
@@ -16,13 +16,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(&bind).await?;
     let local_addr = listener.local_addr()?;
     let boot_id = resolve_boot_id();
+    let rec_dir = env::var_os("DANCAM_REC_DIR")
+        .map_or_else(|| PathBuf::from(dancam::DEFAULT_REC_DIR), PathBuf::from);
     let (state, supervisor): (AppState, Option<SupervisorControl>) =
         match env::var("DANCAM_BACKEND").as_deref() {
             Ok("camera") => {
                 let (backend, supervisor) = CameraProcess::spawn(CameraConfig::from_env());
-                (AppState::new(boot_id, backend), Some(supervisor))
+                (
+                    AppState::new(boot_id, backend).with_rec_dir(rec_dir.clone()),
+                    Some(supervisor),
+                )
             }
-            Ok("mock") | Err(_) => (AppState::new(boot_id, MockBackend::new()), None),
+            Ok("mock") | Err(_) => (
+                AppState::new(boot_id, MockBackend::new()).with_rec_dir(rec_dir.clone()),
+                None,
+            ),
             Ok(other) => {
                 tracing::error!(backend = other, "unknown DANCAM_BACKEND");
                 std::process::exit(1);

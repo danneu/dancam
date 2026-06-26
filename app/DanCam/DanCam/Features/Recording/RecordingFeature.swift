@@ -15,7 +15,7 @@ enum RecordingFeature {
         case startTapped
         case stopTapped
         case recordingResponse(Result<Bool, RecordingError>)
-        case healthResponse(Result<HealthResponse, HealthError>)
+        case statusResponse(Result<StatusResponse, StatusError>)
     }
 
     static func reduce(
@@ -26,7 +26,7 @@ enum RecordingFeature {
         switch action {
         case .onAppear:
             state = .unknown
-            return healthEffect(dependencies: dependencies)
+            return statusEffect(dependencies: dependencies)
 
         case .startTapped:
             state = .starting
@@ -35,7 +35,7 @@ enum RecordingFeature {
                     try await dependencies.recording.start()
                     guard Task.isCancelled == false else { return }
                     await send(.recordingResponse(.success(true)))
-                    try await refreshHealth(send: send, dependencies: dependencies)
+                    try await refreshStatus(send: send, dependencies: dependencies)
                 } catch is CancellationError {
                     return
                 } catch let error as URLError where error.code == .cancelled {
@@ -56,7 +56,7 @@ enum RecordingFeature {
                     try await dependencies.recording.stop()
                     guard Task.isCancelled == false else { return }
                     await send(.recordingResponse(.success(false)))
-                    try await refreshHealth(send: send, dependencies: dependencies)
+                    try await refreshStatus(send: send, dependencies: dependencies)
                 } catch is CancellationError {
                     return
                 } catch let error as URLError where error.code == .cancelled {
@@ -82,20 +82,20 @@ enum RecordingFeature {
             state = .failed(error.displayMessage)
             return .none
 
-        case .healthResponse(.success(let response)):
+        case .statusResponse(.success(let response)):
             state = response.recording ? .recording : .idle
             return .none
 
-        case .healthResponse(.failure(let error)):
+        case .statusResponse(.failure(let error)):
             state = .failed(error.displayMessage)
             return .none
         }
     }
 
-    private static func healthEffect(dependencies: AppDependencies) -> Effect<Action> {
-        .run(id: "recording-health", cancelInFlight: true) { send in
+    private static func statusEffect(dependencies: AppDependencies) -> Effect<Action> {
+        .run(id: "recording-status", cancelInFlight: true) { send in
             do {
-                try await refreshHealth(send: send, dependencies: dependencies)
+                try await refreshStatus(send: send, dependencies: dependencies)
             } catch is CancellationError {
                 return
             } catch let error as URLError where error.code == .cancelled {
@@ -106,24 +106,24 @@ enum RecordingFeature {
         }
     }
 
-    private static func refreshHealth(
+    private static func refreshStatus(
         send: (Action) async -> Void,
         dependencies: AppDependencies
     ) async throws {
         do {
-            let response = try await dependencies.health.fetch()
+            let response = try await dependencies.status.fetch()
             guard Task.isCancelled == false else { return }
-            await send(.healthResponse(.success(response)))
+            await send(.statusResponse(.success(response)))
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {
             throw error
-        } catch let error as HealthError {
+        } catch let error as StatusError {
             guard Task.isCancelled == false else { return }
-            await send(.healthResponse(.failure(error)))
+            await send(.statusResponse(.failure(error)))
         } catch {
             guard Task.isCancelled == false else { return }
-            await send(.healthResponse(.failure(.transport(error.localizedDescription))))
+            await send(.statusResponse(.failure(.transport(error.localizedDescription))))
         }
     }
 }

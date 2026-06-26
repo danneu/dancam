@@ -148,6 +148,15 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   `storage{used,total,locked,oldest_ts,newest_ts}`, `temp_c{soc,sensor?}`,
   `encode_active`, `time_synced`, `last_incident_id`, `boot_id`, `uptime_s`. (Feeds the
   CarPlay panel.)
+  > **Note (2026-06-26):** Swoop `fern` ships a dashboard subset of this accepted
+  > contract without changing the full contract: `recording`, `camera_state`,
+  > `boot_id`, `uptime_s`, nullable `storage{used,total}`, nullable
+  > `temp_c{soc,sensor}`, and nullable `mem{total,available,swap_total,swap_used}`.
+  > The status fields `since`, `current_segment_id`, storage
+  > `locked/oldest_ts/newest_ts`, `encode_active`, `time_synced`, and
+  > `last_incident_id` remain intentionally deferred until the storage coordinator,
+  > time-sync, and incident layers exist. `temp_c.sensor` is present but null until
+  > the Picamera2 owner surfaces sensor metadata.
 - `GET /v1/health` -- tiny liveness `{boot_id, uptime_s, recording, t_ms}`. (Unauth.)
 - `POST /v1/recording/start` / `POST /v1/recording/stop` (idempotent; stop finalizes
   the current segment).
@@ -256,6 +265,13 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   **best-effort** and should be re-run after sync for an evidence-grade window.
   (`app/AGENTS.md` makes correct timestamps an evidence requirement; this states what the
   contract guarantees before vs. after sync.)
+  > **Note (2026-06-26):** Swoop `fern` ships a cheap finished-segment listing for
+  > the current flat `seg_NNNNN.ts` layout. It returns newest-first clip metadata with
+  > `id`, `bytes`, `etag`, `locked:false`, `time_approximate:true`, null
+  > `start_ms`/`dur_ms`, `server_time_ms`, and `next_cursor:null`; it excludes the
+  > highest sequence while recording because that segment is still open. Real
+  > `start_ms`, `dur_ms`, `locked`, and non-approximate time provenance remain
+  > deferred until the storage/time-sync/incident layers land.
 - `GET /v1/clips/{id}` -- resumable pull; `Range`/`If-Range`, `Accept-Ranges`, `ETag`,
   `Content-Range`; `application/mp2t` (the `.ts` segment bytes).
 - `GET /v1/clips/{id}/thumb?w=` -- keyframe JPEG (the Pi caches one per segment).

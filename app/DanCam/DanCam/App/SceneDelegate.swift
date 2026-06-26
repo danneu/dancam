@@ -7,7 +7,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         let window = UIWindow(windowScene: windowScene)
-        let rootViewController = HealthViewController(dependencies: .live)
+        let rootViewController = HomeViewController(dependencies: .live)
         let navigationController = UINavigationController(rootViewController: rootViewController)
 
         window.rootViewController = navigationController

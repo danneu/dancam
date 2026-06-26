@@ -4,12 +4,13 @@ import Testing
 
 @MainActor
 struct RecordingFeatureTests {
-    @Test func onAppearSeedsRecordingStateFromHealth() async {
-        let health = HealthResponse.recording(true)
+    @Test func onAppearSeedsRecordingStateFromStatus() async {
+        let status = StatusResponse.recording(true)
         let store = TestStore(
             initialState: RecordingFeature.State.unknown,
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { health }),
+                health: HealthClient(fetch: { fatalError() }),
+                status: StatusClient(fetch: { status }),
                 recording: RecordingClient(start: { fatalError() }, stop: { fatalError() })
             ),
             reduce: RecordingFeature.reduce
@@ -18,17 +19,18 @@ struct RecordingFeatureTests {
         await store.send(.onAppear) {
             $0 = .unknown
         }
-        await store.receive(.healthResponse(.success(health))) {
+        await store.receive(.statusResponse(.success(status))) {
             $0 = .recording
         }
     }
 
-    @Test func startTappedStartsRecordingThenRefreshesHealth() async {
-        let health = HealthResponse.recording(true)
+    @Test func startTappedStartsRecordingThenRefreshesStatus() async {
+        let status = StatusResponse.recording(true)
         let store = TestStore(
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { health }),
+                health: HealthClient(fetch: { fatalError() }),
+                status: StatusClient(fetch: { status }),
                 recording: RecordingClient(start: {}, stop: { fatalError() })
             ),
             reduce: RecordingFeature.reduce
@@ -40,17 +42,18 @@ struct RecordingFeatureTests {
         await store.receive(.recordingResponse(.success(true))) {
             $0 = .recording
         }
-        await store.receive(.healthResponse(.success(health))) {
+        await store.receive(.statusResponse(.success(status))) {
             $0 = .recording
         }
     }
 
-    @Test func stopTappedStopsRecordingThenRefreshesHealth() async {
-        let health = HealthResponse.recording(false)
+    @Test func stopTappedStopsRecordingThenRefreshesStatus() async {
+        let status = StatusResponse.recording(false)
         let store = TestStore(
             initialState: RecordingFeature.State.recording,
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { health }),
+                health: HealthClient(fetch: { fatalError() }),
+                status: StatusClient(fetch: { status }),
                 recording: RecordingClient(start: { fatalError() }, stop: {})
             ),
             reduce: RecordingFeature.reduce
@@ -62,7 +65,7 @@ struct RecordingFeatureTests {
         await store.receive(.recordingResponse(.success(false))) {
             $0 = .idle
         }
-        await store.receive(.healthResponse(.success(health))) {
+        await store.receive(.statusResponse(.success(status))) {
             $0 = .idle
         }
     }
@@ -72,6 +75,7 @@ struct RecordingFeatureTests {
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError() }),
+                status: StatusClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: { throw RecordingError.http(503) }, stop: {})
             ),
             reduce: RecordingFeature.reduce
@@ -90,6 +94,7 @@ struct RecordingFeatureTests {
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError() }),
+                status: StatusClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: { throw CancellationError() }, stop: {})
             ),
             reduce: RecordingFeature.reduce
@@ -105,13 +110,16 @@ struct RecordingFeatureTests {
     }
 }
 
-private extension HealthResponse {
-    static func recording(_ isRecording: Bool) -> HealthResponse {
-        HealthResponse(
+private extension StatusResponse {
+    static func recording(_ isRecording: Bool) -> StatusResponse {
+        StatusResponse(
+            recording: isRecording,
+            cameraState: .running,
             bootId: "boot-123",
             uptimeS: 42,
-            recording: isRecording,
-            tMs: 123456789
+            storage: nil,
+            tempC: TempC(soc: nil, sensor: nil),
+            mem: nil
         )
     }
 }

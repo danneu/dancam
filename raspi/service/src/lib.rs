@@ -1,4 +1,9 @@
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 
 use axum::{
     body::Body,
@@ -14,17 +19,22 @@ use crate::backend::Backend;
 
 pub mod backend;
 pub mod camera;
+mod clips;
 mod health;
 mod jpeg;
 pub mod preview;
 mod recording;
 pub mod status;
+mod sysfacts;
+
+pub const DEFAULT_REC_DIR: &str = "/home/dan/rec";
 
 #[derive(Clone)]
 pub struct AppState {
     pub boot_id: Arc<str>,
     pub started: Instant,
     pub backend: Arc<dyn Backend>,
+    pub rec_dir: Arc<Path>,
     host_policy: Arc<HostPolicy>,
 }
 
@@ -37,14 +47,22 @@ impl AppState {
             boot_id: Arc::from(boot_id),
             started: Instant::now(),
             backend: Arc::new(backend),
+            rec_dir: Arc::from(PathBuf::from(DEFAULT_REC_DIR).into_boxed_path()),
             host_policy: Arc::new(HostPolicy::default()),
         }
+    }
+
+    pub fn with_rec_dir(mut self, rec_dir: PathBuf) -> Self {
+        self.rec_dir = Arc::from(rec_dir.into_boxed_path());
+        self
     }
 }
 
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health::health))
+        .route("/v1/status", get(status::status))
+        .route("/v1/clips", get(clips::list_clips))
         .route("/v1/preview/live.mjpeg", get(preview::live_mjpeg))
         .route("/v1/recording/start", post(recording::start))
         .route("/v1/recording/stop", post(recording::stop))
