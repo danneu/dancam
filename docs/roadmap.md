@@ -61,14 +61,23 @@ mock first.
       preview open, recording active, clean `.ts` segments, no timestamp warnings,
       stable SoC temperature, and no active swap churn. The richer "live status"
       work was intentionally split out rather than stretched into this slice.
-- [ ] **Swoop `fern` -- Pi status/events telemetry.** Add the user-facing telemetry
-      surface that `jet` deliberately deferred: `GET /v1/status` for recording state,
-      camera state, boot/uptime, rec-dir storage, SoC temperature, memory/swap
-      headroom, and sensor temperature when Picamera2 metadata is surfaced; `GET
-      /v1/events` for heartbeat/status deltas; and `GET /v1/capabilities` if the app
-      still needs explicit capability negotiation such as `preview.concurrent`. Keep
-      `/v1/health` small and boring as a cheap liveness probe. This can feed the app
-      first and the later CarPlay status panel once entitlement work exists.
+- [ ] **Swoop `fern` -- Home camera dashboard.** Make the app's first screen the
+      operational surface instead of a health/check screen: live preview is always on
+      top when connected, recording state + one Start/Stop control sit with the
+      preview, and a simple non-interactive list of finished segment files appears
+      below. Drive the API from that UI; keep `/v1/health` small and boring as a
+      cheap liveness probe, not a user screen.
+      - [ ] Replace the health-first root with a home dashboard that starts preview
+            immediately and keeps recording controls on that same screen.
+      - [ ] Add `GET /v1/status` for dashboard facts: recording state, camera state,
+            boot/uptime, rec-dir storage, SoC temperature, memory/swap headroom, and
+            sensor temperature when Picamera2 metadata is surfaced.
+      - [ ] Add the smallest useful `GET /v1/clips` metadata list for finished `.ts`
+            segments: filename/id, bytes, and best-effort time/duration when cheap.
+      - [ ] Render the finished-segment list below preview as read-only rows; playback,
+            thumbnails, selection, and pull/download stay in `lime`.
+      - [ ] Start with polling `status`/`clips`; add `GET /v1/events` only if polling
+            makes the dashboard or later CarPlay status panel worse.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
       (missing / unformatted / wrong filesystem); auto-format on first insert;
       format-from-app with a double-confirm (`POST /v1/storage/format`).
