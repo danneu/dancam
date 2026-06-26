@@ -49,24 +49,26 @@ final class PreviewViewController: UIViewController {
         imageView.contentMode = .scaleAspectFit
         imageView.translatesAutoresizingMaskIntoConstraints = false
 
-        statusLabel.font = .preferredFont(forTextStyle: .body)
+        statusLabel.font = .preferredFont(forTextStyle: .caption1)
         statusLabel.adjustsFontForContentSizeCategory = true
-        statusLabel.numberOfLines = 0
+        statusLabel.numberOfLines = 2
+        statusLabel.textColor = .white
+        statusLabel.shadowColor = .black
+        statusLabel.shadowOffset = CGSize(width: 0, height: 1)
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = UIStackView(arrangedSubviews: [imageView, statusLabel])
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        view.addSubview(stack)
+        view.addSubview(imageView)
+        view.addSubview(statusLabel)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            imageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: view.topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor, multiplier: 0.75),
+            statusLabel.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.layoutMarginsGuide.trailingAnchor),
+            statusLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
         ])
     }
 
