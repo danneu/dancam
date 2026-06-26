@@ -135,7 +135,7 @@ mock first.
             `dancam-dev` AP, desk and in-car, with and without live preview running
             concurrently (spike 2); and confirm a pulled `.ts` plays via loopback HLS +
             AVPlayer on-device (spike 5a). These set the pull UX and gate the build below.
-      - [ ] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
+      - [x] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
             `.ts` as a plain `200` (`application/mp2t`); never serves the open segment
             (matches the list). The dumbest end-to-end that proves tap -> pull -> play; no
             ranged-pull surface until the app step below needs it.
@@ -157,7 +157,7 @@ mock first.
       - [ ] **App:** on-device clip store -- pulled bytes named by id+etag, reused on
             replay (never re-pull 38 MB), with a simple size cap (bytes reused later by
             `tide` export).
-      - [ ] **App:** download-then-play -- a `127.0.0.1` server serving a generated
+      - [x] **App:** download-then-play -- a `127.0.0.1` server serving a generated
             single-segment VOD `.m3u8` (`#EXT-X-ENDLIST`) over the pulled `.ts`, played
             by AVPlayer; keeps AVPlayer on loopback (no-internet AP + future-TLS).
       - [ ] **App:** tapping a clip pushes a viewer screen (AVPlayer + transport
