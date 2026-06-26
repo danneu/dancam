@@ -99,13 +99,50 @@ mock first.
       - [x] Docs land in lockstep: ADR 09 (`just adr-check` green), README renumbered to
             the pinned 8-section runbook, `raspi/AGENTS.md` flipped to "playbook is the
             source of truth."
+- [ ] **Swoop `lime` -- Watch recorded clips.** Browse the clip list, pull a finished
+      segment with resumable `Range` requests, and play it via a local HLS playlist +
+      AVPlayer on a loopback server. _The chunky one; the first time footage is
+      watchable on the phone. A full 30 s segment is ~38 MB (10 Mbps CBR, confirmed on
+      real `seg_*.ts`), so the pull -- not the UI -- is the weight here._
+      - [ ] **Spike first (real Pi):** time a real ~38 MB `seg_*.ts` pull over the
+            `dancam-dev` AP, desk and in-car, with and without live preview running
+            concurrently (spike 2); and confirm a pulled `.ts` plays via loopback HLS +
+            AVPlayer on-device (spike 5a). These set the pull UX and gate the build below.
+      - [ ] **Pi:** `GET /v1/clips/{id}` serves a finished segment's raw `.ts` with
+            `Accept-Ranges: bytes`, `ETag` (reuse the list's `{seq}-{bytes}`),
+            `Range`/`If-Range` -> `206`/`Content-Range`, `416` on unsatisfiable range,
+            `application/mp2t`; never serves the open segment (matches the list).
+      - [ ] **Pi:** report `dur_ms` cheaply -- ~30 s from the segment cadence, ffprobe
+            only the final short segment if needed -- so rows show length now; `start_ms`
+            and real provenance stay deferred to `moss`.
+      - [ ] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`
+            with full `Range`/`ETag`, so the app pull + playback path runs against the
+            mock first.
+      - [ ] **App (riskiest):** resumable ranged pull on the pinned `NWConnection` -- a
+            `Range`/`If-Range`/`Content-Range` loop that streams to a local file and
+            resumes from the last byte across drops (verify `ETag` before resuming). At
+            ~38 MB over a congested 2.4 GHz link a pull is ~6-26 s, so a mid-pull drop
+            must resume, never restart.
+      - [ ] **App:** on-device clip store -- pulled bytes named by id+etag, reused on
+            replay (never re-pull 38 MB), with a simple size cap (bytes reused later by
+            `tide` export).
+      - [ ] **App:** download-then-play -- a `127.0.0.1` server serving a generated
+            single-segment VOD `.m3u8` (`#EXT-X-ENDLIST`) over the pulled `.ts`, played
+            by AVPlayer; keeps AVPlayer on loopback (no-internet AP + future-TLS).
+      - [ ] **App:** tapping a clip pushes a viewer screen (AVPlayer + transport
+            controls) into the existing nav, showing pull **progress** (a 6-26 s silent
+            spinner reads as a hang), then plays; handles pull failure / resume.
+      - [ ] **App:** clip rows show duration + best-effort created time + a placeholder
+            poster; generate and cache a real poster from any clip already pulled (free
+            -- the phone has the bytes; no Pi work, no extra wire).
+      - Scope fence: one finished segment per clip (no multi-segment timeline), no export
+        (`tide`), no real timestamps (`moss`), no locked/incident clips (`nova`), no
+        server-side browse thumbnails (deferred -- see deepening passes). If the
+        iPhone-poster approach replaces ADR 02's Pi-generated `/thumb` for the pulled
+        case, append a note to ADR 02 when `lime` lands.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
       (missing / unformatted / wrong filesystem); auto-format on first insert;
       format-from-app with a double-confirm (`POST /v1/storage/format`).
-- [ ] **Swoop `lime` -- Watch recorded clips.** Browse a clip list (`GET /v1/clips`),
-      pull one with resumable `Range` requests, play it via a local HLS playlist +
-      AVPlayer on a loopback server. _The chunky one; now that recording exists, it
-      pays off. Spike: 2.4 GHz in-car throughput / pull times._
 - [ ] **Swoop `moss` -- Time provenance.** `POST /v1/time` at handshake (the Pi has no
       RTC); "time unverified" UI until sync; timestamps on clips.
 - [ ] **Swoop `nova` -- Incident lock (manual).** A "save this moment" button: Pi
@@ -125,7 +162,10 @@ mock first.
 - [ ] **Later / deepening passes.** Thermal-behavior policy (what recording does at
       the sensor's 50 C limit); replace the Python Picamera2 camera owner with an
       all-Rust camera binary before or during the read-only car-image pass; HDR tuning;
-      auth hardening (token, then pinned-cert TLS); GPS time source; parked / sentry
+      server-side browse thumbnails (`GET /v1/clips/{id}/thumb` -- a cheap lazy ffmpeg
+      keyframe decode cached per segment, software single-frame only; for clips not yet
+      pulled, deferred out of `lime`); auth hardening (token, then pinned-cert TLS); GPS
+      time source; parked / sentry
       mode (gated on a future constant-power topology -- v1 power is switched /
       drive-only, see the power-source ADR).
 
