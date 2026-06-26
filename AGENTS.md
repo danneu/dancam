@@ -174,6 +174,13 @@ To start a new ADR, copy the structure of an existing one in the same folder.
 - **Writing style:** plain ASCII. Write `4x` not the times sign, straight quotes,
   `--` not an em dash, `degrees`/`deg` not the degree sign. Applies to docs, code
   comments, and commit messages.
+- **References in docs/plans:** never cite line numbers -- they drift the moment a
+  file changes and silently rot. Point at a stable anchor instead:
+  `path/to/file#identifier`, where the identifier is a symbol or heading that can be
+  searched for verbatim -- e.g. `raspi/service/src/main.rs#fn run_server`,
+  `app/AGENTS.md#Conventions`, `docs/roadmap.md#Icebox`. When no named anchor exists,
+  quote a short unique snippet rather than a line number. (Clickable `file:line` in
+  chat is fine -- it's transient; this rule is about durable docs, plans, and ADRs.)
 - **Tasks:** use the root `Justfile` for common repo commands when one exists. Run
   `just --list` to discover tasks, and prefer those tasks over spelling out raw
   `cargo`/Xcode/etc. commands unless you are deliberately testing the lower-level
