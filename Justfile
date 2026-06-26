@@ -10,6 +10,20 @@ raspi-test:
 raspi-deploy:
     ./raspi/deploy.sh
 
+# Provision the Pi's system layer with Ansible over home Wi-Fi (apt, camera overlay,
+# mDNS, locale, AP profile, video group). Override the address with host=192.168.1.50
+# when mDNS is flaky. Prompts once for dan's sudo password.
+raspi-provision host='dancam.local':
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e ansible_host={{host}} --ask-become-pass'
+
+# Dry-run the provision: show what is out of sync on the Pi without changing anything.
+raspi-provision-check host='dancam.local':
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e ansible_host={{host}} --ask-become-pass --check --diff'
+
+# Hardware-free gate: syntax + ansible-lint the playbook on the Mac, no Pi connection.
+raspi-provision-lint:
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml --syntax-check && ansible-lint site.yml'
+
 # Run from the Mac while the Pi is on home Wi-Fi; join dancam-dev from the iPhone,
 # not this Mac. Overrides: DANCAM_HOST, DANCAM_SSH_KEY, DANCAM_HOME_WIFI.
 # Flip the Pi to AP mode (dancam-dev) with auto-revert to home Wi-Fi after `minutes`, then count down to the revert.

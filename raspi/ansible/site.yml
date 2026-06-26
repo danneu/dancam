@@ -1,0 +1,171 @@
+---
+# The dancam Pi system layer, declaratively. Ansible owns onboard system state
+# (apt, the config.txt camera overlay, Avahi scoping, locale, the dancam-ap profile,
+# dan's video group); deploy.sh still owns the dancam binary + systemd unit, and the
+# README owns the human-only/runtime-only steps. One home per fact: a command lives
+# here, its hard-won "why" lives as the # comment on the action it justifies. See
+# raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md.
+- name: Converge the dancam Pi system layer
+  hosts: dancam
+  become: true
+
+  tasks:
+    # Car-image hardening (read-only overlay root, /data journaled partition, AP
+    # autoconnect) is deliberately deferred -- see raspi/AGENTS.md dev-vs-car notes
+    # and ADR 09. No speculative tasks here; this provisions the dev image only.
+
+    - name: Upgrade all apt packages to current
+      # Fresh Lite image lags; full == faithful "apt full-upgrade". notify fires
+      # only when a package actually changed, so this reboots after ANY upgrade --
+      # intentional and safe, and simpler than probing /run/reboot-required for
+      # kernel-only (the README's old rule). See ADR 09.
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: full
+      notify: Reboot host
+
+    - name: Install operator-convenience packages
+      # Operator convenience; the only non-load-bearing add (vs. the camera runtime
+      # deps in the next task).
+      ansible.builtin.apt:
+        name: [vim]
+        state: present
+
+    - name: Install the camera process runtime dependencies
+      # LOAD-BEARING runtime deps of jet's camera owner: raspi/camera/camera.py
+      # imports picamera2 and shells out to ffmpeg (FfmpegOutput) to mux the H.264
+      # MPEG-TS recording segments, and the deployed DANCAM_BACKEND=camera service
+      # spawns it. Without these the Pi converges clean yet the camera dies at
+      # runtime (ImportError: picamera2 / ffmpeg-not-found) -- exactly the silent,
+      # image-dependent drift this migration exists to kill. libcamera, numpy,
+      # simplejpeg arrive transitively. install_recommends: false == the README's
+      # --no-install-recommends, keeping the desktop GUI stack off Lite. No reboot
+      # notify (no kernel/boot change). See ADR 07 (jet's Picamera2 owner).
+      ansible.builtin.apt:
+        name: [python3-picamera2, ffmpeg]
+        state: present
+        install_recommends: false
+
+    - name: Disable camera auto-detect in config.txt
+      # Arducam IMX708 is not an official module, so it is not auto-detected.
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^camera_auto_detect='
+        line: 'camera_auto_detect=0'
+      notify: Reboot host
+
+    - name: Load the IMX708 device-tree overlay in config.txt
+      # In-kernel overlay survives apt upgrade, unlike Arducam's prebuilt-driver
+      # script. The anchored regexp won't touch a commented #dtoverlay; insertafter
+      # keeps it in [all] scope even if a later section is appended.
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^dtoverlay=imx708$'
+        line: 'dtoverlay=imx708'
+        insertafter: '^\[all\]'
+      notify: Reboot host
+
+    - name: Scope mDNS (Avahi) to the wlan0 interface
+      # Two DISTINCT failure modes motivate this task; do not conflate them.
+      # (a) Directive ABSENT: Avahi falls back to all interfaces incl. loopback, can
+      # self-conflict on a stale loopback publication, and renames the host to
+      # dancam-2.local -- a boot race, so it flakes (some boots come up fine). This
+      # is why the directive must exist AND land under [server]: ini_file guarantees
+      # the section placement regardless of prior content, where lineinfile would
+      # EOF-append it out of section if the key were ever absent, silently breaking
+      # the scoping.
+      # (b) Directive PRESENT but SPACED: no_extra_spaces is REQUIRED, not cosmetic.
+      # ini_file defaults to "allow-interfaces = wlan0" (sep " = "), but Avahi's ini
+      # parser strips only leading whitespace, so the space before = stays glued to
+      # the key ("allow-interfaces "). That is then an UNKNOWN key, and Avahi treats
+      # unknown keys as FATAL: load_config_file returns -1 and avahi-daemon refuses
+      # to start (deterministic on every boot -- status "failed", journal "Invalid
+      # configuration key"), NOT a silent ignore. no_extra_spaces emits
+      # "allow-interfaces=wlan0", the exact form the README sed proved working.
+      # backup preserves the README's .conf backup caution. mode '0644' is
+      # avahi-daemon.conf's canonical perm and clears ansible-lint's default
+      # risky-file-permissions rule, which ini_file would otherwise trip (it defaults
+      # to create: true with no mode).
+      community.general.ini_file:
+        path: /etc/avahi/avahi-daemon.conf
+        section: server
+        option: allow-interfaces
+        value: wlan0
+        no_extra_spaces: true
+        backup: true
+        mode: '0644'
+      notify: Restart avahi-daemon
+
+    - name: Generate the en_US.UTF-8 locale
+      # Silences the "cannot change locale (UTF-8)" SSH login warning on fresh Lite.
+      community.general.locale_gen:
+        name: en_US.UTF-8
+        state: present
+
+    - name: Provision the dancam-ap access point profile (no PSK)
+      # AP profile spec per ADR 06 (amended 2026-06-25: WPA2-AES). The cipher pin --
+      # proto rsn, pairwise ccmp, group ccmp -- removes TKIP/WPA1 from the beacon so
+      # iOS stops flagging the AP "Weak Security"; without it a fresh provision
+      # silently regresses that fix. The three cipher props MUST be YAML lists, not
+      # scalars: community.general.nmcli marks proto/pairwise/group list-typed and
+      # always parses the live value into a list, but in diff mode leaves the desired
+      # value as written, then only does an order-insensitive list compare when BOTH
+      # sides are lists. A scalar "proto: rsn" compares ["rsn"] != "rsn" and churns
+      # every run -- breaking the changed=0 idempotency test (verification step 6);
+      # the single-element list "[rsn]" compares equal and is idempotent. key-mgmt is
+      # str-typed, so it stays scalar. The WPA PSK is omitted on purpose: it is set
+      # once by hand on the Pi (README) so the secret never enters the repo or the
+      # playbook, and leaving the secret field unmanaged is also what keeps this task
+      # idempotent (round-tripping NM secret fields through the module is an
+      # unreliable diff). autoconnect=false so bringing it up never strands the Mac.
+      community.general.nmcli:
+        conn_name: dancam-ap
+        type: wifi
+        ifname: wlan0
+        ssid: dancam-dev
+        autoconnect: false
+        wifi:
+          mode: ap
+          band: bg
+          channel: 1
+        wifi_sec:
+          key-mgmt: wpa-psk
+          proto: [rsn]
+          pairwise: [ccmp]
+          group: [ccmp]
+        method4: shared
+        ip4: 10.42.0.1/24
+        method6: ignore
+        state: present
+
+    - name: Ensure dan is in the video group
+      # jet's Picamera2 camera owner (DANCAM_BACKEND=camera, set on the deployed
+      # unit) opens the camera under systemd as user dan, which needs video-group
+      # membership to reach /dev/video11 (bcm2835-codec, used by the hardware
+      # MJPEGEncoder) and /dev/dma_heap/* (libcamera buffers). The Raspberry Pi
+      # Imager default user already gets video, so on the Imager bootstrap path this
+      # is a no-op -- but guaranteeing it declaratively is the whole point of this
+      # layer: a re-image or alternate provisioning path where the default user lacks
+      # video would otherwise provision clean yet fail the camera at runtime.
+      # append: true so we never strip dan's other groups. This is system state, so
+      # the playbook owns it rather than SupplementaryGroups on the deploy.sh-owned
+      # unit.
+      ansible.builtin.user:
+        name: dan
+        groups: video
+        append: true
+
+  handlers:
+    - name: Restart avahi-daemon
+      # Re-read avahi-daemon.conf so the wlan0 scoping takes effect now, not just on
+      # next boot.
+      ansible.builtin.service:
+        name: avahi-daemon
+        state: restarted
+
+    # Defined last so it runs after Restart avahi-daemon. A handler runs once per
+    # play no matter how many tasks notify it; on a clean re-run nothing is notified,
+    # so no reboot. The reboot module waits for the connection to come back on its
+    # own.
+    - name: Reboot host
+      ansible.builtin.reboot:

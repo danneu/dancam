@@ -77,9 +77,11 @@ current provisional direction until it is captured.
 - **Access point:** a NetworkManager hotspot (`nmcli`, `ipv4.method=shared`) on
   the 2.4 GHz band so the phone can connect directly with no router. The current
   dev profile is `dancam-ap`: SSID `dancam-dev`, WPA2-PSK pinned to AES
-  (RSN/CCMP, no TKIP) and entered manually (do not commit the password), channel
-  1, `ipv4.addresses 10.42.0.1/24`,
-  `ipv6.method ignore`, and `connection.autoconnect no`. NM shared mode runs its own
+  (RSN/CCMP, no TKIP), channel 1, `ipv4.addresses 10.42.0.1/24`,
+  `ipv6.method ignore`, and `connection.autoconnect no`. Ansible provisions every
+  field of this profile except the PSK (see
+  `docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`); the password is set
+  by hand on the Pi so it never enters the repo. NM shared mode runs its own
   `dnsmasq` for DHCP/DNS; during bring-up it served `10.42.0.10` through
   `10.42.0.254`. ADR 02's captive-probe DNS lever is applied through that instance,
   not a hand-run DNS service, but is deferred until persistent no-internet joins need
@@ -113,11 +115,15 @@ specified in `docs/design/07-2026-06-25-picamera2-camera-owner.md`. Two facts sh
 release code is **cross-compiled on the dev host** (never built on the Pi), and the
 **dev image differs from the car image**.
 
-The root [`README.md`](../README.md) is the fresh-Pi setup runbook. When a raspi
-change requires package installs, boot config, NetworkManager profiles, Avahi
-settings, systemd units, deploy-path changes, AP/mDNS changes, or any other
-onboard state, update the README in the same change with exact reproduction and
-verification steps.
+The Ansible playbook (`ansible/site.yml`) is the source of truth for onboard **system
+state** -- apt packages, `/boot/firmware/config.txt`, NetworkManager profiles, Avahi
+scoping, locale, and group membership. When a raspi change touches any of that, update
+`site.yml` and its task comment in the same change (the comment is the single home of
+the *why*); see `docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`. The
+systemd unit and deploy paths stay `deploy.sh`'s. The root [`README.md`](../README.md)
+is the bootstrap/verify/ops runbook -- flash, SSH, smoke-tests, the one-time manual AP
+PSK, the AP safe-flip procedure -- and is kept in sync in the same change whenever the
+human-facing steps move.
 
 ### Local Mac service loop
 
@@ -204,7 +210,9 @@ shell, not `rustup target add`.
 - One-time: nothing to install by hand -- `flake.nix` (repo root) pins a Rust
   toolchain carrying the `aarch64-unknown-linux-musl` target plus `zig` +
   `cargo-zigbuild` (zig is the cross-linker; the deps are pure Rust, so no C cross-
-  toolchain is needed). Just need Nix with flakes enabled.
+  toolchain is needed). The same dev shell also ships `ansible` + `ansible-lint` for
+  Pi provisioning (`just raspi-provision*`; see ADR 09). Just need Nix with flakes
+  enabled.
 - Build: `nix develop -c cargo zigbuild --release --target
   aarch64-unknown-linux-musl --manifest-path raspi/service/Cargo.toml` -> a single
   static musl binary (nothing to install on the read-only root; the service-language
@@ -275,3 +283,8 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `08-2026-06-25-fixed-infinity-focus.md` (Accepted) -- the camera owner disables
   autofocus and locks the IMX708 lens to infinity so recording cannot hunt onto
   windshield artifacts.
+- `09-2026-06-26-pi-system-layer-config-ansible.md` (Accepted) -- the Pi's system
+  layer (apt, camera overlay, Avahi scoping, locale, the `dancam-ap` profile sans PSK,
+  `dan`'s `video` group) is provisioned declaratively with Ansible from the Mac;
+  `deploy.sh` keeps the binary/unit and the README becomes a bootstrap/verify/ops
+  runbook.

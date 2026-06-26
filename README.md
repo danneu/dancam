@@ -42,40 +42,44 @@ Confirm it came up as the 64-bit Trixie kernel (`aarch64` / `v8` = 64-bit):
 uname -a
 ```
 
-## 3. Update packages
+## 3. Provision the system layer (Ansible)
 
-A fresh Lite image is already a bit behind. Refresh the package index, upgrade what's
-installed, then add anything you want on the Pi (e.g. `vim`):
+The Pi's onboard system state -- apt upgrade, the IMX708 camera overlay, the camera
+process dependencies (`python3-picamera2`, `ffmpeg`), mDNS scoping, the `en_US.UTF-8`
+locale, the `dancam-ap` access-point profile (without its password), and `dan`'s
+`video`-group membership -- is provisioned declaratively with Ansible. The playbook
+(`raspi/ansible/site.yml`) is the source of truth for that state; the *why* behind each
+choice lives in its task comments (see also
+`raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`). Run it from the
+repo root **over home Wi-Fi** -- it needs internet for apt, and the Pi's AP has no
+upstream:
 
 ```sh
-# refresh the package index, then upgrade everything already installed
-sudo apt update && sudo apt full-upgrade -y
-
-# install vim, or any other packages you might want on the Pi
-sudo apt install -y vim
+just raspi-provision          # converge the Pi; reboots itself if a task needs it
 ```
 
-If the upgrade pulls a new kernel/firmware, `sudo reboot` to pick it up.
+It prompts once for `dan`'s sudo password. When mDNS is flaky, target a raw LAN IP:
+`just raspi-provision host=192.168.1.50`.
+
+Preview what would change without touching the Pi (the drift detector), or lint the
+playbook on the Mac with no Pi connection:
+
+```sh
+just raspi-provision-check    # --check --diff: shows pending changes, makes none
+just raspi-provision-lint     # --syntax-check + ansible-lint, hardware-free
+```
+
+Re-running is idempotent: a converged Pi reports `changed=0` and does not reboot. The
+one piece the playbook deliberately leaves unset is the AP password -- that is a
+one-time manual step in section 6, so the secret never enters the repo.
 
 ## 4. Enable the camera (IMX708)
 
-The Arducam IMX708 is not an official module, so it is not auto-detected. Turn
-auto-detect off and load the in-kernel overlay in `/boot/firmware/config.txt`:
-
-```sh
-sudo sed -i 's/^camera_auto_detect=1/camera_auto_detect=0/' /boot/firmware/config.txt
-echo 'dtoverlay=imx708' | sudo tee -a /boot/firmware/config.txt
-
-# verify the two lines look right, then reboot to load the overlay
-grep -nE 'camera_auto_detect|imx708' /boot/firmware/config.txt
-sudo reboot
-```
-
-`dtoverlay=imx708` is appended under the `[all]` section at the end of the file, so
-it applies to the Zero 2 W. Do **not** use Arducam's `install_pivariety_pkgs.sh`:
-the in-kernel overlay survives `apt upgrade`, the prebuilt-driver script does not.
-
-After the reboot, SSH back in and smoke-test capture:
+Provisioning (section 3) turned off `camera_auto_detect` and loaded the in-kernel
+`dtoverlay=imx708` in `/boot/firmware/config.txt`, then rebooted to apply it (the why
+-- not an official module, in-kernel overlay survives `apt upgrade` unlike Arducam's
+prebuilt-driver script -- lives in the playbook task comments). SSH back in and
+smoke-test capture:
 
 ```sh
 rpicam-hello --list-cameras              # should list: 0 : imx708 [4608x2592 ...]
@@ -90,106 +94,38 @@ Optionally pull the image to the Mac to eyeball focus/orientation:
 scp -i ~/.ssh/<your-key> dan@dancam.local:/tmp/test.jpg ~/Desktop/dancam-test.jpg
 ```
 
-## 5. Install the camera process dependencies
+## 5. Verify the camera process dependencies
 
-The production camera owner is a Python Picamera2 subprocess supervised by the
-Rust service. Install Picamera2 from apt, not pip, so it matches the Raspberry Pi
-OS libcamera stack:
+The production camera owner is a Python Picamera2 subprocess supervised by the Rust
+service. Provisioning (section 3) installed Picamera2 and `ffmpeg` from apt (not pip,
+so they match the Raspberry Pi OS libcamera stack, and without the desktop GUI
+recommends). Confirm the import path works -- the camera overlay from section 4 must
+already be enabled before the import/open path is useful on the Pi:
 
 ```sh
-sudo apt install -y --no-install-recommends python3-picamera2 ffmpeg
 python3 -c "from picamera2 import Picamera2; print('ok')"
 ```
 
-The package pulls the Python libcamera bindings, numpy, and simplejpeg without the
-desktop GUI recommends. The camera overlay from section 4 must already be enabled
-before the import/open path is useful on the Pi.
+## 6. Create the dev access point profile
 
-## 6. Scope mDNS to Wi-Fi
-
-Keep `dancam.local` tied to the reachable Wi-Fi interface. Without this, Avahi can
-publish on loopback before Wi-Fi settles, later detect a stale self-conflict, and
-rename the host to `dancam-2.local`.
-
-On the Pi:
+Provisioning (section 3) created the `dancam-ap` NetworkManager hotspot profile --
+SSID `dancam-dev`, WPA2-AES (RSN/CCMP, no TKIP), channel 1, `10.42.0.1/24`, shared
+IPv4, `connection.autoconnect no` -- with one field left unset on purpose: the WPA2
+password. Set it once by hand on the Pi so the secret never lands in the repo, the
+playbook, or shell history (the `read -rsp` prompt keeps it out of history, and
+re-running the playbook does not disturb it):
 
 ```sh
-sudo cp /etc/avahi/avahi-daemon.conf /etc/avahi/avahi-daemon.conf.dancam-before-wlan0-only
-sudo sed -i 's/^#allow-interfaces=eth0/allow-interfaces=wlan0/' /etc/avahi/avahi-daemon.conf
-grep -n '^allow-interfaces=wlan0$' /etc/avahi/avahi-daemon.conf
-sudo systemctl restart avahi-daemon
-systemctl status avahi-daemon --no-pager
-```
-
-The status should show `running [dancam.local]`, not `dancam-2.local`.
-
-## 7. Create the dev access point profile
-
-The dev image normally joins home Wi-Fi for deploy/debug, but it also has a
-manual NetworkManager hotspot profile for iPhone testing. Pick a dev WPA2
-password and do not commit it anywhere. The profile pins WPA2-AES (RSN/CCMP,
-no TKIP) so iOS does not show a weak-security warning.
-
-On the Pi:
-
-```sh
-read -rsp 'dancam-dev WPA2 password: ' DANCAM_AP_PSK
-echo
-
-sudo nmcli connection add \
-  type wifi \
-  ifname wlan0 \
-  con-name dancam-ap \
-  ssid dancam-dev
-
-sudo nmcli connection modify dancam-ap \
-  connection.autoconnect no \
-  802-11-wireless.mode ap \
-  802-11-wireless.band bg \
-  802-11-wireless.channel 1 \
-  802-11-wireless-security.key-mgmt wpa-psk \
-  802-11-wireless-security.psk "$DANCAM_AP_PSK" \
-  802-11-wireless-security.proto rsn \
-  802-11-wireless-security.pairwise ccmp \
-  802-11-wireless-security.group ccmp \
-  ipv4.method shared \
-  ipv4.addresses 10.42.0.1/24 \
-  ipv6.method ignore
-
+read -rsp 'dancam-dev WPA2 PSK: ' DANCAM_AP_PSK; echo
+sudo nmcli connection modify dancam-ap 802-11-wireless-security.psk "$DANCAM_AP_PSK"
 unset DANCAM_AP_PSK
-
-nmcli -f connection.id,connection.autoconnect,802-11-wireless.ssid,802-11-wireless.mode,802-11-wireless.band,802-11-wireless.channel,ipv4.method,ipv4.addresses,ipv6.method connection show dancam-ap
-nmcli -f 802-11-wireless-security.key-mgmt,802-11-wireless-security.proto,802-11-wireless-security.pairwise,802-11-wireless-security.group connection show dancam-ap
 ```
 
-Expected profile values:
-
-```text
-connection.id:                          dancam-ap
-connection.autoconnect:                 no
-802-11-wireless.ssid:                   dancam-dev
-802-11-wireless.mode:                   ap
-802-11-wireless.band:                   bg
-802-11-wireless.channel:                1
-ipv4.method:                            shared
-ipv4.addresses:                         10.42.0.1/24
-ipv6.method:                            ignore
-```
-
-Expected security values:
-
-```text
-802-11-wireless-security.key-mgmt:      wpa-psk
-802-11-wireless-security.proto:         rsn
-802-11-wireless-security.pairwise:      ccmp
-802-11-wireless-security.group:         ccmp
-```
-
-The cipher settings take effect the next time `dancam-ap` is activated. If the AP
-is already up, run `sudo nmcli connection down dancam-ap` and then
-`sudo nmcli connection up dancam-ap` (or `sudo nmcli device reapply wlan0`);
-otherwise the live beacon can still advertise the old WPA/WPA2 TKIP-capable
-profile and iOS may keep showing the warning.
+A cipher or PSK change only takes effect the next time `dancam-ap` is activated. If
+the AP is already up, run `sudo nmcli connection down dancam-ap` and then
+`sudo nmcli connection up dancam-ap` (or `sudo nmcli device reapply wlan0`); otherwise
+the live beacon can still advertise the old profile and iOS may keep showing the
+weak-security warning.
 
 Before flipping the Pi into AP mode over SSH, always arm a systemd-owned return
 timer. Replace the home profile name if `nmcli connection show` reports a
@@ -221,20 +157,7 @@ not autoconnect. Do not join `dancam-dev` from the Mac during an active remote
 LLM session if the Mac's only internet path is `peluchonet`; use the iPhone for
 AP testing.
 
-## 8. (Optional) Fix the locale warning
-
-My SSH login warned `cannot change locale (UTF-8)` because the fresh Lite image has no
-UTF-8 locale generated yet. Uncomment `en_US.UTF-8` in `/etc/locale.gen` and rebuild
-the locale database on the Pi:
-
-```sh
-sudo sed -i 's/^# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-sudo locale-gen
-```
-
-Log out and back in -- the warning is gone.
-
-## 9. Deploy and run the service
+## 7. Deploy and run the service
 
 Cross-compile and deploy from the Mac in one command (Nix flake + `deploy.sh`;
 details in [`raspi/AGENTS.md`](raspi/AGENTS.md) "Rust dev loop"). From the repo
@@ -349,7 +272,7 @@ systemctl status dancam        # running? enabled for boot?
 journalctl -u dancam -f        # live logs
 ```
 
-## 10. Smoke-test the AP path
+## 8. Smoke-test the AP path
 
 With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, join
 `dancam-dev` from the iPhone, and fetch:

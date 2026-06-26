@@ -45,6 +45,13 @@
             pkgs.zig
             pkgs.cargo-zigbuild
             pkgs.rsync
+            # Pi system-layer provisioning, version-managed like the Rust toolchain.
+            # nixpkgs `ansible` is the batteries-included build that bundles
+            # community.general (nmcli / locale_gen / ini_file), so no separate
+            # collection install. ansible-lint powers the hardware-free `just
+            # raspi-provision-lint` gate.
+            pkgs.ansible
+            pkgs.ansible-lint
           ];
 
           env.DANCAM_TARGET = target;
