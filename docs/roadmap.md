@@ -108,16 +108,20 @@ mock first.
             `dancam-dev` AP, desk and in-car, with and without live preview running
             concurrently (spike 2); and confirm a pulled `.ts` plays via loopback HLS +
             AVPlayer on-device (spike 5a). These set the pull UX and gate the build below.
-      - [ ] **Pi:** `GET /v1/clips/{id}` serves a finished segment's raw `.ts` with
-            `Accept-Ranges: bytes`, `ETag` (reuse the list's `{seq}-{bytes}`),
-            `Range`/`If-Range` -> `206`/`Content-Range`, `416` on unsatisfiable range,
-            `application/mp2t`; never serves the open segment (matches the list).
+      - [ ] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
+            `.ts` as a plain `200` (`application/mp2t`); never serves the open segment
+            (matches the list). The dumbest end-to-end that proves tap -> pull -> play; no
+            ranged-pull surface until the app step below needs it.
+      - [ ] **Pi (ranged/resumable):** add `Accept-Ranges: bytes`, `ETag` (reuse the
+            list's `{seq}-{bytes}`), `Range`/`If-Range` -> `206`/`Content-Range`, and
+            `416` on unsatisfiable range -- pulled in by the app's progress + mid-pull
+            resume step below, not before.
       - [ ] **Pi:** report `dur_ms` cheaply -- ~30 s from the segment cadence, ffprobe
             only the final short segment if needed -- so rows show length now; `start_ms`
             and real provenance stay deferred to `moss`.
-      - [ ] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`
-            with full `Range`/`ETag`, so the app pull + playback path runs against the
-            mock first.
+      - [ ] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`,
+            tracking the Pi in the same two pulses -- plain `200` first, then `Range`/`ETag`
+            -- so the app pull + playback path runs against the mock first at each step.
       - [ ] **App (riskiest):** resumable ranged pull on the pinned `NWConnection` -- a
             `Range`/`If-Range`/`Content-Range` loop that streams to a local file and
             resumes from the last byte across drops (verify `ETag` before resuming). At
