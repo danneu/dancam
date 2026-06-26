@@ -99,6 +99,33 @@ mock first.
       - [x] Docs land in lockstep: ADR 09 (`just adr-check` green), README renumbered to
             the pinned 8-section runbook, `raspi/AGENTS.md` flipped to "playbook is the
             source of truth."
+- [ ] **Swoop `opal` -- Connection robustness.** Keep the app usable across a flaky
+      2.4 GHz link: detect drops fast, ride them out in place, and recover without a
+      manual rejoin. _App-side ambient UX has landed; the only open piece is resumable
+      pulls, shared with `lime`._
+      - [x] **App:** scene-scoped `/v1/status` monitor -- debounced liveness owned by the
+            scene (not the home dashboard), preserving last-known status so screens ride
+            out drops in place.
+      - [x] **App:** missed-heartbeat offline detection -- a missed `/v1/status` heartbeat
+            flips to offline after the debounce window.
+      - [x] **App:** persistent connection status strip in the root shell, so pushed
+            screens inherit it without nav-bar re-parenting.
+      - [x] **App:** foreground/reconnect recovery -- foreground and reconnect hooks
+            refresh the visible screen without tearing down navigation state.
+      - [x] **App:** preview back-off reconnect -- preview reconnects independently with
+            bounded backoff; each attempt bumps `streamGeneration` so decode resets stay
+            observable.
+      - [x] **App:** domain root store -- connection/recording/clips coordination moves
+            into `AppFeature` with equality-gated scoped observation, cutting poll-driven
+            wakeups.
+      - [ ] **App:** resumable pulls across drops -- a `Range`/`If-Range` clip pull that
+            resumes from the last byte rather than restarting. _Shared with `lime`'s
+            ranged-pull step; land it in whichever swoop reaches it first._
+      - Note: app-driven AP join (`NEHotspotConfiguration`, `joinOnce = false`) is *not* an
+        opal item -- a manually-saved `dancam-dev` already auto-rejoins at the OS level.
+        The programmatic provisioning that drops the manual Settings join (per-unit
+        SSID/PSK from the QR sticker) is owned by `wren`, gated on a production image plus
+        the Hotspot Configuration entitlement.
 - [ ] **Swoop `lime` -- Watch recorded clips.** Browse the clip list, pull a finished
       segment with resumable `Range` requests, and play it via a local HLS playlist +
       AVPlayer on a loopback server. _The chunky one; the first time footage is
@@ -153,11 +180,6 @@ mock first.
       force-finalizes the open segment and protects the window. Start with a dumb
       hardlink lock; _deepen toward the storage ADR (idempotency, pre-sync holds)
       later._
-- [ ] **Swoop `opal` -- Connection robustness.** App-side ambient connection UX has
-      landed: a scene-scoped `/v1/status` monitor, persistent connection status strip,
-      missed-heartbeat offline detection, foreground/reconnect recovery, and preview
-      back-off reconnect. Remaining: persistent auto-rejoin (`NEHotspotConfiguration`,
-      `joinOnce = false`), Wi-Fi reconnect back-off, and resumable pulls across drops.
 - [ ] **Swoop `reef` -- CarPlay auto start/stop** on CarPlay connect/disconnect.
 - [ ] **Swoop `sage` -- CarPlay status panel** (Driving Task template). _Gated on the
       Apple entitlement; the product must be useful without it._
@@ -200,6 +222,10 @@ swoop can drop into the list above unchanged. Unordered.
       (`NEHotspotConfiguration`), so every unit ships with a unique strong secret
       instead of a shared dev password. This -- not WPA2-vs-WPA3 -- is the real
       security win for the link (ADR 02's v1 trust boundary; ADR 06 Consequences
-      already flags it as a later hardening pass). Parked until there is a
+      already flags it as a later hardening pass). It is also where app-driven
+      auto-rejoin lands: `joinOnce = false` persists the config so the phone
+      re-associates without a manual Settings join -- a manually-saved AP already
+      auto-rejoins today, so the win is dropping the manual step, not the behavior.
+      Parked until there is a
       production/car image to provision; the dev AP's WPA2-AES + manual PSK is
       sufficient for the dev loop.
