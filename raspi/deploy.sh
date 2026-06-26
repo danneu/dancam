@@ -10,6 +10,7 @@
 # env, e.g.:
 #   DANCAM_HOST=dan@192.168.1.50 ./raspi/deploy.sh
 #   DANCAM_HOST=dan@10.42.0.1 ./raspi/deploy.sh    # while joined to the Pi AP
+#   DANCAM_HEALTH_TIMEOUT=120 ./raspi/deploy.sh    # seconds to wait for /v1/health after restart (default 60)
 #
 # Requires: nix (flakes) on the Mac; SSH access to the Pi; passwordless or
 # interactive sudo on the Pi (the install step uses `ssh -t` so sudo can prompt).
@@ -19,6 +20,30 @@ HOST="${DANCAM_HOST:-dan@dancam.local}"
 SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519_danneu}"
 TARGET="${DANCAM_TARGET:-aarch64-unknown-linux-musl}"
 PORT="${DANCAM_PORT:-8080}"
+
+# macOS desktop notification on exit, so a long deploy can be backgrounded and
+# still ping when it's actually ready to test. The EXIT trap fires once on any
+# exit path: a clean finish notifies success, a failed build/rsync/install or a
+# health-timeout notifies failure, and a Ctrl-C abort stays silent.
+#
+# IMPORTANT: `local rc=$?` must be the first statement -- any command before it
+# (even `command -v`) clobbers $? to its own status (0), so a *failed* deploy
+# would take the success branch, the exact false-"ready" ping this guards against.
+notify_done() {
+  local rc=$?
+  command -v osascript >/dev/null 2>&1 || return 0   # non-macOS: no-op
+  (( rc == 130 )) && return 0                         # Ctrl-C abort: stay quiet
+  local body sound
+  if (( rc == 0 )); then
+    body="Up on $HOST -- ready to test"
+    sound="Glass"
+  else
+    body="FAILED (exit $rc) -- see terminal"
+    sound="Basso"
+  fi
+  osascript -e "display notification \"$body\" with title \"dancam deploy\" sound name \"$sound\""
+}
+trap notify_done EXIT
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -49,6 +74,16 @@ ssh -t -i "$SSH_KEY" "$HOST" '
   rm -f /tmp/dancam.new /tmp/dancam.service /tmp/dancam-camera.py
 '
 
-echo "==> health check"
-ssh -i "$SSH_KEY" "$HOST" "curl -fsS http://localhost:$PORT/v1/health" && echo
+HEALTH_TIMEOUT="${DANCAM_HEALTH_TIMEOUT:-60}"
+echo "==> waiting up to ${HEALTH_TIMEOUT}s for dancam to answer /v1/health on $HOST"
+deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+until ssh -i "$SSH_KEY" -o ConnectTimeout=5 "$HOST" \
+        "curl -fsS --max-time 5 -o /dev/null http://localhost:$PORT/v1/health" 2>/dev/null; do
+  if (( $(date +%s) >= deadline )); then
+    echo "!! dancam did not answer /v1/health within ${HEALTH_TIMEOUT}s" >&2
+    exit 1
+  fi
+  sleep 2
+done
+echo "==> dancam is up and serving on $HOST -- ready to test."
 echo "==> deployed."

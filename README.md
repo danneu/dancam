@@ -169,7 +169,9 @@ just raspi-deploy   # wraps ./raspi/deploy.sh
 
 This ships a static aarch64 binary, the camera process
 (`/usr/local/lib/dancam/camera.py`), and the systemd unit (`dancam.service`),
-enables/restarts the service, and curls `/v1/health`. The deployed unit sets:
+enables/restarts the service, then waits for `/v1/health` to answer (polling up
+to `DANCAM_HEALTH_TIMEOUT`s, default 60) and fires a macOS notification when the
+service is ready to test. The deployed unit sets:
 
 ```ini
 Environment=DANCAM_BIND=0.0.0.0:8080
