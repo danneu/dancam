@@ -1,4 +1,5 @@
 use std::{
+    io::SeekFrom,
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -6,11 +7,14 @@ use std::{
 use axum::{
     body::Body,
     extract::{Path as PathParam, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
-use tokio::fs::File;
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, AsyncSeekExt},
+};
 use tokio_util::io::ReaderStream;
 
 use crate::AppState;
@@ -48,29 +52,157 @@ pub async fn list_clips(State(state): State<AppState>) -> Json<ClipsResponse> {
 pub async fn serve_clip(
     State(state): State<AppState>,
     PathParam(id): PathParam<u32>,
-) -> Result<(HeaderMap, Body), ClipError> {
+    headers: HeaderMap,
+) -> Result<Response, ClipError> {
     if state.backend.status().recording && max_clip_seq(&state.rec_dir) == Some(id) {
         return Err(ClipError::NotFound);
     }
 
     let path = state.rec_dir.join(format!("seg_{id:05}.ts"));
-    let file = File::open(path).await.map_err(|_| ClipError::NotFound)?;
+    let mut file = File::open(path).await.map_err(|_| ClipError::NotFound)?;
     let metadata = file.metadata().await.map_err(|_| ClipError::NotFound)?;
     if !metadata.is_file() {
         return Err(ClipError::NotFound);
     }
 
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/mp2t"),
-    );
-    headers.insert(
-        header::CONTENT_LENGTH,
-        HeaderValue::from_str(&metadata.len().to_string()).map_err(|_| ClipError::NotFound)?,
-    );
+    let total = metadata.len();
+    let etag = http_etag(id, total);
 
-    Ok((headers, Body::from_stream(ReaderStream::new(file))))
+    let range = header_str(&headers, header::RANGE);
+    // RFC 9110: If-Range uses a strong octet-for-octet validator comparison; a
+    // non-matching validator means ignore the Range and serve the full body.
+    let if_range_blocks = header_str(&headers, header::IF_RANGE).is_some_and(|value| value != etag);
+
+    if range.is_none() || if_range_blocks {
+        return Ok(full_response(file, total, &etag));
+    }
+
+    match resolve_range(range, total) {
+        RangeResolution::Full => Ok(full_response(file, total, &etag)),
+        RangeResolution::Partial { start, end } => {
+            let len = end - start + 1;
+            file.seek(SeekFrom::Start(start))
+                .await
+                .map_err(|_| ClipError::NotFound)?;
+            let body = Body::from_stream(ReaderStream::new(file.take(len)));
+            Ok(partial_response(body, start, end, total, len, &etag))
+        }
+        RangeResolution::Unsatisfiable => Err(ClipError::RangeNotSatisfiable { total }),
+    }
+}
+
+/// RFC 9110 entity-tag wire form: quoted `"{seq}-{bytes}"`. Used for both the
+/// `ETag` response header and the `If-Range` comparison so a raw-vs-quoted
+/// mismatch can never silently downgrade a resume to a `200` restart. The JSON
+/// clips list keeps the raw/unquoted `{seq}-{bytes}` value; the app quotes it.
+fn http_etag(seq: u32, bytes: u64) -> String {
+    format!("\"{seq}-{bytes}\"")
+}
+
+fn header_str(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+fn full_response(file: File, total: u64, etag: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/mp2t")
+        .header(header::CONTENT_LENGTH, total)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ETAG, etag)
+        .body(Body::from_stream(ReaderStream::new(file)))
+        .expect("clip response headers are always valid")
+}
+
+fn partial_response(
+    body: Body,
+    start: u64,
+    end: u64,
+    total: u64,
+    len: u64,
+    etag: &str,
+) -> Response {
+    Response::builder()
+        .status(StatusCode::PARTIAL_CONTENT)
+        .header(header::CONTENT_TYPE, "application/mp2t")
+        .header(header::CONTENT_LENGTH, len)
+        .header(
+            header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{total}"),
+        )
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ETAG, etag)
+        .body(body)
+        .expect("clip response headers are always valid")
+}
+
+/// Resolve a `Range` header against the representation size, mirroring the
+/// app-side `HTTPRangeRequest.resolveRange` semantics: single range only
+/// (reject a comma), `bytes=` prefix, forms `N-` / `N-M` / suffix `-N`; clamp
+/// `end` to `total - 1`; `start >= total` is unsatisfiable.
+fn resolve_range(raw: Option<&str>, total: u64) -> RangeResolution {
+    let Some(raw) = raw else {
+        return RangeResolution::Full;
+    };
+    if total == 0 {
+        return RangeResolution::Unsatisfiable;
+    }
+    let Some(spec) = raw.strip_prefix("bytes=") else {
+        return RangeResolution::Unsatisfiable;
+    };
+    if spec.contains(',') {
+        return RangeResolution::Unsatisfiable;
+    }
+    let Some((raw_start, raw_end)) = spec.split_once('-') else {
+        return RangeResolution::Unsatisfiable;
+    };
+
+    if raw_start.is_empty() {
+        let Ok(suffix) = raw_end.parse::<u64>() else {
+            return RangeResolution::Unsatisfiable;
+        };
+        if suffix == 0 {
+            return RangeResolution::Unsatisfiable;
+        }
+        let start = total.saturating_sub(suffix);
+        return RangeResolution::Partial {
+            start,
+            end: total - 1,
+        };
+    }
+
+    let Ok(start) = raw_start.parse::<u64>() else {
+        return RangeResolution::Unsatisfiable;
+    };
+    if start >= total {
+        return RangeResolution::Unsatisfiable;
+    }
+
+    if raw_end.is_empty() {
+        return RangeResolution::Partial {
+            start,
+            end: total - 1,
+        };
+    }
+
+    let Ok(requested_end) = raw_end.parse::<u64>() else {
+        return RangeResolution::Unsatisfiable;
+    };
+    if requested_end < start {
+        return RangeResolution::Unsatisfiable;
+    }
+
+    RangeResolution::Partial {
+        start,
+        end: requested_end.min(total - 1),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RangeResolution {
+    Full,
+    Partial { start: u64, end: u64 },
+    Unsatisfiable,
 }
 
 pub fn read_finished_clips(rec_dir: &Path, recording: bool) -> Vec<ClipMeta> {
@@ -157,20 +289,108 @@ fn server_time_ms() -> u64 {
 #[derive(Debug)]
 pub enum ClipError {
     NotFound,
+    RangeNotSatisfiable { total: u64 },
 }
 
 impl IntoResponse for ClipError {
     fn into_response(self) -> Response {
         match self {
             ClipError::NotFound => StatusCode::NOT_FOUND.into_response(),
+            ClipError::RangeNotSatisfiable { total } => Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                .body(Body::empty())
+                .expect("range-not-satisfiable response headers are always valid"),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{max_clip_seq, read_finished_clips};
+    use super::{http_etag, max_clip_seq, read_finished_clips, resolve_range, RangeResolution};
     use std::{fs, path::Path};
+
+    #[test]
+    fn http_etag_quotes_the_seq_bytes_pair() {
+        assert_eq!(http_etag(1, 7), "\"1-7\"");
+    }
+
+    #[test]
+    fn resolve_range_is_full_without_a_header() {
+        assert_eq!(resolve_range(None, 10), RangeResolution::Full);
+    }
+
+    #[test]
+    fn resolve_range_open_ended_runs_to_the_last_byte() {
+        assert_eq!(
+            resolve_range(Some("bytes=3-"), 10),
+            RangeResolution::Partial { start: 3, end: 9 }
+        );
+    }
+
+    #[test]
+    fn resolve_range_closed_range_clamps_end_to_total() {
+        assert_eq!(
+            resolve_range(Some("bytes=2-5"), 10),
+            RangeResolution::Partial { start: 2, end: 5 }
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=2-100"), 10),
+            RangeResolution::Partial { start: 2, end: 9 }
+        );
+    }
+
+    #[test]
+    fn resolve_range_suffix_returns_the_tail() {
+        assert_eq!(
+            resolve_range(Some("bytes=-4"), 10),
+            RangeResolution::Partial { start: 6, end: 9 }
+        );
+    }
+
+    #[test]
+    fn resolve_range_suffix_larger_than_total_returns_whole_file() {
+        assert_eq!(
+            resolve_range(Some("bytes=-100"), 10),
+            RangeResolution::Partial { start: 0, end: 9 }
+        );
+    }
+
+    #[test]
+    fn resolve_range_rejects_unsatisfiable_and_garbage() {
+        assert_eq!(
+            resolve_range(Some("bytes=100-"), 10),
+            RangeResolution::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=10-"), 10),
+            RangeResolution::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=0-1,3-4"), 10),
+            RangeResolution::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=5-2"), 10),
+            RangeResolution::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("0-3"), 10),
+            RangeResolution::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=abc"), 10),
+            RangeResolution::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=-0"), 10),
+            RangeResolution::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=0-"), 0),
+            RangeResolution::Unsatisfiable
+        );
+    }
 
     #[test]
     fn read_finished_clips_returns_newest_first_when_not_recording() {

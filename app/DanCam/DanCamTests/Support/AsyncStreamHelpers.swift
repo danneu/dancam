@@ -50,4 +50,17 @@ enum AsyncStreamHelpers {
             continuation.finish(throwing: error)
         }
     }
+
+    /// Yields the chunks, then finishes by throwing -- a mid-transfer link drop.
+    static func droppingByteStream(
+        _ chunks: [Data],
+        error: Error = URLError(.networkConnectionLost)
+    ) -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { continuation in
+            for chunk in chunks {
+                continuation.yield(chunk)
+            }
+            continuation.finish(throwing: error)
+        }
+    }
 }

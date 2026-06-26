@@ -144,9 +144,153 @@ async fn serve_clip_returns_exact_bytes_and_headers() {
             .and_then(|value| value.to_str().ok()),
         Some("10")
     );
+    assert_eq!(
+        header_value(&response, header::ACCEPT_RANGES),
+        Some("bytes")
+    );
+    // Quoted entity-tag, quotes included -- pins the wire form the app octet-matches.
+    assert_eq!(header_value(&response, header::ETAG), Some("\"7-10\""));
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(body, Bytes::from_static(b"clip-bytes"));
+}
+
+#[tokio::test]
+async fn serve_clip_open_ended_range_returns_partial_content() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+
+    let response = dancam::app(state(rec_dir.path.clone(), false))
+        .oneshot(clip_request_with_headers(
+            "/v1/clips/7",
+            &[(header::RANGE.as_str(), "bytes=3-")],
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        header_value(&response, header::CONTENT_RANGE),
+        Some("bytes 3-9/10")
+    );
+    assert_eq!(header_value(&response, header::CONTENT_LENGTH), Some("7"));
+    assert_eq!(
+        header_value(&response, header::ACCEPT_RANGES),
+        Some("bytes")
+    );
+    assert_eq!(header_value(&response, header::ETAG), Some("\"7-10\""));
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body, Bytes::from_static(b"p-bytes"));
+}
+
+#[tokio::test]
+async fn serve_clip_closed_and_suffix_ranges_slice_the_body() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    let app = dancam::app(state(rec_dir.path.clone(), false));
+
+    let closed = app
+        .clone()
+        .oneshot(clip_request_with_headers(
+            "/v1/clips/7",
+            &[(header::RANGE.as_str(), "bytes=2-5")],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(closed.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        header_value(&closed, header::CONTENT_RANGE),
+        Some("bytes 2-5/10")
+    );
+    let closed_body = closed.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(closed_body, Bytes::from_static(b"ip-b"));
+
+    let suffix = app
+        .oneshot(clip_request_with_headers(
+            "/v1/clips/7",
+            &[(header::RANGE.as_str(), "bytes=-4")],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(suffix.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        header_value(&suffix, header::CONTENT_RANGE),
+        Some("bytes 6-9/10")
+    );
+    let suffix_body = suffix.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(suffix_body, Bytes::from_static(b"ytes"));
+}
+
+#[tokio::test]
+async fn serve_clip_honors_matching_if_range_and_ignores_a_mismatch() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    let app = dancam::app(state(rec_dir.path.clone(), false));
+
+    // Quoted, matching validator -> the Range is honored (206).
+    let matching = app
+        .clone()
+        .oneshot(clip_request_with_headers(
+            "/v1/clips/7",
+            &[
+                (header::RANGE.as_str(), "bytes=3-"),
+                (header::IF_RANGE.as_str(), "\"7-10\""),
+            ],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(matching.status(), StatusCode::PARTIAL_CONTENT);
+
+    // Unquoted validator (the raw list value) -> octet mismatch -> full 200.
+    let unquoted = app
+        .clone()
+        .oneshot(clip_request_with_headers(
+            "/v1/clips/7",
+            &[
+                (header::RANGE.as_str(), "bytes=3-"),
+                (header::IF_RANGE.as_str(), "7-10"),
+            ],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unquoted.status(), StatusCode::OK);
+    assert_eq!(header_value(&unquoted, header::CONTENT_LENGTH), Some("10"));
+    let unquoted_body = unquoted.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(unquoted_body, Bytes::from_static(b"clip-bytes"));
+
+    // A different validator -> full 200.
+    let different = app
+        .oneshot(clip_request_with_headers(
+            "/v1/clips/7",
+            &[
+                (header::RANGE.as_str(), "bytes=3-"),
+                (header::IF_RANGE.as_str(), "\"7-999\""),
+            ],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(different.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn serve_clip_unsatisfiable_range_returns_416() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+
+    let response = dancam::app(state(rec_dir.path.clone(), false))
+        .oneshot(clip_request_with_headers(
+            "/v1/clips/7",
+            &[(header::RANGE.as_str(), "bytes=100-")],
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        header_value(&response, header::CONTENT_RANGE),
+        Some("bytes */10")
+    );
 }
 
 #[tokio::test]
@@ -192,11 +336,22 @@ fn state(rec_dir: PathBuf, recording: bool) -> AppState {
 }
 
 fn clip_request(uri: &str) -> Request<Body> {
-    Request::builder()
-        .uri(uri)
-        .header("Host", "localhost:8080")
-        .body(Body::empty())
-        .unwrap()
+    clip_request_with_headers(uri, &[])
+}
+
+fn clip_request_with_headers(uri: &str, headers: &[(&str, &str)]) -> Request<Body> {
+    let mut builder = Request::builder().uri(uri).header("Host", "localhost:8080");
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    builder.body(Body::empty()).unwrap()
+}
+
+fn header_value(response: &axum::http::Response<Body>, name: header::HeaderName) -> Option<&str> {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
 }
 
 struct TempRecDir {

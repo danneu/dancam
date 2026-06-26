@@ -104,7 +104,7 @@ final class ClipViewerViewController: UIViewController {
         do {
             var completedResult: ClipPullResult?
 
-            for try await event in dependencies.clipPull.pull(clip.id) {
+            for try await event in dependencies.clipPull.pull(clip.id, clip.etag) {
                 try Task.checkCancellation()
 
                 switch event {
