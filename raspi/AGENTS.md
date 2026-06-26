@@ -29,9 +29,10 @@ app, is documented in [`../app/AGENTS.md`](../app/AGENTS.md).
     connector as the Pi 5 and Compute Modules), and the 15-pin end plugs into the
     camera. A standard Pi 3/4's 15-pin CSI port would instead need a 15-15
     "Standard-Standard" cable.
-  - This is not an official module, so it is not auto-detected. Enable it with
-    `camera_auto_detect=0` and `dtoverlay=imx708` in `/boot/firmware/config.txt`;
-    full steps live in "OS and first flash".
+  - This is not an official module, so it is not auto-detected; it needs
+    `camera_auto_detect=0` and `dtoverlay=imx708` in `/boot/firmware/config.txt`.
+    The playbook applies that overlay (`ansible/site.yml`); the rationale lives in
+    "OS and first flash".
   - **Operating temp 0 C to +50 C -- this is the system's thermal weak link**, not
     the board. Hot-parked operation is bounded by the sensor, not the Pi.
 
@@ -156,17 +157,19 @@ early swoops) -- not something to fight while iterating.
 - **Raspberry Pi OS Lite, 64-bit** (Trixie / Debian 13; the 2026-06-18 build,
   kernel 6.18 LTS). Lite = headless and lean for 512 MB; Trixie ships
   `rpicam-vid` and the IMX708 driver in-kernel. Our Arducam B0311 is not
-  auto-detected (it is not an official module), so enable it with the kernel's
-  in-tree overlay: set `camera_auto_detect=0` and add `dtoverlay=imx708` to
-  `/boot/firmware/config.txt`, then reboot -- no install script, no tuning file,
-  and it survives kernel upgrades. Do NOT use Arducam's legacy
-  `install_pivariety_pkgs.sh` driver: it ships prebuilt per-kernel binaries that
-  break on every `apt upgrade` (the source of the "had to downgrade the kernel"
-  reports). The official Camera Module 3 would auto-detect with no config -- same
-  IMX708 sensor -- if we ever want zero camera setup. On this 512 MB board,
-  camera/codec buffers come from CMA; the old `gpu_mem` split is obsolete. If
-  `rpicam` reports buffer-allocation failures, raise CMA with a `config.txt`
-  overlay such as `dtoverlay=cma,cma-size=...`, not `gpu_mem`.
+  auto-detected (it is not an official module), so it needs the kernel's in-tree
+  overlay -- `camera_auto_detect=0` plus `dtoverlay=imx708` in
+  `/boot/firmware/config.txt` -- with no install script, no tuning file, and it
+  survives kernel upgrades. The playbook applies that overlay and reboots; the
+  command and its idempotency notes live in `ansible/site.yml`. Do NOT use
+  Arducam's legacy `install_pivariety_pkgs.sh` driver: it ships prebuilt
+  per-kernel binaries that break on every `apt upgrade` (the source of the "had
+  to downgrade the kernel" reports). The official Camera Module 3 would
+  auto-detect with no config -- same IMX708 sensor -- if we ever want zero camera
+  setup. On this 512 MB board, camera/codec buffers come from CMA; the old
+  `gpu_mem` split is obsolete. If `rpicam` reports buffer-allocation failures,
+  raise CMA with a `config.txt` overlay such as `dtoverlay=cma,cma-size=...`, not
+  `gpu_mem`.
 - Flash with **current Raspberry Pi Imager (2.0.10 or newer)**, pre-setting
   hostname (`dancam`), SSH on, the user, and **home Wi-Fi credentials**. Current
   Trixie images use cloud-init for first-boot customization: Imager 1.9.x cannot
@@ -175,11 +178,11 @@ early swoops) -- not something to fight while iterating.
   stable in 2.0.10). Editing files on the boot partition is the legacy fallback.
   Boot headless, then `ssh dan@dancam.local` over the LAN (mDNS). No monitor or
   keyboard, and no card-shuffling after this.
-- Scope Avahi/mDNS to the Wi-Fi interface after first boot:
-  set `allow-interfaces=wlan0` in `/etc/avahi/avahi-daemon.conf`, then
-  `sudo systemctl restart avahi-daemon`. Without this, Avahi can publish on
-  loopback before Wi-Fi settles, later detect its own stale `dancam.local`
-  advertisement as a conflict, and rename the host to `dancam-2.local`.
+- The playbook scopes Avahi/mDNS to the Wi-Fi interface --
+  `allow-interfaces=wlan0` in `/etc/avahi/avahi-daemon.conf` (see
+  `ansible/site.yml`). Without this, Avahi can publish on loopback before Wi-Fi
+  settles, later detect its own stale `dancam.local` advertisement as a conflict,
+  and rename the host to `dancam-2.local`.
 - Fallback if Wi-Fi is fussy: the data micro-USB port supports gadget mode
   (`g_ether`) -> SSH over the USB cable.
 
