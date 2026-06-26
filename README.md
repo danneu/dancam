@@ -329,7 +329,7 @@ context, not just an interactive shell, can start the camera process.
 To regenerate the local mock preview frames later, run from the repo root:
 
 ```sh
-ffmpeg -f lavfi -i testsrc=size=640x480:rate=10 -frames:v 12 -q:v 8 raspi/service/assets/preview/frame_%02d.jpg
+ffmpeg -y -f lavfi -i testsrc=size=640x480:rate=10 -frames:v 12 -q:v 8 -pix_fmt yuvj420p -start_number 0 raspi/service/assets/preview/frame_%02d.jpg
 ```
 
 Service management on the Pi:
