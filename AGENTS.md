@@ -25,6 +25,14 @@ pivot, update the record in the same change (amend or supersede the ADR -- see
 "Cross-cutting principles" below are the firmest layer (hard physical constraints) --
 revisit even those if reality disagrees, but at a higher, explicit bar.
 
+**Optimize for the ideal solution, full stop.** There are no users and no shipped
+releases, so there is nothing to be backwards-compatible with: never preserve an old
+shape, keep a deprecated path, or add a compatibility shim "just in case." Delete and
+replace rather than layer around. Code churn is not a cost we weigh -- rename, move,
+restructure, and rewrite freely whenever it gets us to the cleaner end state. If a
+change is the right one, the size of the diff or the number of touched files is never
+a reason to hold back. The only bar is: is this the best design we can see right now?
+
 ## Roadmap
 
 The build plan lives in **[`docs/roadmap.md`](docs/roadmap.md)**: the **breadth-first
