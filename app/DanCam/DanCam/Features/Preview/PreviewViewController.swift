@@ -5,7 +5,7 @@ final class PreviewViewController: UIViewController {
     private var observation: StoreObservation?
 
     private let imageView = UIImageView()
-    private let statusLabel = UILabel()
+    private let statusPill = StatusPillView()
 
     private var decodeState = PreviewDecodeState()
 
@@ -49,16 +49,11 @@ final class PreviewViewController: UIViewController {
         imageView.contentMode = .scaleAspectFit
         imageView.translatesAutoresizingMaskIntoConstraints = false
 
-        statusLabel.font = .preferredFont(forTextStyle: .caption1)
-        statusLabel.adjustsFontForContentSizeCategory = true
-        statusLabel.numberOfLines = 2
-        statusLabel.textColor = .white
-        statusLabel.shadowColor = .black
-        statusLabel.shadowOffset = CGSize(width: 0, height: 1)
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.isHidden = true
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(imageView)
-        view.addSubview(statusLabel)
+        view.addSubview(statusPill)
 
         NSLayoutConstraint.activate([
             imageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -66,26 +61,29 @@ final class PreviewViewController: UIViewController {
             imageView.topAnchor.constraint(equalTo: view.topAnchor),
             imageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            statusLabel.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.layoutMarginsGuide.trailingAnchor),
-            statusLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+            statusPill.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            statusPill.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -10),
+            statusPill.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
         ])
     }
 
     private func render(_ state: PreviewFeature.State) {
         switch state {
         case .idle:
-            statusLabel.text = "Idle"
+            statusPill.isHidden = true
         case .connecting:
-            statusLabel.text = "Connecting..."
+            statusPill.configure(caption: "Connecting", dotColor: .systemOrange, backgroundStyle: .material)
+            statusPill.isHidden = false
             decodeState.beginNewStream()
         case .streaming(let frame):
-            statusLabel.text = "Streaming"
+            statusPill.configure(caption: "Live", dotColor: .systemGreen, backgroundStyle: .material)
+            statusPill.isHidden = false
             enqueueDecode(frame)
         case .stopped:
-            statusLabel.text = "Stopped"
-        case .failed(let message):
-            statusLabel.text = message
+            statusPill.isHidden = true
+        case .failed:
+            statusPill.configure(caption: "Preview offline", dotColor: .systemRed, backgroundStyle: .material)
+            statusPill.isHidden = false
         }
     }
 

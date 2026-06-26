@@ -11,17 +11,18 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
     private var statusObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
 
-    private let cameraLabel = UILabel()
-    private let tempLabel = UILabel()
-    private let storageLabel = UILabel()
-    private let memLabel = UILabel()
-    private let statusErrorLabel = UILabel()
-    private let recordButton = UIButton(type: .system)
-    private let recDot = UIView()
-    private let recLabel = UILabel()
-    private let recIndicator = UIStackView()
-    private let recordingControls = UIStackView()
+    private let storageChipView = UIView()
+    private let storageProgressView = UIProgressView(progressViewStyle: .bar)
+    private let storageFreeLabel = UILabel()
+    private let tempWarningPill = StatusPillView()
+    private let errorPill = StatusPillView()
+    private let recordButton = RecordButton(frame: .zero)
+    private let recPill = StatusPillView(caption: "REC", dotColor: .systemRed)
+    private let clipsHeaderLabel = UILabel()
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
+    private let emptyClipsView = UIStackView()
+    private let emptyClipsImageView = UIImageView(image: UIImage(systemName: "film"))
+    private let emptyClipsLabel = UILabel()
 
     private var recordingState = RecordingFeature.State.unknown
     private var clips: [Clip] = []
@@ -57,12 +58,14 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
 
         title = "DanCam"
         view.backgroundColor = .systemBackground
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: "Debug",
+        let debugItem = UIBarButtonItem(
+            image: UIImage(systemName: "chart.bar"),
             style: .plain,
             target: self,
             action: #selector(debugTapped)
         )
+        debugItem.accessibilityLabel = "Status detail"
+        navigationItem.rightBarButtonItem = debugItem
 
         addChild(previewViewController)
         configureViews()
@@ -93,53 +96,33 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
     }
 
     private func configureViews() {
-        for label in [cameraLabel, tempLabel, storageLabel, memLabel, statusErrorLabel] {
-            label.font = .preferredFont(forTextStyle: .subheadline)
-            label.adjustsFontForContentSizeCategory = true
-            label.numberOfLines = 0
-        }
-        statusErrorLabel.textColor = .systemRed
+        configurePreview()
+        configureStorageChip()
+        configureStatusPills()
+        configureClipsTable()
 
         recordButton.addTarget(self, action: #selector(recordTapped), for: .touchUpInside)
+        recordButton.apply(.unknown)
+        recordButton.translatesAutoresizingMaskIntoConstraints = false
 
-        recDot.backgroundColor = .systemRed
-        recDot.layer.cornerRadius = 5
-        recDot.translatesAutoresizingMaskIntoConstraints = false
-
-        recLabel.text = "REC"
-        recLabel.font = .preferredFont(forTextStyle: .caption1)
-        recLabel.adjustsFontForContentSizeCategory = true
-
-        recIndicator.addArrangedSubview(recDot)
-        recIndicator.addArrangedSubview(recLabel)
-        recIndicator.axis = .horizontal
-        recIndicator.alignment = .center
-        recIndicator.spacing = 6
-
-        recordingControls.addArrangedSubview(recordButton)
-        recordingControls.axis = .horizontal
-        recordingControls.alignment = .center
-        recordingControls.spacing = 16
-        recordingControls.distribution = .fillProportionally
-
-        clipsTableView.dataSource = self
-        clipsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "clip")
-        clipsTableView.translatesAutoresizingMaskIntoConstraints = false
-
-        let statusStack = UIStackView(arrangedSubviews: [
-            cameraLabel,
-            tempLabel,
-            storageLabel,
-            memLabel,
-            statusErrorLabel,
+        let belowPreviewStack = UIStackView(arrangedSubviews: [
+            storageChipView,
+            tempWarningPill,
+            errorPill,
         ])
-        statusStack.axis = .vertical
-        statusStack.spacing = 4
+        belowPreviewStack.axis = .vertical
+        belowPreviewStack.alignment = .leading
+        belowPreviewStack.spacing = 8
+
+        let recordButtonRow = UIView()
+        recordButtonRow.translatesAutoresizingMaskIntoConstraints = false
+        recordButtonRow.addSubview(recordButton)
 
         let stack = UIStackView(arrangedSubviews: [
-            statusStack,
             previewViewController.view,
-            recordingControls,
+            belowPreviewStack,
+            recordButtonRow,
+            clipsHeaderLabel,
             clipsTableView,
         ])
         stack.axis = .vertical
@@ -149,8 +132,12 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         view.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            recDot.widthAnchor.constraint(equalToConstant: 10),
-            recDot.heightAnchor.constraint(equalToConstant: 10),
+            recPill.topAnchor.constraint(equalTo: previewViewController.view.topAnchor, constant: 10),
+            recPill.trailingAnchor.constraint(equalTo: previewViewController.view.trailingAnchor, constant: -10),
+
+            recordButton.topAnchor.constraint(equalTo: recordButtonRow.topAnchor),
+            recordButton.bottomAnchor.constraint(equalTo: recordButtonRow.bottomAnchor),
+            recordButton.centerXAnchor.constraint(equalTo: recordButtonRow.centerXAnchor),
 
             stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
@@ -165,31 +152,154 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         ])
     }
 
+    private func configurePreview() {
+        previewViewController.view.backgroundColor = .black
+        previewViewController.view.layer.cornerRadius = 16
+        previewViewController.view.layer.cornerCurve = .continuous
+        previewViewController.view.layer.masksToBounds = true
+        previewViewController.view.translatesAutoresizingMaskIntoConstraints = false
+
+        recPill.configure(caption: "REC", dotColor: .systemRed, backgroundStyle: .material)
+        recPill.accessibilityLabel = "Recording"
+        recPill.isHidden = true
+        recPill.translatesAutoresizingMaskIntoConstraints = false
+        previewViewController.view.addSubview(recPill)
+    }
+
+    private func configureStorageChip() {
+        storageChipView.isAccessibilityElement = true
+        storageChipView.backgroundColor = .secondarySystemBackground
+        storageChipView.layer.cornerRadius = 12
+        storageChipView.layer.cornerCurve = .continuous
+        storageChipView.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: 8,
+            leading: 10,
+            bottom: 8,
+            trailing: 10
+        )
+
+        storageProgressView.progressTintColor = .systemGreen
+        storageProgressView.trackTintColor = .tertiarySystemFill
+
+        storageFreeLabel.font = .preferredFont(forTextStyle: .subheadline)
+        storageFreeLabel.adjustsFontForContentSizeCategory = true
+        storageFreeLabel.textColor = .secondaryLabel
+
+        let stack = UIStackView(arrangedSubviews: [storageProgressView, storageFreeLabel])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        storageChipView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            storageProgressView.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
+
+            stack.leadingAnchor.constraint(equalTo: storageChipView.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: storageChipView.layoutMarginsGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: storageChipView.layoutMarginsGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: storageChipView.layoutMarginsGuide.bottomAnchor),
+        ])
+    }
+
+    private func configureStatusPills() {
+        tempWarningPill.isHidden = true
+        errorPill.isHidden = true
+    }
+
+    private func configureClipsTable() {
+        clipsHeaderLabel.text = "Recent clips"
+        clipsHeaderLabel.font = .preferredFont(forTextStyle: .headline)
+        clipsHeaderLabel.adjustsFontForContentSizeCategory = true
+
+        emptyClipsImageView.tintColor = .secondaryLabel
+        emptyClipsImageView.contentMode = .scaleAspectFit
+
+        emptyClipsLabel.text = "No clips yet"
+        emptyClipsLabel.font = .preferredFont(forTextStyle: .subheadline)
+        emptyClipsLabel.adjustsFontForContentSizeCategory = true
+        emptyClipsLabel.textColor = .secondaryLabel
+
+        emptyClipsView.axis = .vertical
+        emptyClipsView.alignment = .center
+        emptyClipsView.spacing = 8
+        emptyClipsView.addArrangedSubview(emptyClipsImageView)
+        emptyClipsView.addArrangedSubview(emptyClipsLabel)
+
+        clipsTableView.dataSource = self
+        clipsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "clip")
+        clipsTableView.rowHeight = UITableView.automaticDimension
+        clipsTableView.estimatedRowHeight = 56
+        clipsTableView.tableFooterView = UIView()
+        clipsTableView.translatesAutoresizingMaskIntoConstraints = false
+    }
+
     private func renderStatus(_ state: StatusFeature.State) {
-        statusErrorLabel.isHidden = true
-        statusErrorLabel.text = nil
+        tempWarningPill.isHidden = true
+        errorPill.isHidden = true
 
         switch state {
-        case .idle:
-            renderStatusFields(response: nil)
-        case .loading:
-            renderStatusFields(response: nil)
-            cameraLabel.text = "Camera: loading"
+        case .idle, .loading:
+            renderStorageChip(storage: nil)
         case .loaded(let response):
-            renderStatusFields(response: response)
-        case .failed(let message):
-            renderStatusFields(response: nil)
-            cameraLabel.text = "Camera: unavailable"
-            statusErrorLabel.isHidden = false
-            statusErrorLabel.text = message
+            renderStorageChip(storage: response.storage)
+            renderTempWarning(sensor: response.tempC.sensor)
+            renderCameraError(response: response)
+        case .failed:
+            renderStorageChip(storage: nil)
+            errorPill.configure(
+                caption: "Can't reach camera",
+                dotColor: .systemRed,
+                backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
+            )
+            errorPill.isHidden = false
         }
     }
 
-    private func renderStatusFields(response: StatusResponse?) {
-        cameraLabel.text = "Camera: \(response?.cameraState.rawValue ?? "--")"
-        tempLabel.text = "SoC: \(formatTemp(response?.tempC.soc))"
-        storageLabel.text = "Storage: \(formatStorage(response?.storage))"
-        memLabel.text = "Memory: \(formatMemory(response?.mem))"
+    private func renderStorageChip(storage: Storage?) {
+        guard let storage else {
+            storageFreeLabel.text = "--"
+            storageProgressView.progress = 0
+            storageChipView.alpha = 0.55
+            storageChipView.accessibilityLabel = "Storage unavailable"
+            return
+        }
+
+        let display = Formatters.storageDisplay(storage)
+        storageFreeLabel.text = "\(display.freeText) free"
+        storageProgressView.progress = Float(display.usedFraction)
+        storageChipView.alpha = 1
+        storageChipView.accessibilityLabel = "\(display.freeText) free"
+    }
+
+    private func renderTempWarning(sensor: Double?) {
+        guard let sensor, let warning = Formatters.sensorWarning(for: sensor) else {
+            tempWarningPill.isHidden = true
+            return
+        }
+
+        let color: UIColor = warning == .critical ? .systemRed : .systemOrange
+        tempWarningPill.configure(
+            caption: "\(Formatters.temperature(sensor)) camera",
+            dotColor: color,
+            backgroundStyle: .tinted(color.withAlphaComponent(0.16))
+        )
+        tempWarningPill.isHidden = false
+    }
+
+    private func renderCameraError(response: StatusResponse) {
+        guard response.cameraState == .offline else {
+            errorPill.isHidden = true
+            return
+        }
+
+        errorPill.configure(
+            caption: "Camera offline",
+            dotColor: .systemRed,
+            backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
+        )
+        errorPill.isHidden = false
     }
 
     private func renderRecording(_ state: RecordingFeature.State) {
@@ -201,31 +311,13 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
         }
 
         switch state {
-        case .unknown:
-            recordButton.setTitle("Start Recording", for: .normal)
-            recordButton.isEnabled = false
-            setRecordingIndicatorVisible(false)
-        case .idle:
-            recordButton.setTitle("Start Recording", for: .normal)
-            recordButton.isEnabled = true
-            setRecordingIndicatorVisible(false)
-        case .starting:
-            recordButton.setTitle("Starting", for: .normal)
-            recordButton.isEnabled = false
-            setRecordingIndicatorVisible(true)
-        case .recording:
-            recordButton.setTitle("Stop Recording", for: .normal)
-            recordButton.isEnabled = true
-            setRecordingIndicatorVisible(true)
-        case .stopping:
-            recordButton.setTitle("Stopping", for: .normal)
-            recordButton.isEnabled = false
-            setRecordingIndicatorVisible(true)
-        case .failed:
-            recordButton.setTitle("Start Recording", for: .normal)
-            recordButton.isEnabled = true
-            setRecordingIndicatorVisible(false)
+        case .starting, .recording, .stopping:
+            recPill.isHidden = false
+        case .unknown, .idle, .failed:
+            recPill.isHidden = true
         }
+
+        recordButton.apply(state)
     }
 
     private func renderClips(_ state: ClipsFeature.State) {
@@ -238,33 +330,8 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
             clips = []
         }
 
+        clipsTableView.backgroundView = clips.isEmpty ? emptyClipsView : nil
         clipsTableView.reloadData()
-    }
-
-    private func setRecordingIndicatorVisible(_ isVisible: Bool) {
-        let isArranged = recordingControls.arrangedSubviews.contains(recIndicator)
-
-        if isVisible && isArranged == false {
-            recordingControls.addArrangedSubview(recIndicator)
-        } else if isVisible == false && isArranged {
-            recordingControls.removeArrangedSubview(recIndicator)
-            recIndicator.removeFromSuperview()
-        }
-    }
-
-    private func formatTemp(_ value: Double?) -> String {
-        guard let value else { return "--" }
-        return String(format: "%.1f C", value)
-    }
-
-    private func formatStorage(_ storage: Storage?) -> String {
-        guard let storage else { return "--" }
-        return "\(storage.used) / \(storage.total) bytes"
-    }
-
-    private func formatMemory(_ mem: Mem?) -> String {
-        guard let mem else { return "--" }
-        return "\(mem.available) / \(mem.total) bytes"
     }
 
     @objc private func recordTapped() {
@@ -295,10 +362,16 @@ final class HomeViewController: UIViewController, UITableViewDataSource {
     ) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "clip", for: indexPath)
         let clip = clips[indexPath.row]
-        cell.textLabel?.font = .preferredFont(forTextStyle: .body)
-        cell.textLabel?.adjustsFontForContentSizeCategory = true
         let filename = String(format: "seg_%05d.ts", clip.id)
-        cell.textLabel?.text = "\(filename) - \(clip.bytes) bytes"
+        var content = UIListContentConfiguration.subtitleCell()
+        content.text = filename
+        content.secondaryText = Formatters.byteSize(clip.bytes)
+        content.textProperties.font = .preferredFont(forTextStyle: .body)
+        content.textProperties.adjustsFontForContentSizeCategory = true
+        content.secondaryTextProperties.font = .preferredFont(forTextStyle: .subheadline)
+        content.secondaryTextProperties.adjustsFontForContentSizeCategory = true
+        content.secondaryTextProperties.color = .secondaryLabel
+        cell.contentConfiguration = content
         cell.selectionStyle = .none
         return cell
     }

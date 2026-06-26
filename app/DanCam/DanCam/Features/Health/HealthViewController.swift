@@ -2,13 +2,18 @@ import UIKit
 
 final class HealthViewController: UIViewController {
     private let store: Store<HealthFeature.State, HealthFeature.Action, AppDependencies>
+    private let statusStore: Store<StatusFeature.State, StatusFeature.Action, AppDependencies>
     private var observation: StoreObservation?
+    private var statusObservation: StoreObservation?
 
+    private let scrollView = UIScrollView()
     private let statusLabel = UILabel()
     private let bootIdLabel = UILabel()
     private let uptimeLabel = UILabel()
     private let recordingLabel = UILabel()
     private let timeLabel = UILabel()
+    private let telemetryHeaderLabel = UILabel()
+    private let telemetryStack = UIStackView()
     private let errorLabel = UILabel()
     private let reloadButton = UIButton(type: .system)
 
@@ -17,6 +22,11 @@ final class HealthViewController: UIViewController {
             initialState: .idle,
             dependencies: dependencies,
             reduce: HealthFeature.reduce
+        )
+        statusStore = Store(
+            initialState: .idle,
+            dependencies: dependencies,
+            reduce: StatusFeature.reduce
         )
         super.init(nibName: nil, bundle: nil)
     }
@@ -36,13 +46,34 @@ final class HealthViewController: UIViewController {
         observation = store.observe { [weak self] state in
             self?.render(state)
         }
+        statusObservation = statusStore.observe { [weak self] state in
+            self?.renderTelemetry(state)
+        }
         store.send(.onAppear)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        statusStore.send(.onAppear)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        statusStore.send(.onDisappear)
     }
 
     private func configureViews() {
         statusLabel.font = .preferredFont(forTextStyle: .title2)
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.numberOfLines = 0
+
+        telemetryHeaderLabel.text = "Telemetry"
+        telemetryHeaderLabel.font = .preferredFont(forTextStyle: .headline)
+        telemetryHeaderLabel.adjustsFontForContentSizeCategory = true
+
+        telemetryStack.axis = .vertical
+        telemetryStack.spacing = 8
+        telemetryStack.alignment = .fill
 
         for label in [bootIdLabel, uptimeLabel, recordingLabel, timeLabel, errorLabel] {
             label.font = .preferredFont(forTextStyle: .body)
@@ -55,12 +86,16 @@ final class HealthViewController: UIViewController {
         reloadButton.setTitle("Reload", for: .normal)
         reloadButton.addTarget(self, action: #selector(reloadTapped), for: .touchUpInside)
 
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
         let stack = UIStackView(arrangedSubviews: [
             statusLabel,
             bootIdLabel,
             uptimeLabel,
             recordingLabel,
             timeLabel,
+            telemetryHeaderLabel,
+            telemetryStack,
             errorLabel,
             reloadButton,
         ])
@@ -69,12 +104,20 @@ final class HealthViewController: UIViewController {
         stack.alignment = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(stack)
+        view.addSubview(scrollView)
+        scrollView.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 24),
+            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -24),
+            stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
         ])
     }
 
@@ -106,6 +149,22 @@ final class HealthViewController: UIViewController {
         uptimeLabel.text = "Uptime: \(response.map { "\($0.uptimeS) s" } ?? "--")"
         recordingLabel.text = "Recording: \(response.map { $0.recording ? "yes" : "no" } ?? "--")"
         timeLabel.text = "Pi time: \(response.map { "\($0.tMs) ms" } ?? "--")"
+    }
+
+    private func renderTelemetry(_ state: StatusFeature.State) {
+        for view in telemetryStack.arrangedSubviews {
+            telemetryStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        for row in HealthTelemetry.rows(for: state) {
+            let label = UILabel()
+            label.font = .preferredFont(forTextStyle: .body)
+            label.adjustsFontForContentSizeCategory = true
+            label.numberOfLines = 0
+            label.text = "\(row.label): \(row.value)"
+            telemetryStack.addArrangedSubview(label)
+        }
     }
 
     @objc private func reloadTapped() {
