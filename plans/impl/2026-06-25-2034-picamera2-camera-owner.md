@@ -193,6 +193,42 @@ the smoke harness, not through the service.
 - **FAIL A (preview choppy, recording clean):** flip the one line to software `JpegEncoder`, re-run; if it passes, ship that.
 - **FAIL B (software JPEG also drops record frames / overheats):** concurrency untenable -> the follow-up advertises `preview.concurrent=false` and falls back to preview-only-when-stopped (ADR 02 allows it; still covers parked positioning/night aiming).
 
+## Validation log
+
+### 2026-06-25 desk soak: simulator preview + real Pi recording
+
+Result: **pass for the desk/service-level `jet` gate**. The simulator app was on
+Live Preview against the real Pi while recording was active. The agent polled the Pi
+for roughly 30 minutes, then stopped recording through `POST /v1/recording/stop`
+and validated the files.
+
+- Window: about `20:41:36` to `21:11:36` Pi local time.
+- Health: `/v1/health.recording` stayed `true` during the soak and returned `false`
+  after the stop call.
+- Segment output: recording wrote `seg_00003.ts` through `seg_00067.ts`; numbering
+  continued from earlier test clips and did not reset or overwrite.
+- `ffprobe`: 65 soak segments passed. `seg_00003.ts` through `seg_00066.ts`
+  reported `30.000000` seconds; `seg_00067.ts` reported `2.366667` seconds, the
+  expected short final segment after stop.
+- `ffmpeg -v error -i <segment> -c copy -f null -`: 65 segments checked, `NOISY 0`.
+- Logs: `journalctl -u dancam` for the soak window had no warning-priority entries
+  and no `timestamp`, `error`, `warn`, `failed`, `oom`, `kill`, or `corrupt` hits.
+- SoC temperature: sampled range was roughly `49.9 C` to `55.8 C`; after stop it
+  dropped back to `51.5 C`.
+- Memory: available memory stayed roughly `171-180 MB` during the run. Swap stayed
+  around `79-80 MB`; sampled `vmstat` windows showed no active swap churn.
+- Processes: `python3 camera.py` held around `27 MB` RSS early and about `27-28 MB`
+  during recording samples; `ffmpeg` was about `47 MB` RSS while recording.
+
+Caveats before closing the full hardware gate:
+
+- This was a desk soak, not a warm-cabin soak.
+- The app path was the iOS simulator against the real Pi, not a physical iPhone on
+  the `dancam-dev` AP.
+- Sensor temperature was not surfaced yet; only SoC temperature was measured.
+- Preview smoothness was visually implied by the app staying on preview, but the
+  run did not record a delivered preview fps counter.
+
 ## Verification
 
 Each item is tagged **[agent]** (the implementing agent runs it, no hardware / no eyes-on)
