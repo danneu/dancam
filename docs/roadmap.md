@@ -52,14 +52,23 @@ mock first.
       (sidesteps the headline spike); _spike confirmed: `NWConnection` Wi-Fi pinning
       reached the Pi over the no-internet AP with cellular on, and no captive sheet was
       observed._
-- [ ] **Swoop `jet` -- Recording control + live status.** Lean code path landed:
-      a Picamera2 camera-owner subprocess, supervised Rust fan-out, `POST
-      /v1/recording/start|stop`, real `/v1/health.recording`, mutation hardening for
-      the new POSTs, and app Record / Stop Recording controls on the live-preview
-      screen. Still open before checking this swoop off: Dan's mock end-to-end eyes-on
-      pass, the real Zero 2 W + IMX708 concurrency/thermal/RAM spike, and the real-Pi
-      end-to-end pass. Deferred from the lean slice: SSE `GET /v1/events`, storage and
-      temperature status, `GET /v1/status`, and `GET /v1/capabilities.preview.concurrent`.
+- [x] **Swoop `jet` -- Recording control + concurrent preview.** Lean end-to-end
+      recording control is done: a Picamera2 camera-owner subprocess, supervised
+      Rust fan-out, `POST /v1/recording/start|stop`, real `/v1/health.recording`,
+      mutation hardening for the new POSTs, and app Record / Stop Recording controls
+      on the live-preview screen. Dan confirmed the mock/Xcode path and the real-Pi
+      recording path; the real Pi then passed a 30 min desk soak with simulator
+      preview open, recording active, clean `.ts` segments, no timestamp warnings,
+      stable SoC temperature, and no active swap churn. The richer "live status"
+      work was intentionally split out rather than stretched into this slice.
+- [ ] **Swoop `fern` -- Pi status/events telemetry.** Add the user-facing telemetry
+      surface that `jet` deliberately deferred: `GET /v1/status` for recording state,
+      camera state, boot/uptime, rec-dir storage, SoC temperature, memory/swap
+      headroom, and sensor temperature when Picamera2 metadata is surfaced; `GET
+      /v1/events` for heartbeat/status deltas; and `GET /v1/capabilities` if the app
+      still needs explicit capability negotiation such as `preview.concurrent`. Keep
+      `/v1/health` small and boring as a cheap liveness probe. This can feed the app
+      first and the later CarPlay status panel once entitlement work exists.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
       (missing / unformatted / wrong filesystem); auto-format on first insert;
       format-from-app with a double-confirm (`POST /v1/storage/format`).

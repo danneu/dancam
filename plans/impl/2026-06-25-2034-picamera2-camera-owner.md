@@ -220,7 +220,7 @@ and validated the files.
 - Processes: `python3 camera.py` held around `27 MB` RSS early and about `27-28 MB`
   during recording samples; `ffmpeg` was about `47 MB` RSS while recording.
 
-Caveats before closing the full hardware gate:
+Caveats split out of `jet` closure:
 
 - This was a desk soak, not a warm-cabin soak.
 - The app path was the iOS simulator against the real Pi, not a physical iPhone on
@@ -228,6 +228,13 @@ Caveats before closing the full hardware gate:
 - Sensor temperature was not surfaced yet; only SoC temperature was measured.
 - Preview smoothness was visually implied by the app staying on preview, but the
   run did not record a delivered preview fps counter.
+
+Closure decision, 2026-06-25: treat `jet` as complete for the roadmap's lean
+recording-control + concurrent-preview slice. The remaining "live status" pieces
+are not blockers for recording control; they are now a separate follow-up swoop
+(`fern`) covering `GET /v1/status`, `GET /v1/events`, storage/temp/memory telemetry,
+sensor-temperature surfacing, and any app-facing capability flags. Warm-cabin thermal
+policy remains a later hardening pass rather than part of `jet`.
 
 ## Verification
 
