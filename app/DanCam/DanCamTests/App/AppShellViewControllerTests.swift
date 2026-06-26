@@ -9,19 +9,19 @@ struct AppShellViewControllerTests {
         let spy = ResumeSpy()
         let shell = AppShellViewController(
             navigationController: UINavigationController(rootViewController: spy),
-            monitor: store
+            store: store
         )
         shell.loadViewIfNeeded()
 
-        store.send(.statusResponse(.failure(.http(503))))
-        store.send(.statusResponse(.failure(.transport("lost"))))
-        store.send(.statusResponse(.failure(.decoding("bad"))))
+        store.send(.connection(.statusResponse(.failure(.http(503)))))
+        store.send(.connection(.statusResponse(.failure(.transport("lost")))))
+        store.send(.connection(.statusResponse(.failure(.decoding("bad")))))
         #expect(spy.resumeCount == 0)
 
-        store.send(.statusResponse(.success(.sample(recording: true))))
+        store.send(.connection(.statusResponse(.success(.sample(recording: true)))))
         #expect(spy.resumeCount == 1)
 
-        store.send(.stop)
+        store.send(.connection(.stop))
     }
 
     @Test func firstContactConnectDoesNotResume() {
@@ -29,19 +29,19 @@ struct AppShellViewControllerTests {
         let spy = ResumeSpy()
         let shell = AppShellViewController(
             navigationController: UINavigationController(rootViewController: spy),
-            monitor: store
+            store: store
         )
         shell.loadViewIfNeeded()
 
-        store.send(.statusResponse(.success(.sample(recording: true))))
+        store.send(.connection(.statusResponse(.success(.sample(recording: true)))))
         #expect(spy.resumeCount == 0)
 
-        store.send(.stop)
+        store.send(.connection(.stop))
     }
 
-    private func makeStore() -> Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies> {
-        Store(
-            initialState: ConnectionFeature.State(),
+    private func makeStore() -> AppStore {
+        AppStore(
+            initialState: AppFeature.State(),
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError("Health is not used by AppShellViewControllerTests.") }),
                 status: StatusClient(fetch: {
@@ -52,7 +52,7 @@ struct AppShellViewControllerTests {
                     try? await Task.sleep(for: .seconds(60))
                 }
             ),
-            reduce: ConnectionFeature.reduce
+            reduce: AppFeature.reduce
         )
     }
 }

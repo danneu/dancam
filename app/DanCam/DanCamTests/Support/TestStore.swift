@@ -85,6 +85,10 @@ final class TestStore<State: Equatable, Action: Equatable, Dependencies> {
         switch effect {
         case .none:
             return
+        case .merge(let effects):
+            for effect in effects {
+                execute(effect)
+            }
         case .cancel(let id):
             cancelTask(id: id)
         case .run(let id, let cancelInFlight, let operation):

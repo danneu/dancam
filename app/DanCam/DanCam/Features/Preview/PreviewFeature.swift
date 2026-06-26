@@ -12,6 +12,7 @@ enum PreviewFeature {
 
         var phase: Phase = .idle
         var reconnectAttempt = 0
+        var streamGeneration = 0
     }
 
     enum Action: Equatable {
@@ -37,10 +38,12 @@ enum PreviewFeature {
         case .onAppear, .startTapped, .reconnectNow:
             state.phase = .connecting
             state.reconnectAttempt = 0
+            state.streamGeneration += 1
             return connectEffect(dependencies: dependencies)
 
         case .reconnect:
             state.phase = .connecting
+            state.streamGeneration += 1
             return connectEffect(dependencies: dependencies)
 
         case .onDisappear, .stopTapped:

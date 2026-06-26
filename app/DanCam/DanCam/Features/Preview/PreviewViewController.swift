@@ -3,6 +3,7 @@ import UIKit
 final class PreviewViewController: UIViewController {
     private let store: Store<PreviewFeature.State, PreviewFeature.Action, AppDependencies>
     private var observation: StoreObservation?
+    private var streamObservation: StoreObservation?
 
     private let imageView = UIImageView()
     private let statusPill = StatusPillView()
@@ -31,6 +32,10 @@ final class PreviewViewController: UIViewController {
         configureViews()
         observation = store.observe { [weak self] state in
             self?.render(state)
+        }
+        streamObservation = store.observe(\.streamGeneration) { [weak self] generation in
+            guard generation > 0 else { return }
+            self?.decodeState.beginNewStream()
         }
     }
 
@@ -78,7 +83,6 @@ final class PreviewViewController: UIViewController {
         case .connecting:
             statusPill.configure(caption: "Connecting", dotColor: .systemOrange, backgroundStyle: .material)
             statusPill.isHidden = false
-            decodeState.beginNewStream()
         case .streaming(let frame):
             statusPill.configure(caption: "Live", dotColor: .systemGreen, backgroundStyle: .material)
             statusPill.isHidden = false

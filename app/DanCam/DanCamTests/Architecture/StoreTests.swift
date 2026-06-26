@@ -74,6 +74,112 @@ struct StoreTests {
         #expect(observedStates == [0, 1])
     }
 
+    @Test func unchangedStateDoesNotNotifyButStillExecutesEffect() async {
+        enum Action {
+            case start
+            case finish
+        }
+
+        let finished = Signal()
+        var observedStates: [Int] = []
+        let store = Store<Int, Action, Void>(initialState: 0, dependencies: ()) { state, action, _ in
+            switch action {
+            case .start:
+                return .run { send in
+                    await send(.finish)
+                }
+            case .finish:
+                state = 1
+                return .none
+            }
+        }
+
+        store.observe { state in
+            observedStates.append(state)
+            if state == 1 {
+                finished.signal()
+            }
+        }
+
+        store.send(.start)
+        await finished.wait()
+
+        #expect(observedStates == [0, 1])
+    }
+
+    @Test func scopedObserveFiresOnlyWhenSliceChanges() {
+        struct State: Equatable {
+            var count = 0
+            var name = "initial"
+        }
+
+        enum Action {
+            case increment
+            case rename(String)
+        }
+
+        var observedCounts: [Int] = []
+        let store = Store<State, Action, Void>(initialState: State(), dependencies: ()) { state, action, _ in
+            switch action {
+            case .increment:
+                state.count += 1
+            case .rename(let name):
+                state.name = name
+            }
+
+            return .none
+        }
+
+        store.observe(\.count) { count in
+            observedCounts.append(count)
+        }
+
+        store.send(.rename("changed"))
+        store.send(.increment)
+
+        #expect(observedCounts == [0, 1])
+    }
+
+    @Test func scopedObserveUpdatesLastBeforeInvokingObserver() {
+        struct State: Equatable {
+            var count = 0
+            var name = "initial"
+        }
+
+        enum Action {
+            case increment
+            case rename(String)
+        }
+
+        var observedCounts: [Int] = []
+        var store: Store<State, Action, Void>!
+        store = Store<State, Action, Void>(initialState: State(), dependencies: ()) { state, action, _ in
+            switch action {
+            case .increment:
+                state.count += 1
+            case .rename(let name):
+                state.name = name
+            }
+
+            return .none
+        }
+
+        store.observe(\.count) { count in
+            observedCounts.append(count)
+
+            if count == 0 {
+                store.send(.rename("re-entered"))
+            }
+        }
+
+        #expect(observedCounts == [0])
+        #expect(store.state.name == "re-entered")
+
+        store.send(.increment)
+
+        #expect(observedCounts == [0, 1])
+    }
+
     @Test func effectFedActionIsDeliveredBackAndApplied() async {
         enum Action {
             case start
@@ -104,6 +210,49 @@ struct StoreTests {
         await finished.wait()
 
         #expect(store.state == 2)
+    }
+
+    @Test func mergeRunsBothMappedChildEffects() async {
+        enum ChildAction {
+            case append(String)
+        }
+
+        enum Action {
+            case start
+            case child(ChildAction)
+        }
+
+        let finished = Signal()
+        let store = Store<[String], Action, Void>(initialState: [], dependencies: ()) { state, action, _ in
+            switch action {
+            case .start:
+                func childEffect(_ value: String) -> Effect<ChildAction> {
+                    .run { send in
+                        await send(.append(value))
+                    }
+                }
+
+                return .merge([
+                    childEffect("first").map(Action.child),
+                    childEffect("second").map(Action.child),
+                ])
+
+            case .child(.append(let value)):
+                state.append(value)
+                return .none
+            }
+        }
+
+        store.observe { state in
+            if state.count == 2 {
+                finished.signal()
+            }
+        }
+
+        store.send(.start)
+        await finished.wait()
+
+        #expect(Set(store.state) == Set(["first", "second"]))
     }
 
     @Test func immediateEffectChainIsAppliedInOrder() async {
@@ -174,6 +323,51 @@ struct StoreTests {
             case .cancel:
                 return .cancel(id: "work")
             case .finish:
+                state = 2
+                return .none
+            }
+        }
+
+        store.send(.start)
+        await started.wait()
+        store.send(.cancel)
+        proceed.open()
+        await attemptedSend.wait()
+
+        #expect(store.state == 1)
+    }
+
+    @Test func mappedCancellationStopsInFlightEffectAction() async {
+        enum ChildAction {
+            case finish
+        }
+
+        enum Action {
+            case start
+            case cancel
+            case child(ChildAction)
+        }
+
+        let started = Signal()
+        let proceed = Gate()
+        let attemptedSend = Signal()
+        let store = Store<Int, Action, Void>(initialState: 0, dependencies: ()) { state, action, _ in
+            switch action {
+            case .start:
+                state = 1
+                let effect: Effect<ChildAction> = .run(id: "mapped-work") { send in
+                    started.signal()
+                    await proceed.wait()
+                    await send(.finish)
+                    attemptedSend.signal()
+                }
+                return effect.map(Action.child)
+
+            case .cancel:
+                let effect: Effect<ChildAction> = .cancel(id: "mapped-work")
+                return effect.map(Action.child)
+
+            case .child(.finish):
                 state = 2
                 return .none
             }

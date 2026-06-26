@@ -2,41 +2,41 @@ import UIKit
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
-    private var connectionStore: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>?
+    private var appStore: AppStore?
     private var shell: AppShellViewController?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         let dependencies = AppDependencies.live
-        let connectionStore = Store(
-            initialState: ConnectionFeature.State(),
+        let appStore = AppStore(
+            initialState: AppFeature.State(),
             dependencies: dependencies,
-            reduce: ConnectionFeature.reduce
+            reduce: AppFeature.reduce
         )
         let window = UIWindow(windowScene: windowScene)
-        let rootViewController = HomeViewController(dependencies: dependencies, monitor: connectionStore)
+        let rootViewController = HomeViewController(dependencies: dependencies, store: appStore)
         let navigationController = UINavigationController(rootViewController: rootViewController)
         let shell = AppShellViewController(
             navigationController: navigationController,
-            monitor: connectionStore
+            store: appStore
         )
 
         window.rootViewController = shell
         self.window = window
-        self.connectionStore = connectionStore
+        self.appStore = appStore
         self.shell = shell
         window.makeKeyAndVisible()
         rootViewController.loadViewIfNeeded()
-        connectionStore.send(.start)
+        appStore.send(.connection(.start))
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
-        connectionStore?.send(.start)
+        appStore?.send(.connection(.start))
         (shell?.topViewController as? ConnectionResumable)?.resumeLiveWork()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
-        connectionStore?.send(.stop)
+        appStore?.send(.connection(.stop))
     }
 }

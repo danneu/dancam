@@ -23,6 +23,7 @@ struct PreviewFeatureTests {
 
         await store.send(.onAppear) {
             $0.phase = .connecting
+            $0.streamGeneration = 1
         }
         await store.receive(.frameReceived(frame)) {
             $0.phase = .streaming(frame)
@@ -33,6 +34,7 @@ struct PreviewFeatureTests {
         }
         await store.receive(.reconnect) {
             $0.phase = .connecting
+            $0.streamGeneration = 2
         }
     }
 
@@ -67,6 +69,7 @@ struct PreviewFeatureTests {
 
         await store.send(.startTapped) {
             $0.phase = .connecting
+            $0.streamGeneration = 1
         }
         await store.receive(.streamFailed(.http(503))) {
             $0.phase = .failed("HTTP 503")
@@ -74,6 +77,7 @@ struct PreviewFeatureTests {
         }
         await store.receive(.reconnect) {
             $0.phase = .connecting
+            $0.streamGeneration = 2
         }
     }
 
@@ -91,6 +95,7 @@ struct PreviewFeatureTests {
 
         await store.send(.onAppear) {
             $0.phase = .connecting
+            $0.streamGeneration = 1
         }
         await store.send(.stopTapped) {
             $0.phase = .stopped
@@ -115,6 +120,7 @@ struct PreviewFeatureTests {
 
         await store.send(.startTapped) {
             $0.phase = .connecting
+            $0.streamGeneration = 1
         }
         await store.finishEffects()
 
@@ -138,6 +144,7 @@ struct PreviewFeatureTests {
 
         await store.send(.onAppear) {
             $0.phase = .connecting
+            $0.streamGeneration = 1
         }
         await store.send(.streamFailed(.http(503))) {
             $0.phase = .failed("HTTP 503")
@@ -145,6 +152,7 @@ struct PreviewFeatureTests {
         }
         await store.receive(.reconnect) {
             $0.phase = .connecting
+            $0.streamGeneration = 2
         }
         await store.send(.frameReceived(frame)) {
             $0.phase = .streaming(frame)
@@ -168,6 +176,7 @@ struct PreviewFeatureTests {
 
         await store.send(.onAppear) {
             $0.phase = .connecting
+            $0.streamGeneration = 1
         }
         await store.send(.streamFinished) {
             $0.phase = .stopped
@@ -175,6 +184,7 @@ struct PreviewFeatureTests {
         }
         await store.receive(.reconnect) {
             $0.phase = .connecting
+            $0.streamGeneration = 2
         }
         await store.send(.frameReceived(frame)) {
             $0.phase = .streaming(frame)
@@ -202,6 +212,7 @@ struct PreviewFeatureTests {
 
         await store.send(.onAppear) {
             $0.phase = .connecting
+            $0.streamGeneration = 1
         }
         await store.send(.streamFailed(.http(503))) {
             $0.phase = .failed("HTTP 503")
@@ -211,8 +222,37 @@ struct PreviewFeatureTests {
         await store.send(.reconnectNow) {
             $0.phase = .connecting
             $0.reconnectAttempt = 0
+            $0.streamGeneration = 2
         }
         await releaseSleep.signal()
+        await store.send(.stopTapped) {
+            $0.phase = .stopped
+        }
+        await store.finishEffects()
+
+        store.expectNoReceivedActions()
+    }
+
+    @Test func reconnectNowWhileConnectingStillChangesState() async {
+        let store = TestStore(
+            initialState: PreviewFeature.State(),
+            dependencies: AppDependencies(
+                health: HealthClient(fetch: { fatalError() }),
+                preview: PreviewClient(connect: {
+                    AsyncThrowingStream { _ in }
+                })
+            ),
+            reduce: PreviewFeature.reduce
+        )
+
+        await store.send(.onAppear) {
+            $0.phase = .connecting
+            $0.streamGeneration = 1
+        }
+        await store.send(.reconnectNow) {
+            $0.phase = .connecting
+            $0.streamGeneration = 2
+        }
         await store.send(.stopTapped) {
             $0.phase = .stopped
         }

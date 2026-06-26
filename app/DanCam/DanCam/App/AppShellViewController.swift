@@ -2,7 +2,7 @@ import UIKit
 
 final class AppShellViewController: UIViewController {
     private let embeddedNavigationController: UINavigationController
-    private let monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
+    private let store: AppStore
     private let strip = ConnectionStatusStripView()
 
     private var observation: StoreObservation?
@@ -10,10 +10,10 @@ final class AppShellViewController: UIViewController {
 
     init(
         navigationController: UINavigationController,
-        monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
+        store: AppStore
     ) {
         embeddedNavigationController = navigationController
-        self.monitor = monitor
+        self.store = store
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -46,8 +46,8 @@ final class AppShellViewController: UIViewController {
         configureViews()
         embeddedNavigationController.didMove(toParent: self)
 
-        observation = monitor.observe { [weak self] state in
-            self?.render(state)
+        observation = store.observe(\.connection.connectivity) { [weak self] connectivity in
+            self?.render(connectivity)
         }
     }
 
@@ -70,17 +70,17 @@ final class AppShellViewController: UIViewController {
         ])
     }
 
-    private func render(_ state: ConnectionFeature.State) {
-        strip.configure(ConnectionCoordination.presentation(for: state.connectivity))
+    private func render(_ connectivity: ConnectionFeature.Connectivity) {
+        strip.configure(ConnectionCoordination.presentation(for: connectivity))
 
         if let previousConnectivity,
            ConnectionCoordination.shouldResumeLiveWork(
                from: previousConnectivity,
-               to: state.connectivity
+               to: connectivity
            ) {
             (embeddedNavigationController.topViewController as? ConnectionResumable)?.resumeLiveWork()
         }
 
-        previousConnectivity = state.connectivity
+        previousConnectivity = connectivity
     }
 }

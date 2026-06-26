@@ -2,14 +2,13 @@ import UIKit
 
 final class HomeViewController: UIViewController, UITableViewDataSource, ConnectionResumable {
     private let dependencies: AppDependencies
-    private let monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
+    private let store: AppStore
     private let previewViewController: PreviewViewController
-    private let recordingStore: Store<RecordingFeature.State, RecordingFeature.Action, AppDependencies>
-    private let clipsStore: Store<ClipsFeature.State, ClipsFeature.Action, AppDependencies>
 
     private var recordingObservation: StoreObservation?
     private var connectionObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
+    private var manualRefreshObservation: StoreObservation?
 
     private let statusPillsStack = UIStackView()
     private let tempWarningPill = StatusPillView()
@@ -24,28 +23,15 @@ final class HomeViewController: UIViewController, UITableViewDataSource, Connect
     private let emptyClipsImageView = UIImageView(image: UIImage(systemName: "film"))
     private let emptyClipsLabel = UILabel()
 
-    private var recordingState = RecordingFeature.State.unknown
-    private var observedRecording: Bool?
     private var clips: [Clip] = []
-    private var refreshGate = RefreshGate()
 
     init(
         dependencies: AppDependencies,
-        monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
+        store: AppStore
     ) {
         self.dependencies = dependencies
-        self.monitor = monitor
+        self.store = store
         previewViewController = PreviewViewController(dependencies: dependencies)
-        recordingStore = Store(
-            initialState: .unknown,
-            dependencies: dependencies,
-            reduce: RecordingFeature.reduce
-        )
-        clipsStore = Store(
-            initialState: .idle,
-            dependencies: dependencies,
-            reduce: ClipsFeature.reduce
-        )
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -72,29 +58,34 @@ final class HomeViewController: UIViewController, UITableViewDataSource, Connect
         configureViews()
         previewViewController.didMove(toParent: self)
 
-        recordingObservation = recordingStore.observe { [weak self] state in
+        recordingObservation = store.observe(\.recording) { [weak self] state in
             self?.renderRecording(state)
         }
-        connectionObservation = monitor.observe { [weak self] state in
-            self?.renderConnection(state)
+        connectionObservation = store.observe(\.connection.lastStatus) { [weak self] status in
+            self?.renderConnectionPills(status)
         }
-        clipsObservation = clipsStore.observe { [weak self] state in
+        clipsObservation = store.observe(\.clips) { [weak self] state in
             self?.renderClips(state)
+        }
+        manualRefreshObservation = store.observe(\.pendingManualRefresh) { [weak self] pending in
+            if pending == false {
+                self?.refreshControl.endRefreshing()
+            }
         }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        clipsStore.send(.onAppear)
+        store.send(.clips(.onAppear))
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        clipsStore.send(.onDisappear)
+        store.send(.clips(.onDisappear))
     }
 
     func resumeLiveWork() {
-        clipsStore.send(.refresh)
+        store.send(.clips(.refresh))
         previewViewController.reconnect()
     }
 
@@ -210,18 +201,13 @@ final class HomeViewController: UIViewController, UITableViewDataSource, Connect
         ])
     }
 
-    private func renderConnection(_ state: ConnectionFeature.State) {
+    private func renderConnectionPills(_ status: StatusResponse?) {
         tempWarningPill.isHidden = true
         errorPill.isHidden = true
 
-        if let response = state.lastStatus {
+        if let response = status {
             renderTempWarning(sensor: response.tempC.sensor)
             renderCameraError(response: response)
-
-            if observedRecording != response.recording {
-                observedRecording = response.recording
-                recordingStore.send(.statusObserved(recording: response.recording))
-            }
         }
 
         statusPillsStack.isHidden = tempWarningPill.isHidden && errorPill.isHidden
@@ -257,13 +243,6 @@ final class HomeViewController: UIViewController, UITableViewDataSource, Connect
     }
 
     private func renderRecording(_ state: RecordingFeature.State) {
-        let previous = recordingState
-        recordingState = state
-
-        if HomeCoordination.shouldRefreshClips(from: previous, to: state) {
-            clipsStore.send(.refresh)
-        }
-
         switch state {
         case .starting, .recording, .stopping:
             recPill.isHidden = false
@@ -275,10 +254,6 @@ final class HomeViewController: UIViewController, UITableViewDataSource, Connect
     }
 
     private func renderClips(_ state: ClipsFeature.State) {
-        if refreshGate.handle(state) {
-            refreshControl.endRefreshing()
-        }
-
         switch state {
         case .loaded(let clips):
             self.clips = clips
@@ -291,27 +266,19 @@ final class HomeViewController: UIViewController, UITableViewDataSource, Connect
     }
 
     @objc private func recordTapped() {
-        switch recordingState {
-        case .recording:
-            recordingStore.send(.stopTapped)
-        case .unknown, .idle, .failed:
-            recordingStore.send(.startTapped)
-        case .starting, .stopping:
-            break
-        }
+        store.send(.recordTapped)
     }
 
     @objc private func debugTapped() {
         navigationController?.pushViewController(
-            HealthViewController(dependencies: dependencies, monitor: monitor),
+            HealthViewController(dependencies: dependencies, store: store),
             animated: true
         )
     }
 
     @objc private func refreshPulled() {
-        resumeLiveWork()
-        monitor.send(.poll)
-        refreshGate.begin()
+        store.send(.manualRefresh)
+        previewViewController.reconnect()
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {

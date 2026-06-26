@@ -2,7 +2,7 @@ import UIKit
 
 final class HealthViewController: UIViewController {
     private let store: Store<HealthFeature.State, HealthFeature.Action, AppDependencies>
-    private let monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
+    private let appStore: AppStore
     private var observation: StoreObservation?
     private var connectionObservation: StoreObservation?
 
@@ -19,14 +19,14 @@ final class HealthViewController: UIViewController {
 
     init(
         dependencies: AppDependencies,
-        monitor: Store<ConnectionFeature.State, ConnectionFeature.Action, AppDependencies>
+        store appStore: AppStore
     ) {
         store = Store(
             initialState: .idle,
             dependencies: dependencies,
             reduce: HealthFeature.reduce
         )
-        self.monitor = monitor
+        self.appStore = appStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -45,8 +45,8 @@ final class HealthViewController: UIViewController {
         observation = store.observe { [weak self] state in
             self?.render(state)
         }
-        connectionObservation = monitor.observe { [weak self] state in
-            self?.renderTelemetry(state)
+        connectionObservation = appStore.observe(\.connection.lastStatus) { [weak self] status in
+            self?.renderTelemetry(status)
         }
         store.send(.onAppear)
     }
@@ -140,13 +140,13 @@ final class HealthViewController: UIViewController {
         timeLabel.text = "Pi time: \(response.map { "\($0.tMs) ms" } ?? "--")"
     }
 
-    private func renderTelemetry(_ state: ConnectionFeature.State) {
+    private func renderTelemetry(_ status: StatusResponse?) {
         for view in telemetryStack.arrangedSubviews {
             telemetryStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
 
-        for row in HealthTelemetry.rows(for: state.lastStatus) {
+        for row in HealthTelemetry.rows(for: status) {
             let label = UILabel()
             label.font = .preferredFont(forTextStyle: .body)
             label.adjustsFontForContentSizeCategory = true

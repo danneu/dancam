@@ -14,7 +14,7 @@ struct StoreObservation {
 }
 
 @MainActor
-final class Store<State, Action, Dependencies> {
+final class Store<State: Equatable, Action, Dependencies> {
     typealias Reducer = (inout State, Action, Dependencies) -> Effect<Action>
 
     private(set) var state: State
@@ -45,15 +45,42 @@ final class Store<State, Action, Dependencies> {
         }
     }
 
+    @discardableResult
+    func observe<Value: Equatable>(
+        _ keyPath: KeyPath<State, Value>,
+        _ observer: @escaping (Value) -> Void
+    ) -> StoreObservation {
+        var last = state[keyPath: keyPath]
+        var isFirst = true
+
+        return observe { state in
+            let value = state[keyPath: keyPath]
+
+            if isFirst {
+                isFirst = false
+                last = value
+                observer(value)
+                return
+            }
+
+            guard value != last else { return }
+            last = value
+            observer(value)
+        }
+    }
+
     func send(_ action: Action) {
+        let old = state
         let effect = reduce(&state, action, dependencies)
 
-        notifyObservers()
+        if state != old {
+            notifyObservers()
+        }
         execute(effect)
     }
 
     private func notifyObservers() {
-        for observer in observers.values {
+        for observer in Array(observers.values) {
             observer(state)
         }
     }
@@ -62,6 +89,10 @@ final class Store<State, Action, Dependencies> {
         switch effect {
         case .none:
             return
+        case .merge(let effects):
+            for effect in effects {
+                execute(effect)
+            }
         case .cancel(let id):
             cancelTask(id: id)
         case .run(let id, let cancelInFlight, let operation):

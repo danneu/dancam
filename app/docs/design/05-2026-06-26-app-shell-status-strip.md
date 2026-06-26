@@ -1,6 +1,6 @@
 # ADR: app shell status strip
 
-- **Status:** Accepted
+- **Status:** Superseded by 06-2026-06-26-domain-root-store-and-scoped-observation.md
 - **Date:** 2026-06-26
 - **Owner:** app
 - **Related:** root `AGENTS.md`; `app/AGENTS.md`;
