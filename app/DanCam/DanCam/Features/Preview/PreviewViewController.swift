@@ -13,6 +13,8 @@ final class PreviewViewController: UIViewController {
     private let recordButton = UIButton(type: .system)
     private let recDot = UIView()
     private let recLabel = UILabel()
+    private let recIndicator = UIStackView()
+    private let recordingControls = UIStackView()
 
     private var decodeState = PreviewDecodeState()
     private var recordingState = RecordingFeature.State.unknown
@@ -89,7 +91,8 @@ final class PreviewViewController: UIViewController {
         recLabel.font = .preferredFont(forTextStyle: .caption1)
         recLabel.adjustsFontForContentSizeCategory = true
 
-        let recIndicator = UIStackView(arrangedSubviews: [recDot, recLabel])
+        recIndicator.addArrangedSubview(recDot)
+        recIndicator.addArrangedSubview(recLabel)
         recIndicator.axis = .horizontal
         recIndicator.alignment = .center
         recIndicator.spacing = 6
@@ -99,7 +102,7 @@ final class PreviewViewController: UIViewController {
         controls.spacing = 16
         controls.distribution = .fillEqually
 
-        let recordingControls = UIStackView(arrangedSubviews: [recordButton, recIndicator])
+        recordingControls.addArrangedSubview(recordButton)
         recordingControls.axis = .horizontal
         recordingControls.alignment = .center
         recordingControls.spacing = 16
@@ -156,33 +159,38 @@ final class PreviewViewController: UIViewController {
         case .unknown:
             recordButton.setTitle("Record", for: .normal)
             recordButton.isEnabled = false
-            recDot.isHidden = true
-            recLabel.isHidden = true
+            setRecordingIndicatorVisible(false)
         case .idle:
             recordButton.setTitle("Record", for: .normal)
             recordButton.isEnabled = true
-            recDot.isHidden = true
-            recLabel.isHidden = true
+            setRecordingIndicatorVisible(false)
         case .starting:
             recordButton.setTitle("Starting", for: .normal)
             recordButton.isEnabled = false
-            recDot.isHidden = false
-            recLabel.isHidden = false
+            setRecordingIndicatorVisible(true)
         case .recording:
             recordButton.setTitle("Stop Recording", for: .normal)
             recordButton.isEnabled = true
-            recDot.isHidden = false
-            recLabel.isHidden = false
+            setRecordingIndicatorVisible(true)
         case .stopping:
             recordButton.setTitle("Stopping", for: .normal)
             recordButton.isEnabled = false
-            recDot.isHidden = false
-            recLabel.isHidden = false
+            setRecordingIndicatorVisible(true)
         case .failed:
             recordButton.setTitle("Record", for: .normal)
             recordButton.isEnabled = true
-            recDot.isHidden = true
-            recLabel.isHidden = true
+            setRecordingIndicatorVisible(false)
+        }
+    }
+
+    private func setRecordingIndicatorVisible(_ isVisible: Bool) {
+        let isArranged = recordingControls.arrangedSubviews.contains(recIndicator)
+
+        if isVisible && isArranged == false {
+            recordingControls.addArrangedSubview(recIndicator)
+        } else if isVisible == false && isArranged {
+            recordingControls.removeArrangedSubview(recIndicator)
+            recIndicator.removeFromSuperview()
         }
     }
 
