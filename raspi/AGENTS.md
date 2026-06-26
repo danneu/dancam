@@ -68,7 +68,9 @@ current provisional direction until it is captured.
   Picamera2 camera-owner ADR). It owns libcamera once, emits low-res MJPEG preview
   from the lores stream, and writes segmented MPEG-TS (`.ts`) recordings with inline
   headers under `DANCAM_REC_DIR` -- truncation-tolerant and HLS-native for the iPhone.
-  See the crash-safe recording ADR for why TS over raw H.264 / MP4.
+  The camera owner locks the lens to infinity and disables autofocus for both
+  recording and preview streams; see the fixed-infinity-focus ADR. See the crash-safe
+  recording ADR for why TS over raw H.264 / MP4.
 - **Storage model:** a **ring buffer** of short segments; oldest deleted as the card
   fills; incident-locked segments are exempt from deletion. See the storage
   ring-buffer / incident-lock ADR.
@@ -268,3 +270,6 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `07-2026-06-25-picamera2-camera-owner.md` (Accepted) -- the camera subprocess is a
   Picamera2 owner for `jet`, with a fixed stdout/stdin/stderr contract so a future
   all-Rust camera binary can replace it without changing the HTTP API.
+- `08-2026-06-25-fixed-infinity-focus.md` (Accepted) -- the camera owner disables
+  autofocus and locks the IMX708 lens to infinity so recording cannot hunt onto
+  windshield artifacts.

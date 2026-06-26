@@ -266,6 +266,7 @@ class RealCameraDriver:
         from picamera2 import Picamera2
         from picamera2.encoders import MJPEGEncoder
         from picamera2.outputs import Output
+        from libcamera import controls
 
         class PreviewQueueOutput(Output):
             def __init__(self, frames: "queue.Queue[bytes]"):
@@ -282,7 +283,11 @@ class RealCameraDriver:
         config = self.picam2.create_video_configuration(
             main={"size": (1920, 1080), "format": "YUV420"},
             lores={"size": (640, 480), "format": "YUV420"},
-            controls={"FrameRate": 30},
+            controls={
+                "FrameRate": 30,
+                "AfMode": controls.AfModeEnum.Manual,  # disable autofocus; never hunt onto glass
+                "LensPosition": 0.0,  # diopters: 0.0 = infinity
+            },
             buffer_count=4,
             queue=False,
         )
