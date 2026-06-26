@@ -111,6 +111,13 @@ swoop can drop into the list above unchanged. Unordered.
       **very low priority**: the on-phone "save this moment" button (swoop `nova`)
       already covers the core need, so hands-free voice marking is just convenience on
       top. Revisit only if voice marking proves worth it in the car.
+- [ ] **Swoop `lark` -- GPS-driven recording overlay.** Use the iPhone's GPS (speed,
+      heading, coordinates, plus a verified clock) and burn/show an info overlay on the
+      recorded video and the live preview. Open questions for when we get here: overlay
+      on the Pi (burned into footage, survives export, but the Pi has no GPS so the phone
+      must push location to it over the link) vs. on the phone (drawn at playback/preview
+      only, easy but not in the saved file); what fields to show; and how to fold in the
+      `moss` time provenance and a future GPS time source. Flesh out at implementation time.
 - [ ] **Swoop `wren` -- Per-unit AP security provisioning.** Replace the single
       hand-typed dev PSK with a per-unit random SSID/PSK generated at provisioning
       time, delivered to the phone via QR-based onboarding
