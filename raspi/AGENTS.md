@@ -238,8 +238,10 @@ shell, not `rustup target add`.
   `http://10.42.0.1:8080/v1/...`. The dev AP profile does not autoconnect; schedule a
   detached revert before flipping it over SSH:
   `sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up netplan-wlan0-peluchonet`.
-  Use a fresh unit name if that one is already loaded. After it returns, inspect it
-  with
+  Use a fresh unit name if that one is already loaded. From the Mac, `just raspi-ap
+  [minutes]` wraps this arm + AP flip and prints a local countdown to the revert; it
+  detaches the AP-up as a transient `dancam-go-ap` unit so the SSH session returns
+  before Wi-Fi drops. After it returns, inspect it with
   `journalctl -b -u dancam-restore-home-wifi.service -u dancam-restore-home-wifi.timer`.
   Power cycling also returns the dev image to home Wi-Fi. The current dev image keeps
   only the current boot's journal, so previous-boot AP failures are lost after a

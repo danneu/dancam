@@ -10,6 +10,42 @@ raspi-test:
 raspi-deploy:
     ./raspi/deploy.sh
 
+# Run from the Mac while the Pi is on home Wi-Fi; join dancam-dev from the iPhone,
+# not this Mac. Overrides: DANCAM_HOST, DANCAM_SSH_KEY, DANCAM_HOME_WIFI.
+# Flip the Pi to AP mode (dancam-dev) with auto-revert to home Wi-Fi after `minutes`, then count down to the revert.
+raspi-ap minutes="5":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HOST="${DANCAM_HOST:-dan@dancam.local}"
+    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519_danneu}"
+    HOME_WIFI="${DANCAM_HOME_WIFI:-netplan-wlan0-peluchonet}"
+    SECS=$(( {{minutes}} * 60 ))
+
+    echo "==> arming +{{minutes}}min revert to $HOME_WIFI, then flipping Pi to AP (dancam-dev)"
+    # Detach both via systemd so this SSH session returns before Wi-Fi drops. The
+    # stop/reset-failed makes the task re-runnable (clears any prior transient units).
+    ssh -t -i "$SSH_KEY" "$HOST" "
+      set -e
+      sudo systemctl stop  dancam-restore-home-wifi.timer dancam-restore-home-wifi.service dancam-go-ap.timer dancam-go-ap.service 2>/dev/null || true
+      sudo systemctl reset-failed dancam-restore-home-wifi.timer dancam-restore-home-wifi.service dancam-go-ap.timer dancam-go-ap.service 2>/dev/null || true
+      sudo systemd-run --unit=dancam-restore-home-wifi --on-active={{minutes}}min /usr/bin/nmcli connection up '$HOME_WIFI'
+      sudo systemd-run --unit=dancam-go-ap          --on-active=2s             /usr/bin/nmcli connection up dancam-ap
+    "
+
+    echo "==> AP comes up in ~2s; this Mac will drop the Pi (stay on $HOME_WIFI)."
+    echo "==> iPhone: join dancam-dev, then hit http://10.42.0.1:8080/v1/health"
+    echo
+
+    end=$(( $(date +%s) + SECS ))
+    trap 'printf "\n  (countdown stopped; the Pi auto-revert still fires on its own)\n"; exit 0' INT
+    while :; do
+      left=$(( end - $(date +%s) ))
+      (( left <= 0 )) && break
+      printf '\r  %s restores in %02d:%02d   ' "$HOME_WIFI" $(( left / 60 )) $(( left % 60 ))
+      sleep 1
+    done
+    printf '\r  auto-revert fired: Pi should be back on %s now.            \n' "$HOME_WIFI"
+
 # Build the iPhone app for the iOS simulator.
 app-build:
     xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'generic/platform=iOS Simulator' build

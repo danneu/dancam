@@ -201,6 +201,15 @@ sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli
 sudo nmcli connection up dancam-ap
 ```
 
+Shortcut: from the Mac (with the Pi still on home Wi-Fi), `just raspi-ap [minutes]`
+(default 5) does the arm + flip in one step and then prints a local countdown to the
+revert. It differs from the manual block above in one way: it schedules the AP-up as a
+detached transient `dancam-go-ap` unit firing ~2s out, so the SSH session returns
+cleanly before Wi-Fi drops instead of dying mid-command. The countdown runs on the Mac
+(which can no longer see the Pi once the AP is up), so it is a local estimate of the
+armed duration, not a probe of the Pi. Override the target/key/home-profile with
+`DANCAM_HOST`, `DANCAM_SSH_KEY`, `DANCAM_HOME_WIFI`.
+
 When the timer fires, inspect it with:
 
 ```sh
