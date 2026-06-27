@@ -1,9 +1,6 @@
 import Foundation
 
 nonisolated enum TSDemuxer {
-    private static let packetSize = 188
-    private static let clockTimescale: Int32 = 90_000
-
     static func demuxH264(from url: URL) throws -> DemuxedH264Clip {
         let data: Data
         do {
@@ -16,84 +13,125 @@ nonisolated enum TSDemuxer {
     }
 
     static func demuxH264(from data: Data) throws -> DemuxedH264Clip {
-        guard data.count >= packetSize, data.count % packetSize == 0 else {
+        guard data.count >= TransportStreamH264Parser.packetSize,
+              data.count % TransportStreamH264Parser.packetSize == 0
+        else {
             throw ClipRemuxError.invalidTransportStream("Transport stream size is not packet-aligned.")
         }
 
-        var pmtPID: UInt16?
-        var videoPID: UInt16?
-        var currentPES: PartialPES?
-        var packets: [H264PESPacket] = []
+        var parserState = TransportStreamH264Parser.State()
 
-        for packetOffset in stride(from: 0, to: data.count, by: packetSize) {
-            guard data[packetOffset] == 0x47 else {
-                throw ClipRemuxError.invalidTransportStream("Missing sync byte at TS packet \(packetOffset / packetSize).")
-            }
-
-            let payloadUnitStart = (data[packetOffset + 1] & 0x40) != 0
-            let pid = UInt16(data[packetOffset + 1] & 0x1f) << 8
-                | UInt16(data[packetOffset + 2])
-            let adaptationControl = (data[packetOffset + 3] & 0x30) >> 4
-
-            guard adaptationControl != 0 else {
-                throw ClipRemuxError.invalidTransportStream("Reserved adaptation-control value.")
-            }
-
-            var payloadOffset = packetOffset + 4
-            if adaptationControl == 2 || adaptationControl == 3 {
-                guard payloadOffset < packetOffset + packetSize else {
-                    throw ClipRemuxError.invalidTransportStream("Missing adaptation-field length.")
-                }
-                let adaptationLength = Int(data[payloadOffset])
-                payloadOffset += 1 + adaptationLength
-            }
-
-            guard adaptationControl == 1 || adaptationControl == 3 else {
-                continue
-            }
-            guard payloadOffset <= packetOffset + packetSize else {
-                throw ClipRemuxError.invalidTransportStream("Adaptation field overruns TS packet.")
-            }
-
-            let payload = Data(data[payloadOffset..<(packetOffset + packetSize)])
-            guard payload.isEmpty == false else { continue }
-
-            if pid == 0 {
-                if let parsedPMTPID = try parsePAT(payload, payloadUnitStart: payloadUnitStart) {
-                    pmtPID = parsedPMTPID
-                }
-                continue
-            }
-
-            if let pmtPID, pid == pmtPID {
-                if let parsedVideoPID = try parsePMT(payload, payloadUnitStart: payloadUnitStart) {
-                    videoPID = parsedVideoPID
-                }
-                continue
-            }
-
-            guard let videoPID, pid == videoPID else {
-                continue
-            }
-
-            if payloadUnitStart {
-                finish(&currentPES, into: &packets)
-                currentPES = try parsePESStart(payload)
-            } else {
-                currentPES?.payload.append(payload)
-            }
+        for packetOffset in stride(from: 0, to: data.count, by: TransportStreamH264Parser.packetSize) {
+            try TransportStreamH264Parser.processPacket(
+                from: data,
+                packetOffset: packetOffset,
+                packetIndex: packetOffset / TransportStreamH264Parser.packetSize,
+                state: &parserState
+            )
         }
 
-        finish(&currentPES, into: &packets)
+        TransportStreamH264Parser.finish(&parserState)
 
-        guard packets.isEmpty == false else {
+        guard parserState.packets.isEmpty == false else {
             throw ClipRemuxError.invalidTransportStream("No H.264 PES packets found.")
         }
 
         return try H264AccessUnitAssembler.assemble(
-            packets: packets,
-            timescale: clockTimescale
+            packets: parserState.packets,
+            timescale: TransportStreamH264Parser.clockTimescale
         )
+    }
+}
+
+nonisolated enum TransportStreamH264Parser {
+    static let packetSize = 188
+    static let clockTimescale: Int32 = 90_000
+
+    struct State {
+        fileprivate var pmtPID: UInt16?
+        fileprivate var videoPID: UInt16?
+        private var currentPES: PartialPES?
+        fileprivate(set) var packets: [H264PESPacket] = []
+
+        fileprivate mutating func startPES(from payload: Data) throws {
+            finishCurrentPES()
+            currentPES = try TransportStreamH264Parser.parsePESStart(payload)
+        }
+
+        fileprivate mutating func appendToCurrentPES(_ payload: Data) {
+            currentPES?.payload.append(payload)
+        }
+
+        fileprivate mutating func finishCurrentPES() {
+            TransportStreamH264Parser.finishCurrentPES(&currentPES, into: &packets)
+        }
+    }
+
+    static func processPacket(
+        from data: Data,
+        packetOffset: Int,
+        packetIndex: Int,
+        state: inout State
+    ) throws {
+        guard data[packetOffset] == 0x47 else {
+            throw ClipRemuxError.invalidTransportStream("Missing sync byte at TS packet \(packetIndex).")
+        }
+
+        let payloadUnitStart = (data[packetOffset + 1] & 0x40) != 0
+        let pid = UInt16(data[packetOffset + 1] & 0x1f) << 8
+            | UInt16(data[packetOffset + 2])
+        let adaptationControl = (data[packetOffset + 3] & 0x30) >> 4
+
+        guard adaptationControl != 0 else {
+            throw ClipRemuxError.invalidTransportStream("Reserved adaptation-control value.")
+        }
+
+        var payloadOffset = packetOffset + 4
+        if adaptationControl == 2 || adaptationControl == 3 {
+            guard payloadOffset < packetOffset + packetSize else {
+                throw ClipRemuxError.invalidTransportStream("Missing adaptation-field length.")
+            }
+            let adaptationLength = Int(data[payloadOffset])
+            payloadOffset += 1 + adaptationLength
+        }
+
+        guard adaptationControl == 1 || adaptationControl == 3 else {
+            return
+        }
+        guard payloadOffset <= packetOffset + packetSize else {
+            throw ClipRemuxError.invalidTransportStream("Adaptation field overruns TS packet.")
+        }
+
+        let payload = Data(data[payloadOffset..<(packetOffset + packetSize)])
+        guard payload.isEmpty == false else { return }
+
+        if pid == 0 {
+            if let parsedPMTPID = try parsePAT(payload, payloadUnitStart: payloadUnitStart) {
+                state.pmtPID = parsedPMTPID
+            }
+            return
+        }
+
+        if let pmtPID = state.pmtPID, pid == pmtPID {
+            if let parsedVideoPID = try parsePMT(payload, payloadUnitStart: payloadUnitStart) {
+                state.videoPID = parsedVideoPID
+            }
+            return
+        }
+
+        guard let videoPID = state.videoPID, pid == videoPID else {
+            return
+        }
+
+        if payloadUnitStart {
+            try state.startPES(from: payload)
+        } else {
+            state.appendToCurrentPES(payload)
+        }
+    }
+
+    static func finish(_ state: inout State) {
+        state.finishCurrentPES()
     }
 
     private static func parsePAT(
@@ -221,7 +259,7 @@ nonisolated enum TSDemuxer {
         return high | middle | low
     }
 
-    private static func finish(
+    private static func finishCurrentPES(
         _ partial: inout PartialPES?,
         into packets: inout [H264PESPacket]
     ) {

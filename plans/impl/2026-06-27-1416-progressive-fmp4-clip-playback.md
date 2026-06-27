@@ -982,7 +982,7 @@ fMP4 work dir all gone. Add `OSSignposter` marks for TTFF and the swap.
 
 ## Commit progress
 - [x] 1. feat(app): add ClipPullEvent .opened/.restarted pull seam
-- [ ] 2. refactor(app): extract shared TS parser helpers from TSDemuxer
+- [x] 2. refactor(app): extract shared TS parser helpers from TSDemuxer
 - [ ] 3. feat(app): add IncrementalTSDemuxer
 - [ ] 4. refactor(app): share H264 split/avcc helpers
 - [ ] 5. feat(app): add StreamingH264AccessUnitAssembler
