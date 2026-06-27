@@ -39,7 +39,7 @@ nonisolated struct DemuxedH264Clip: Equatable, Sendable {
     }
 }
 
-nonisolated enum ClipRemuxError: Error, Equatable {
+nonisolated enum ClipRemuxError: Error, Equatable, Sendable {
     case invalidTransportStream(String)
     case invalidH264(String)
     case writer(String)
