@@ -123,7 +123,7 @@ nonisolated enum H264AccessUnitAssembler {
         return nalUnits
     }
 
-    private static func splitAccessUnitGroups(_ nalUnits: [H264NALUnit]) -> [[H264NALUnit]] {
+    static func splitAccessUnitGroups(_ nalUnits: [H264NALUnit]) -> [[H264NALUnit]] {
         var groups: [[H264NALUnit]] = []
         var current: [H264NALUnit] = []
 
@@ -164,7 +164,7 @@ nonisolated enum H264AccessUnitAssembler {
         ))
     }
 
-    private static func findStartCode(
+    static func findStartCode(
         in data: Data,
         from start: Int
     ) -> (start: Int, end: Int)? {
@@ -186,7 +186,7 @@ nonisolated enum H264AccessUnitAssembler {
         return nil
     }
 
-    private static func avccSampleData(from nalUnits: [H264NALUnit]) -> Data {
+    static func avccSampleData(from nalUnits: [H264NALUnit]) -> Data {
         var sample = Data()
 
         for nalUnit in nalUnits {
@@ -200,7 +200,7 @@ nonisolated enum H264AccessUnitAssembler {
         return sample
     }
 
-    private static func isSliceNAL(_ nalUnit: H264NALUnit) -> Bool {
+    static func isSliceNAL(_ nalUnit: H264NALUnit) -> Bool {
         nalUnit.type == 1 || nalUnit.type == 5
     }
 
