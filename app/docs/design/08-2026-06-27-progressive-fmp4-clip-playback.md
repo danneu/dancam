@@ -1,6 +1,6 @@
 # ADR: progressive fMP4 clip playback
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-27
 - **Owner:** app
 - **Related:** `app/docs/design/07-2026-06-26-on-device-clip-remux-playback.md`;

@@ -16,6 +16,12 @@
 > are deleted. The transport, pull, interface-pinning, auth, incident, and offline
 > content in this ADR stands unchanged, and the Pi still serves raw `.ts` bytes.
 
+> **Note (2026-06-27):** ADR 08 extends the clip-playback update above. The app may
+> now serve progressive fMP4 fragments from a viewer-scoped loopback HLS server for
+> early play while the ranged TS pull is still running, then swap to the finalized
+> MP4 from ADR 07. The Pi transport contract stays unchanged: the Pi serves raw
+> `.ts` bytes with `Range`, and AVPlayer still talks only to local media.
+
 ## Context
 
 The iPhone app is the client of the camera unit's local API. The **wire contract** --

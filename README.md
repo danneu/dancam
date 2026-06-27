@@ -293,6 +293,11 @@ shared scheme without a `DANCAM_PIN_WIFI` override for the real AP path: the def
 `http://10.42.0.1:8080` base URL derives to Wi-Fi pinning for both health and preview.
 Use `DANCAM_PIN_WIFI=0` only for an explicit unpinned diagnostic pass.
 
+The app target also carries `NSAppTransportSecurity` / `NSAllowsLocalNetworking` so
+the clip viewer can serve progressive playback fragments over cleartext loopback HLS.
+This is app bundle configuration; it does not require Pi provisioning or a router
+change.
+
 In the app, verify that the home screen health fetch succeeds, then open Live preview
 and confirm that the camera feed is moving. Stop then Start should resume the stream.
 In the 2026-06-25 `fox` spike, this worked over `dancam-dev` with cellular left on; no

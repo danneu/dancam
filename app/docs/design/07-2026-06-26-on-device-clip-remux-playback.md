@@ -4,9 +4,18 @@
 - **Date:** 2026-06-26
 - **Owner:** app
 - **Related:** `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
+  `app/docs/design/08-2026-06-27-progressive-fmp4-clip-playback.md`;
   `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`;
   `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
   `docs/roadmap.md` (swoop `lime` -- Watch recorded clips)
+
+> **Note (2026-06-27):** ADR 08 extends this decision. The finalized MP4 remains
+> the durable playback artifact for scrubbing, cache, and future export, but it is
+> no longer the only viewer playback path while a pull is in progress. The viewer
+> may now serve progressive fMP4 fragments through a viewer-scoped loopback HLS
+> server bound to 127.0.0.1 for early play, then swap to the finalized MP4 when
+> remuxing completes. The rejected path here was single-segment TS HLS, not
+> localhost HLS itself.
 
 ## Context
 

@@ -162,9 +162,11 @@ mock first.
             passthrough `.mp4` and play it directly with AVPlayer; keeps AVPlayer on a
             local file (no-internet AP + future-TLS) and gives the player an MP4 sample
             table for scrubbing.
-      - [ ] **App:** tapping a clip pushes a viewer screen (AVPlayer + transport
+      - [x] **App:** tapping a clip pushes a viewer screen (AVPlayer + transport
             controls) into the existing nav, showing pull **progress** (a 6-26 s silent
-            spinner reads as a hang), then plays; handles pull failure / resume.
+            spinner reads as a hang), starting progressive local fMP4 playback when
+            the first fragment is ready, then swapping to the finalized MP4 for
+            scrubbing; handles pull failure / resume and progressive fallback.
       - [ ] **App:** clip rows show duration + best-effort created time + a placeholder
             poster; generate and cache a real poster from any clip already pulled (free
             -- the phone has the bytes; no Pi work, no extra wire).
