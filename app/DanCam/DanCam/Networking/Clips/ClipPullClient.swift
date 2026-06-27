@@ -9,6 +9,8 @@ nonisolated struct ClipPullResult: Equatable, Sendable {
 }
 
 nonisolated enum ClipPullEvent: Equatable, Sendable {
+    case opened(fileURL: URL)
+    case restarted
     case progress(bytesWritten: UInt64, expected: UInt64?)
     case completed(ClipPullResult)
 }
@@ -107,6 +109,7 @@ nonisolated struct ClipPullClient {
 
             let outputHandle = try FileHandle(forWritingTo: outputURL)
             fileHandle = outputHandle
+            continuation.yield(.opened(fileURL: outputURL))
 
             let clock = ContinuousClock()
             let signpostID = signposter.makeSignpostID()
@@ -236,7 +239,8 @@ nonisolated struct ClipPullClient {
                             fileHandle: fileHandle,
                             bytesWritten: &bytesWritten,
                             expectedBytes: &expectedBytes,
-                            resumeETag: &resumeETag
+                            resumeETag: &resumeETag,
+                            continuation: continuation
                         )
                         try writeDecodedChunks(
                             from: leftoverBody,
@@ -327,7 +331,8 @@ nonisolated struct ClipPullClient {
         fileHandle: FileHandle,
         bytesWritten: inout UInt64,
         expectedBytes: inout UInt64?,
-        resumeETag: inout String
+        resumeETag: inout String,
+        continuation: AsyncThrowingStream<ClipPullEvent, Error>.Continuation
     ) throws -> HTTPBodyDecoder {
         let status = head.statusCode
 
@@ -369,6 +374,7 @@ nonisolated struct ClipPullClient {
             if let etag = head.headerValue("etag") {
                 resumeETag = etag
             }
+            continuation.yield(.restarted)
             return HTTPBodyDecoder(head: head)
         case 416:
             // The drop landed at EOF and the server now sees the request as past the

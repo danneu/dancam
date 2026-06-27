@@ -38,16 +38,19 @@ struct ClipPullClientTests {
 
         """)
 
-        try #require(events.count == 4)
-        #expect(events[0] == .progress(bytesWritten: 4, expected: UInt64(body.count)))
-        #expect(events[1] == .progress(bytesWritten: 7, expected: UInt64(body.count)))
-        #expect(events[2] == .progress(bytesWritten: 12, expected: UInt64(body.count)))
+        try #require(events.count == 5)
+        let openedURL = try requireOpenedURL(events)
+        #expect(events[0] == .opened(fileURL: openedURL))
+        #expect(events[1] == .progress(bytesWritten: 4, expected: UInt64(body.count)))
+        #expect(events[2] == .progress(bytesWritten: 7, expected: UInt64(body.count)))
+        #expect(events[3] == .progress(bytesWritten: 12, expected: UInt64(body.count)))
 
         let result = try requireCompleted(events)
         defer {
             try? FileManager.default.removeItem(at: result.fileURL)
         }
 
+        #expect(openedURL == result.fileURL)
         #expect(try Data(contentsOf: result.fileURL) == body)
         #expect(result.bytes == UInt64(body.count))
         #expect(result.throughputMbps >= 0)
@@ -83,8 +86,10 @@ struct ClipPullClientTests {
         #expect(progress.map(\.bytesWritten) == [5, 12])
         #expect(progress.allSatisfy { $0.expected == UInt64(full.count) })
 
+        let openedURL = try requireOpenedURL(events)
         let result = try requireCompleted(events)
         defer { try? FileManager.default.removeItem(at: result.fileURL) }
+        #expect(openedURL == result.fileURL)
         #expect(try Data(contentsOf: result.fileURL) == full)
         #expect(result.bytes == UInt64(full.count))
     }
@@ -205,9 +210,50 @@ struct ClipPullClientTests {
 
         let result = try requireCompleted(events)
         defer { try? FileManager.default.removeItem(at: result.fileURL) }
+        let restartIndex = try requireSingleRestartIndex(events)
+        let firstPostRestartProgress = try #require(firstProgressIndex(in: events, after: restartIndex))
+
+        #expect(progressValues(events).map(\.bytesWritten) == [10, 2, 6])
+        #expect(firstPostRestartProgress > restartIndex)
         // Truncated and rewritten -- no stale tail from the 10-byte old representation.
         #expect(try Data(contentsOf: result.fileURL) == newBytes)
         #expect(result.bytes == UInt64(newBytes.count))
+    }
+
+    @Test(.tags(.networking))
+    func restartedPrecedesPostTruncationProgressEvenWhenProgressDoesNotRewind() async throws {
+        let oldPrefix = Data("ab".utf8)
+        let newBytes = Data("ABCDEF".utf8)
+        let call1 = ok200(total: 4, etag: "old", body: oldPrefix)
+        let call2 = ok200(total: newBytes.count, etag: "new", body: newBytes)
+
+        let responder = ScriptedResponder([.drop([call1]), .finish([call2])])
+        let client = try makeClient(responder)
+
+        let events = try await collect(client.pull(107, "old"))
+        let requests = await responder.requests
+        try #require(requests.count == 2)
+
+        let progress = progressValues(events)
+        #expect(progress.map(\.bytesWritten) == [2, 6])
+        try #require(progress.count == 2)
+        try #require(progress[1].bytesWritten >= progress[0].bytesWritten)
+
+        let restartIndex = try requireSingleRestartIndex(events)
+        let firstPostRestartProgress = try #require(firstProgressIndex(in: events, after: restartIndex))
+        let completedIndex = try #require(events.firstIndex { event in
+            if case .completed = event {
+                return true
+            }
+            return false
+        })
+
+        #expect(firstPostRestartProgress > restartIndex)
+        #expect(firstPostRestartProgress < completedIndex)
+
+        let result = try requireCompleted(events)
+        defer { try? FileManager.default.removeItem(at: result.fileURL) }
+        #expect(try Data(contentsOf: result.fileURL) == newBytes)
     }
 
     // MARK: - Helpers
@@ -278,6 +324,40 @@ struct ClipPullClientTests {
                 return (bytesWritten, expected)
             }
             return nil
+        }
+    }
+
+    private func requireOpenedURL(_ events: [ClipPullEvent]) throws -> URL {
+        let opened = events.compactMap { event -> URL? in
+            if case .opened(let fileURL) = event {
+                return fileURL
+            }
+            return nil
+        }
+        #expect(opened.count == 1)
+        return try #require(opened.first)
+    }
+
+    private func requireSingleRestartIndex(_ events: [ClipPullEvent]) throws -> Int {
+        let indices = events.indices.filter { index in
+            if case .restarted = events[index] {
+                return true
+            }
+            return false
+        }
+        #expect(indices.count == 1)
+        return try #require(indices.first)
+    }
+
+    private func firstProgressIndex(
+        in events: [ClipPullEvent],
+        after index: Int
+    ) -> Int? {
+        events.indices.drop(while: { $0 <= index }).first { eventIndex in
+            if case .progress = events[eventIndex] {
+                return true
+            }
+            return false
         }
     }
 

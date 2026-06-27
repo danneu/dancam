@@ -108,6 +108,10 @@ final class ClipViewerViewController: UIViewController {
                 try Task.checkCancellation()
 
                 switch event {
+                case .opened(let fileURL):
+                    temporaryFiles.insert(fileURL)
+                case .restarted:
+                    break
                 case .progress(let bytesWritten, let expected):
                     renderProgress(bytesWritten: bytesWritten, expected: expected)
                 case .completed(let result):
