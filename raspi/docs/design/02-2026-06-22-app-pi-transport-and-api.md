@@ -61,6 +61,13 @@
 > must validate that the Picamera2 lores preview stays smooth while 1080p30 H.264
 > recording runs on the Zero 2 W.
 
+> **Note (2026-06-26):** App-side clip playback is superseded by
+> `app/docs/design/07-2026-06-26-on-device-clip-remux-playback.md`. The wire contract
+> here is unchanged: the Pi still serves raw `.ts` bytes from `GET /v1/clips/{id}` and
+> does not serve `.m3u8` or MP4. The invariant that AVPlayer never talks to the Pi also
+> still holds; the app now remuxes the pulled TS to a local MP4 and plays that local
+> file.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --

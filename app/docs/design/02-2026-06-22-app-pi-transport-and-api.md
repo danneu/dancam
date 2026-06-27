@@ -9,6 +9,13 @@
   `app/docs/design/01-2026-06-22-carplay-integration-surface.md` (the incident-lock and
   offline alert this ADR's client feeds)
 
+> **Note (2026-06-26):** The **Clip playback and export** subsection is superseded by
+> `07-2026-06-26-on-device-clip-remux-playback.md`. Playback now remuxes the pulled
+> `.ts` to a local passthrough `.mp4` and plays that file directly with
+> `AVPlayer(url:)`; the loopback HLS server, local playlist, and loopback range parser
+> are deleted. The transport, pull, interface-pinning, auth, incident, and offline
+> content in this ADR stands unchanged, and the Pi still serves raw `.ts` bytes.
+
 ## Context
 
 The iPhone app is the client of the camera unit's local API. The **wire contract** --

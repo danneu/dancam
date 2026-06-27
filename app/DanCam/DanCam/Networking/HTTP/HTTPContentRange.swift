@@ -9,9 +9,8 @@ nonisolated func httpEntityTag(_ rawETag: String) -> String {
 }
 
 /// Response-side parser for the `Content-Range` header a `206` carries
-/// (`bytes <start>-<end>/<total>`). The loopback `HTTPRangeRequest` is the
-/// request/server side; this is the client-side counterpart the pull loop needs
-/// to validate a resumed partial before appending it.
+/// (`bytes <start>-<end>/<total>`). The pull loop uses this to validate a
+/// resumed partial before appending it.
 nonisolated enum HTTPContentRange {
     /// Returns `nil` for an unknown total (`bytes */<n>`) or any malformed value.
     static func parse(_ value: String) -> (start: UInt64, end: UInt64, total: UInt64)? {

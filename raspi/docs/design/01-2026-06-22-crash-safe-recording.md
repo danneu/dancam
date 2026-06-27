@@ -32,6 +32,12 @@
 > hardening (ring buffer, journaled data partition, read-only root, PLP validation) is
 > still owned by the later hardening pass.
 
+> **Note (2026-06-26):** The app-side playback/export realization is superseded by
+> `app/docs/design/07-2026-06-26-on-device-clip-remux-playback.md`. The phone now remuxes
+> pulled TS clips to local passthrough MP4 for both playback and future export/share.
+> The `.ts` recording format, short segmentation, inline headers, and crash-safety
+> layers in this ADR remain unchanged.
+
 ## Context
 
 The camera unit is powered from the car. When the engine goes off, power is cut

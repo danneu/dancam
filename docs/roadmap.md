@@ -127,14 +127,15 @@ mock first.
         SSID/PSK from the QR sticker) is owned by `wren`, gated on a production image plus
         the Hotspot Configuration entitlement.
 - [ ] **Swoop `lime` -- Watch recorded clips.** Browse the clip list, pull a finished
-      segment with resumable `Range` requests, and play it via a local HLS playlist +
-      AVPlayer on a loopback server. _The chunky one; the first time footage is
+      segment with resumable `Range` requests, remux it to a local `.mp4`, and play it
+      with AVPlayer. _The chunky one; the first time footage is
       watchable on the phone. A full 30 s segment is ~38 MB (10 Mbps CBR, confirmed on
       real `seg_*.ts`), so the pull -- not the UI -- is the weight here._
       - [ ] **Spike first (real Pi):** time a real ~38 MB `seg_*.ts` pull over the
             `dancam-dev` AP, desk and in-car, with and without live preview running
-            concurrently (spike 2); and confirm a pulled `.ts` plays via loopback HLS +
-            AVPlayer on-device (spike 5a). These set the pull UX and gate the build below.
+            concurrently (spike 2); and confirm a pulled `.ts` remuxes to a playable,
+            seekable `.mp4` on a physical iPhone (spike 5a). These set the pull UX and
+            gate the build below.
       - [x] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
             `.ts` as a plain `200` (`application/mp2t`); never serves the open segment
             (matches the list). The dumbest end-to-end that proves tap -> pull -> play; no
@@ -157,9 +158,10 @@ mock first.
       - [ ] **App:** on-device clip store -- pulled bytes named by id+etag, reused on
             replay (never re-pull 38 MB), with a simple size cap (bytes reused later by
             `tide` export).
-      - [x] **App:** download-then-play -- a `127.0.0.1` server serving a generated
-            single-segment VOD `.m3u8` (`#EXT-X-ENDLIST`) over the pulled `.ts`, played
-            by AVPlayer; keeps AVPlayer on loopback (no-internet AP + future-TLS).
+      - [x] **App:** download-then-play -- remux the pulled `.ts` to a local
+            passthrough `.mp4` and play it directly with AVPlayer; keeps AVPlayer on a
+            local file (no-internet AP + future-TLS) and gives the player an MP4 sample
+            table for scrubbing.
       - [ ] **App:** tapping a clip pushes a viewer screen (AVPlayer + transport
             controls) into the existing nav, showing pull **progress** (a 6-26 s silent
             spinner reads as a hang), then plays; handles pull failure / resume.
@@ -183,8 +185,9 @@ mock first.
 - [ ] **Swoop `reef` -- CarPlay auto start/stop** on CarPlay connect/disconnect.
 - [ ] **Swoop `sage` -- CarPlay status panel** (Driving Task template). _Gated on the
       Apple entitlement; the product must be useful without it._
-- [ ] **Swoop `tide` -- Export / share.** TS -> MP4 passthrough remux to Photos /
-      AirDrop (export-only, off the playback path).
+- [ ] **Swoop `tide` -- Export / share.** Save-to-Photos and AirDrop UI over the
+      `.mp4` that `lime` already produces; TS -> MP4 passthrough remux moved forward
+      into playback instead of staying export-only.
 - [ ] **Swoop `vine` -- Power-loss hardening for real.** Power-good GPIO + clean
       shutdown; supercap go/no-go; validate crash recovery in the actual car.
 - [ ] **Later / deepening passes.** Thermal-behavior policy (what recording does at

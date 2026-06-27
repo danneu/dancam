@@ -12,9 +12,9 @@ final class ClipViewerViewController: UIViewController {
     private let playerContainerView = UIView()
 
     private var pullTask: Task<Void, Never>?
-    private var server: LoopbackHLSServer?
     private var player: AVPlayer?
     private var playerViewController: AVPlayerViewController?
+    private var temporaryFiles: Set<URL> = []
 
     init(dependencies: AppDependencies, clip: Clip) {
         self.dependencies = dependencies
@@ -118,8 +118,18 @@ final class ClipViewerViewController: UIViewController {
 
             guard let completedResult else { return }
             try Task.checkCancellation()
-            try await startPlayback(from: completedResult.fileURL)
+            temporaryFiles.insert(completedResult.fileURL)
+            renderRemuxing()
+            let remuxedResult = try await dependencies.clipRemuxer.remux(completedResult.fileURL, clip.id)
+            temporaryFiles.insert(remuxedResult.fileURL)
+            if remuxedResult.fileURL != completedResult.fileURL {
+                removeTemporaryFile(completedResult.fileURL)
+            }
+            renderReadyToPlay(pullResult: completedResult, remuxResult: remuxedResult)
+            try Task.checkCancellation()
+            startPlayback(from: remuxedResult.fileURL)
         } catch is CancellationError {
+            removeTemporaryFiles()
         } catch {
             renderFailure(error)
         }
@@ -136,18 +146,29 @@ final class ClipViewerViewController: UIViewController {
 
     private func renderCompleted(_ result: ClipPullResult) {
         progressView.setProgress(1, animated: true)
-        statusLabel.text = "Ready"
+        statusLabel.text = "Download complete"
         resultLabel.text = "\(Formatters.byteSize(result.bytes)) - \(formatSeconds(result.elapsed)) - \(formatThroughput(result.throughputMbps))"
     }
 
-    private func startPlayback(from fileURL: URL) async throws {
-        let durationSeconds = Double(clip.durMs ?? 30_000) / 1_000.0
-        let server = LoopbackHLSServer(segmentURL: fileURL, durationSeconds: durationSeconds)
-        self.server = server
-        let baseURL = try await server.start()
-        try Task.checkCancellation()
+    private func renderRemuxing() {
+        statusLabel.text = "Preparing playback"
+    }
 
-        let player = AVPlayer(url: baseURL.appending(path: "index.m3u8"))
+    private func renderReadyToPlay(
+        pullResult: ClipPullResult,
+        remuxResult: ClipRemuxResult
+    ) {
+        statusLabel.text = "Ready"
+        resultLabel.text = [
+            "\(Formatters.byteSize(pullResult.bytes)) pulled",
+            "\(Formatters.byteSize(remuxResult.bytes)) playable",
+            formatSeconds(pullResult.elapsed),
+            formatThroughput(pullResult.throughputMbps),
+        ].joined(separator: " - ")
+    }
+
+    private func startPlayback(from fileURL: URL) {
+        let player = AVPlayer(url: fileURL)
         let playerViewController = AVPlayerViewController()
         playerViewController.player = player
         playerViewController.view.translatesAutoresizingMaskIntoConstraints = false
@@ -168,8 +189,9 @@ final class ClipViewerViewController: UIViewController {
     }
 
     private func renderFailure(_ error: Error) {
+        removeTemporaryFiles()
         progressView.setProgress(0, animated: false)
-        statusLabel.text = "Pull failed"
+        statusLabel.text = "Clip failed"
         resultLabel.text = error.localizedDescription
     }
 
@@ -186,12 +208,19 @@ final class ClipViewerViewController: UIViewController {
             self.playerViewController = nil
         }
 
-        if let server {
-            Task { [server] in
-                await server.stop()
-            }
-            self.server = nil
+        removeTemporaryFiles()
+    }
+
+    private func removeTemporaryFile(_ url: URL) {
+        temporaryFiles.remove(url)
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private func removeTemporaryFiles() {
+        for url in temporaryFiles {
+            try? FileManager.default.removeItem(at: url)
         }
+        temporaryFiles.removeAll()
     }
 
     private func formatSeconds(_ duration: Duration) -> String {

@@ -5,6 +5,7 @@ struct AppDependencies {
     var status: StatusClient
     var clips: ClipsClient
     var clipPull: ClipPullClient
+    var clipRemuxer: ClipRemuxer
     var preview: PreviewClient
     var recording: RecordingClient
     var sleep: @Sendable (Duration) async -> Void
@@ -14,6 +15,7 @@ struct AppDependencies {
         status: StatusClient = .noop,
         clips: ClipsClient = .noop,
         clipPull: ClipPullClient = .noop,
+        clipRemuxer: ClipRemuxer = .noop,
         preview: PreviewClient = .noop,
         recording: RecordingClient = .noop,
         sleep: @escaping @Sendable (Duration) async -> Void = { duration in
@@ -24,6 +26,7 @@ struct AppDependencies {
         self.status = status
         self.clips = clips
         self.clipPull = clipPull
+        self.clipRemuxer = clipRemuxer
         self.preview = preview
         self.recording = recording
         self.sleep = sleep
@@ -46,6 +49,7 @@ struct AppDependencies {
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning
         )
+        clipRemuxer = .live
         preview = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning
