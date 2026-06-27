@@ -990,7 +990,7 @@ fMP4 work dir all gone. Add `OSSignposter` marks for TTFF and the swap.
 - [x] 7. feat(app): add FMP4Segmenter
 - [x] 8. docs(app): add ADR 08 progressive fMP4 playback (Proposed)
 - [x] 9. feat(app): add LoopbackMediaServer
-- [ ] 10. feat(app): add ProgressiveSegmenter seam + ViewerState machine (noop)
+- [x] 10. feat(app): add ProgressiveSegmenter seam + ViewerState machine (noop)
 - [ ] 11. feat(app): wire live ProgressiveSegmenter (progressive early play)
 - [ ] 12. feat(app): rebase remux to zero + faststart finalized MP4
 - [ ] 13. feat(app): finalize-and-swap viewer to durable MP4
@@ -1002,3 +1002,6 @@ fMP4 work dir all gone. Add `OSSignposter` marks for TTFF and the swap.
 - Commit 9 uses a POSIX listener socket bound explicitly to `127.0.0.1` instead of
   `NWListener`; the tested Network framework forms for loopback interface/local-endpoint
   binding returned `EINVAL`, while the hard requirement is an actual loopback-only bind.
+- Commit 10 keeps `ProgressiveSegmenter.live`'s event stream open after clean input EOF so
+  the returned loopback URL remains backed by a retained server until the viewer cancels the
+  segmenter at swap or dismiss; HLS `#EXT-X-ENDLIST` is the EOF signal for AVPlayer.

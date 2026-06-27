@@ -6,6 +6,7 @@ struct AppDependencies {
     var clips: ClipsClient
     var clipPull: ClipPullClient
     var clipRemuxer: ClipRemuxer
+    var progressiveSegmenter: ProgressiveSegmenter
     var preview: PreviewClient
     var recording: RecordingClient
     var sleep: @Sendable (Duration) async -> Void
@@ -16,6 +17,7 @@ struct AppDependencies {
         clips: ClipsClient = .noop,
         clipPull: ClipPullClient = .noop,
         clipRemuxer: ClipRemuxer = .noop,
+        progressiveSegmenter: ProgressiveSegmenter = .noop,
         preview: PreviewClient = .noop,
         recording: RecordingClient = .noop,
         sleep: @escaping @Sendable (Duration) async -> Void = { duration in
@@ -27,6 +29,7 @@ struct AppDependencies {
         self.clips = clips
         self.clipPull = clipPull
         self.clipRemuxer = clipRemuxer
+        self.progressiveSegmenter = progressiveSegmenter
         self.preview = preview
         self.recording = recording
         self.sleep = sleep
@@ -50,6 +53,7 @@ struct AppDependencies {
             pinning: configuration.cameraAPIInterfacePinning
         )
         clipRemuxer = .live
+        progressiveSegmenter = .noop
         preview = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning

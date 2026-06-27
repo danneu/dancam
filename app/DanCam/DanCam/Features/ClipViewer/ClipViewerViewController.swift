@@ -1,6 +1,31 @@
 import AVKit
 import UIKit
 
+nonisolated enum ProgressiveAvailability {
+    enum Decision: Equatable {
+        case advance(UInt64)
+        case terminateProgressive
+        case ignore
+    }
+
+    static func decide(
+        _ event: ClipPullEvent,
+        lastForwarded: inout UInt64
+    ) -> Decision {
+        switch event {
+        case .restarted:
+            lastForwarded = 0
+            return .terminateProgressive
+        case .progress(let bytesWritten, _):
+            defer { lastForwarded = bytesWritten }
+            return bytesWritten < lastForwarded ? .terminateProgressive : .advance(bytesWritten)
+        case .opened, .completed:
+            return .ignore
+        }
+    }
+}
+
+@MainActor
 final class ClipViewerViewController: UIViewController {
     private let dependencies: AppDependencies
     private let clip: Clip
@@ -11,9 +36,22 @@ final class ClipViewerViewController: UIViewController {
     private let resultLabel = UILabel()
     private let playerContainerView = UIView()
 
+    private var state: ViewerState? {
+        didSet {
+            guard let state, state != oldValue else { return }
+            render(state)
+        }
+    }
+
     private var pullTask: Task<Void, Never>?
+    private var segmenterTask: Task<Void, Never>?
+    private var finalizerTask: Task<Void, Never>?
+    private var availabilityContinuation: AsyncStream<UInt64>.Continuation?
+    private var lastForwardedAvailability: UInt64 = 0
     private var player: AVPlayer?
     private var playerViewController: AVPlayerViewController?
+    private var currentItemIsProgressive = false
+    private var currentItemURL: URL?
     private var temporaryFiles: Set<URL> = []
 
     init(dependencies: AppDependencies, clip: Clip) {
@@ -43,6 +81,26 @@ final class ClipViewerViewController: UIViewController {
 
     isolated deinit {
         tearDown()
+    }
+
+    var statusText: String? {
+        statusLabel.text
+    }
+
+    var resultText: String? {
+        resultLabel.text
+    }
+
+    var progressFraction: Float {
+        progressView.progress
+    }
+
+    var hasEmbeddedPlayer: Bool {
+        playerViewController != nil
+    }
+
+    var currentPlayerItemURL: URL? {
+        currentItemURL
     }
 
     private func configureViews() {
@@ -102,49 +160,215 @@ final class ClipViewerViewController: UIViewController {
 
     private func runPull() async {
         do {
-            var completedResult: ClipPullResult?
-
             for try await event in dependencies.clipPull.pull(clip.id, clip.etag) {
                 try Task.checkCancellation()
-
-                switch event {
-                case .opened(let fileURL):
-                    temporaryFiles.insert(fileURL)
-                case .restarted:
-                    break
-                case .progress(let bytesWritten, let expected):
-                    renderProgress(bytesWritten: bytesWritten, expected: expected)
-                case .completed(let result):
-                    completedResult = result
-                    renderCompleted(result)
-                }
+                handlePullEvent(event)
             }
-
-            guard let completedResult else { return }
-            try Task.checkCancellation()
-            temporaryFiles.insert(completedResult.fileURL)
-            renderRemuxing()
-            let remuxedResult = try await dependencies.clipRemuxer.remux(completedResult.fileURL, clip.id)
-            temporaryFiles.insert(remuxedResult.fileURL)
-            if remuxedResult.fileURL != completedResult.fileURL {
-                removeTemporaryFile(completedResult.fileURL)
-            }
-            renderReadyToPlay(pullResult: completedResult, remuxResult: remuxedResult)
-            try Task.checkCancellation()
-            startPlayback(from: remuxedResult.fileURL)
         } catch is CancellationError {
             removeTemporaryFiles()
         } catch {
-            renderFailure(error)
+            state = .failed(message: error.localizedDescription)
         }
     }
 
-    private func renderProgress(bytesWritten: UInt64, expected: UInt64?) {
-        if let expected, expected > 0 {
-            progressView.setProgress(Float(Double(bytesWritten) / Double(expected)), animated: true)
-            statusLabel.text = "\(Formatters.byteSize(bytesWritten)) of \(Formatters.byteSize(expected))"
-        } else {
-            statusLabel.text = "\(Formatters.byteSize(bytesWritten)) pulled"
+    private func handlePullEvent(_ event: ClipPullEvent) {
+        var lastForwarded = lastForwardedAvailability
+        let availabilityDecision = ProgressiveAvailability.decide(event, lastForwarded: &lastForwarded)
+        lastForwardedAvailability = lastForwarded
+        apply(availabilityDecision)
+
+        switch event {
+        case .opened(let fileURL):
+            temporaryFiles.insert(fileURL)
+            startSegmenter(sourceURL: fileURL)
+        case .restarted:
+            break
+        case .progress(let bytesWritten, let expected):
+            updateProgress(PullProgress(bytesWritten: bytesWritten, expected: expected))
+        case .completed(let result):
+            handlePullCompleted(result)
+        }
+    }
+
+    private func apply(_ decision: ProgressiveAvailability.Decision) {
+        switch decision {
+        case .advance(let bytesAvailable):
+            availabilityContinuation?.yield(bytesAvailable)
+        case .terminateProgressive:
+            handleProgressiveFailure(.truncatedReset)
+        case .ignore:
+            break
+        }
+    }
+
+    private func updateProgress(_ progress: PullProgress) {
+        switch state {
+        case .fallback(.awaitingCompletion(_, let reason)):
+            state = .fallback(.awaitingCompletion(progress, reason: reason))
+        case .playingWhilePulling(_, let ttff):
+            state = .playingWhilePulling(progress, ttff: ttff)
+        default:
+            state = .pulling(progress)
+        }
+    }
+
+    private func handlePullCompleted(_ result: ClipPullResult) {
+        availabilityContinuation?.finish()
+        availabilityContinuation = nil
+        temporaryFiles.insert(result.fileURL)
+
+        switch state {
+        case .fallback(.awaitingCompletion(_, let reason)):
+            state = .fallback(.finalizing(result, reason: reason))
+            startFinalizer(for: result, source: .fallback)
+        default:
+            state = .complete(result)
+            startFinalizer(for: result, source: currentItemIsProgressive ? .progressiveSwap : .fallback)
+        }
+    }
+
+    private func startSegmenter(sourceURL: URL) {
+        segmenterTask?.cancel()
+        availabilityContinuation?.finish()
+        lastForwardedAvailability = 0
+
+        let (availability, continuation) = AsyncStream.makeStream(of: UInt64.self)
+        availabilityContinuation = continuation
+        let events = dependencies.progressiveSegmenter.start(sourceURL, clip.id, availability)
+
+        segmenterTask = Task { [weak self] in
+            do {
+                for try await event in events {
+                    try Task.checkCancellation()
+                    self?.handleSegmenterEvent(event)
+                }
+            } catch is CancellationError {
+                // Viewer teardown owns cleanup.
+            } catch {
+                self?.handleProgressiveFailure(.segmenterFailed)
+            }
+        }
+    }
+
+    private func handleSegmenterEvent(_ event: ProgressiveSegmenterEvent) {
+        switch event {
+        case .opened(let workDirectory):
+            temporaryFiles.insert(workDirectory)
+        case .firstPlayableReady(let url):
+            handleFirstPlayable(url)
+        }
+    }
+
+    private func handleFirstPlayable(_ url: URL) {
+        guard let progress = progressiveEligibleProgress() else { return }
+
+        attachPlayer(url: url, isProgressive: true)
+        player?.play()
+        state = .playingWhilePulling(progress, ttff: nil)
+    }
+
+    private func progressiveEligibleProgress() -> PullProgress? {
+        switch state {
+        case .none:
+            PullProgress(bytesWritten: 0, expected: clip.bytes > 0 ? clip.bytes : nil)
+        case .pulling(let progress), .preparingFirstPlayableFragment(let progress):
+            progress
+        default:
+            nil
+        }
+    }
+
+    private func handleProgressiveFailure(_ reason: FallbackReason) {
+        guard progressiveFallbackCanApply else { return }
+
+        let progress = currentProgress() ?? PullProgress(bytesWritten: 0, expected: clip.bytes > 0 ? clip.bytes : nil)
+        stopProgressivePipeline()
+        state = .fallback(.awaitingCompletion(progress, reason: reason))
+    }
+
+    private var progressiveFallbackCanApply: Bool {
+        switch state {
+        case .none, .pulling, .preparingFirstPlayableFragment, .playingWhilePulling:
+            true
+        case .complete, .finalizing, .readyScrubbable, .fallback, .failed:
+            false
+        }
+    }
+
+    private func currentProgress() -> PullProgress? {
+        switch state {
+        case .pulling(let progress),
+             .preparingFirstPlayableFragment(let progress),
+             .playingWhilePulling(let progress, _),
+             .fallback(.awaitingCompletion(let progress, _)):
+            progress
+        case .none, .complete, .finalizing, .readyScrubbable, .fallback, .failed:
+            nil
+        }
+    }
+
+    private func startFinalizer(for result: ClipPullResult, source: FinalizeSource) {
+        finalizerTask?.cancel()
+        finalizerTask = Task { [weak self] in
+            await self?.runFinalizer(for: result, source: source)
+        }
+    }
+
+    private func runFinalizer(for pullResult: ClipPullResult, source: FinalizeSource) async {
+        do {
+            state = .finalizing(pullResult, source: source)
+            let remuxedResult = try await dependencies.clipRemuxer.remux(pullResult.fileURL, clip.id)
+            temporaryFiles.insert(remuxedResult.fileURL)
+            if remuxedResult.fileURL != pullResult.fileURL {
+                removeTemporaryFile(pullResult.fileURL)
+            }
+            state = .readyScrubbable(ReadyInfo(pullResult: pullResult, remuxResult: remuxedResult))
+            try Task.checkCancellation()
+            attachPlayer(url: remuxedResult.fileURL, isProgressive: false)
+            player?.play()
+            stopProgressivePipeline()
+        } catch is CancellationError {
+            removeTemporaryFiles()
+        } catch {
+            state = .failed(message: error.localizedDescription)
+        }
+    }
+
+    private func render(_ state: ViewerState) {
+        switch state {
+        case .pulling(let progress), .fallback(.awaitingCompletion(let progress, _)):
+            renderProgress(progress)
+        case .preparingFirstPlayableFragment:
+            statusLabel.text = "Preparing first frame"
+        case .playingWhilePulling(let progress, let ttff):
+            renderPlayingWhilePulling(progress: progress, ttff: ttff)
+        case .complete(let result):
+            renderCompleted(result)
+        case .fallback(.finalizing):
+            statusLabel.text = "Preparing playback"
+        case .finalizing(_, let source):
+            statusLabel.text = source == .progressiveSwap ? "Preparing scrubbing" : "Preparing playback"
+        case .readyScrubbable(let info):
+            renderReadyToPlay(pullResult: info.pullResult, remuxResult: info.remuxResult)
+        case .failed(let message):
+            removeTemporaryFiles()
+            progressView.setProgress(0, animated: false)
+            statusLabel.text = "Clip failed"
+            resultLabel.text = message
+        }
+    }
+
+    private func renderProgress(_ progress: PullProgress) {
+        if let expected = progress.expected, expected > 0 {
+            progressView.setProgress(Float(Double(progress.bytesWritten) / Double(expected)), animated: true)
+        }
+        statusLabel.text = progressStatusText(progress)
+    }
+
+    private func renderPlayingWhilePulling(progress: PullProgress, ttff: Duration?) {
+        statusLabel.text = "Playing - \(progressStatusText(progress))"
+        if let ttff {
+            resultLabel.text = "first frame \(formatSeconds(ttff))"
         }
     }
 
@@ -152,10 +376,6 @@ final class ClipViewerViewController: UIViewController {
         progressView.setProgress(1, animated: true)
         statusLabel.text = "Download complete"
         resultLabel.text = "\(Formatters.byteSize(result.bytes)) - \(formatSeconds(result.elapsed)) - \(formatThroughput(result.throughputMbps))"
-    }
-
-    private func renderRemuxing() {
-        statusLabel.text = "Preparing playback"
     }
 
     private func renderReadyToPlay(
@@ -171,8 +391,18 @@ final class ClipViewerViewController: UIViewController {
         ].joined(separator: " - ")
     }
 
-    private func startPlayback(from fileURL: URL) {
-        let player = AVPlayer(url: fileURL)
+    private func progressStatusText(_ progress: PullProgress) -> String {
+        if let expected = progress.expected, expected > 0 {
+            "\(Formatters.byteSize(progress.bytesWritten)) of \(Formatters.byteSize(expected))"
+        } else {
+            "\(Formatters.byteSize(progress.bytesWritten)) pulled"
+        }
+    }
+
+    private func attachPlayer(url: URL, isProgressive: Bool) {
+        detachPlayer()
+
+        let player = AVPlayer(url: url)
         let playerViewController = AVPlayerViewController()
         playerViewController.player = player
         playerViewController.view.translatesAutoresizingMaskIntoConstraints = false
@@ -189,21 +419,15 @@ final class ClipViewerViewController: UIViewController {
 
         self.player = player
         self.playerViewController = playerViewController
-        player.play()
+        currentItemIsProgressive = isProgressive
+        currentItemURL = url
     }
 
-    private func renderFailure(_ error: Error) {
-        removeTemporaryFiles()
-        progressView.setProgress(0, animated: false)
-        statusLabel.text = "Clip failed"
-        resultLabel.text = error.localizedDescription
-    }
-
-    private func tearDown() {
-        pullTask?.cancel()
-        pullTask = nil
+    private func detachPlayer() {
         player?.pause()
         player = nil
+        currentItemIsProgressive = false
+        currentItemURL = nil
 
         if let playerViewController {
             playerViewController.willMove(toParent: nil)
@@ -211,8 +435,27 @@ final class ClipViewerViewController: UIViewController {
             playerViewController.removeFromParent()
             self.playerViewController = nil
         }
+    }
 
+    private func tearDown() {
+        pullTask?.cancel()
+        pullTask = nil
+        finalizerTask?.cancel()
+        finalizerTask = nil
+        stopProgressivePipeline()
+        detachPlayer()
         removeTemporaryFiles()
+    }
+
+    private func stopProgressivePipeline() {
+        availabilityContinuation?.finish()
+        availabilityContinuation = nil
+        segmenterTask?.cancel()
+        segmenterTask = nil
+
+        if currentItemIsProgressive {
+            detachPlayer()
+        }
     }
 
     private func removeTemporaryFile(_ url: URL) {
@@ -236,5 +479,45 @@ final class ClipViewerViewController: UIViewController {
 
     private func formatThroughput(_ throughputMbps: Double) -> String {
         String(format: "%.0f Mbps", locale: Locale(identifier: "en_US_POSIX"), throughputMbps)
+    }
+
+    private struct PullProgress: Equatable {
+        var bytesWritten: UInt64
+        var expected: UInt64?
+    }
+
+    private struct ReadyInfo: Equatable {
+        var pullResult: ClipPullResult
+        var remuxResult: ClipRemuxResult
+    }
+
+    private enum FinalizeSource: Equatable {
+        case progressiveSwap
+        case fallback
+    }
+
+    private enum FallbackReason: Equatable {
+        case segmenterFailed
+        case missingOrInvalidSegmentReport
+        case segmentExceedsFrozenTargetDuration
+        case neverProducedFirstFrame
+        case progressivePlayerFailed
+        case truncatedReset
+    }
+
+    private enum FallbackPhase: Equatable {
+        case awaitingCompletion(PullProgress, reason: FallbackReason)
+        case finalizing(ClipPullResult, reason: FallbackReason)
+    }
+
+    private enum ViewerState: Equatable {
+        case pulling(PullProgress)
+        case preparingFirstPlayableFragment(PullProgress)
+        case playingWhilePulling(PullProgress, ttff: Duration?)
+        case complete(ClipPullResult)
+        case finalizing(ClipPullResult, source: FinalizeSource)
+        case readyScrubbable(ReadyInfo)
+        case fallback(FallbackPhase)
+        case failed(message: String)
     }
 }
