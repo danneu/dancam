@@ -985,7 +985,7 @@ fMP4 work dir all gone. Add `OSSignposter` marks for TTFF and the swap.
 - [x] 2. refactor(app): extract shared TS parser helpers from TSDemuxer
 - [x] 3. feat(app): add IncrementalTSDemuxer
 - [x] 4. refactor(app): share H264 split/avcc helpers
-- [ ] 5. feat(app): add StreamingH264AccessUnitAssembler
+- [x] 5. feat(app): add StreamingH264AccessUnitAssembler
 - [ ] 6. refactor(app): extract CoreMedia sample helpers from ClipRemuxerEngine
 - [ ] 7. feat(app): add FMP4Segmenter
 - [ ] 8. docs(app): add ADR 08 progressive fMP4 playback (Proposed)

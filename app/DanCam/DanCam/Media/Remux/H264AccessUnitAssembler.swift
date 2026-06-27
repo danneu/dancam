@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 nonisolated enum H264AccessUnitAssembler {
     static func assemble(
@@ -237,5 +238,234 @@ nonisolated enum H264AccessUnitAssembler {
         var dtsTicks: Int64
         var isKeyFrame: Bool
         var nalTypes: [UInt8]
+    }
+}
+
+nonisolated struct StreamingH264AccessUnitAssembler {
+    private static let logger = Logger(subsystem: "com.danneu.dancam", category: "h264-au")
+
+    private let frameDurationWindow: Int
+
+    private var sps: Data?
+    private var pps: Data?
+    private var didBecomeReady = false
+    private var held: PendingAccessUnit?
+    private var deferredPacket: DeferredPacket?
+    private var recentDurations: [Int64] = []
+    private var didLogMultiAccessUnitPES = false
+
+    init(
+        timescale: Int32 = 90_000,
+        frameDurationWindow: Int = 32
+    ) {
+        _ = timescale
+        self.frameDurationWindow = max(1, frameDurationWindow)
+    }
+
+    struct Output: Sendable {
+        var accessUnits: [H264AccessUnit]
+        var sps: Data?
+        var pps: Data?
+        var didBecomeReady: Bool
+    }
+
+    mutating func append(_ packets: [H264PESPacket]) throws -> Output {
+        var output = makeOutput()
+
+        for packet in packets {
+            try flushDeferredPacket(nextDTS: packet.dtsTicks, into: &output)
+            try append(packet, into: &output)
+        }
+
+        return output
+    }
+
+    mutating func finish() throws -> Output {
+        var output = makeOutput()
+        try flushDeferredPacket(nextDTS: nil, into: &output)
+
+        if let held {
+            output.accessUnits.append(held.accessUnit(durationTicks: inferredFrameDuration()))
+            self.held = nil
+        }
+
+        return output
+    }
+
+    private mutating func append(
+        _ packet: H264PESPacket,
+        into output: inout Output
+    ) throws {
+        let nalUnits = try H264AccessUnitAssembler.splitAnnexB(packet.payload)
+        latchParameterSets(from: nalUnits, into: &output)
+
+        guard sps != nil, pps != nil else { return }
+
+        let pendingUnits = makePendingUnits(from: nalUnits, packet: packet)
+        guard pendingUnits.isEmpty == false else { return }
+
+        if pendingUnits.count == 1 {
+            try push(pendingUnits[0], into: &output)
+        } else {
+            logMultiAccessUnitPESIfNeeded(count: pendingUnits.count)
+            deferredPacket = DeferredPacket(
+                dtsTicks: packet.dtsTicks,
+                units: pendingUnits
+            )
+        }
+    }
+
+    private func makeOutput() -> Output {
+        Output(
+            accessUnits: [],
+            sps: nil,
+            pps: nil,
+            didBecomeReady: false
+        )
+    }
+
+    private mutating func latchParameterSets(
+        from nalUnits: [H264NALUnit],
+        into output: inout Output
+    ) {
+        for nalUnit in nalUnits {
+            switch nalUnit.type {
+            case 7 where sps == nil:
+                sps = nalUnit.data
+                output.sps = nalUnit.data
+            case 8 where pps == nil:
+                pps = nalUnit.data
+                output.pps = nalUnit.data
+            default:
+                break
+            }
+        }
+
+        guard didBecomeReady == false, sps != nil, pps != nil else { return }
+
+        didBecomeReady = true
+        output.didBecomeReady = true
+    }
+
+    private func makePendingUnits(
+        from nalUnits: [H264NALUnit],
+        packet: H264PESPacket
+    ) -> [PendingAccessUnit] {
+        H264AccessUnitAssembler.splitAccessUnitGroups(nalUnits).compactMap { group in
+            let sampleNALs = group.filter { nalUnit in
+                switch nalUnit.type {
+                case 7, 8, 9:
+                    return false
+                default:
+                    return true
+                }
+            }
+            guard sampleNALs.contains(where: H264AccessUnitAssembler.isSliceNAL) else {
+                return nil
+            }
+
+            return PendingAccessUnit(
+                sampleData: H264AccessUnitAssembler.avccSampleData(from: sampleNALs),
+                ptsTicks: packet.ptsTicks,
+                dtsTicks: packet.dtsTicks,
+                isKeyFrame: sampleNALs.contains { $0.type == 5 },
+                nalTypes: group.map(\.type)
+            )
+        }
+    }
+
+    private mutating func flushDeferredPacket(
+        nextDTS: Int64?,
+        into output: inout Output
+    ) throws {
+        guard let deferredPacket else { return }
+        self.deferredPacket = nil
+
+        let unitDuration: Int64
+        if let nextDTS {
+            let packetDuration = nextDTS - deferredPacket.dtsTicks
+            guard packetDuration > 0 else {
+                throw ClipRemuxError.invalidH264("DTS not strictly increasing")
+            }
+            unitDuration = max(1, packetDuration / Int64(deferredPacket.units.count))
+        } else {
+            unitDuration = inferredFrameDuration()
+        }
+
+        for index in deferredPacket.units.indices {
+            var pending = deferredPacket.units[index]
+            let offset = Int64(index) * unitDuration
+            pending.ptsTicks += offset
+            pending.dtsTicks += offset
+            try push(pending, into: &output)
+        }
+    }
+
+    private mutating func push(
+        _ pending: PendingAccessUnit,
+        into output: inout Output
+    ) throws {
+        if let held {
+            let duration = pending.dtsTicks - held.dtsTicks
+            guard duration > 0 else {
+                throw ClipRemuxError.invalidH264("DTS not strictly increasing")
+            }
+            recordDuration(duration)
+            output.accessUnits.append(held.accessUnit(durationTicks: duration))
+        }
+
+        held = pending
+    }
+
+    private mutating func recordDuration(_ duration: Int64) {
+        recentDurations.append(duration)
+
+        let overflow = recentDurations.count - frameDurationWindow
+        if overflow > 0 {
+            recentDurations.removeFirst(overflow)
+        }
+    }
+
+    private func inferredFrameDuration() -> Int64 {
+        let durations = recentDurations
+            .filter { $0 > 0 }
+            .sorted()
+
+        guard durations.isEmpty == false else {
+            return 3_000
+        }
+
+        return durations[durations.count / 2]
+    }
+
+    private mutating func logMultiAccessUnitPESIfNeeded(count: Int) {
+        guard didLogMultiAccessUnitPES == false else { return }
+
+        didLogMultiAccessUnitPES = true
+        Self.logger.notice("Deferred \(count) H.264 access units from one PES until the next DTS.")
+    }
+
+    private struct PendingAccessUnit {
+        var sampleData: Data
+        var ptsTicks: Int64
+        var dtsTicks: Int64
+        var isKeyFrame: Bool
+        var nalTypes: [UInt8]
+
+        func accessUnit(durationTicks: Int64) -> H264AccessUnit {
+            H264AccessUnit(
+                sampleData: sampleData,
+                ptsTicks: ptsTicks,
+                dtsTicks: dtsTicks,
+                durationTicks: durationTicks,
+                isKeyFrame: isKeyFrame,
+                nalTypes: nalTypes
+            )
+        }
+    }
+
+    private struct DeferredPacket {
+        var dtsTicks: Int64
+        var units: [PendingAccessUnit]
     }
 }
