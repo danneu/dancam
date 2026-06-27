@@ -988,7 +988,7 @@ fMP4 work dir all gone. Add `OSSignposter` marks for TTFF and the swap.
 - [x] 5. feat(app): add StreamingH264AccessUnitAssembler
 - [x] 6. refactor(app): extract CoreMedia sample helpers from ClipRemuxerEngine
 - [x] 7. feat(app): add FMP4Segmenter
-- [ ] 8. docs(app): add ADR 08 progressive fMP4 playback (Proposed)
+- [x] 8. docs(app): add ADR 08 progressive fMP4 playback (Proposed)
 - [ ] 9. feat(app): add LoopbackMediaServer
 - [ ] 10. feat(app): add ProgressiveSegmenter seam + ViewerState machine (noop)
 - [ ] 11. feat(app): wire live ProgressiveSegmenter (progressive early play)
