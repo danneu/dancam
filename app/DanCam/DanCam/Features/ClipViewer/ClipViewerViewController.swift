@@ -53,6 +53,7 @@ final class ClipViewerViewController: UIViewController {
     private var currentItemIsProgressive = false
     private var currentItemURL: URL?
     private var temporaryFiles: Set<URL> = []
+    private var progressiveWorkDirectories: Set<URL> = []
 
     init(dependencies: AppDependencies, clip: Clip) {
         self.dependencies = dependencies
@@ -101,6 +102,29 @@ final class ClipViewerViewController: UIViewController {
 
     var currentPlayerItemURL: URL? {
         currentItemURL
+    }
+
+    var currentPlayerTime: CMTime {
+        player?.currentTime() ?? .invalid
+    }
+
+    var isCurrentPlayerPlaying: Bool {
+        guard let player else { return false }
+        return player.rate != 0 || player.timeControlStatus == .playing
+    }
+
+    func seekCurrentPlayerForTesting(to time: CMTime) async {
+        guard let player else { return }
+
+        await withCheckedContinuation { continuation in
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                continuation.resume()
+            }
+        }
+    }
+
+    func pauseCurrentPlayerForTesting() {
+        player?.pause()
     }
 
     private func configureViews() {
@@ -256,6 +280,7 @@ final class ClipViewerViewController: UIViewController {
         switch event {
         case .opened(let workDirectory):
             temporaryFiles.insert(workDirectory)
+            progressiveWorkDirectories.insert(workDirectory)
         case .firstPlayableReady(let url):
             handleFirstPlayable(url)
         }
@@ -324,10 +349,23 @@ final class ClipViewerViewController: UIViewController {
             if remuxedResult.fileURL != pullResult.fileURL {
                 removeTemporaryFile(pullResult.fileURL)
             }
+            let shouldSwapExistingPlayer = source == .progressiveSwap && player != nil
+            let resumeTime = shouldSwapExistingPlayer ? currentPlayerTime : .zero
+            let shouldPlay = shouldSwapExistingPlayer ? shouldResumeCurrentPlayerPlayback : true
             state = .readyScrubbable(ReadyInfo(pullResult: pullResult, remuxResult: remuxedResult))
             try Task.checkCancellation()
-            attachPlayer(url: remuxedResult.fileURL, isProgressive: false)
-            player?.play()
+            if shouldSwapExistingPlayer {
+                replaceCurrentPlayerItem(
+                    with: remuxedResult.fileURL,
+                    resumeTime: resumeTime,
+                    shouldPlay: shouldPlay
+                )
+            } else {
+                attachPlayer(url: remuxedResult.fileURL, isProgressive: false)
+                if shouldPlay {
+                    player?.play()
+                }
+            }
             stopProgressivePipeline()
         } catch is CancellationError {
             removeTemporaryFiles()
@@ -425,6 +463,52 @@ final class ClipViewerViewController: UIViewController {
         currentItemURL = url
     }
 
+    private var shouldResumeCurrentPlayerPlayback: Bool {
+        guard let player else { return true }
+        return player.rate != 0 || player.timeControlStatus == .playing || player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+    }
+
+    private func replaceCurrentPlayerItem(
+        with url: URL,
+        resumeTime: CMTime,
+        shouldPlay: Bool
+    ) {
+        guard let player else {
+            attachPlayer(url: url, isProgressive: false)
+            if shouldPlay {
+                self.player?.play()
+            }
+            return
+        }
+
+        let seekTime = normalizedResumeTime(resumeTime)
+        player.pause()
+        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        currentItemIsProgressive = false
+        currentItemURL = url
+
+        player.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak player] _ in
+            Task { @MainActor in
+                guard let self,
+                      let player,
+                      self.player === player,
+                      self.currentItemURL == url else {
+                    return
+                }
+                if shouldPlay {
+                    player.play()
+                }
+            }
+        }
+    }
+
+    private func normalizedResumeTime(_ time: CMTime) -> CMTime {
+        guard time.isValid, time.isNumeric, CMTimeCompare(time, .zero) >= 0 else {
+            return .zero
+        }
+        return time
+    }
+
     private func detachPlayer() {
         player?.pause()
         player = nil
@@ -458,6 +542,7 @@ final class ClipViewerViewController: UIViewController {
         if currentItemIsProgressive {
             detachPlayer()
         }
+        removeProgressiveWorkDirectories()
     }
 
     private func removeTemporaryFile(_ url: URL) {
@@ -465,11 +550,19 @@ final class ClipViewerViewController: UIViewController {
         try? FileManager.default.removeItem(at: url)
     }
 
+    private func removeProgressiveWorkDirectories() {
+        for url in progressiveWorkDirectories {
+            removeTemporaryFile(url)
+        }
+        progressiveWorkDirectories.removeAll()
+    }
+
     private func removeTemporaryFiles() {
         for url in temporaryFiles {
             try? FileManager.default.removeItem(at: url)
         }
         temporaryFiles.removeAll()
+        progressiveWorkDirectories.removeAll()
     }
 
     private func formatSeconds(_ duration: Duration) -> String {

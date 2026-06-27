@@ -993,7 +993,7 @@ fMP4 work dir all gone. Add `OSSignposter` marks for TTFF and the swap.
 - [x] 10. feat(app): add ProgressiveSegmenter seam + ViewerState machine (noop)
 - [x] 11. feat(app): wire live ProgressiveSegmenter (progressive early play)
 - [x] 12. feat(app): rebase remux to zero + faststart finalized MP4
-- [ ] 13. feat(app): finalize-and-swap viewer to durable MP4
+- [x] 13. feat(app): finalize-and-swap viewer to durable MP4
 - [ ] 14. feat(app): harden progressive fallback + cleanup
 - [ ] 15. docs(app): mark ADR 08 Accepted; note ADR 07/02; tick lime roadmap
 
