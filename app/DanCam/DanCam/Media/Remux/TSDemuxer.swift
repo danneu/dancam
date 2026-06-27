@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 nonisolated enum TSDemuxer {
     static func demuxH264(from url: URL) throws -> DemuxedH264Clip {
@@ -13,6 +14,15 @@ nonisolated enum TSDemuxer {
     }
 
     static func demuxH264(from data: Data) throws -> DemuxedH264Clip {
+        let packets = try demuxH264PESPackets(from: data)
+
+        return try H264AccessUnitAssembler.assemble(
+            packets: packets,
+            timescale: TransportStreamH264Parser.clockTimescale
+        )
+    }
+
+    static func demuxH264PESPackets(from data: Data) throws -> [H264PESPacket] {
         guard data.count >= TransportStreamH264Parser.packetSize,
               data.count % TransportStreamH264Parser.packetSize == 0
         else {
@@ -36,10 +46,87 @@ nonisolated enum TSDemuxer {
             throw ClipRemuxError.invalidTransportStream("No H.264 PES packets found.")
         }
 
-        return try H264AccessUnitAssembler.assemble(
-            packets: parserState.packets,
-            timescale: TransportStreamH264Parser.clockTimescale
-        )
+        return parserState.packets
+    }
+}
+
+nonisolated struct IncrementalTSDemuxer {
+    private static let logger = Logger(subsystem: "com.danneu.dancam", category: "ts-demux")
+
+    private var residual = Data()
+    private var parserState = TransportStreamH264Parser.State()
+    private var packetIndex = 0
+    private var isSynced = true
+    private var didLogResync = false
+
+    init(clockTimescale _: Int32 = TransportStreamH264Parser.clockTimescale) {
+    }
+
+    mutating func append(_ chunk: Data) throws -> [H264PESPacket] {
+        residual.append(chunk)
+
+        var consumed = 0
+        while residual.count - consumed >= TransportStreamH264Parser.packetSize {
+            if isSynced == false || residual[consumed] != 0x47 {
+                guard let resyncOffset = Self.findResyncOffset(in: residual, from: consumed) else {
+                    isSynced = false
+                    preserveUnvalidatedTail(startingAt: consumed)
+                    return parserState.drainPackets()
+                }
+
+                logResyncIfNeeded(skippedByteCount: resyncOffset - consumed)
+                consumed = resyncOffset
+                isSynced = true
+            }
+
+            try TransportStreamH264Parser.processPacket(
+                from: residual,
+                packetOffset: consumed,
+                packetIndex: packetIndex,
+                state: &parserState
+            )
+            consumed += TransportStreamH264Parser.packetSize
+            packetIndex += 1
+        }
+
+        if consumed > 0 {
+            residual = Data(residual[consumed...])
+        }
+
+        return parserState.drainPackets()
+    }
+
+    mutating func finish() -> [H264PESPacket] {
+        residual.removeAll(keepingCapacity: true)
+        TransportStreamH264Parser.finish(&parserState)
+        return parserState.drainPackets()
+    }
+
+    private static func findResyncOffset(in data: Data, from start: Int) -> Int? {
+        var offset = start
+        while offset + (TransportStreamH264Parser.packetSize * 2) < data.count {
+            if data[offset] == 0x47,
+               data[offset + TransportStreamH264Parser.packetSize] == 0x47,
+               data[offset + (TransportStreamH264Parser.packetSize * 2)] == 0x47 {
+                return offset
+            }
+            offset += 1
+        }
+
+        return nil
+    }
+
+    private mutating func preserveUnvalidatedTail(startingAt start: Int) {
+        let tailLength = TransportStreamH264Parser.packetSize * 2
+        let preserveStart = max(start, residual.count - tailLength)
+        residual = Data(residual[preserveStart...])
+    }
+
+    private mutating func logResyncIfNeeded(skippedByteCount: Int) {
+        guard didLogResync == false else { return }
+
+        didLogResync = true
+        Self.logger.notice("Resynchronized TS parser after dropping \(skippedByteCount) bytes.")
     }
 }
 
@@ -64,6 +151,11 @@ nonisolated enum TransportStreamH264Parser {
 
         fileprivate mutating func finishCurrentPES() {
             TransportStreamH264Parser.finishCurrentPES(&currentPES, into: &packets)
+        }
+
+        fileprivate mutating func drainPackets() -> [H264PESPacket] {
+            defer { packets.removeAll(keepingCapacity: true) }
+            return packets
         }
     }
 
