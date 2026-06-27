@@ -77,12 +77,12 @@
       </BuildableProductRunnable>
       <EnvironmentVariables>
          <EnvironmentVariable
-            key = "_DANCAM_CAMERA_API_BASE_URL"
-            value = "http://dancam.local:8080"
+            key = "DANCAM_CAMERA_API_BASE_URL"
+            value = " http://dancam.local:8080"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
-            key = "DANCAM_CAMERA_API_BASE_URL"
+            key = "__DANCAM_CAMERA_API_BASE_URL"
             value = "http://127.0.0.1:8080"
             isEnabled = "YES">
          </EnvironmentVariable>
