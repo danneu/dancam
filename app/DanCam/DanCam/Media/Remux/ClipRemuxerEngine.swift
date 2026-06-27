@@ -31,6 +31,7 @@ nonisolated enum ClipRemuxerEngine {
             pps: clip.pps
         )
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+        writer.shouldOptimizeForNetworkUse = true
         let input = AVAssetWriterInput(
             mediaType: .video,
             outputSettings: nil,
@@ -46,10 +47,7 @@ nonisolated enum ClipRemuxerEngine {
         guard writer.startWriting() else {
             throw ClipRemuxError.writer(writer.error?.localizedDescription ?? "Could not start MP4 writer.")
         }
-        writer.startSession(atSourceTime: H264CoreMediaSamples.cmTime(
-            clip.firstDecodeTicks,
-            timescale: clip.timescale
-        ))
+        writer.startSession(atSourceTime: .zero)
 
         do {
             for accessUnit in clip.accessUnits {
@@ -60,7 +58,7 @@ nonisolated enum ClipRemuxerEngine {
                 }
 
                 let sampleBuffer = try H264CoreMediaSamples.makeSampleBuffer(
-                    accessUnit: accessUnit,
+                    accessUnit: accessUnit.rebased(bySubtracting: clip.firstDecodeTicks),
                     formatDescription: formatDescription,
                     timescale: clip.timescale
                 )
@@ -219,5 +217,18 @@ nonisolated enum H264CoreMediaSamples {
 
     static func cmTime(_ ticks: Int64, timescale: Int32) -> CMTime {
         CMTime(value: ticks, timescale: timescale)
+    }
+}
+
+private extension H264AccessUnit {
+    nonisolated func rebased(bySubtracting firstDecodeTicks: Int64) -> H264AccessUnit {
+        H264AccessUnit(
+            sampleData: sampleData,
+            ptsTicks: ptsTicks - firstDecodeTicks,
+            dtsTicks: dtsTicks - firstDecodeTicks,
+            durationTicks: durationTicks,
+            isKeyFrame: isKeyFrame,
+            nalTypes: nalTypes
+        )
     }
 }

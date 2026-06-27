@@ -24,11 +24,17 @@ struct ClipRemuxerTests {
         let track = try #require(videoTracks.first)
         #expect(videoTracks.count == 1)
         #expect(try await track.load(.naturalSize) == CGSize(width: 320, height: 180))
+        let timeRange = try await track.load(.timeRange)
+        #expect(timeRange.start.isNumeric)
+        #expect(abs(timeRange.start.seconds) < 0.01)
         assertSyncSamples(on: track)
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
+        _ = try await generator.image(at: .zero).image
         _ = try await generator.image(at: CMTime(seconds: 15, preferredTimescale: 600)).image
+
+        try assertFastStartLayout(result.fileURL)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -107,6 +113,63 @@ struct ClipRemuxerTests {
         #expect(sampleCount > 800)
         #expect(fullSyncCount > 1)
         #expect(dependentCount > 0)
+    }
+
+    private func assertFastStartLayout(_ url: URL) throws {
+        let data = try Data(contentsOf: url)
+        let moovOffset = try #require(topLevelBoxOffset(named: "moov", in: data))
+        let mdatOffset = try #require(topLevelBoxOffset(named: "mdat", in: data))
+        #expect(moovOffset < mdatOffset)
+    }
+
+    private func topLevelBoxOffset(named expectedName: String, in data: Data) -> Int? {
+        var offset = 0
+
+        while offset + 8 <= data.count {
+            let boxStart = offset
+            let size32 = uint32(in: data, at: offset)
+            let typeStart = offset + 4
+            let typeEnd = offset + 8
+            guard let name = String(bytes: data[typeStart..<typeEnd], encoding: .ascii) else {
+                return nil
+            }
+
+            var headerSize = 8
+            let boxSize: UInt64
+            if size32 == 1 {
+                guard offset + 16 <= data.count else { return nil }
+                boxSize = uint64(in: data, at: offset + 8)
+                headerSize = 16
+            } else if size32 == 0 {
+                boxSize = UInt64(data.count - offset)
+            } else {
+                boxSize = UInt64(size32)
+            }
+
+            if name == expectedName {
+                return boxStart
+            }
+
+            guard boxSize >= UInt64(headerSize),
+                  UInt64(offset) + boxSize <= UInt64(data.count) else {
+                return nil
+            }
+            offset += Int(boxSize)
+        }
+
+        return nil
+    }
+
+    private func uint32(in data: Data, at offset: Int) -> UInt32 {
+        data[offset..<(offset + 4)].reduce(UInt32(0)) { partial, byte in
+            (partial << 8) | UInt32(byte)
+        }
+    }
+
+    private func uint64(in data: Data, at offset: Int) -> UInt64 {
+        data[offset..<(offset + 8)].reduce(UInt64(0)) { partial, byte in
+            (partial << 8) | UInt64(byte)
+        }
     }
 
     private func temporaryURL(extension pathExtension: String) -> URL {
