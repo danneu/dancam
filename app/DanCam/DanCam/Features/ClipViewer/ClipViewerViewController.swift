@@ -50,6 +50,7 @@ final class ClipViewerViewController: UIViewController {
     private var lastForwardedAvailability: UInt64 = 0
     private var player: AVPlayer?
     private var playerViewController: AVPlayerViewController?
+    private var currentItemStatusObservation: NSKeyValueObservation?
     private var currentItemIsProgressive = false
     private var currentItemURL: URL?
     private var temporaryFiles: Set<URL> = []
@@ -127,6 +128,10 @@ final class ClipViewerViewController: UIViewController {
         player?.pause()
     }
 
+    func failCurrentProgressivePlayerForTesting() {
+        handlePlayerItemFailed(isProgressive: currentItemIsProgressive)
+    }
+
     private func configureViews() {
         progressView.progress = 0
         progressView.translatesAutoresizingMaskIntoConstraints = false
@@ -191,6 +196,7 @@ final class ClipViewerViewController: UIViewController {
         } catch is CancellationError {
             removeTemporaryFiles()
         } catch {
+            stopProgressivePipeline()
             state = .failed(message: error.localizedDescription)
         }
     }
@@ -317,7 +323,7 @@ final class ClipViewerViewController: UIViewController {
         switch state {
         case .none, .pulling, .preparingFirstPlayableFragment, .playingWhilePulling:
             true
-        case .complete, .finalizing, .readyScrubbable, .fallback, .failed:
+        case .complete, .finalizing, .readyScrubbable, .progressiveOnly, .fallback, .failed:
             false
         }
     }
@@ -329,7 +335,7 @@ final class ClipViewerViewController: UIViewController {
              .playingWhilePulling(let progress, _),
              .fallback(.awaitingCompletion(let progress, _)):
             progress
-        case .none, .complete, .finalizing, .readyScrubbable, .fallback, .failed:
+        case .none, .complete, .finalizing, .readyScrubbable, .progressiveOnly, .fallback, .failed:
             nil
         }
     }
@@ -370,8 +376,22 @@ final class ClipViewerViewController: UIViewController {
         } catch is CancellationError {
             removeTemporaryFiles()
         } catch {
-            state = .failed(message: error.localizedDescription)
+            handleFinalizerFailure(error, pullResult: pullResult, source: source)
         }
+    }
+
+    private func handleFinalizerFailure(
+        _ error: Error,
+        pullResult: ClipPullResult,
+        source: FinalizeSource
+    ) {
+        guard source == .progressiveSwap, currentItemIsProgressive else {
+            state = .failed(message: error.localizedDescription)
+            return
+        }
+
+        removeTemporaryFile(pullResult.fileURL)
+        state = .progressiveOnly(pullResult, message: error.localizedDescription)
     }
 
     private func render(_ state: ViewerState) {
@@ -390,7 +410,10 @@ final class ClipViewerViewController: UIViewController {
             statusLabel.text = source == .progressiveSwap ? "Preparing scrubbing" : "Preparing playback"
         case .readyScrubbable(let info):
             renderReadyToPlay(pullResult: info.pullResult, remuxResult: info.remuxResult)
+        case .progressiveOnly(let result, let message):
+            renderProgressiveOnly(pullResult: result, message: message)
         case .failed(let message):
+            stopProgressivePipeline()
             removeTemporaryFiles()
             progressView.setProgress(0, animated: false)
             statusLabel.text = "Clip failed"
@@ -431,6 +454,20 @@ final class ClipViewerViewController: UIViewController {
         ].joined(separator: " - ")
     }
 
+    private func renderProgressiveOnly(
+        pullResult: ClipPullResult,
+        message: String
+    ) {
+        progressView.setProgress(1, animated: true)
+        statusLabel.text = "Scrubbing unavailable"
+        resultLabel.text = [
+            "\(Formatters.byteSize(pullResult.bytes)) pulled",
+            formatSeconds(pullResult.elapsed),
+            formatThroughput(pullResult.throughputMbps),
+            message,
+        ].joined(separator: " - ")
+    }
+
     private func progressStatusText(_ progress: PullProgress) -> String {
         if let expected = progress.expected, expected > 0 {
             "\(Formatters.byteSize(progress.bytesWritten)) of \(Formatters.byteSize(expected))"
@@ -442,7 +479,8 @@ final class ClipViewerViewController: UIViewController {
     private func attachPlayer(url: URL, isProgressive: Bool) {
         detachPlayer()
 
-        let player = AVPlayer(url: url)
+        let item = AVPlayerItem(url: url)
+        let player = AVPlayer(playerItem: item)
         let playerViewController = AVPlayerViewController()
         playerViewController.player = player
         playerViewController.view.translatesAutoresizingMaskIntoConstraints = false
@@ -459,6 +497,7 @@ final class ClipViewerViewController: UIViewController {
 
         self.player = player
         self.playerViewController = playerViewController
+        observePlayerItem(item, isProgressive: isProgressive)
         currentItemIsProgressive = isProgressive
         currentItemURL = url
     }
@@ -482,8 +521,10 @@ final class ClipViewerViewController: UIViewController {
         }
 
         let seekTime = normalizedResumeTime(resumeTime)
+        let item = AVPlayerItem(url: url)
         player.pause()
-        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        player.replaceCurrentItem(with: item)
+        observePlayerItem(item, isProgressive: false)
         currentItemIsProgressive = false
         currentItemURL = url
 
@@ -509,8 +550,31 @@ final class ClipViewerViewController: UIViewController {
         return time
     }
 
+    private func observePlayerItem(_ item: AVPlayerItem, isProgressive: Bool) {
+        currentItemStatusObservation?.invalidate()
+        currentItemStatusObservation = item.observe(\.status, options: [.new]) { [weak self, weak item] observedItem, _ in
+            guard observedItem.status == .failed else { return }
+
+            Task { @MainActor [weak self, weak item] in
+                guard let self,
+                      let item,
+                      self.player?.currentItem === item else {
+                    return
+                }
+                self.handlePlayerItemFailed(isProgressive: isProgressive)
+            }
+        }
+    }
+
+    private func handlePlayerItemFailed(isProgressive: Bool) {
+        guard isProgressive else { return }
+        handleProgressiveFailure(.progressivePlayerFailed)
+    }
+
     private func detachPlayer() {
         player?.pause()
+        currentItemStatusObservation?.invalidate()
+        currentItemStatusObservation = nil
         player = nil
         currentItemIsProgressive = false
         currentItemURL = nil
@@ -612,6 +676,7 @@ final class ClipViewerViewController: UIViewController {
         case complete(ClipPullResult)
         case finalizing(ClipPullResult, source: FinalizeSource)
         case readyScrubbable(ReadyInfo)
+        case progressiveOnly(ClipPullResult, message: String)
         case fallback(FallbackPhase)
         case failed(message: String)
     }
