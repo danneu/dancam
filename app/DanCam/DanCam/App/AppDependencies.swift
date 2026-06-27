@@ -53,7 +53,7 @@ struct AppDependencies {
             pinning: configuration.cameraAPIInterfacePinning
         )
         clipRemuxer = .live
-        progressiveSegmenter = .noop
+        progressiveSegmenter = .live
         preview = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning

@@ -207,6 +207,37 @@ struct ClipViewerViewControllerTests {
         #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func progressiveSegmenterReachesPlayingWhilePulling() async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let workDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dancam-progressive-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
+        let playlistURL = try #require(URL(string: "http://localhost:49152/p.m3u8"))
+        let allowPullToFinish = AsyncSignal()
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: workDirectory)
+        }
+
+        let controller = makeController(
+            clipPull: gatedPullClient(sourceURL: sourceURL, allowCompletion: allowPullToFinish),
+            progressiveSegmenter: playingSegmenter(playlistURL: playlistURL, workDirectory: workDirectory),
+            remuxer: ClipRemuxer { _, _ in
+                Issue.record("Progressive test should not reach the finalizer before assertion.")
+                return ClipRemuxResult(fileURL: sourceURL, duration: .seconds(0), bytes: 0)
+            }
+        )
+        controller.loadViewIfNeeded()
+
+        try await waitUntil { controller.currentPlayerItemURL == playlistURL }
+        #expect(controller.hasEmbeddedPlayer)
+        #expect(controller.statusText == "Playing - 1 byte of 1 byte")
+
+        controller.viewWillDisappear(false)
+        await allowPullToFinish.signal()
+    }
+
     private func makeController(
         sourceURL: URL,
         remuxer: ClipRemuxer
@@ -230,17 +261,29 @@ struct ClipViewerViewControllerTests {
         progressiveSegmenter: ProgressiveSegmenter,
         remuxer: ClipRemuxer
     ) -> ClipViewerViewController {
+        makeController(
+            clipPull: ClipPullClient { _, _ in
+                AsyncThrowingStream { continuation in
+                    for event in pullEvents {
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                }
+            },
+            progressiveSegmenter: progressiveSegmenter,
+            remuxer: remuxer
+        )
+    }
+
+    private func makeController(
+        clipPull: ClipPullClient,
+        progressiveSegmenter: ProgressiveSegmenter,
+        remuxer: ClipRemuxer
+    ) -> ClipViewerViewController {
         ClipViewerViewController(
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError("Health is not used by ClipViewerViewControllerTests.") }),
-                clipPull: ClipPullClient { _, _ in
-                    AsyncThrowingStream { continuation in
-                        for event in pullEvents {
-                            continuation.yield(event)
-                        }
-                        continuation.finish()
-                    }
-                },
+                clipPull: clipPull,
                 clipRemuxer: remuxer,
                 progressiveSegmenter: progressiveSegmenter
             ),
@@ -273,6 +316,59 @@ struct ClipViewerViewControllerTests {
         ProgressiveSegmenter { _, _, _ in
             AsyncThrowingStream { continuation in
                 continuation.finish(throwing: ClipRemuxError.invalidH264("boom"))
+            }
+        }
+    }
+
+    private func playingSegmenter(
+        playlistURL: URL,
+        workDirectory: URL
+    ) -> ProgressiveSegmenter {
+        ProgressiveSegmenter { _, _, availability in
+            AsyncThrowingStream { continuation in
+                let task = Task {
+                    continuation.yield(.opened(workDirectory: workDirectory))
+
+                    var didEmitFirstPlayable = false
+                    for await bytesAvailable in availability {
+                        guard didEmitFirstPlayable == false, bytesAvailable > 0 else {
+                            continue
+                        }
+                        didEmitFirstPlayable = true
+                        continuation.yield(.firstPlayableReady(url: playlistURL))
+                    }
+                    continuation.finish()
+                }
+
+                continuation.onTermination = { @Sendable _ in
+                    task.cancel()
+                }
+            }
+        }
+    }
+
+    private func gatedPullClient(
+        sourceURL: URL,
+        allowCompletion: AsyncSignal
+    ) -> ClipPullClient {
+        ClipPullClient { _, _ in
+            AsyncThrowingStream { continuation in
+                let task = Task {
+                    continuation.yield(.opened(fileURL: sourceURL))
+                    continuation.yield(.progress(bytesWritten: 1, expected: 1))
+                    await allowCompletion.wait()
+                    continuation.yield(.completed(ClipPullResult(
+                        fileURL: sourceURL,
+                        bytes: 1,
+                        elapsed: .milliseconds(1),
+                        throughputMbps: 1
+                    )))
+                    continuation.finish()
+                }
+
+                continuation.onTermination = { @Sendable _ in
+                    task.cancel()
+                }
             }
         }
     }

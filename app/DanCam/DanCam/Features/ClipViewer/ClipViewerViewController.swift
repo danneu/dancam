@@ -208,7 +208,9 @@ final class ClipViewerViewController: UIViewController {
         case .playingWhilePulling(_, let ttff):
             state = .playingWhilePulling(progress, ttff: ttff)
         default:
-            state = .pulling(progress)
+            state = availabilityContinuation == nil
+                ? .pulling(progress)
+                : .preparingFirstPlayableFragment(progress)
         }
     }
 
