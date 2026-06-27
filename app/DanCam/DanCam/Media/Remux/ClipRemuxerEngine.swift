@@ -26,7 +26,10 @@ nonisolated enum ClipRemuxerEngine {
         try? fileManager.removeItem(at: outputURL)
 
         let clip = try TSDemuxer.demuxH264(from: sourceURL)
-        let formatDescription = try makeFormatDescription(sps: clip.sps, pps: clip.pps)
+        let formatDescription = try H264CoreMediaSamples.makeFormatDescription(
+            sps: clip.sps,
+            pps: clip.pps
+        )
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
         let input = AVAssetWriterInput(
             mediaType: .video,
@@ -43,7 +46,10 @@ nonisolated enum ClipRemuxerEngine {
         guard writer.startWriting() else {
             throw ClipRemuxError.writer(writer.error?.localizedDescription ?? "Could not start MP4 writer.")
         }
-        writer.startSession(atSourceTime: cmTime(clip.firstDecodeTicks, timescale: clip.timescale))
+        writer.startSession(atSourceTime: H264CoreMediaSamples.cmTime(
+            clip.firstDecodeTicks,
+            timescale: clip.timescale
+        ))
 
         do {
             for accessUnit in clip.accessUnits {
@@ -53,7 +59,7 @@ nonisolated enum ClipRemuxerEngine {
                     Thread.sleep(forTimeInterval: 0.002)
                 }
 
-                let sampleBuffer = try makeSampleBuffer(
+                let sampleBuffer = try H264CoreMediaSamples.makeSampleBuffer(
                     accessUnit: accessUnit,
                     formatDescription: formatDescription,
                     timescale: clip.timescale
@@ -84,7 +90,33 @@ nonisolated enum ClipRemuxerEngine {
         )
     }
 
-    private static func makeFormatDescription(
+    private static func finish(_ writer: AVAssetWriter) throws {
+        let semaphore = DispatchSemaphore(value: 0)
+        writer.finishWriting {
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        guard writer.status == .completed else {
+            throw ClipRemuxError.writer(writer.error?.localizedDescription ?? "Could not finish MP4 writer.")
+        }
+    }
+
+    private static func duration(fromTicks ticks: Int64, timescale: Int32) -> Duration {
+        .nanoseconds(Int64(Double(ticks) * 1_000_000_000.0 / Double(timescale)))
+    }
+
+    private static func fileSize(_ url: URL) throws -> UInt64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let size = attributes[.size] as? NSNumber else {
+            throw ClipRemuxError.file("Could not read output size.")
+        }
+        return size.uint64Value
+    }
+}
+
+nonisolated enum H264CoreMediaSamples {
+    static func makeFormatDescription(
         sps: Data,
         pps: Data
     ) throws -> CMFormatDescription {
@@ -115,7 +147,7 @@ nonisolated enum ClipRemuxerEngine {
         return formatDescription
     }
 
-    private static func makeSampleBuffer(
+    static func makeSampleBuffer(
         accessUnit: H264AccessUnit,
         formatDescription: CMFormatDescription,
         timescale: Int32
@@ -185,31 +217,7 @@ nonisolated enum ClipRemuxerEngine {
         return sampleBuffer
     }
 
-    private static func finish(_ writer: AVAssetWriter) throws {
-        let semaphore = DispatchSemaphore(value: 0)
-        writer.finishWriting {
-            semaphore.signal()
-        }
-        semaphore.wait()
-
-        guard writer.status == .completed else {
-            throw ClipRemuxError.writer(writer.error?.localizedDescription ?? "Could not finish MP4 writer.")
-        }
-    }
-
-    private static func cmTime(_ ticks: Int64, timescale: Int32) -> CMTime {
+    static func cmTime(_ ticks: Int64, timescale: Int32) -> CMTime {
         CMTime(value: ticks, timescale: timescale)
-    }
-
-    private static func duration(fromTicks ticks: Int64, timescale: Int32) -> Duration {
-        .nanoseconds(Int64(Double(ticks) * 1_000_000_000.0 / Double(timescale)))
-    }
-
-    private static func fileSize(_ url: URL) throws -> UInt64 {
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        guard let size = attributes[.size] as? NSNumber else {
-            throw ClipRemuxError.file("Could not read output size.")
-        }
-        return size.uint64Value
     }
 }
