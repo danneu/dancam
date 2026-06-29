@@ -289,6 +289,11 @@ final class ClipViewerViewController: UIViewController {
             progressiveWorkDirectories.insert(workDirectory)
         case .firstPlayableReady(let url):
             handleFirstPlayable(url)
+        case .finished:
+            // A finalized #EXT-X-ENDLIST progressive playlist is now being served.
+            // The scrubbable swap is owned by the pull-completion finalizer
+            // (handlePullCompleted -> startFinalizer), so there is nothing to do here today.
+            break
         }
     }
 

@@ -80,6 +80,52 @@ struct LoopbackMediaServerTests {
     }
 
     @Test(.tags(.networking), .timeLimit(.minutes(1)))
+    func reportsFinalizedPlaylistOnlyAfterMediaAndFinish() throws {
+        do {
+            let server = try LoopbackMediaServer()
+            defer {
+                server.shutdown()
+            }
+
+            #expect(server.hasFinalizedPlaylist() == false)
+        }
+
+        do {
+            let server = try LoopbackMediaServer()
+            defer {
+                server.shutdown()
+            }
+
+            server.appendInitializationSegment(Data([0x01]))
+            server.finish()
+            #expect(server.hasFinalizedPlaylist() == false)
+        }
+
+        do {
+            let server = try LoopbackMediaServer()
+            defer {
+                server.shutdown()
+            }
+
+            server.appendInitializationSegment(Data([0x01]))
+            server.appendMediaSegment(Data([0x02]), duration: CMTime(value: 1, timescale: 1))
+            #expect(server.hasFinalizedPlaylist() == false)
+        }
+
+        do {
+            let server = try LoopbackMediaServer()
+            defer {
+                server.shutdown()
+            }
+
+            server.appendInitializationSegment(Data([0x01]))
+            server.appendMediaSegment(Data([0x02]), duration: CMTime(value: 1, timescale: 1))
+            server.finish()
+            #expect(server.hasFinalizedPlaylist())
+        }
+    }
+
+    @Test(.tags(.networking), .timeLimit(.minutes(1)))
     func servesInitAndMediaRoutesWithHeadAndRanges() async throws {
         let server = try LoopbackMediaServer()
         defer {

@@ -3,6 +3,12 @@ import Foundation
 nonisolated enum ProgressiveSegmenterEvent: Equatable, Sendable {
     case opened(workDirectory: URL)
     case firstPlayableReady(url: URL)
+    /// Emitted once a finalized `#EXT-X-ENDLIST` playlist is being served, i.e. the whole clip is
+    /// segmented and the loopback server now reports a finite duration. Intentionally not emitted
+    /// for inputs that produced no media segment (no SPS/PPS, or SPS/PPS with zero access units):
+    /// there is no finalized playlist, so a consumer waiting on `.finished` must not treat its
+    /// absence as a hang on such inputs.
+    case finished
 }
 
 nonisolated struct ProgressiveSegmenter: Sendable {
@@ -141,6 +147,9 @@ nonisolated private final class ProgressiveSegmenterPipeline: @unchecked Sendabl
             try consume(output: assembler.finish())
             try segmenter?.finishWriting()
             try server?.checkForFailure()
+            if server?.hasFinalizedPlaylist() == true {
+                continuation?.yield(.finished)
+            }
         } catch {
             fail(error)
         }

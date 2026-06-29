@@ -118,6 +118,12 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
         }
     }
 
+    func hasFinalizedPlaylist() -> Bool {
+        performOnQueueSync {
+            state.finished && state.targetDuration != nil
+        }
+    }
+
     private static func makeLoopbackListener() throws -> Int32 {
         let fileDescriptor = Darwin.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
         guard fileDescriptor >= 0 else {

@@ -19,6 +19,7 @@ struct ProgressivePlaybackIntegrationTests {
             of: URL.self,
             throwing: Error.self
         )
+        let segmenterFinished = AsyncSignal()
         var pullResult: ClipPullResult?
         var remuxedURL: URL?
         defer {
@@ -40,7 +41,8 @@ struct ProgressivePlaybackIntegrationTests {
                 let events = ProgressiveSegmenter.live.start(sourceURL, clipID, availability)
                 segmenterDrainTask = Self.drainSegmenterEvents(
                     events,
-                    firstPlayableContinuation: firstPlayableContinuation
+                    firstPlayableContinuation: firstPlayableContinuation,
+                    segmenterFinished: segmenterFinished
                 )
             case .restarted:
                 throw ClipRemuxError.file("Fixture pull unexpectedly restarted.")
@@ -68,28 +70,35 @@ struct ProgressivePlaybackIntegrationTests {
         }
         #expect(item.status == .readyToPlay)
 
-        let progressiveAsset = AVURLAsset(url: playlistURL)
-        let progressiveDuration = try await progressiveAsset.load(.duration)
-        #expect(progressiveDuration.isNumeric)
-        #expect(progressiveDuration.seconds > 0)
-
         let completedPull = try #require(pullResult)
         let remuxed = try await ClipRemuxer.live.remux(completedPull.fileURL, clipID)
         remuxedURL = remuxed.fileURL
         let remuxedAsset = AVURLAsset(url: remuxed.fileURL)
         let remuxedDuration = try await remuxedAsset.load(.duration)
         #expect(abs(remuxedDuration.seconds - 30.0) < 0.5)
+
+        await segmenterFinished.wait()
+        let progressiveAsset = AVURLAsset(url: playlistURL)
+        let progressiveDuration = try await progressiveAsset.load(.duration)
+        #expect(progressiveDuration.isNumeric)
+        #expect(abs(progressiveDuration.seconds - remuxedDuration.seconds) < 0.5)
     }
 
     private static func drainSegmenterEvents(
         _ events: AsyncThrowingStream<ProgressiveSegmenterEvent, Error>,
-        firstPlayableContinuation: AsyncThrowingStream<URL, Error>.Continuation
+        firstPlayableContinuation: AsyncThrowingStream<URL, Error>.Continuation,
+        segmenterFinished: AsyncSignal
     ) -> Task<Void, Never> {
         Task {
             do {
                 for try await event in events {
-                    if case .firstPlayableReady(let url) = event {
+                    switch event {
+                    case .firstPlayableReady(let url):
                         firstPlayableContinuation.yield(url)
+                    case .finished:
+                        await segmenterFinished.signal()
+                    case .opened:
+                        break
                     }
                 }
                 firstPlayableContinuation.finish()
