@@ -164,6 +164,14 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > `last_incident_id` remain intentionally deferred until the storage coordinator,
   > time-sync, and incident layers exist. `temp_c.sensor` is present but null until
   > the Picamera2 owner surfaces sensor metadata.
+  > **Note (2026-06-29):** Swoop `fern` now realizes the accepted
+  > `current_segment_id` field for the open recording segment and adds
+  > `current_segment_dur_ms` as an additive field. The duration is anchored on the
+  > open segment's TS PTS span through the same duration primitive used for finished
+  > clips, not on a wall-clock `since`, because the Pi has no RTC and time
+  > provenance remains owned by `moss`. The open segment stays unlisted by
+  > `GET /v1/clips` and unpullable by `GET /v1/clips/{id}`; these fields are status
+  > metadata only, so ADR 03's listing rule is unchanged.
 - `GET /v1/health` -- tiny liveness `{boot_id, uptime_s, recording, t_ms}`. (Unauth.)
 - `POST /v1/recording/start` / `POST /v1/recording/stop` (idempotent; stop finalizes
   the current segment).

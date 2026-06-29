@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, time::Duration};
 
 use dancam::{
     app,
@@ -27,10 +27,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Some(supervisor),
                 )
             }
-            Ok("mock") | Err(_) => (
-                AppState::new(boot_id, MockBackend::new()).with_rec_dir(rec_dir.clone()),
-                None,
-            ),
+            Ok("mock") | Err(_) => {
+                let roll_interval = mock_segment_interval();
+                (
+                    AppState::new(
+                        boot_id,
+                        MockBackend::recording_to(rec_dir.clone(), roll_interval),
+                    )
+                    .with_rec_dir(rec_dir.clone()),
+                    None,
+                )
+            }
             Ok(other) => {
                 tracing::error!(backend = other, "unknown DANCAM_BACKEND");
                 std::process::exit(1);
@@ -48,6 +55,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn mock_segment_interval() -> Duration {
+    let seconds = env::var("DANCAM_MOCK_SEGMENT_SECS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(5);
+
+    Duration::from_secs(seconds)
 }
 
 async fn shutdown_signal() {

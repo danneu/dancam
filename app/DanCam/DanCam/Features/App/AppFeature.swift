@@ -22,26 +22,39 @@ enum AppFeature {
         switch action {
         case .connection(let action):
             let previousRecording = state.connection.lastStatus?.recording
+            let previousSegmentId = state.connection.lastStatus?.currentSegmentId
             let connectionEffect = ConnectionFeature.reduce(
                 state: &state.connection,
                 action: action,
                 dependencies: dependencies
             )
             .map(Action.connection)
+            var effects = [connectionEffect]
 
-            guard state.connection.lastStatus?.recording != previousRecording,
-                  let recording = state.connection.lastStatus?.recording else {
-                return connectionEffect
+            if state.connection.lastStatus?.recording != previousRecording,
+               let recording = state.connection.lastStatus?.recording {
+                effects.append(
+                    reduceRecording(
+                        state: &state,
+                        action: .statusObserved(recording: recording),
+                        dependencies: dependencies
+                    )
+                )
             }
 
-            return .merge([
-                connectionEffect,
-                reduceRecording(
-                    state: &state,
-                    action: .statusObserved(recording: recording),
-                    dependencies: dependencies
-                ),
-            ])
+            if let currentSegmentId = state.connection.lastStatus?.currentSegmentId,
+               currentSegmentId != previousSegmentId {
+                effects.append(
+                    ClipsFeature.reduce(
+                        state: &state.clips,
+                        action: .refresh,
+                        dependencies: dependencies
+                    )
+                    .map(Action.clips)
+                )
+            }
+
+            return effects.count == 1 ? connectionEffect : .merge(effects)
 
         case .recording(let action):
             return reduceRecording(

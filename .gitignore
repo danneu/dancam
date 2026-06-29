@@ -19,6 +19,7 @@ venv/
 
 # Rust / Raspberry Pi service (raspi/)
 /raspi/service/target/
+/raspi/service/.mock-rec/
 
 # Secrets / local config (never commit Wi-Fi creds, keys, etc.)
 *.local

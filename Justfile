@@ -75,7 +75,7 @@ app-test:
 
 # Run the mock Pi service on 127.0.0.1:8080 for local dev.
 raspi-mock:
-    cd raspi/service && cargo run
+    cd raspi/service && DANCAM_REC_DIR=.mock-rec DANCAM_MOCK_SEGMENT_SECS=5 cargo run
 
 # Run the mock Pi service with a sample finished clip available from /v1/clips.
 raspi-mock-clips:

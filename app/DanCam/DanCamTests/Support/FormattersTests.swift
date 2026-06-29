@@ -74,4 +74,19 @@ struct FormattersTests {
         #expect(Formatters.clipMetadata(durMs: 34_000, bytes: 1_000) == "00:34 - 1 KB")
         #expect(Formatters.clipMetadata(durMs: nil, bytes: 1_000) == "1 KB")
     }
+
+    @Test func countUpDurationFloorsSeconds() {
+        let cases: [(durMs: UInt64, text: String)] = [
+            (0, "00:00"),
+            (999, "00:00"),
+            (1_000, "00:01"),
+            (59_999, "00:59"),
+            (60_000, "01:00"),
+            (600_000, "10:00"),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.countUpDuration(testCase.durMs) == testCase.text)
+        }
+    }
 }

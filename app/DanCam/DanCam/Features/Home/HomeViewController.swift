@@ -1,5 +1,72 @@
 import UIKit
 
+nonisolated struct LiveSegment: Equatable, Sendable {
+    var id: Int
+    var seedDurMs: UInt64?
+    var anchor: ContinuousClock.Instant
+
+    func elapsedDurMs(at now: ContinuousClock.Instant) -> UInt64 {
+        (seedDurMs ?? 0) + Self.milliseconds(from: anchor.duration(to: now))
+    }
+
+    private static func milliseconds(from duration: Duration) -> UInt64 {
+        let components = duration.components
+        guard components.seconds > 0 || components.attoseconds > 0 else { return 0 }
+
+        let seconds = UInt64(max(components.seconds, 0))
+        let attoseconds = UInt64(max(components.attoseconds, 0))
+        return seconds * 1_000 + attoseconds / 1_000_000_000_000_000
+    }
+}
+
+nonisolated enum HomeRow: Equatable, Sendable {
+    case live(LiveSegment)
+    case finished(Clip)
+
+    static func compose(
+        clips: [Clip],
+        recording: Bool,
+        currentSegmentId: Int?,
+        currentSegmentDurMs: UInt64?,
+        previousLive: LiveSegment?,
+        now: ContinuousClock.Instant
+    ) -> [HomeRow] {
+        var rows = clips.map(HomeRow.finished)
+        guard recording, let currentSegmentId else {
+            return rows
+        }
+
+        let live: LiveSegment
+        if let previousLive, previousLive.id == currentSegmentId {
+            if let currentSegmentDurMs {
+                live = LiveSegment(
+                    id: currentSegmentId,
+                    seedDurMs: max(currentSegmentDurMs, previousLive.elapsedDurMs(at: now)),
+                    anchor: now
+                )
+            } else {
+                live = previousLive
+            }
+        } else {
+            live = LiveSegment(
+                id: currentSegmentId,
+                seedDurMs: currentSegmentDurMs,
+                anchor: now
+            )
+        }
+
+        rows.insert(.live(live), at: 0)
+        return rows
+    }
+
+    var liveSegment: LiveSegment? {
+        if case .live(let segment) = self {
+            return segment
+        }
+        return nil
+    }
+}
+
 final class HomeViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, ConnectionResumable {
     private let dependencies: AppDependencies
     private let store: AppStore
@@ -22,8 +89,14 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     private let emptyClipsView = UIStackView()
     private let emptyClipsImageView = UIImageView(image: UIImage(systemName: "film"))
     private let emptyClipsLabel = UILabel()
+    private let clock = ContinuousClock()
 
-    private var clips: [Clip] = []
+    private var recordingState: RecordingFeature.State = .unknown
+    private var lastStatus: StatusResponse?
+    private var finishedClips: [Clip] = []
+    private var rows: [HomeRow] = []
+    private var liveTickTimer: Timer?
+    private var isVisible = false
 
     init(
         dependencies: AppDependencies,
@@ -59,10 +132,14 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         previewViewController.didMove(toParent: self)
 
         recordingObservation = store.observe(\.recording) { [weak self] state in
+            self?.recordingState = state
             self?.renderRecording(state)
+            self?.renderRows()
         }
         connectionObservation = store.observe(\.connection.lastStatus) { [weak self] status in
+            self?.lastStatus = status
             self?.renderConnectionPills(status)
+            self?.renderRows()
         }
         clipsObservation = store.observe(\.clips) { [weak self] state in
             self?.renderClips(state)
@@ -76,12 +153,20 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        isVisible = true
         store.send(.clips(.onAppear))
+        updateLiveTickTimer()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        isVisible = false
         store.send(.clips(.onDisappear))
+        stopLiveTickTimer()
+    }
+
+    deinit {
+        stopLiveTickTimer()
     }
 
     func resumeLiveWork() {
@@ -189,6 +274,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         clipsTableView.dataSource = self
         clipsTableView.delegate = self
         clipsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "clip")
+        clipsTableView.register(LiveClipCell.self, forCellReuseIdentifier: "liveClip")
         clipsTableView.rowHeight = UITableView.automaticDimension
         clipsTableView.estimatedRowHeight = 56
         clipsTableView.tableFooterView = UIView()
@@ -257,13 +343,57 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     private func renderClips(_ state: ClipsFeature.State) {
         switch state {
         case .loaded(let clips):
-            self.clips = clips
+            finishedClips = clips
         case .idle, .loading, .failed:
             break
         }
 
-        clipsTableView.backgroundView = clips.isEmpty ? emptyClipsBackgroundView : nil
+        renderRows()
+    }
+
+    private func renderRows(now: ContinuousClock.Instant? = nil) {
+        let now = now ?? clock.now
+        let previousLive = rows.first?.liveSegment
+        rows = HomeRow.compose(
+            clips: finishedClips,
+            recording: recordingState.showsLiveSegment,
+            currentSegmentId: lastStatus?.currentSegmentId,
+            currentSegmentDurMs: lastStatus?.currentSegmentDurMs,
+            previousLive: previousLive,
+            now: now
+        )
+
+        clipsTableView.backgroundView = rows.isEmpty ? emptyClipsBackgroundView : nil
         clipsTableView.reloadData()
+        updateLiveTickTimer()
+    }
+
+    private func updateLiveTickTimer() {
+        let hasLiveRow = rows.contains { $0.liveSegment != nil }
+        if hasLiveRow, isVisible {
+            guard liveTickTimer == nil else { return }
+
+            liveTickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                self?.updateVisibleLiveElapsed()
+            }
+        } else {
+            stopLiveTickTimer()
+        }
+    }
+
+    private func stopLiveTickTimer() {
+        liveTickTimer?.invalidate()
+        liveTickTimer = nil
+    }
+
+    private func updateVisibleLiveElapsed() {
+        guard let row = rows.firstIndex(where: { $0.liveSegment != nil }),
+              let segment = rows[row].liveSegment,
+              let cell = clipsTableView.cellForRow(at: IndexPath(row: row, section: 0)) as? LiveClipCell else {
+            return
+        }
+
+        cell.updateElapsed(segment: segment, now: clock.now)
     }
 
     @objc private func recordTapped() {
@@ -283,15 +413,32 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        clips.count
+        rows.count
     }
 
     func tableView(
         _ tableView: UITableView,
         cellForRowAt indexPath: IndexPath
     ) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "clip", for: indexPath)
-        let clip = clips[indexPath.row]
+        switch rows[indexPath.row] {
+        case .live(let segment):
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: "liveClip",
+                for: indexPath
+            ) as? LiveClipCell else {
+                return UITableViewCell(style: .default, reuseIdentifier: nil)
+            }
+            cell.configure(segment: segment, now: clock.now)
+            return cell
+
+        case .finished(let clip):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "clip", for: indexPath)
+            configureFinishedCell(cell, clip: clip)
+            return cell
+        }
+    }
+
+    private func configureFinishedCell(_ cell: UITableViewCell, clip: Clip) {
         let filename = String(format: "seg_%05d.ts", clip.id)
         var content = UIListContentConfiguration.subtitleCell()
         content.text = filename
@@ -303,16 +450,98 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         content.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = content
         cell.selectionStyle = .default
-        return cell
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        guard clips.indices.contains(indexPath.row) else { return }
+        guard rows.indices.contains(indexPath.row) else { return }
 
-        navigationController?.pushViewController(
-            ClipViewerViewController(dependencies: dependencies, clip: clips[indexPath.row]),
-            animated: true
+        switch rows[indexPath.row] {
+        case .live:
+            return
+        case .finished(let clip):
+            tableView.deselectRow(at: indexPath, animated: true)
+            navigationController?.pushViewController(
+                ClipViewerViewController(dependencies: dependencies, clip: clip),
+                animated: true
+            )
+        }
+    }
+}
+
+private extension RecordingFeature.State {
+    var showsLiveSegment: Bool {
+        switch self {
+        case .recording, .stopping:
+            return true
+        case .unknown, .idle, .starting, .failed:
+            return false
+        }
+    }
+}
+
+private final class LiveClipCell: UITableViewCell {
+    private let titleLabel = UILabel()
+    private let elapsedLabel = UILabel()
+    private let recBadge = StatusPillView(caption: "REC", dotColor: .systemRed)
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        configureViews()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("LiveClipCell is programmatic.")
+    }
+
+    func configure(segment: LiveSegment, now: ContinuousClock.Instant) {
+        titleLabel.text = String(format: "seg_%05d.ts", segment.id)
+        updateElapsed(segment: segment, now: now)
+        accessibilityLabel = "\(titleLabel.text ?? ""), recording, \(elapsedLabel.text ?? "")"
+    }
+
+    func updateElapsed(segment: LiveSegment, now: ContinuousClock.Instant) {
+        elapsedLabel.text = Formatters.countUpDuration(segment.elapsedDurMs(at: now))
+    }
+
+    private func configureViews() {
+        selectionStyle = .none
+
+        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+
+        let elapsedBaseFont = UIFont.monospacedDigitSystemFont(
+            ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize,
+            weight: .regular
         )
+        elapsedLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: elapsedBaseFont)
+        elapsedLabel.adjustsFontForContentSizeCategory = true
+        elapsedLabel.textColor = .secondaryLabel
+        elapsedLabel.textAlignment = .right
+        elapsedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        recBadge.configure(
+            caption: "REC",
+            dotColor: .systemRed,
+            backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.14))
+        )
+        recBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let stack = UIStackView(arrangedSubviews: [titleLabel, recBadge, elapsedLabel])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        contentView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: contentView.layoutMarginsGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: contentView.layoutMarginsGuide.bottomAnchor),
+        ])
     }
 }

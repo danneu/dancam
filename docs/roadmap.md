@@ -76,6 +76,9 @@ mock first.
             segments: filename/id, bytes, and best-effort time/duration when cheap.
       - [x] Render the finished-segment list below preview as read-only rows; playback,
             thumbnails, selection, and pull/download stay in `lime`.
+      - [x] Deepening: Recent clips now shows the open segment as a synthetic live
+            status row with a `REC` badge and count-up, while the Pi keeps the open
+            segment unlisted and unpullable.
       - [x] Start with polling `status`/`clips`; add `GET /v1/events` only if polling
             makes the dashboard or later CarPlay status panel worse.
 - [x] **Swoop `loam` -- Declarative Pi provisioning.** Replace the manual README

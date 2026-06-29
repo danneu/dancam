@@ -8,6 +8,8 @@ struct StatusClientTests {
         let payload = Data("""
         {
           "recording": true,
+          "current_segment_id": 7,
+          "current_segment_dur_ms": 1234,
           "camera_state": "running",
           "boot_id": "boot-123",
           "uptime_s": 42,
@@ -42,6 +44,8 @@ struct StatusClientTests {
         """)
         #expect(response == StatusResponse(
             recording: true,
+            currentSegmentId: 7,
+            currentSegmentDurMs: 1234,
             cameraState: .running,
             bootId: "boot-123",
             uptimeS: 42,

@@ -31,6 +31,14 @@ nonisolated enum Formatters {
         guard let durMs else { return nil }
 
         let totalSeconds = durMs / 1_000 + (durMs % 1_000 >= 500 ? 1 : 0)
+        return minutesSeconds(totalSeconds: totalSeconds)
+    }
+
+    static func countUpDuration(_ durMs: UInt64) -> String {
+        minutesSeconds(totalSeconds: durMs / 1_000)
+    }
+
+    private static func minutesSeconds(totalSeconds: UInt64) -> String {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
 

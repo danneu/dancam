@@ -186,6 +186,20 @@ IMX708 lens to infinity with autofocus disabled; see
 `raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`. Local `just raspi-mock`
 still defaults to the mock backend and cycles committed test-pattern frames.
 
+For app development against the local mock Pi, run:
+
+```sh
+just raspi-mock
+```
+
+The recipe binds `127.0.0.1:8080` and sets a writable mock recording directory
+(`DANCAM_REC_DIR=.mock-rec`, under `raspi/service/`) plus
+`DANCAM_MOCK_SEGMENT_SECS=5`, so tapping Record in the app creates gitignored mock
+segments and rolls them quickly enough to watch the live row settle into the Recent
+clips list. The mock bytes are not real TS, so finished mock rows may show bytes
+without a duration; `just raspi-mock-clips` still points at the committed
+`assets/clips` fixture when you need a real finished sample clip.
+
 Verify from the Mac over the LAN:
 
 ```sh

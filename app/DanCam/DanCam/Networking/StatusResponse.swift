@@ -2,6 +2,8 @@ import Foundation
 
 nonisolated struct StatusResponse: Codable, Equatable, Sendable {
     var recording: Bool
+    var currentSegmentId: Int? = nil
+    var currentSegmentDurMs: UInt64? = nil
     var cameraState: CameraState
     var bootId: String
     var uptimeS: UInt64

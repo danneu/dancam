@@ -133,6 +133,73 @@ struct AppFeatureTests {
         store.expectNoReceivedActions()
     }
 
+    @Test func connectionSegmentRolloverRefreshesClipsWhileRecordingStaysTrue() async {
+        let loaded = ClipsResponse.sample(ids: [7])
+        let refreshed = ClipsResponse.sample(ids: [8, 7])
+        let nextStatus = StatusResponse.sample(
+            recording: true,
+            uptimeS: 2,
+            currentSegmentId: 8
+        )
+        let queue = ClipsFetchQueue([.success(refreshed)])
+        let store = TestStore(
+            initialState: state(
+                connectionStatus: .sample(recording: true, currentSegmentId: 7),
+                recording: .recording,
+                clips: .loaded(loaded.clips)
+            ),
+            dependencies: dependencies(
+                clips: ClipsClient(fetch: { try await queue.fetch() }),
+                sleep: longSleep
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.connection(.statusResponse(.success(nextStatus)))) {
+            $0.connection.connectivity = .connected
+            $0.connection.consecutiveFailures = 0
+            $0.connection.lastStatus = nextStatus
+        }
+        await store.receive(.clips(.clipsResponse(.success(refreshed)))) {
+            $0.clips = .loaded(refreshed.clips)
+        }
+        await store.send(.connection(.stop))
+        await store.send(.clips(.onDisappear))
+        await store.finishEffects()
+    }
+
+    @Test func unchangedConnectionSegmentDoesNotRefreshClips() async {
+        let loaded = ClipsResponse.sample(ids: [7])
+        let nextStatus = StatusResponse.sample(
+            recording: true,
+            uptimeS: 2,
+            currentSegmentId: 7
+        )
+        let store = TestStore(
+            initialState: state(
+                connectionStatus: .sample(recording: true, currentSegmentId: 7),
+                recording: .recording,
+                clips: .loaded(loaded.clips)
+            ),
+            dependencies: dependencies(
+                clips: ClipsClient(fetch: { fatalError("Clips should not refresh.") }),
+                sleep: longSleep
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.connection(.statusResponse(.success(nextStatus)))) {
+            $0.connection.connectivity = .connected
+            $0.connection.consecutiveFailures = 0
+            $0.connection.lastStatus = nextStatus
+        }
+        await store.send(.connection(.stop))
+        await store.finishEffects()
+
+        #expect(store.state.clips == .loaded(loaded.clips))
+        store.expectNoReceivedActions()
+    }
+
     @Test func firstConnectionStatusSeedsRecordingState() async {
         let response = StatusResponse.sample(recording: true)
         let store = TestStore(
@@ -287,9 +354,16 @@ private actor ClipsFetchQueue {
 }
 
 private extension StatusResponse {
-    static func sample(recording: Bool, uptimeS: UInt64 = 1) -> StatusResponse {
+    static func sample(
+        recording: Bool,
+        uptimeS: UInt64 = 1,
+        currentSegmentId: Int? = nil,
+        currentSegmentDurMs: UInt64? = nil
+    ) -> StatusResponse {
         StatusResponse(
             recording: recording,
+            currentSegmentId: currentSegmentId,
+            currentSegmentDurMs: currentSegmentDurMs,
             cameraState: .running,
             bootId: "boot-123",
             uptimeS: uptimeS,

@@ -1,6 +1,6 @@
 use std::{
     io::SeekFrom,
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -67,7 +67,9 @@ pub async fn serve_clip(
     PathParam(id): PathParam<u32>,
     headers: HeaderMap,
 ) -> Result<Response, ClipError> {
-    if state.backend.status().recording && max_clip_seq(&state.rec_dir) == Some(id) {
+    if state.backend.status().recording
+        && open_segment(&state.rec_dir).map(|(seq, _, _)| seq) == Some(id)
+    {
         return Err(ClipError::NotFound);
     }
 
@@ -223,28 +225,8 @@ pub(crate) fn read_finished_clips(
     recording: bool,
     duration_cache: &DurationCache,
 ) -> Vec<ClipMeta> {
-    let Ok(entries) = std::fs::read_dir(rec_dir) else {
-        return Vec::new();
-    };
-
-    let mut candidates = Vec::new();
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(seq) = clip_seq(&path) else {
-            continue;
-        };
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        if !metadata.is_file() {
-            continue;
-        }
-
-        candidates.push((seq, metadata.len(), path));
-    }
-
-    let max_seq = candidates.iter().map(|(seq, _, _)| *seq).max();
+    let candidates = segment_candidates(rec_dir);
+    let max_seq = max_segment_seq(&candidates);
     let mut candidates: Vec<_> = candidates
         .into_iter()
         .filter(|(seq, _, _)| !recording || Some(*seq) != max_seq)
@@ -274,8 +256,24 @@ pub(crate) fn read_finished_clips(
         .collect()
 }
 
-fn max_clip_seq(rec_dir: &Path) -> Option<u32> {
-    let entries = std::fs::read_dir(rec_dir).ok()?;
+pub(crate) fn open_segment(rec_dir: &Path) -> Option<(u32, PathBuf, u64)> {
+    let candidates = segment_candidates(rec_dir);
+    let max_seq = max_segment_seq(&candidates)?;
+
+    candidates
+        .into_iter()
+        .find(|(seq, _, _)| *seq == max_seq)
+        .map(|(seq, bytes, path)| (seq, path, bytes))
+}
+
+pub(crate) fn max_clip_seq(rec_dir: &Path) -> Option<u32> {
+    open_segment(rec_dir).map(|(seq, _, _)| seq)
+}
+
+fn segment_candidates(rec_dir: &Path) -> Vec<(u32, u64, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(rec_dir) else {
+        return Vec::new();
+    };
 
     entries
         .flatten()
@@ -283,9 +281,13 @@ fn max_clip_seq(rec_dir: &Path) -> Option<u32> {
             let path = entry.path();
             let seq = clip_seq(&path)?;
             let metadata = entry.metadata().ok()?;
-            metadata.is_file().then_some(seq)
+            metadata.is_file().then_some((seq, metadata.len(), path))
         })
-        .max()
+        .collect()
+}
+
+fn max_segment_seq(candidates: &[(u32, u64, PathBuf)]) -> Option<u32> {
+    candidates.iter().map(|(seq, _, _)| *seq).max()
 }
 
 fn clip_seq(path: &Path) -> Option<u32> {

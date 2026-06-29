@@ -1,6 +1,7 @@
 use axum::{extract::State, Json};
 
 use crate::{
+    clips::open_segment,
     sysfacts::{self, DiskUsage, MemInfo},
     AppState,
 };
@@ -65,6 +66,8 @@ pub enum ChildEvent {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct StatusResponse {
     pub recording: bool,
+    pub current_segment_id: Option<u32>,
+    pub current_segment_dur_ms: Option<u64>,
     pub camera_state: CameraState,
     pub boot_id: String,
     pub uptime_s: u64,
@@ -81,9 +84,32 @@ pub struct TempC {
 
 pub async fn status(State(state): State<AppState>) -> Json<StatusResponse> {
     let backend_status = state.backend.status();
+    let current_segment = if backend_status.recording {
+        let rec_dir = state.rec_dir.clone();
+        let duration_cache = state.clip_durations.clone();
+
+        match tokio::task::spawn_blocking(move || {
+            open_segment(rec_dir.as_ref()).map(|(seq, path, bytes)| {
+                let dur_ms = duration_cache.duration_ms(seq, &path, bytes);
+                (seq, dur_ms)
+            })
+        })
+        .await
+        {
+            Ok(current_segment) => current_segment,
+            Err(error) => {
+                tracing::error!(%error, "current segment status task failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     Json(StatusResponse {
         recording: backend_status.recording,
+        current_segment_id: current_segment.map(|(seq, _)| seq),
+        current_segment_dur_ms: current_segment.and_then(|(_, dur_ms)| dur_ms),
         camera_state: backend_status.camera_state,
         boot_id: state.boot_id.to_string(),
         uptime_s: state.started.elapsed().as_secs(),
