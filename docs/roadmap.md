@@ -131,11 +131,12 @@ mock first.
       with AVPlayer. _The chunky one; the first time footage is
       watchable on the phone. A full 30 s segment is ~38 MB (10 Mbps CBR, confirmed on
       real `seg_*.ts`), so the pull -- not the UI -- is the weight here._
-      - [ ] **Spike first (real Pi):** time a real ~38 MB `seg_*.ts` pull over the
-            `dancam-dev` AP, desk and in-car, with and without live preview running
-            concurrently (spike 2); and confirm a pulled `.ts` remuxes to a playable,
-            seekable `.mp4` on a physical iPhone (spike 5a). These set the pull UX and
-            gate the build below.
+      - [x] **Spike first (real Pi):** Dan confirmed real ~38 MB `seg_*.ts` pulls over
+            the `dancam-dev` AP feel acceptable, including desk and in-car checks with
+            and without live preview running concurrently (spike 2); pulled `.ts` files
+            remux to playable, seekable `.mp4` files on a physical iPhone (spike 5a).
+            The app also starts progressive local fMP4 playback while the pull is still
+            running, then swaps to the finalized MP4 for scrubbing.
       - [x] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
             `.ts` as a plain `200` (`application/mp2t`); never serves the open segment
             (matches the list). The dumbest end-to-end that proves tap -> pull -> play; no
