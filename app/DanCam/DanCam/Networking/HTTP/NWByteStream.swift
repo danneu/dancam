@@ -30,13 +30,14 @@ nonisolated enum NWByteStream {
             port: port,
             using: parameters
         )
+        let lifecycle = NWConnectionLifecycle(connection)
 
-        try await start(connection: connection)
-        try await send(request, on: connection)
+        try await start(connection: connection, lifecycle: lifecycle)
+        try await send(request, on: connection, lifecycle: lifecycle)
 
         return AsyncThrowingStream { continuation in
             continuation.onTermination = { _ in
-                connection.cancel()
+                lifecycle.cancel()
             }
 
             receive(from: connection, continuation: continuation)
@@ -52,9 +53,10 @@ nonisolated enum NWByteStream {
         }
     }
 
-    private static func start(connection: NWConnection) async throws {
+    private static func start(connection: NWConnection, lifecycle: NWConnectionLifecycle) async throws {
         let queue = DispatchQueue(label: "com.danneu.dancam.nw-byte-stream")
 
+        try Task.checkCancellation()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 connection.stateUpdateHandler = { state in
@@ -73,14 +75,30 @@ nonisolated enum NWByteStream {
                     }
                 }
 
-                connection.start(queue: queue)
+                do {
+                    try lifecycle.start(on: queue)
+                } catch {
+                    connection.stateUpdateHandler = nil
+                    continuation.resume(throwing: error)
+                }
             }
         } onCancel: {
-            connection.cancel()
+            lifecycle.cancel()
         }
     }
 
-    private static func send(_ data: Data, on connection: NWConnection) async throws {
+    private static func send(
+        _ data: Data,
+        on connection: NWConnection,
+        lifecycle: NWConnectionLifecycle
+    ) async throws {
+        do {
+            try Task.checkCancellation()
+        } catch {
+            lifecycle.cancel()
+            throw error
+        }
+
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 connection.send(content: data, completion: .contentProcessed { error in
@@ -92,7 +110,7 @@ nonisolated enum NWByteStream {
                 })
             }
         } onCancel: {
-            connection.cancel()
+            lifecycle.cancel()
         }
     }
 
@@ -112,6 +130,46 @@ nonisolated enum NWByteStream {
             } else {
                 receive(from: connection, continuation: continuation)
             }
+        }
+    }
+}
+
+nonisolated private final class NWConnectionLifecycle: @unchecked Sendable {
+    private let connection: NWConnection
+    private let lock = NSLock()
+    private var isStarted = false
+    private var isCancelled = false
+
+    init(_ connection: NWConnection) {
+        self.connection = connection
+    }
+
+    func start(on queue: DispatchQueue) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if isCancelled {
+            throw CancellationError()
+        }
+
+        isStarted = true
+        connection.start(queue: queue)
+    }
+
+    func cancel() {
+        let shouldCancel: Bool
+
+        lock.lock()
+        if isCancelled {
+            shouldCancel = false
+        } else {
+            isCancelled = true
+            shouldCancel = isStarted
+        }
+        lock.unlock()
+
+        if shouldCancel {
+            connection.cancel()
         }
     }
 }
