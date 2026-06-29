@@ -49,4 +49,29 @@ struct FormattersTests {
         #expect(Formatters.byteSize(1_000) == "1 KB")
         #expect(Formatters.byteSize(1_536) == "2 KB")
     }
+
+    @Test func clipDurationFormatsMillisecondsAsMinutesAndSeconds() {
+        let cases: [(durMs: UInt64?, text: String?)] = [
+            (nil, nil),
+            (0, "00:00"),
+            (5_000, "00:05"),
+            (34_000, "00:34"),
+            (34_700, "00:35"),
+            (34_400, "00:34"),
+            (94_000, "01:34"),
+            (600_000, "10:00"),
+            (6_000_000, "100:00"),
+            (128_849_018_880_000, "2147483648:00"),
+            (.max, "307445734561825:52"),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.clipDuration(testCase.durMs) == testCase.text)
+        }
+    }
+
+    @Test func clipMetadataCombinesDurationAndByteSize() {
+        #expect(Formatters.clipMetadata(durMs: 34_000, bytes: 1_000) == "00:34 - 1 KB")
+        #expect(Formatters.clipMetadata(durMs: nil, bytes: 1_000) == "1 KB")
+    }
 }

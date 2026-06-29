@@ -27,6 +27,23 @@ nonisolated enum Formatters {
         return formatter.string(fromByteCount: Int64(clamping: bytes))
     }
 
+    static func clipDuration(_ durMs: UInt64?) -> String? {
+        guard let durMs else { return nil }
+
+        let totalSeconds = durMs / 1_000 + (durMs % 1_000 >= 500 ? 1 : 0)
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+
+        return String(format: "%02llu:%02llu", minutes, seconds)
+    }
+
+    static func clipMetadata(durMs: UInt64?, bytes: UInt64) -> String {
+        let byteText = byteSize(bytes)
+        guard let durationText = clipDuration(durMs) else { return byteText }
+
+        return "\(durationText) - \(byteText)"
+    }
+
     static func temperature(_ celsius: Double, precise: Bool = false) -> String {
         if precise {
             return String(format: "%.1f C", locale: Locale(identifier: "en_US_POSIX"), celsius)

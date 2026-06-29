@@ -295,7 +295,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         let filename = String(format: "seg_%05d.ts", clip.id)
         var content = UIListContentConfiguration.subtitleCell()
         content.text = filename
-        content.secondaryText = Formatters.byteSize(clip.bytes)
+        content.secondaryText = Formatters.clipMetadata(durMs: clip.durMs, bytes: clip.bytes)
         content.textProperties.font = .preferredFont(forTextStyle: .body)
         content.textProperties.adjustsFontForContentSizeCategory = true
         content.secondaryTextProperties.font = .preferredFont(forTextStyle: .subheadline)
