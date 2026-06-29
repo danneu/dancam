@@ -24,10 +24,16 @@ nonisolated struct ClipsClient {
 
     static func live(
         baseURL: URL,
-        pinning: InterfacePinning
+        pinning: InterfacePinning,
+        connectTimeout: Duration
     ) -> ClipsClient {
         live(baseURL: baseURL, pinning: pinning) { url, request in
-            try await NWByteStream.open(url: url, request: request, pinning: pinning)
+            try await NWByteStream.open(
+                url: url,
+                request: request,
+                pinning: pinning,
+                connectTimeout: connectTimeout
+            )
         }
     }
 

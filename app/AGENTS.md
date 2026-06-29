@@ -101,5 +101,14 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `04-2026-06-26-connection-monitor-and-indicator.md` -- superseded by ADR 05; recorded
   the app-scoped `/v1/status` monitor, ambient navigation-bar connection pill,
   asymmetric disconnect debounce, and foreground/reconnect recovery hook.
-- `05-2026-06-26-app-shell-status-strip.md` -- keeps the app-scoped connection monitor
-  and replaces the navigation-bar pill with a persistent shell-owned status strip.
+- `05-2026-06-26-app-shell-status-strip.md` -- superseded by ADR 06; kept the
+  app-scoped connection monitor and replaced the navigation-bar pill with a persistent
+  shell-owned status strip.
+- `06-2026-06-26-domain-root-store-and-scoped-observation.md` -- domain root store,
+  scoped observation, and the live connection monitor head inherited from ADR 05.
+- `07-2026-06-26-on-device-clip-remux-playback.md` -- remux pulled TS clips into
+  on-device MP4 for durable playback.
+- `08-2026-06-27-progressive-fmp4-clip-playback.md` -- progressively serve fMP4
+  fragments over loopback while a clip pull is still running.
+- `09-2026-06-29-connection-liveness-timeouts.md` -- bound transport connect and
+  monitor status-fetch liveness so stale "Connected" cannot hang indefinitely.

@@ -23,6 +23,7 @@ nonisolated struct RecordingClient {
     static func live(
         baseURL: URL,
         pinning: InterfacePinning,
+        connectTimeout: Duration,
         makeIdempotencyKey: @escaping @Sendable () -> String = { UUID().uuidString }
     ) -> RecordingClient {
         live(
@@ -30,7 +31,12 @@ nonisolated struct RecordingClient {
             pinning: pinning,
             makeIdempotencyKey: makeIdempotencyKey
         ) { url, request in
-            try await NWByteStream.open(url: url, request: request, pinning: pinning)
+            try await NWByteStream.open(
+                url: url,
+                request: request,
+                pinning: pinning,
+                connectTimeout: connectTimeout
+            )
         }
     }
 

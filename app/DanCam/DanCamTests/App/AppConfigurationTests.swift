@@ -12,6 +12,8 @@ struct AppConfigurationTests {
 
         #expect(configuration.cameraAPIBaseURL == expected)
         #expect(configuration.cameraAPIInterfacePinning == .wifi)
+        #expect(configuration.cameraAPIConnectTimeout == .seconds(2))
+        #expect(configuration.statusFetchTimeout == .seconds(3))
     }
 
     @Test func environmentOverrideWinsOverInfoPlistOverride() throws {
@@ -85,5 +87,31 @@ struct AppConfigurationTests {
         )
 
         #expect(pinning == .disabled)
+    }
+
+    @Test func validConnectTimeoutOverrideScalesStatusFetchTimeout() {
+        let configuration = AppConfiguration.live(
+            environment: [
+                AppConfiguration.cameraAPIConnectTimeoutEnvironmentKey: "5000",
+            ],
+            infoDictionary: [:]
+        )
+
+        #expect(configuration.cameraAPIConnectTimeout == .seconds(5))
+        #expect(configuration.statusFetchTimeout == .seconds(6))
+    }
+
+    @Test func invalidConnectTimeoutOverridesFallBackToDefault() {
+        for rawValue in ["abc", "0", "-1"] {
+            let configuration = AppConfiguration.live(
+                environment: [
+                    AppConfiguration.cameraAPIConnectTimeoutEnvironmentKey: rawValue,
+                ],
+                infoDictionary: [:]
+            )
+
+            #expect(configuration.cameraAPIConnectTimeout == .seconds(2))
+            #expect(configuration.statusFetchTimeout == .seconds(3))
+        }
     }
 }

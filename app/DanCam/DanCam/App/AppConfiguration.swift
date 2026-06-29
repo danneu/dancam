@@ -5,10 +5,16 @@ nonisolated struct AppConfiguration: Equatable {
     static let cameraAPIBaseURLInfoKey = "DANCAMCameraAPIBaseURL"
     static let cameraAPIPinWiFiEnvironmentKey = "DANCAM_PIN_WIFI"
     static let cameraAPIPinWiFiInfoKey = "DANCAMPinWiFi"
+    static let cameraAPIConnectTimeoutEnvironmentKey = "DANCAM_CONNECT_TIMEOUT_MS"
     static let defaultCameraAPIBaseURL = URL(string: "http://10.42.0.1:8080")!
+    static let defaultCameraAPIConnectTimeout = Duration.seconds(2)
 
     var cameraAPIBaseURL: URL
     var cameraAPIInterfacePinning: InterfacePinning
+    var cameraAPIConnectTimeout: Duration
+    var statusFetchTimeout: Duration {
+        cameraAPIConnectTimeout + .seconds(1)
+    }
 
     static func live(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -25,7 +31,8 @@ nonisolated struct AppConfiguration: Equatable {
                 environment: environment,
                 infoDictionary: infoDictionary,
                 baseURL: baseURL
-            )
+            ),
+            cameraAPIConnectTimeout: configuredCameraAPIConnectTimeout(environment: environment)
         )
     }
 
@@ -48,6 +55,11 @@ nonisolated struct AppConfiguration: Equatable {
             ?? defaultPinning(for: baseURL)
     }
 
+    static func configuredCameraAPIConnectTimeout(environment: [String: String]) -> Duration {
+        configuredDuration(fromMilliseconds: environment[cameraAPIConnectTimeoutEnvironmentKey])
+            ?? defaultCameraAPIConnectTimeout
+    }
+
     private static func configuredURL(from value: String?) -> URL? {
         guard
             let rawValue = value?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -60,6 +72,19 @@ nonisolated struct AppConfiguration: Equatable {
         }
 
         return url
+    }
+
+    private static func configuredDuration(fromMilliseconds value: String?) -> Duration? {
+        guard
+            let rawValue = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            rawValue.isEmpty == false,
+            let milliseconds = Int(rawValue),
+            milliseconds > 0
+        else {
+            return nil
+        }
+
+        return .milliseconds(milliseconds)
     }
 
     private static func configuredPinning(from value: Any?) -> InterfacePinning? {

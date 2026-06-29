@@ -58,7 +58,7 @@ enum ConnectionFeature {
     private static func fetchEffect(dependencies: AppDependencies) -> Effect<Action> {
         .run(id: pollID, cancelInFlight: true) { send in
             do {
-                let response = try await dependencies.status.fetch()
+                let response = try await fetchWithTimeout(dependencies: dependencies)
                 guard Task.isCancelled == false else { return }
                 await send(.statusResponse(.success(response)))
             } catch is CancellationError {
@@ -71,6 +71,35 @@ enum ConnectionFeature {
             } catch {
                 guard Task.isCancelled == false else { return }
                 await send(.statusResponse(.failure(.transport(error.localizedDescription))))
+            }
+        }
+    }
+
+    private enum FetchResult {
+        case response(StatusResponse)
+        case timedOut
+    }
+
+    private static func fetchWithTimeout(dependencies: AppDependencies) async throws -> StatusResponse {
+        try await withThrowingTaskGroup(of: FetchResult.self) { group in
+            group.addTask {
+                .response(try await dependencies.status.fetch())
+            }
+            group.addTask {
+                try await dependencies.statusFetchTimeout()
+                return .timedOut
+            }
+
+            guard let result = try await group.next() else {
+                throw CancellationError()
+            }
+            group.cancelAll()
+
+            switch result {
+            case .response(let response):
+                return response
+            case .timedOut:
+                throw StatusError.timedOut
             }
         }
     }

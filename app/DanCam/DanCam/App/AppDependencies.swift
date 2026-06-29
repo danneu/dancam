@@ -10,6 +10,7 @@ struct AppDependencies {
     var preview: PreviewClient
     var recording: RecordingClient
     var sleep: @Sendable (Duration) async -> Void
+    var statusFetchTimeout: @Sendable () async throws -> Void
 
     init(
         health: HealthClient,
@@ -22,6 +23,9 @@ struct AppDependencies {
         recording: RecordingClient = .noop,
         sleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
+        },
+        statusFetchTimeout: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(for: .seconds(3600))
         }
     ) {
         self.health = health
@@ -33,37 +37,47 @@ struct AppDependencies {
         self.preview = preview
         self.recording = recording
         self.sleep = sleep
+        self.statusFetchTimeout = statusFetchTimeout
     }
 
     init(configuration: AppConfiguration = .live()) {
         health = .live(
             baseURL: configuration.cameraAPIBaseURL,
-            pinning: configuration.cameraAPIInterfacePinning
+            pinning: configuration.cameraAPIInterfacePinning,
+            connectTimeout: configuration.cameraAPIConnectTimeout
         )
         status = .live(
             baseURL: configuration.cameraAPIBaseURL,
-            pinning: configuration.cameraAPIInterfacePinning
+            pinning: configuration.cameraAPIInterfacePinning,
+            connectTimeout: configuration.cameraAPIConnectTimeout
         )
         clips = .live(
             baseURL: configuration.cameraAPIBaseURL,
-            pinning: configuration.cameraAPIInterfacePinning
+            pinning: configuration.cameraAPIInterfacePinning,
+            connectTimeout: configuration.cameraAPIConnectTimeout
         )
         clipPull = .live(
             baseURL: configuration.cameraAPIBaseURL,
-            pinning: configuration.cameraAPIInterfacePinning
+            pinning: configuration.cameraAPIInterfacePinning,
+            connectTimeout: configuration.cameraAPIConnectTimeout
         )
         clipRemuxer = .live
         progressiveSegmenter = .live
         preview = .live(
             baseURL: configuration.cameraAPIBaseURL,
-            pinning: configuration.cameraAPIInterfacePinning
+            pinning: configuration.cameraAPIInterfacePinning,
+            connectTimeout: configuration.cameraAPIConnectTimeout
         )
         recording = .live(
             baseURL: configuration.cameraAPIBaseURL,
-            pinning: configuration.cameraAPIInterfacePinning
+            pinning: configuration.cameraAPIInterfacePinning,
+            connectTimeout: configuration.cameraAPIConnectTimeout
         )
         sleep = { duration in
             try? await Task.sleep(for: duration)
+        }
+        statusFetchTimeout = {
+            try await Task.sleep(for: configuration.statusFetchTimeout)
         }
     }
 

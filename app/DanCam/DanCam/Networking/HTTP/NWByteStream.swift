@@ -4,13 +4,15 @@ import Network
 nonisolated enum NWByteStreamError: Error, Equatable {
     case missingHost
     case invalidPort
+    case connectTimedOut
 }
 
 nonisolated enum NWByteStream {
     static func open(
         url: URL,
         request: Data,
-        pinning: InterfacePinning
+        pinning: InterfacePinning,
+        connectTimeout: Duration
     ) async throws -> AsyncThrowingStream<Data, Error> {
         guard let host = url.host else {
             throw NWByteStreamError.missingHost
@@ -32,7 +34,7 @@ nonisolated enum NWByteStream {
         )
         let lifecycle = NWConnectionLifecycle(connection)
 
-        try await start(connection: connection, lifecycle: lifecycle)
+        try await start(connection: connection, lifecycle: lifecycle, connectTimeout: connectTimeout)
         try await send(request, on: connection, lifecycle: lifecycle)
 
         return AsyncThrowingStream { continuation in
@@ -53,23 +55,39 @@ nonisolated enum NWByteStream {
         }
     }
 
-    private static func start(connection: NWConnection, lifecycle: NWConnectionLifecycle) async throws {
+    private static func start(
+        connection: NWConnection,
+        lifecycle: NWConnectionLifecycle,
+        connectTimeout: Duration
+    ) async throws {
         let queue = DispatchQueue(label: "com.danneu.dancam.nw-byte-stream")
 
         try Task.checkCancellation()
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let resolution = NWConnectionStartResolution(
+                    connection: connection,
+                    continuation: continuation
+                )
+
+                let deadline = DispatchWorkItem {
+                    lifecycle.cancel()
+                    resolution.finish(.failure(NWByteStreamError.connectTimedOut))
+                }
+                resolution.setDeadline(deadline)
+                queue.asyncAfter(
+                    deadline: .now() + dispatchInterval(for: connectTimeout),
+                    execute: deadline
+                )
+
                 connection.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
-                        connection.stateUpdateHandler = nil
-                        continuation.resume()
+                        resolution.finish(.success(()))
                     case .failed(let error):
-                        connection.stateUpdateHandler = nil
-                        continuation.resume(throwing: error)
+                        resolution.finish(.failure(error))
                     case .cancelled:
-                        connection.stateUpdateHandler = nil
-                        continuation.resume(throwing: CancellationError())
+                        resolution.finish(.failure(CancellationError()))
                     default:
                         break
                     }
@@ -78,13 +96,24 @@ nonisolated enum NWByteStream {
                 do {
                     try lifecycle.start(on: queue)
                 } catch {
-                    connection.stateUpdateHandler = nil
-                    continuation.resume(throwing: error)
+                    queue.async {
+                        resolution.finish(.failure(error))
+                    }
                 }
             }
         } onCancel: {
             lifecycle.cancel()
         }
+    }
+
+    private static func dispatchInterval(for duration: Duration) -> DispatchTimeInterval {
+        let components = duration.components
+        let attosecondsPerMillisecond: Int64 = 1_000_000_000_000_000
+        let attosecondMilliseconds = components.attoseconds / attosecondsPerMillisecond
+        let roundedRemainder: Int64 = components.attoseconds % attosecondsPerMillisecond == 0 ? 0 : 1
+        let totalMilliseconds = components.seconds * 1_000 + attosecondMilliseconds + roundedRemainder
+        let cappedMilliseconds = min(max(totalMilliseconds, 1), Int64(Int.max))
+        return .milliseconds(Int(cappedMilliseconds))
     }
 
     private static func send(
@@ -130,6 +159,38 @@ nonisolated enum NWByteStream {
             } else {
                 receive(from: connection, continuation: continuation)
             }
+        }
+    }
+}
+
+// Swift cannot express this queue affinity: setDeadline runs before start, and
+// finish is called only on the connection queue.
+nonisolated private final class NWConnectionStartResolution: @unchecked Sendable {
+    private let connection: NWConnection
+    private let continuation: CheckedContinuation<Void, Error>
+    private var didResume = false
+    private var deadlineWorkItem: DispatchWorkItem?
+
+    init(connection: NWConnection, continuation: CheckedContinuation<Void, Error>) {
+        self.connection = connection
+        self.continuation = continuation
+    }
+
+    func setDeadline(_ deadlineWorkItem: DispatchWorkItem) {
+        self.deadlineWorkItem = deadlineWorkItem
+    }
+
+    func finish(_ result: Result<Void, Error>) {
+        guard didResume == false else { return }
+        didResume = true
+        connection.stateUpdateHandler = nil
+        deadlineWorkItem?.cancel()
+
+        switch result {
+        case .success:
+            continuation.resume()
+        case .failure(let error):
+            continuation.resume(throwing: error)
         }
     }
 }

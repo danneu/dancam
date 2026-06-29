@@ -22,6 +22,10 @@
 > MP4 from ADR 07. The Pi transport contract stays unchanged: the Pi serves raw
 > `.ts` bytes with `Range`, and AVPlayer still talks only to local media.
 
+> **Note (2026-06-29):** ADR 09 refines the hand-rolled HTTP/1.1 client mechanics by
+> adding a configured connect deadline to `NWByteStream`. The wire contract, Wi-Fi
+> pinning, and raw clip transport stay unchanged.
+
 ## Context
 
 The iPhone app is the client of the camera unit's local API. The **wire contract** --

@@ -4,6 +4,7 @@ nonisolated enum StatusError: Error, Equatable {
     case http(Int)
     case transport(String)
     case decoding(String)
+    case timedOut
 
     var displayMessage: String {
         switch self {
@@ -13,6 +14,8 @@ nonisolated enum StatusError: Error, Equatable {
             "Transport error: \(message)"
         case .decoding(let message):
             "Decode error: \(message)"
+        case .timedOut:
+            "Status request timed out."
         }
     }
 }
@@ -24,10 +27,16 @@ nonisolated struct StatusClient {
 
     static func live(
         baseURL: URL,
-        pinning: InterfacePinning
+        pinning: InterfacePinning,
+        connectTimeout: Duration
     ) -> StatusClient {
         live(baseURL: baseURL, pinning: pinning) { url, request in
-            try await NWByteStream.open(url: url, request: request, pinning: pinning)
+            try await NWByteStream.open(
+                url: url,
+                request: request,
+                pinning: pinning,
+                connectTimeout: connectTimeout
+            )
         }
     }
 

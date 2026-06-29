@@ -111,37 +111,94 @@ struct ConnectionFeatureTests {
         #expect(store.state.connectivity == .connected)
     }
 
-    @Test func stopCancelsPollAndSendsNoFurtherActions() async {
-        let started = AsyncSignal()
+    @Test func hungFetchFlipsToDisconnected() async {
+        let fetchStarted = AsyncSignal()
+        let store = TestStore(
+            initialState: ConnectionFeature.State(connectivity: .connected),
+            dependencies: AppDependencies(
+                health: HealthClient(fetch: { fatalError() }),
+                status: StatusClient(fetch: {
+                    await fetchStarted.signal()
+                    try await Task.sleep(for: .seconds(3600))
+                    return StatusResponse.sample(recording: false)
+                }),
+                sleep: { _ in },
+                statusFetchTimeout: {
+                    await fetchStarted.wait()
+                }
+            ),
+            reduce: ConnectionFeature.reduce
+        )
+
+        await store.send(.poll)
+        await store.receive(.statusResponse(.failure(.timedOut))) {
+            $0.consecutiveFailures = 1
+        }
+        await store.receive(.poll)
+        await store.receive(.statusResponse(.failure(.timedOut))) {
+            $0.consecutiveFailures = 2
+        }
+        await store.receive(.poll)
+        await store.receive(.statusResponse(.failure(.timedOut))) {
+            $0.connectivity = .disconnected
+            $0.consecutiveFailures = 3
+        }
+    }
+
+    @Test func stopCancelsFetchAndTimeoutAndSendsNoFurtherActions() async {
+        let fetchStarted = AsyncSignal()
+        let timeoutStarted = AsyncSignal()
+        let fetchCancelled = AsyncSignal()
+        let timeoutCancelled = AsyncSignal()
         let store = TestStore(
             initialState: ConnectionFeature.State(),
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError() }),
                 status: StatusClient(fetch: {
-                    await started.signal()
-                    try await Task.sleep(for: .seconds(60))
-                    return StatusResponse.sample(recording: false)
-                })
+                    await fetchStarted.signal()
+                    do {
+                        try await Task.sleep(for: .seconds(3600))
+                        return StatusResponse.sample(recording: false)
+                    } catch {
+                        await fetchCancelled.signal()
+                        throw error
+                    }
+                }),
+                statusFetchTimeout: {
+                    await timeoutStarted.signal()
+                    do {
+                        try await Task.sleep(for: .seconds(3600))
+                    } catch {
+                        await timeoutCancelled.signal()
+                        throw error
+                    }
+                }
             ),
             reduce: ConnectionFeature.reduce
         )
 
         await store.send(.start)
-        await started.wait()
+        await fetchStarted.wait()
+        await timeoutStarted.wait()
         await store.send(.stop)
-        await store.finishEffects()
+        await fetchCancelled.wait()
+        await timeoutCancelled.wait()
 
         store.expectNoReceivedActions()
     }
 
     private func dependencies(
         queue: StatusFetchQueue,
-        sleep: @escaping @Sendable (Duration) async -> Void
+        sleep: @escaping @Sendable (Duration) async -> Void,
+        statusFetchTimeout: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(for: .seconds(3600))
+        }
     ) -> AppDependencies {
         AppDependencies(
             health: HealthClient(fetch: { fatalError() }),
             status: StatusClient(fetch: { try await queue.fetch() }),
-            sleep: sleep
+            sleep: sleep,
+            statusFetchTimeout: statusFetchTimeout
         )
     }
 }

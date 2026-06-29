@@ -8,6 +8,10 @@
   `app/docs/design/03-2026-06-24-app-ui-architecture.md`;
   `app/docs/design/05-2026-06-26-app-shell-status-strip.md`
 
+> **Note (2026-06-29):** ADR 09 refines the carried-forward connection monitor by
+> bounding whole status fetches and adding `StatusError.timedOut`. `/v1/status`
+> remains the connection truth, and the three-strike debounce stays unchanged.
+
 ## Context
 
 The first UIKit screens used the bespoke TEA core from ADR 03, but they owned
