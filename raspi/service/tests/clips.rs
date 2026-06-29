@@ -96,6 +96,39 @@ async fn clips_route_lists_finished_clips_and_headers() {
 }
 
 #[tokio::test]
+async fn clips_route_reports_duration_for_real_transport_stream() {
+    let rec_dir = TempRecDir::new();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/clips/seg_00000.ts");
+    fs::copy(fixture, rec_dir.path.join("seg_00000.ts")).unwrap();
+
+    let response = dancam::app(state(rec_dir.path.clone(), false))
+        .oneshot(
+            Request::builder()
+                .uri("/v1/clips")
+                .header("Host", "localhost:8080")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    let clips = json["clips"].as_array().unwrap();
+
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0]["id"], 0);
+    let dur_ms = clips[0]["dur_ms"].as_u64().unwrap();
+    assert!(
+        (dur_ms as i64 - 30_000).abs() <= 100,
+        "duration was {dur_ms} ms"
+    );
+    assert_eq!(clips[0]["start_ms"], Value::Null);
+    assert_eq!(clips[0]["time_approximate"], true);
+}
+
+#[tokio::test]
 async fn clips_route_returns_empty_for_missing_dir() {
     let rec_dir = TempRecDir::new();
     let missing = rec_dir.path.join("missing");

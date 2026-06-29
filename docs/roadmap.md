@@ -145,9 +145,10 @@ mock first.
             list's `{seq}-{bytes}`), `Range`/`If-Range` -> `206`/`Content-Range`, and
             `416` on unsatisfiable range -- pulled in by the app's progress + mid-pull
             resume step below, not before.
-      - [ ] **Pi:** report `dur_ms` cheaply -- ~30 s from the segment cadence, ffprobe
-            only the final short segment if needed -- so rows show length now; `start_ms`
-            and real provenance stay deferred to `moss`.
+      - [x] **Pi:** report `dur_ms` from an exact cached TS-PTS duration span
+            (`(maxPTS - minPTS) + frame_interval`) for each finished segment, pivoting
+            from the earlier cadence-constant/ffprobe sketch; `start_ms` and real
+            provenance stay deferred to `moss`.
       - [x] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`,
             tracking the Pi in the same two pulses -- plain `200` first, then `Range`/`ETag`
             -- so the app pull + playback path runs against the mock first at each step.

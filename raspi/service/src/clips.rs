@@ -17,7 +17,7 @@ use tokio::{
 };
 use tokio_util::io::ReaderStream;
 
-use crate::AppState;
+use crate::{ts_duration::DurationCache, AppState};
 
 const MAX_CLIPS: usize = 500;
 
@@ -41,9 +41,22 @@ pub struct ClipsResponse {
 
 pub async fn list_clips(State(state): State<AppState>) -> Json<ClipsResponse> {
     let recording = state.backend.status().recording;
+    let rec_dir = state.rec_dir.clone();
+    let duration_cache = state.clip_durations.clone();
+    let clips = match tokio::task::spawn_blocking(move || {
+        read_finished_clips(rec_dir.as_ref(), recording, duration_cache.as_ref())
+    })
+    .await
+    {
+        Ok(clips) => clips,
+        Err(error) => {
+            tracing::error!(%error, "clip listing task failed");
+            Vec::new()
+        }
+    };
 
     Json(ClipsResponse {
-        clips: read_finished_clips(&state.rec_dir, recording),
+        clips,
         server_time_ms: server_time_ms(),
         next_cursor: None,
     })
@@ -205,7 +218,11 @@ enum RangeResolution {
     Unsatisfiable,
 }
 
-pub fn read_finished_clips(rec_dir: &Path, recording: bool) -> Vec<ClipMeta> {
+pub(crate) fn read_finished_clips(
+    rec_dir: &Path,
+    recording: bool,
+    duration_cache: &DurationCache,
+) -> Vec<ClipMeta> {
     let Ok(entries) = std::fs::read_dir(rec_dir) else {
         return Vec::new();
     };
@@ -224,35 +241,37 @@ pub fn read_finished_clips(rec_dir: &Path, recording: bool) -> Vec<ClipMeta> {
             continue;
         }
 
-        candidates.push((seq, metadata.len()));
+        candidates.push((seq, metadata.len(), path));
     }
 
-    let max_seq = candidates.iter().map(|(seq, _)| *seq).max();
-    let mut clips: Vec<_> = candidates
+    let max_seq = candidates.iter().map(|(seq, _, _)| *seq).max();
+    let mut candidates: Vec<_> = candidates
         .into_iter()
-        .filter(|(seq, _)| !recording || Some(*seq) != max_seq)
-        .map(|(seq, bytes)| ClipMeta {
+        .filter(|(seq, _, _)| !recording || Some(*seq) != max_seq)
+        .collect();
+
+    candidates.sort_by(|(left_seq, _, _), (right_seq, _, _)| right_seq.cmp(left_seq));
+    if candidates.len() > MAX_CLIPS {
+        tracing::warn!(
+            total = candidates.len(),
+            returned = MAX_CLIPS,
+            "truncating clips list"
+        );
+        candidates.truncate(MAX_CLIPS);
+    }
+
+    candidates
+        .into_iter()
+        .map(|(seq, bytes, path)| ClipMeta {
             id: seq,
             start_ms: None,
-            dur_ms: None,
+            dur_ms: duration_cache.duration_ms(seq, &path, bytes),
             bytes,
             locked: false,
             etag: format!("{seq}-{bytes}"),
             time_approximate: true,
         })
-        .collect();
-
-    clips.sort_by(|left, right| right.id.cmp(&left.id));
-    if clips.len() > MAX_CLIPS {
-        tracing::warn!(
-            total = clips.len(),
-            returned = MAX_CLIPS,
-            "truncating clips list"
-        );
-        clips.truncate(MAX_CLIPS);
-    }
-
-    clips
+        .collect()
 }
 
 fn max_clip_seq(rec_dir: &Path) -> Option<u32> {
@@ -308,6 +327,7 @@ impl IntoResponse for ClipError {
 #[cfg(test)]
 mod tests {
     use super::{http_etag, max_clip_seq, read_finished_clips, resolve_range, RangeResolution};
+    use crate::ts_duration::DurationCache;
     use std::{fs, path::Path};
 
     #[test]
@@ -400,7 +420,7 @@ mod tests {
         write_file(&rec_dir.path, "seg_00002.ts", b"two");
         write_file(&rec_dir.path, "notes.txt", b"ignored");
 
-        let clips = read_finished_clips(&rec_dir.path, false);
+        let clips = read_finished_clips_for_test(&rec_dir.path, false);
 
         assert_eq!(
             clips.iter().map(|clip| clip.id).collect::<Vec<_>>(),
@@ -417,7 +437,7 @@ mod tests {
         write_file(&rec_dir.path, "seg_00001.ts", b"one");
         write_file(&rec_dir.path, "seg_00002.ts", b"two");
 
-        let clips = read_finished_clips(&rec_dir.path, true);
+        let clips = read_finished_clips_for_test(&rec_dir.path, true);
 
         assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [1, 0]);
     }
@@ -427,7 +447,7 @@ mod tests {
         let rec_dir = temp_rec_dir();
         write_file(&rec_dir.path, "seg_00000.ts", b"zero");
 
-        assert!(read_finished_clips(&rec_dir.path, true).is_empty());
+        assert!(read_finished_clips_for_test(&rec_dir.path, true).is_empty());
     }
 
     #[test]
@@ -435,7 +455,7 @@ mod tests {
         let rec_dir = temp_rec_dir();
         let missing = rec_dir.path.join("missing");
 
-        assert!(read_finished_clips(&missing, false).is_empty());
+        assert!(read_finished_clips_for_test(&missing, false).is_empty());
     }
 
     #[test]
@@ -450,6 +470,11 @@ mod tests {
 
     fn write_file(dir: &Path, name: &str, bytes: &[u8]) {
         fs::write(dir.join(name), bytes).unwrap();
+    }
+
+    fn read_finished_clips_for_test(rec_dir: &Path, recording: bool) -> Vec<super::ClipMeta> {
+        let duration_cache = DurationCache::new();
+        read_finished_clips(rec_dir, recording, &duration_cache)
     }
 
     struct TempRecDir {

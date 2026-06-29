@@ -62,7 +62,7 @@ fn require_mutation_headers(headers: &HeaderMap) -> Result<(), RecordingRequestE
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
-    if is_json_content_type(content_type) == false {
+    if !is_json_content_type(content_type) {
         return Err(RecordingRequestError::MissingJsonContentType);
     }
 

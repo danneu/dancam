@@ -26,6 +26,9 @@ pub mod preview;
 mod recording;
 pub mod status;
 mod sysfacts;
+mod ts_duration;
+
+use ts_duration::DurationCache;
 
 pub const DEFAULT_REC_DIR: &str = "/home/dan/rec";
 
@@ -35,6 +38,7 @@ pub struct AppState {
     pub started: Instant,
     pub backend: Arc<dyn Backend>,
     pub rec_dir: Arc<Path>,
+    pub(crate) clip_durations: Arc<DurationCache>,
     host_policy: Arc<HostPolicy>,
 }
 
@@ -48,6 +52,7 @@ impl AppState {
             started: Instant::now(),
             backend: Arc::new(backend),
             rec_dir: Arc::from(PathBuf::from(DEFAULT_REC_DIR).into_boxed_path()),
+            clip_durations: Arc::new(DurationCache::new()),
             host_policy: Arc::new(HostPolicy::default()),
         }
     }

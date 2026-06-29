@@ -289,8 +289,12 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > `id`, `bytes`, `etag`, `locked:false`, `time_approximate:true`, null
   > `start_ms`/`dur_ms`, `server_time_ms`, and `next_cursor:null`; it excludes the
   > highest sequence while recording because that segment is still open. Real
-  > `start_ms`, `dur_ms`, `locked`, and non-approximate time provenance remain
-  > deferred until the storage/time-sync/incident layers land.
+  > `start_ms`, `locked`, and non-approximate time provenance remain deferred
+  > until the storage/time-sync/incident layers land.
+  > **Note (2026-06-29):** Swoop `lime` now populates `dur_ms` from an exact
+  > TS-PTS-derived duration cached per finished segment. `start_ms`, `locked`, and
+  > non-approximate time provenance remain deferred. This realizes ADR 03's TS-PTS
+  > rebuild primitive early for the current flat-layout listing.
 - `GET /v1/clips/{id}` -- resumable pull; `Range`/`If-Range`, `Accept-Ranges`, `ETag`,
   `Content-Range`; `application/mp2t` (the `.ts` segment bytes).
 - `GET /v1/clips/{id}/thumb?w=` -- keyframe JPEG (the Pi caches one per segment).

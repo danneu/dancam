@@ -6,6 +6,11 @@ raspi-build:
 raspi-test:
     cargo test --manifest-path raspi/service/Cargo.toml
 
+# Run the Raspberry Pi Rust service formatting and lint gate.
+raspi-check:
+    cargo fmt --manifest-path raspi/service/Cargo.toml --check
+    cargo clippy --manifest-path raspi/service/Cargo.toml --all-targets -- -D warnings
+
 # Cross-build and deploy the service to the Pi (override target with DANCAM_HOST=...).
 raspi-deploy:
     ./raspi/deploy.sh

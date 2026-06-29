@@ -339,6 +339,14 @@ On boot, the coordinator rebuilds state by:
 1. Scanning `segments/*.ts` for `seq` and file sizes.
 2. Replaying `index.log` and `index.snapshot` for boot and monotonic metadata,
    parsing TS PTS for any segment missing a record.
+   > **Note (2026-06-29):** The TS-PTS parse is partially realized early as
+   > `raspi/service/src/ts_duration.rs`, currently the primary `dur_ms` source
+   > for the present flat-layout listing. It computes a duration span
+   > (`(maxPTS - minPTS) + frame_interval`), not the boot-anchored
+   > `mono_start_ms`/`mono_end_ms` stored by finalized `index.log` records, and
+   > it does not reconcile against `index.log`. When the storage coordinator
+   > lands, indexed records remain primary (`mono_end_ms - mono_start_ms`) and
+   > TS-PTS parsing becomes the missing-record rebuild fallback described here.
 3. Scanning `incidents/*/` and `state/seen-keys.log` to rebuild incidents,
    idempotency state, and eviction floors. Hardlinks are the lock truth.
 4. Reconciling torn state: drop index entries with no file; discard a torn final
