@@ -99,10 +99,10 @@ mock first.
       - [x] Docs land in lockstep: ADR 09 (`just adr-check` green), README renumbered to
             the pinned 8-section runbook, `raspi/AGENTS.md` flipped to "playbook is the
             source of truth."
-- [ ] **Swoop `opal` -- Connection robustness.** Keep the app usable across a flaky
+- [x] **Swoop `opal` -- Connection robustness.** Keep the app usable across a flaky
       2.4 GHz link: detect drops fast, ride them out in place, and recover without a
-      manual rejoin. _App-side ambient UX has landed; the only open piece is resumable
-      pulls, shared with `lime`._
+      manual rejoin. _App-side ambient UX and resumable pulls have landed; measured
+      pull UX now continues in `lime`._
       - [x] **App:** scene-scoped `/v1/status` monitor -- debounced liveness owned by the
             scene (not the home dashboard), preserving last-known status so screens ride
             out drops in place.
@@ -118,7 +118,7 @@ mock first.
       - [x] **App:** domain root store -- connection/recording/clips coordination moves
             into `AppFeature` with equality-gated scoped observation, cutting poll-driven
             wakeups.
-      - [ ] **App:** resumable pulls across drops -- a `Range`/`If-Range` clip pull that
+      - [x] **App:** resumable pulls across drops -- a `Range`/`If-Range` clip pull that
             resumes from the last byte rather than restarting. _Shared with `lime`'s
             ranged-pull step; land it in whichever swoop reaches it first._
       - Note: app-driven AP join (`NEHotspotConfiguration`, `joinOnce = false`) is *not* an
@@ -140,17 +140,17 @@ mock first.
             `.ts` as a plain `200` (`application/mp2t`); never serves the open segment
             (matches the list). The dumbest end-to-end that proves tap -> pull -> play; no
             ranged-pull surface until the app step below needs it.
-      - [ ] **Pi (ranged/resumable):** add `Accept-Ranges: bytes`, `ETag` (reuse the
+      - [x] **Pi (ranged/resumable):** add `Accept-Ranges: bytes`, `ETag` (reuse the
             list's `{seq}-{bytes}`), `Range`/`If-Range` -> `206`/`Content-Range`, and
             `416` on unsatisfiable range -- pulled in by the app's progress + mid-pull
             resume step below, not before.
       - [ ] **Pi:** report `dur_ms` cheaply -- ~30 s from the segment cadence, ffprobe
             only the final short segment if needed -- so rows show length now; `start_ms`
             and real provenance stay deferred to `moss`.
-      - [ ] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`,
+      - [x] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`,
             tracking the Pi in the same two pulses -- plain `200` first, then `Range`/`ETag`
             -- so the app pull + playback path runs against the mock first at each step.
-      - [ ] **App (riskiest):** resumable ranged pull on the pinned `NWConnection` -- a
+      - [x] **App (riskiest):** resumable ranged pull on the pinned `NWConnection` -- a
             `Range`/`If-Range`/`Content-Range` loop that streams to a local file and
             resumes from the last byte across drops (verify `ETag` before resuming). At
             ~38 MB over a congested 2.4 GHz link a pull is ~6-26 s, so a mid-pull drop
