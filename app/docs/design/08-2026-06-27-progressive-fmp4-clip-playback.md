@@ -123,6 +123,15 @@ Hard or risky:
   better fix is the raspi keyframe-interval lever, not app-side sub-GOP slicing.
 - The finalizer intentionally parses the TS a second time. That duplicates some
   CPU work, but keeps the durable MP4 on the already-tested whole-file path.
+- 2026-06-30 update: the finalizer and progressive path now share the tolerant
+  `IncrementalTSDemuxer` implementation. The finalizer tolerates power-cut
+  truncation and mid-stream garbage, drops only sub-188-byte residual tails, and
+  emits the trailing access unit as-is so the durable MP4 can play up to the
+  cut. A blanket trailing-unit drop was rejected because clean clips have no
+  reliable in-band "this was truncated" signal, so it would discard the last
+  good frame of every clean clip. The deferred "single parse feeding both"
+  alternative remains deferred; only the demux stage is unified, while the
+  assemble/write passes stay independent.
 
 Mitigations:
 

@@ -38,6 +38,79 @@ struct ClipRemuxerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func liveRemuxesTruncatedTransportStreamToPlayableMP4() async throws {
+        let data = try Data(contentsOf: MediaFixtureURLs.seg00000TS())
+        let cut = data.count - 17_000
+        try #require(cut % TransportStreamH264Parser.packetSize != 0)
+
+        let clipID = 91_002
+        let sourceURL = temporaryURL(extension: "ts")
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            for url in remuxOutputs(clipID: clipID) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        try Data(data.prefix(cut)).write(to: sourceURL)
+
+        let result = try await ClipRemuxer.live.remux(sourceURL, clipID)
+
+        #expect(result.fileURL.pathExtension == "mp4")
+        #expect(result.bytes > 0)
+        #expect(durationSeconds(result.duration) > 25.0)
+        #expect(durationSeconds(result.duration) < 30.5)
+        try assertFastStartLayout(result.fileURL)
+
+        let asset = AVURLAsset(url: result.fileURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try #require(videoTracks.first)
+        #expect(videoTracks.count == 1)
+        assertSyncSamples(on: track)
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        _ = try await generator.image(at: .zero).image
+        _ = try await generator.image(at: CMTime(seconds: 10, preferredTimescale: 600)).image
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func liveRemuxesTransportStreamWithMidStreamGarbageToPlayableMP4() async throws {
+        let data = try Data(contentsOf: MediaFixtureURLs.seg00000TS())
+        let insertionOffset = TransportStreamH264Parser.packetSize * 31
+        try #require(data.count > insertionOffset + (TransportStreamH264Parser.packetSize * 3))
+
+        var corrupted = Data(data[..<insertionOffset])
+        corrupted.append(contentsOf: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
+        corrupted.append(contentsOf: data[insertionOffset...])
+
+        let clipID = 91_003
+        let sourceURL = temporaryURL(extension: "ts")
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            for url in remuxOutputs(clipID: clipID) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        try corrupted.write(to: sourceURL)
+
+        let result = try await ClipRemuxer.live.remux(sourceURL, clipID)
+
+        #expect(result.fileURL.pathExtension == "mp4")
+        #expect(result.bytes > 0)
+        try assertFastStartLayout(result.fileURL)
+
+        let asset = AVURLAsset(url: result.fileURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try #require(videoTracks.first)
+        #expect(videoTracks.count == 1)
+        assertSyncSamples(on: track)
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        _ = try await generator.image(at: .zero).image
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func liveRemuxFailureRemovesStaleAndPartialOutputs() async throws {
         let clipID = 91_001
         let invalidSourceURL = temporaryURL(extension: "ts")

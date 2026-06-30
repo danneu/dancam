@@ -17,11 +17,11 @@ struct TSDemuxerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func incrementalDemuxerMatchesWholeFilePESPacketsAcrossChunkSizes() throws {
+    func demuxedPESPacketsAreInvariantToChunkBoundaries() throws {
         let data = try Data(contentsOf: MediaFixtureURLs.seg00000TS())
         let expected = try TSDemuxer.demuxH264PESPackets(from: data)
 
-        for chunkSize in [1, 187, 188, 189, 4096] {
+        for chunkSize in [1, 187, 188, 189, 4096, data.count] {
             let actual = try incrementalPESPackets(from: data, chunkSizes: [chunkSize])
             #expect(actual == expected, "chunk size \(chunkSize)")
         }
@@ -67,10 +67,30 @@ struct TSDemuxerTests {
     }
 
     @Test
-    func rejectsUnalignedTransportStream() {
-        #expect(throws: ClipRemuxError.invalidTransportStream("Transport stream size is not packet-aligned.")) {
+    func rejectsTransportStreamWithNoH264Packets() {
+        #expect(throws: ClipRemuxError.invalidTransportStream("No H.264 PES packets found.")) {
             _ = try TSDemuxer.demuxH264(from: Data([0x47, 0x00]))
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func toleratesUnalignedTruncatedTransportStream() throws {
+        let data = try Data(contentsOf: MediaFixtureURLs.seg00000TS())
+        let packetSize = TransportStreamH264Parser.packetSize
+        let full = try TSDemuxer.demuxH264PESPackets(from: data)
+        let cut = data.count - 750
+        try #require(cut % packetSize != 0)
+        let flooredByteCount = (cut / packetSize) * packetSize
+
+        let truncated = try TSDemuxer.demuxH264PESPackets(from: Data(data.prefix(cut)))
+        let floored = try TSDemuxer.demuxH264PESPackets(from: Data(data.prefix(flooredByteCount)))
+
+        #expect(truncated == floored)
+        #expect(truncated.count == full.count)
+
+        let truncatedLast = try #require(truncated.last)
+        let fullLast = try #require(full.last)
+        #expect(truncatedLast.payload.count < fullLast.payload.count)
     }
 
     private func incrementalPESPackets(

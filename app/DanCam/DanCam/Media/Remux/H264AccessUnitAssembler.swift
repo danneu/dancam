@@ -13,7 +13,7 @@ nonisolated enum H264AccessUnitAssembler {
         let sortedPackets = packets.sorted(by: { $0.dtsTicks < $1.dtsTicks })
         for index in sortedPackets.indices {
             let packet = sortedPackets[index]
-            let nalUnits = try splitAnnexB(packet.payload)
+            let nalUnits = splitAnnexB(packet.payload)
             guard nalUnits.isEmpty == false else { continue }
 
             for nalUnit in nalUnits {
@@ -102,11 +102,11 @@ nonisolated enum H264AccessUnitAssembler {
         )
     }
 
-    static func splitAnnexB(_ data: Data) throws -> [H264NALUnit] {
+    static func splitAnnexB(_ data: Data) -> [H264NALUnit] {
         var nalUnits: [H264NALUnit] = []
 
         guard var startCode = findStartCode(in: data, from: 0) else {
-            throw ClipRemuxError.invalidH264("Missing Annex B start code.")
+            return []
         }
 
         while true {
@@ -296,7 +296,7 @@ nonisolated struct StreamingH264AccessUnitAssembler {
         _ packet: H264PESPacket,
         into output: inout Output
     ) throws {
-        let nalUnits = try H264AccessUnitAssembler.splitAnnexB(packet.payload)
+        let nalUnits = H264AccessUnitAssembler.splitAnnexB(packet.payload)
         latchParameterSets(from: nalUnits, into: &output)
 
         guard sps != nil, pps != nil else { return }

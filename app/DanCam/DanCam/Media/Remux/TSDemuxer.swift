@@ -23,30 +23,19 @@ nonisolated enum TSDemuxer {
     }
 
     static func demuxH264PESPackets(from data: Data) throws -> [H264PESPacket] {
-        guard data.count >= TransportStreamH264Parser.packetSize,
-              data.count % TransportStreamH264Parser.packetSize == 0
-        else {
-            throw ClipRemuxError.invalidTransportStream("Transport stream size is not packet-aligned.")
-        }
+        // The finalizer shares the tolerant incremental path: it resyncs after
+        // garbage, drops any sub-188-byte residual tail, and emits the final
+        // truncated PES as-is so the MP4 can play up to the cut. Appending the
+        // whole file creates one transient copy into the demuxer's residual.
+        var demuxer = IncrementalTSDemuxer()
+        var packets = try demuxer.append(data)
+        packets.append(contentsOf: demuxer.finish())
 
-        var parserState = TransportStreamH264Parser.State()
-
-        for packetOffset in stride(from: 0, to: data.count, by: TransportStreamH264Parser.packetSize) {
-            try TransportStreamH264Parser.processPacket(
-                from: data,
-                packetOffset: packetOffset,
-                packetIndex: packetOffset / TransportStreamH264Parser.packetSize,
-                state: &parserState
-            )
-        }
-
-        TransportStreamH264Parser.finish(&parserState)
-
-        guard parserState.packets.isEmpty == false else {
+        guard packets.isEmpty == false else {
             throw ClipRemuxError.invalidTransportStream("No H.264 PES packets found.")
         }
 
-        return parserState.packets
+        return packets
     }
 }
 

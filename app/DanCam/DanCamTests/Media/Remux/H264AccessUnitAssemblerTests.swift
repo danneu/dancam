@@ -5,7 +5,7 @@ import Testing
 struct H264AccessUnitAssemblerTests {
     @Test
     func parsesAnnexBStartCodesAndNALTypes() throws {
-        let units = try H264AccessUnitAssembler.splitAnnexB(Data([
+        let units = H264AccessUnitAssembler.splitAnnexB(Data([
             0x00, 0x00, 0x00, 0x01, 0x67, 0xaa,
             0x00, 0x00, 0x01, 0x68, 0xbb,
             0x00, 0x00, 0x00, 0x01, 0x65, 0xcc,
@@ -68,6 +68,57 @@ struct H264AccessUnitAssemblerTests {
         #expect(clip.accessUnits.count == 2)
         #expect(clip.accessUnits.map(\.isKeyFrame) == [true, false])
         #expect(clip.accessUnits.map(\.nalTypes) == [[7, 8, 9, 5], [9, 1]])
+    }
+
+    @Test
+    func skipsPESWithoutAnnexBStartCode() throws {
+        let first = H264PESPacket(
+            payload: annexB([
+                nal(9, [0xf0]),
+                nal(7, [0x64, 0x00, 0x15]),
+                nal(8, [0xee, 0x3c]),
+                nal(5, [0x88, 0x99]),
+            ]),
+            ptsTicks: 0,
+            dtsTicks: 0
+        )
+        let malformed = H264PESPacket(
+            payload: Data([0xde, 0xad, 0xbe, 0xef]),
+            ptsTicks: 3_000,
+            dtsTicks: 3_000
+        )
+        let second = H264PESPacket(
+            payload: annexB([
+                nal(9, [0xf0]),
+                nal(1, [0x77, 0x66]),
+            ]),
+            ptsTicks: 6_000,
+            dtsTicks: 6_000
+        )
+
+        let batch = try H264AccessUnitAssembler.assemble(
+            packets: [first, malformed, second],
+            timescale: 90_000
+        )
+        #expect(batch.accessUnits.count == 2)
+        #expect(batch.accessUnits.map(\.isKeyFrame) == [true, false])
+        #expect(batch.accessUnits.map(\.nalTypes) == [[9, 7, 8, 5], [9, 1]])
+
+        var assembler = StreamingH264AccessUnitAssembler()
+        var streamingUnits: [H264AccessUnit] = []
+        var readyEventCount = 0
+
+        for packet in [first, malformed, second] {
+            let output = try assembler.append([packet])
+            streamingUnits.append(contentsOf: output.accessUnits)
+            if output.didBecomeReady {
+                readyEventCount += 1
+            }
+        }
+        streamingUnits.append(contentsOf: try assembler.finish().accessUnits)
+
+        #expect(readyEventCount == 1)
+        #expect(streamingUnits == batch.accessUnits)
     }
 
     @Test(.timeLimit(.minutes(1)))
