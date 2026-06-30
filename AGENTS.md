@@ -110,9 +110,11 @@ These are settled at the system level. Side-specific ADRs must not contradict th
   windshield in Texas heat. The camera sensor (rated to ~50 C) is the weak link,
   not the Pi board (rated to 70 C). See `raspi/AGENTS.md`.
 - **The app<->Pi link is a versioned local API served by the Pi, pinned to Wi-Fi.**
-  Request/response control plus low-res preview and on-demand clip pull; never on the
-  recording path. The transport mechanics (MJPEG preview, resumable ranged pull, SSE
-  events) live in the transport ADR.
+  Request/response control plus low-res preview, snapshot-first SSE events, and
+  on-demand clip pull; never on the recording path. `/v1/events` is the live state
+  source: snapshot, ordered deltas, and heartbeat. Connection liveness is heartbeat
+  presence; `/v1/status` is a one-shot read of the same snapshot shape. The transport
+  mechanics (MJPEG preview, resumable ranged pull, SSE events) live in the transport ADR.
   See `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`.
 
 ## Design decisions (ADRs)

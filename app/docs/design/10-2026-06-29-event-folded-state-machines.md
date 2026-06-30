@@ -6,7 +6,7 @@
 - **Related:** `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
   `app/docs/design/03-2026-06-24-app-ui-architecture.md`;
   `app/docs/design/06-2026-06-26-domain-root-store-and-scoped-observation.md`;
-  `raspi/docs/design/10-2026-06-29-recorder-fsm-and-events-sse.md`
+  `raspi/docs/design/10-2026-06-30-recorder-fsm-and-events-sse.md`
 
 ## Context
 

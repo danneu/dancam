@@ -76,11 +76,12 @@ mock first.
             segments: filename/id, bytes, and best-effort time/duration when cheap.
       - [x] Render the finished-segment list below preview as read-only rows; playback,
             thumbnails, selection, and pull/download stay in `lime`.
-      - [x] Deepening: Recent clips now shows the open segment as a synthetic live
-            status row with a `REC` badge and count-up, while the Pi keeps the open
-            segment unlisted and unpullable.
-      - [x] Start with polling `status`/`clips`; add `GET /v1/events` only if polling
-            makes the dashboard or later CarPlay status panel worse.
+      - [x] Deepening: Recent clips now shows the Pi recorder state machine's open
+            segment as a synthetic live status row with a `REC` badge and count-up,
+            while the Pi keeps the open segment unlisted and unpullable.
+      - [x] Started with polling `status`/`clips`; `pulse` replaced live state polling
+            with snapshot-first `GET /v1/events`, while `/v1/status` and `/v1/clips`
+            remain one-shot reads.
 - [x] **Swoop `loam` -- Declarative Pi provisioning.** Replace the manual README
       bring-up runbook (the apt / config.txt / avahi / locale / nmcli steps `pine`
       established by hand) with one idempotent Ansible playbook, run from the Nix
@@ -129,6 +130,23 @@ mock first.
         The programmatic provisioning that drops the manual Settings join (per-unit
         SSID/PSK from the QR sticker) is owned by `wren`, gated on a production image plus
         the Hotspot Configuration entitlement.
+- [x] **Swoop `pulse` -- Event-folded recorder state.** Replace the poll-era status
+      and clips loops with the realized `/v1/events` plane: the Pi owns recorder phase,
+      session, current segment, and clips exclusion; the app folds snapshot-first SSE
+      into one `Link` world and treats heartbeat presence as connection truth.
+      _Deepens `fern` and `opal`: the dashboard row and connection strip now ride the
+      same recorder-owned event stream instead of filesystem guesses and status-poll
+      debounce._
+      - [x] `GET /v1/events` streams snapshot, ordered deltas, and 2 second heartbeats;
+            `GET /v1/status` remains a one-shot `Snapshot`.
+      - [x] Recorder lifecycle transitions are first-class events, including command
+            phases, segment opens, clip finalization, failure, and telemetry deltas.
+      - [x] The camera child protocol carries Rust-owned `session_id` and
+            `start_segment_index`, plus session-echoing segment lifecycle events.
+      - [x] App connection state is `Link`, with offline detection after about 6 seconds
+            of missed heartbeats and fresh snapshot recovery on reconnect.
+      - [x] Recent clips keep a live row only when the Pi recorder snapshot reports a
+            current segment; finalized clips merge from `clip_finalized` events.
 - [ ] **Swoop `lime` -- Watch recorded clips.** Browse the clip list, pull a finished
       segment with resumable `Range` requests, remux it to a local `.mp4`, and play it
       with AVPlayer. _The chunky one; the first time footage is

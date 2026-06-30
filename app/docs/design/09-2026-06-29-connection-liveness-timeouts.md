@@ -7,6 +7,16 @@
   `app/docs/design/06-2026-06-26-domain-root-store-and-scoped-observation.md`;
   root `AGENTS.md` (cross-cutting app<->Pi local API principle)
 
+> **Note (2026-06-30):** ADR 10 supersedes this ADR's status-monitor liveness layer.
+> The `NWByteStream` connect-phase deadline still applies to the SSE, preview, control,
+> and clip clients, but `/v1/status` polling, the whole-status-fetch timeout, and the
+> three-strike debounce no longer define connection truth. The app starts one
+> long-lived `/v1/events` stream, arms a heartbeat timeout at stream start, and moves
+> offline on stream failure or about 6 seconds without an event (3 missed 2 second Pi
+> heartbeats). That deliberate number replaces the earlier
+> `3 x (connectTimeout + pollInterval)` rough 10 second estimate and reconciles the
+> app policy with ADR 02's missed-heartbeat contract.
+
 ## Context
 
 The app's global connection strip is driven by whether `GET /v1/status` succeeds.

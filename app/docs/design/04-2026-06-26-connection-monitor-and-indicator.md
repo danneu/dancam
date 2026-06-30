@@ -7,6 +7,13 @@
   `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
   `app/docs/design/03-2026-06-24-app-ui-architecture.md`
 
+> **Note (2026-06-30):** ADR 10 supersedes this ADR's connection-truth mechanism.
+> The app no longer owns a scene-scoped `ConnectionFeature`, `/v1/status` poll, or
+> three-strike debounce. Connection truth is now `Link`, folded from
+> snapshot-first `/v1/events`; liveness is heartbeat presence, with offline detected
+> after about 6 seconds of missed 2 second heartbeats. The shell and root-store
+> decisions that superseded this ADR are refined in ADR 06 and ADR 10.
+
 ## Context
 
 The home dashboard originally inferred connectivity from screen-local polls. Home,

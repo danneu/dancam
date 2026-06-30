@@ -12,6 +12,15 @@
 > bounding whole status fetches and adding `StatusError.timedOut`. `/v1/status`
 > remains the connection truth, and the three-strike debounce stays unchanged.
 
+> **Note (2026-06-30):** ADR 10 refines the root store's carried-forward monitor and
+> cross-domain coupling. `AppFeature` remains the scene-scoped domain root, but its
+> connection slice is now `Link` folded from the `/v1/events` stream instead of
+> `ConnectionFeature` polling `/v1/status`. The root no longer diffs `lastStatus` to
+> drive recording and clips: recorder phase events drive the recording overlay,
+> `clip_finalized` events merge clips, and heartbeat presence drives liveness. Scoped
+> observation, equality gating, the app shell boundary, and the decision to keep
+> preview outside the root still stand.
+
 ## Context
 
 The first UIKit screens used the bespoke TEA core from ADR 03, but they owned
