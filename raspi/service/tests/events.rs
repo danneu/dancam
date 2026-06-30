@@ -120,6 +120,36 @@ async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
     let finalized = wait_for_type(&mut reader, "clip_finalized", Duration::from_secs(3)).await;
     let finalized_id = finalized.json["id"].as_u64().unwrap();
 
+    // The finalize event carries a real, file-derived duration, not a fabricated one.
+    let event_dur_ms = finalized.json["dur_ms"].as_u64();
+    assert!(
+        event_dur_ms.is_some_and(|dur_ms| dur_ms > 0),
+        "clip_finalized dur_ms was {}",
+        finalized.json["dur_ms"]
+    );
+
+    // /v1/clips derives dur_ms from the same segment file, so it must agree exactly --
+    // a fabricated event duration would diverge here and the value would flicker on
+    // refresh.
+    let listed = response_json(
+        app.clone()
+            .oneshot(clip_request("/v1/clips"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let listed_dur_ms = listed["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|clip| clip["id"].as_u64() == Some(finalized_id))
+        .unwrap_or_else(|| panic!("finalized clip {finalized_id} missing from {listed}"))["dur_ms"]
+        .as_u64();
+    assert_eq!(
+        listed_dur_ms, event_dur_ms,
+        "event and /v1/clips dur_ms disagree for segment {finalized_id}"
+    );
+
     let pulled = app
         .oneshot(clip_request(&format!("/v1/clips/{finalized_id}")))
         .await
@@ -127,6 +157,11 @@ async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
     assert_eq!(pulled.status(), StatusCode::OK);
     let body = pulled.into_body().collect().await.unwrap().to_bytes();
     assert!(!body.is_empty());
+}
+
+async fn response_json(response: axum::http::Response<Body>) -> Value {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
 }
 
 async fn wait_for_type(reader: &mut SseReader, event_type: &str, timeout: Duration) -> SseFrame {

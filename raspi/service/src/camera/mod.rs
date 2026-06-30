@@ -24,6 +24,7 @@ use crate::{
     jpeg::JpegSplitter,
     recorder::{RecorderEvent, RecorderPhase, SegmentId},
     sysfacts::{DiskUsage, MemInfo},
+    ts_duration::DurationCache,
     world::{CameraState, Input, LiveStatus, TempC},
 };
 
@@ -96,6 +97,7 @@ pub struct CameraBackend {
     hub: Arc<EventHub>,
     rec_dir: Arc<std::path::Path>,
     commands_tx: mpsc::Sender<Command>,
+    clip_durations: Arc<DurationCache>,
 }
 
 pub struct CameraProcess;
@@ -107,6 +109,7 @@ impl CameraProcess {
         let (commands_tx, commands_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let rec_dir: Arc<std::path::Path> = Arc::from(config.rec_dir.clone().into_boxed_path());
+        let clip_durations = Arc::new(DurationCache::new());
 
         let supervisor = tokio::spawn(supervise(
             config,
@@ -114,6 +117,7 @@ impl CameraProcess {
             hub.clone(),
             commands_rx,
             shutdown_rx,
+            clip_durations.clone(),
         ));
 
         let backend = CameraBackend {
@@ -121,6 +125,7 @@ impl CameraProcess {
             hub,
             rec_dir,
             commands_tx,
+            clip_durations,
         };
         let control = SupervisorControl {
             shutdown_tx: Some(shutdown_tx),
@@ -208,6 +213,10 @@ impl Backend for CameraBackend {
 
     fn unpullable_from(&self) -> Option<SegmentId> {
         self.hub.unpullable_from()
+    }
+
+    fn clip_durations(&self) -> Arc<DurationCache> {
+        self.clip_durations.clone()
     }
 
     fn set_context(&self, boot_id: Arc<str>, started: Instant) {
@@ -319,6 +328,7 @@ async fn supervise(
     hub: Arc<EventHub>,
     mut commands_rx: mpsc::Receiver<Command>,
     mut shutdown_rx: oneshot::Receiver<()>,
+    clip_durations: Arc<DurationCache>,
 ) {
     let mut backoff = BACKOFF_BASE;
 
@@ -335,6 +345,7 @@ async fn supervise(
                     Arc::from(config.rec_dir.clone().into_boxed_path()),
                     &mut commands_rx,
                     &mut shutdown_rx,
+                    clip_durations.clone(),
                 )
                 .await
                 {
@@ -405,6 +416,7 @@ async fn run_child(
     rec_dir: Arc<Path>,
     commands_rx: &mut mpsc::Receiver<Command>,
     shutdown_rx: &mut oneshot::Receiver<()>,
+    clip_durations: Arc<DurationCache>,
 ) -> ChildOutcome {
     let Some(stdout) = child.stdout.take() else {
         tracing::error!("camera child stdout was not piped");
@@ -426,7 +438,7 @@ async fn run_child(
     };
 
     let stdout_task = tokio::spawn(drain_stdout(stdout, frames_tx));
-    let stderr_task = tokio::spawn(parse_stderr(stderr, hub, rec_dir));
+    let stderr_task = tokio::spawn(parse_stderr(stderr, hub, rec_dir, clip_durations));
 
     loop {
         tokio::select! {
@@ -497,7 +509,12 @@ async fn drain_stdout(mut stdout: ChildStdout, frames_tx: watch::Sender<Option<B
     }
 }
 
-async fn parse_stderr(stderr: ChildStderr, hub: Arc<EventHub>, rec_dir: Arc<Path>) {
+async fn parse_stderr(
+    stderr: ChildStderr,
+    hub: Arc<EventHub>,
+    rec_dir: Arc<Path>,
+    clip_durations: Arc<DurationCache>,
+) {
     let mut lines = BufReader::new(stderr).lines();
     let mut last_opened: Option<(u64, SegmentId)> = None;
     let mut pending_closed: Option<(u64, SegmentId)> = None;
@@ -513,7 +530,8 @@ async fn parse_stderr(stderr: ChildStderr, hub: Arc<EventHub>, rec_dir: Arc<Path
             Ok(ChildEvent::SegmentOpened { session, id }) => {
                 if let Some((closed_session, closed_id)) = pending_closed.take() {
                     if closed_session == session {
-                        match clip_meta(rec_dir.as_ref(), closed_id, None) {
+                        match clip_meta(rec_dir.as_ref(), closed_id, Some(clip_durations.as_ref()))
+                        {
                             Some(finalized) => {
                                 hub.drive_now(Input::SegmentRollover {
                                     session,
@@ -555,7 +573,7 @@ async fn parse_stderr(stderr: ChildStderr, hub: Arc<EventHub>, rec_dir: Arc<Path
                 let mut final_stat_failed = false;
                 let finalized = match last_opened {
                     Some((opened_session, id)) if opened_session == session => {
-                        match clip_meta(rec_dir.as_ref(), id, None) {
+                        match clip_meta(rec_dir.as_ref(), id, Some(clip_durations.as_ref())) {
                             Some(finalized) => Some(finalized),
                             None => {
                                 final_stat_failed = true;

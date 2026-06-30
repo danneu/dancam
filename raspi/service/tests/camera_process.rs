@@ -23,6 +23,8 @@ use uuid::Uuid;
 use dancam::{
     backend::Backend,
     camera::{CameraConfig, CameraProcess},
+    event_hub::EventConnection,
+    events::Event,
     recorder::RecorderPhase,
     world::CameraState,
     AppState,
@@ -304,6 +306,11 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
 
     wait_for_camera_state(&backend, CameraState::Running).await;
 
+    // Subscribe before recording so the rollover-finalized start segment's
+    // clip_finalized is captured: it is the only witness of the camera finalize path's
+    // dur_ms (/v1/clips computes duration independently of the event).
+    let mut connection = backend.connect();
+
     let start = app
         .clone()
         .oneshot(recording_request("/v1/recording/start"))
@@ -313,6 +320,18 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
 
     wait_for_current_segment(&backend, 5).await;
     let rolled = wait_for_newer_segment(&backend, 5).await;
+
+    // The first clip_finalized is the rolled start segment (seg 5), emitted when seg 6
+    // opens; `rolled` is seg 6, the stop segment.
+    let (finalized_id, finalized_dur_ms) = wait_for_clip_finalized(&mut connection).await;
+    assert_eq!(
+        finalized_id, 5,
+        "first clip_finalized should be the rolled start segment"
+    );
+    assert!(
+        finalized_dur_ms.is_some_and(|dur_ms| dur_ms > 0),
+        "camera clip_finalized dur_ms was {finalized_dur_ms:?}"
+    );
 
     let stop = app
         .clone()
@@ -331,6 +350,21 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
             .iter()
             .any(|clip| clip["id"].as_u64() == Some(rolled as u64)),
         "clips were {clips_json}"
+    );
+
+    // /v1/clips recomputes the same segment's duration from its file, so it agrees with
+    // the finalize event exactly.
+    let listed_dur_ms = clips_json["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|clip| clip["id"].as_u64() == Some(finalized_id as u64))
+        .unwrap_or_else(|| panic!("finalized clip {finalized_id} missing from {clips_json}"))
+        ["dur_ms"]
+        .as_u64();
+    assert_eq!(
+        listed_dur_ms, finalized_dur_ms,
+        "camera event and /v1/clips dur_ms disagree for segment {finalized_id}"
     );
 
     let pulled = app
@@ -541,6 +575,23 @@ async fn wait_for_newer_segment(backend: &impl Backend, previous: u32) -> u32 {
     })
     .await
     .unwrap_or_else(|_| panic!("timed out waiting for segment newer than {previous}"))
+}
+
+async fn wait_for_clip_finalized(connection: &mut EventConnection) -> (u32, Option<u64>) {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            match connection.rx.recv().await {
+                Ok(seq_event) => {
+                    if let Event::ClipFinalized(meta) = seq_event.event {
+                        return (meta.id, meta.dur_ms);
+                    }
+                }
+                Err(error) => panic!("event stream closed before clip_finalized: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for clip_finalized")
 }
 
 async fn response_json(response: axum::http::Response<Body>) -> Value {

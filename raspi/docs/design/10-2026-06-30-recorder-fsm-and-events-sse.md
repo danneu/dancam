@@ -70,9 +70,18 @@ advances to the new open segment in the same lock hold that announces the old cl
 Stop emits `clip_finalized(last)` and `recording_stopped` together, clearing the
 floor only when the last segment is already finalized.
 
-The mock backend drives the full event taxonomy now. The real camera backend is
-temporarily phase-only against the old session-less child protocol; the session and
-segment child protocol lands separately with ADR 07 notes.
+`clip_finalized.dur_ms` is computed at finalization from the segment **file** (its PTS
+span), outside the hub lock -- the same derivation `/v1/clips` uses, so the two agree by
+construction even though they run at different times. The backend owns one
+`DurationCache` that the finalize path and `/v1/clips` share; sharing it only avoids a
+redundant re-scan at list time and is **not** what makes the values consistent (two
+separate file-backed caches would derive the identical value from the same file).
+
+The mock backend drives the full event taxonomy, and the real camera backend tracks
+sessions and segments and finalizes duration-bearing `clip_finalized` events through
+`parse_stderr` against ADR 07's session/segment child protocol. Both dev fakes -- the
+Rust `MockBackend` writer and the Python `camera.py --fake` driver -- now write valid TS
+(minimal PTS-bearing packets) so their finalized clips carry a real duration.
 
 ## Consequences
 

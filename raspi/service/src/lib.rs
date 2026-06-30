@@ -31,7 +31,7 @@ mod sysfacts;
 mod ts_duration;
 pub mod world;
 
-use ts_duration::DurationCache;
+pub use ts_duration::DurationCache;
 
 // Fallback only. The deployed unit sets DANCAM_REC_DIR to the same path via
 // StateDirectory=dancam.
@@ -55,13 +55,14 @@ impl AppState {
         let started = Instant::now();
         let boot_id: Arc<str> = Arc::from(boot_id);
         backend.set_context(boot_id.clone(), started);
+        let clip_durations = backend.clip_durations();
 
         Self {
             boot_id,
             started,
             backend: Arc::new(backend),
             rec_dir: Arc::from(PathBuf::from(DEFAULT_REC_DIR).into_boxed_path()),
-            clip_durations: Arc::new(DurationCache::new()),
+            clip_durations,
             host_policy: Arc::new(HostPolicy::default()),
         }
     }

@@ -19,7 +19,7 @@ struct PtsSpan {
     frame_interval: u64,
 }
 
-pub(crate) struct DurationCache {
+pub struct DurationCache {
     entries: Mutex<HashMap<u32, (u64, Option<u64>)>>,
 }
 
@@ -202,11 +202,38 @@ fn decode_pts(bytes: &[u8], pts_dts_flags: u8) -> Option<u64> {
     Some(high | middle | low)
 }
 
+/// Build a 188-byte MPEG-TS packet carrying a single video PES whose only payload is
+/// `pts` (90 kHz ticks). The mock recording writer emits a run of these so finalized
+/// mock segments have a real PTS span that `scan_pts_bounds` can recover, and the unit
+/// tests reuse it as their fixture. The `camera.py --fake` driver ports this layout.
+pub(crate) fn ts_pts_packet(pts: u64) -> [u8; PACKET_SIZE] {
+    let mut packet = [0xff; PACKET_SIZE];
+    packet[0] = TS_SYNC;
+    packet[1] = 0x40;
+    packet[2] = 0x00;
+    packet[3] = 0x10;
+
+    let payload = &mut packet[4..];
+    payload[0..9].copy_from_slice(&[0x00, 0x00, 0x01, 0xe0, 0x00, 0x00, 0x80, 0x80, 0x05]);
+    payload[9..14].copy_from_slice(&encode_pts(pts));
+    packet
+}
+
+fn encode_pts(pts: u64) -> [u8; 5] {
+    [
+        0x20 | (((pts >> 30) as u8 & 0x07) << 1) | 0x01,
+        (pts >> 22) as u8,
+        (((pts >> 15) as u8 & 0x7f) << 1) | 0x01,
+        (pts >> 7) as u8,
+        ((pts as u8 & 0x7f) << 1) | 0x01,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        scan_pts_bounds, segment_duration_ms, segment_pts_span, tail_window_offset, DurationCache,
-        PtsSpan, HEAD_WINDOW, PACKET_SIZE, TAIL_WINDOW,
+        scan_pts_bounds, segment_duration_ms, segment_pts_span, tail_window_offset, ts_pts_packet,
+        DurationCache, PtsSpan, HEAD_WINDOW, PACKET_SIZE, TAIL_WINDOW,
     };
     use std::{
         fs,
@@ -228,6 +255,20 @@ mod tests {
 
         let temp = TempFile::write("three-pts.ts", &buf);
         assert_eq!(segment_duration_ms(&temp.path, buf.len() as u64), Some(100));
+    }
+
+    #[test]
+    fn ts_pts_packet_round_trips_through_scan() {
+        let buf = [ts_pts_packet(3000), ts_pts_packet(9000)].concat();
+
+        assert_eq!(
+            scan_pts_bounds(&buf),
+            Some(PtsSpan {
+                min: 3000,
+                max: 9000,
+                frame_interval: 6000,
+            })
+        );
     }
 
     #[test]
@@ -365,32 +406,9 @@ mod tests {
     fn pts_buffer(values: &[u64]) -> Vec<u8> {
         let mut buf = Vec::with_capacity(values.len() * PACKET_SIZE);
         for value in values {
-            buf.extend_from_slice(&pts_packet(*value));
+            buf.extend_from_slice(&ts_pts_packet(*value));
         }
         buf
-    }
-
-    fn pts_packet(pts: u64) -> [u8; PACKET_SIZE] {
-        let mut packet = [0xff; PACKET_SIZE];
-        packet[0] = 0x47;
-        packet[1] = 0x40;
-        packet[2] = 0x00;
-        packet[3] = 0x10;
-
-        let payload = &mut packet[4..];
-        payload[0..9].copy_from_slice(&[0x00, 0x00, 0x01, 0xe0, 0x00, 0x00, 0x80, 0x80, 0x05]);
-        payload[9..14].copy_from_slice(&encode_pts(pts));
-        packet
-    }
-
-    fn encode_pts(pts: u64) -> [u8; 5] {
-        [
-            0x20 | (((pts >> 30) as u8 & 0x07) << 1) | 0x01,
-            (pts >> 22) as u8,
-            (((pts >> 15) as u8 & 0x7f) << 1) | 0x01,
-            (pts >> 7) as u8,
-            ((pts as u8 & 0x7f) << 1) | 0x01,
-        ]
     }
 
     fn truncated_pes_packet() -> [u8; PACKET_SIZE] {
@@ -425,7 +443,7 @@ mod tests {
 
     fn put_pts_packet(buf: &mut [u8], packet_index: usize, pts: u64) {
         let start = packet_index * PACKET_SIZE;
-        buf[start..start + PACKET_SIZE].copy_from_slice(&pts_packet(pts));
+        buf[start..start + PACKET_SIZE].copy_from_slice(&ts_pts_packet(pts));
     }
 
     struct TempFile {

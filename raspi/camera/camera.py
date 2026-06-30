@@ -35,6 +35,38 @@ FAKE_JPEG = (
 )
 
 
+def encode_pts(pts: int) -> bytes:
+    return bytes(
+        [
+            0x20 | (((pts >> 30) & 0x07) << 1) | 0x01,
+            (pts >> 22) & 0xFF,
+            (((pts >> 15) & 0x7F) << 1) | 0x01,
+            (pts >> 7) & 0xFF,
+            ((pts & 0x7F) << 1) | 0x01,
+        ]
+    )
+
+
+def ts_pts_packet(pts: int) -> bytes:
+    """A 188-byte MPEG-TS packet carrying one video PES whose only payload is `pts`
+    (90 kHz ticks) -- a direct port of `ts_duration.rs#ts_pts_packet` so the Rust
+    duration scanner recovers a span from segments this fake writes."""
+    packet = bytearray([0xFF] * 188)
+    packet[0] = 0x47
+    packet[1] = 0x40
+    packet[2] = 0x00
+    packet[3] = 0x10
+    packet[4:13] = bytes([0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x80, 0x05])
+    packet[13:18] = encode_pts(pts)
+    return bytes(packet)
+
+
+# A fixed three-packet segment (~300 ms PTS span). The fake writes this at each segment
+# open so every finalized fake segment carries a deterministic, non-null duration that
+# `/v1/clips` recomputes identically; the per-segment value has no product meaning.
+FAKE_SEGMENT = ts_pts_packet(0) + ts_pts_packet(9000) + ts_pts_packet(18000)
+
+
 def compute_skip(sensor_fps: float, preview_fps: float) -> int:
     return max(1, math.ceil(sensor_fps / preview_fps))
 
@@ -215,7 +247,7 @@ class FakeCameraDriver:
             self.current_session_id = session_id
             self.current_segment_index = start_segment_index
             self.current_segment = self.rec_dir / f"seg_{start_segment_index:05d}.ts"
-            self.current_segment.write_bytes(b"fake segment\n")
+            self.current_segment.write_bytes(FAKE_SEGMENT)
             self.segment_started_at = time.monotonic()
             self.recording.set()
             self.recording_thread = threading.Thread(
@@ -283,23 +315,18 @@ class FakeCameraDriver:
                     new = old + 1
                     self.current_segment_index = new
                     self.current_segment = self.rec_dir / f"seg_{new:05d}.ts"
-                    self.current_segment.write_bytes(b"fake segment\n")
+                    self.current_segment.write_bytes(FAKE_SEGMENT)
                     self.segment_started_at = time.monotonic()
                     events = [
                         {"event": "segment_closed", "id": old},
                         {"event": "segment_opened", "id": new},
                     ]
                 session_id = self.current_session_id
-                segment = self.current_segment
 
             if session_id is not None:
                 for event in events:
                     emit_event(event["event"], session_id=session_id, id=event["id"])
 
-            if segment is not None:
-                with segment.open("ab") as file:
-                    file.write(b"tick\n")
-                    file.flush()
             time.sleep(0.1)
 
 

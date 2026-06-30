@@ -46,11 +46,17 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
     assert_eq!(clips_response.status(), StatusCode::OK);
     let clips_json = response_json(clips_response).await;
     let clips = clips_json["clips"].as_array().unwrap();
+    let first_clip = clips
+        .iter()
+        .find(|clip| clip["id"].as_u64() == Some(first_segment as u64))
+        .unwrap_or_else(|| panic!("finished clips were {clips_json}"));
+    // The mock now writes real TS, so the rolled clip carries a non-null duration.
     assert!(
-        clips
-            .iter()
-            .any(|clip| clip["id"].as_u64() == Some(first_segment as u64)),
-        "finished clips were {clips_json}"
+        first_clip["dur_ms"]
+            .as_u64()
+            .is_some_and(|dur_ms| dur_ms > 0),
+        "rolled clip dur_ms was {}",
+        first_clip["dur_ms"]
     );
 
     let stop = app
