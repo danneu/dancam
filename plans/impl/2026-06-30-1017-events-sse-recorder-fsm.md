@@ -909,7 +909,11 @@ Commits 3 and 4 are independent given mock-first (iOS needs only commit 2's mock
 ## Commit progress
 
 - [x] 1. /v1/events wire contract + golden corpus
-- [ ] 2. recorder FSM + event hub + GET /v1/events (mock-driven)
+- [x] 2. recorder FSM + event hub + GET /v1/events (mock-driven)
 - [ ] 3. camera child lifecycle protocol (session + segment events)
 - [ ] 4. fold events into state machines; recorder-driven live row; drop polls
 - [ ] 5. cross-cutting sweep
+
+## Implementation notes
+
+- Commit 2's camera backend bridge queues the old session-less child command, drives the Rust `StartCommand` / `StopCommand` input, and only then permits the supervisor to write to the child, so a fast `recording_started` / `recording_stopped` confirmation cannot arrive before the interim bridge has allocated the live session. Commit 3 replaces this bridge with the planned session-bearing child protocol.

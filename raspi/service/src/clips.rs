@@ -17,11 +17,11 @@ use tokio::{
 };
 use tokio_util::io::ReaderStream;
 
-use crate::{ts_duration::DurationCache, AppState};
+use crate::{recorder::SegmentId, ts_duration::DurationCache, AppState};
 
 const MAX_CLIPS: usize = 500;
 
-#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ClipMeta {
     pub id: u32,
     pub start_ms: Option<u64>,
@@ -40,11 +40,11 @@ pub struct ClipsResponse {
 }
 
 pub async fn list_clips(State(state): State<AppState>) -> Json<ClipsResponse> {
-    let recording = state.backend.status().recording;
+    let unpullable_from = state.backend.unpullable_from();
     let rec_dir = state.rec_dir.clone();
     let duration_cache = state.clip_durations.clone();
     let clips = match tokio::task::spawn_blocking(move || {
-        read_finished_clips(rec_dir.as_ref(), recording, duration_cache.as_ref())
+        read_finished_clips(rec_dir.as_ref(), unpullable_from, duration_cache.as_ref())
     })
     .await
     {
@@ -67,8 +67,10 @@ pub async fn serve_clip(
     PathParam(id): PathParam<u32>,
     headers: HeaderMap,
 ) -> Result<Response, ClipError> {
-    if state.backend.status().recording
-        && open_segment(&state.rec_dir).map(|(seq, _, _)| seq) == Some(id)
+    if state
+        .backend
+        .unpullable_from()
+        .is_some_and(|floor| id >= floor)
     {
         return Err(ClipError::NotFound);
     }
@@ -222,14 +224,13 @@ enum RangeResolution {
 
 pub(crate) fn read_finished_clips(
     rec_dir: &Path,
-    recording: bool,
+    unpullable_from: Option<SegmentId>,
     duration_cache: &DurationCache,
 ) -> Vec<ClipMeta> {
     let candidates = segment_candidates(rec_dir);
-    let max_seq = max_segment_seq(&candidates);
     let mut candidates: Vec<_> = candidates
         .into_iter()
-        .filter(|(seq, _, _)| !recording || Some(*seq) != max_seq)
+        .filter(|(seq, _, _)| unpullable_from.is_none_or(|floor| *seq < floor))
         .collect();
 
     candidates.sort_by(|(left_seq, _, _), (right_seq, _, _)| right_seq.cmp(left_seq));
@@ -268,6 +269,28 @@ pub(crate) fn open_segment(rec_dir: &Path) -> Option<(u32, PathBuf, u64)> {
 
 pub(crate) fn max_clip_seq(rec_dir: &Path) -> Option<u32> {
     open_segment(rec_dir).map(|(seq, _, _)| seq)
+}
+
+pub(crate) fn clip_meta(
+    rec_dir: &Path,
+    seq: SegmentId,
+    duration_cache: Option<&DurationCache>,
+) -> Option<ClipMeta> {
+    let path = rec_dir.join(format!("seg_{seq:05}.ts"));
+    let metadata = std::fs::metadata(&path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let bytes = metadata.len();
+    Some(ClipMeta {
+        id: seq,
+        start_ms: None,
+        dur_ms: duration_cache.and_then(|cache| cache.duration_ms(seq, &path, bytes)),
+        bytes,
+        locked: false,
+        etag: format!("{seq}-{bytes}"),
+        time_approximate: true,
+    })
 }
 
 fn segment_candidates(rec_dir: &Path) -> Vec<(u32, u64, PathBuf)> {
@@ -422,7 +445,7 @@ mod tests {
         write_file(&rec_dir.path, "seg_00002.ts", b"two");
         write_file(&rec_dir.path, "notes.txt", b"ignored");
 
-        let clips = read_finished_clips_for_test(&rec_dir.path, false);
+        let clips = read_finished_clips_for_test(&rec_dir.path, None);
 
         assert_eq!(
             clips.iter().map(|clip| clip.id).collect::<Vec<_>>(),
@@ -433,23 +456,23 @@ mod tests {
     }
 
     #[test]
-    fn read_finished_clips_excludes_newest_segment_while_recording() {
+    fn read_finished_clips_excludes_segments_at_or_above_floor() {
         let rec_dir = temp_rec_dir();
         write_file(&rec_dir.path, "seg_00000.ts", b"zero");
         write_file(&rec_dir.path, "seg_00001.ts", b"one");
         write_file(&rec_dir.path, "seg_00002.ts", b"two");
 
-        let clips = read_finished_clips_for_test(&rec_dir.path, true);
+        let clips = read_finished_clips_for_test(&rec_dir.path, Some(2));
 
         assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [1, 0]);
     }
 
     #[test]
-    fn read_finished_clips_returns_empty_for_single_open_segment() {
+    fn read_finished_clips_returns_empty_when_only_reserved_segment_exists() {
         let rec_dir = temp_rec_dir();
         write_file(&rec_dir.path, "seg_00000.ts", b"zero");
 
-        assert!(read_finished_clips_for_test(&rec_dir.path, true).is_empty());
+        assert!(read_finished_clips_for_test(&rec_dir.path, Some(0)).is_empty());
     }
 
     #[test]
@@ -457,7 +480,7 @@ mod tests {
         let rec_dir = temp_rec_dir();
         let missing = rec_dir.path.join("missing");
 
-        assert!(read_finished_clips_for_test(&missing, false).is_empty());
+        assert!(read_finished_clips_for_test(&missing, None).is_empty());
     }
 
     #[test]
@@ -474,9 +497,12 @@ mod tests {
         fs::write(dir.join(name), bytes).unwrap();
     }
 
-    fn read_finished_clips_for_test(rec_dir: &Path, recording: bool) -> Vec<super::ClipMeta> {
+    fn read_finished_clips_for_test(
+        rec_dir: &Path,
+        unpullable_from: Option<u32>,
+    ) -> Vec<super::ClipMeta> {
         let duration_cache = DurationCache::new();
-        read_finished_clips(rec_dir, recording, &duration_cache)
+        read_finished_clips(rec_dir, unpullable_from, &duration_cache)
     }
 
     struct TempRecDir {

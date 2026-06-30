@@ -17,7 +17,7 @@ use uuid::Uuid;
 use dancam::{
     backend::Backend,
     camera::{CameraConfig, CameraProcess},
-    status::CameraState,
+    world::CameraState,
 };
 
 #[derive(Default)]
@@ -371,7 +371,7 @@ async fn preview_slot_cleared_while_child_restarting() {
 async fn wait_for_camera_state(backend: &impl Backend, expected: CameraState) {
     tokio::time::timeout(Duration::from_secs(4), async {
         loop {
-            if backend.status().camera_state == expected {
+            if backend.snapshot().camera_state == expected {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;

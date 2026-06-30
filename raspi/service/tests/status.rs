@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, pin::Pin};
+use std::{fs, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use axum::{
@@ -13,14 +13,17 @@ use tower::ServiceExt;
 
 use dancam::{
     backend::{Backend, BackendError, FrameStream},
-    status::{CameraState, Status},
+    event_hub::{EventConnection, EventHub},
+    events::Snapshot,
+    recorder::{RecorderEvent, SegmentId},
+    world::{CameraState, Input},
     AppState,
 };
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 
 struct StubBackend {
-    recording: bool,
+    hub: EventHub,
 }
 
 #[async_trait]
@@ -37,22 +40,31 @@ impl Backend for StubBackend {
         Ok(())
     }
 
-    fn status(&self) -> Status {
-        Status {
-            recording: self.recording,
-            camera_state: CameraState::Running,
-        }
+    fn snapshot(&self) -> Snapshot {
+        self.hub.snapshot()
+    }
+
+    fn connect(&self) -> EventConnection {
+        self.hub.connect()
+    }
+
+    fn unpullable_from(&self) -> Option<SegmentId> {
+        self.hub.unpullable_from()
+    }
+
+    fn set_context(&self, boot_id: Arc<str>, started: Instant) {
+        self.hub.set_context(boot_id, started);
     }
 }
 
-fn state(rec_dir: PathBuf, recording: bool) -> AppState {
-    AppState::new(BOOT_ID.to_string(), StubBackend { recording }).with_rec_dir(rec_dir)
+fn state(rec_dir: PathBuf, backend: StubBackend) -> AppState {
+    AppState::new(BOOT_ID.to_string(), backend).with_rec_dir(rec_dir)
 }
 
 #[tokio::test]
-async fn status_returns_dashboard_wire_contract() {
+async fn status_returns_snapshot_wire_contract() {
     let rec_dir = TempRecDir::new();
-    let response = dancam::app(state(rec_dir.path.clone(), false))
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(status_request())
         .await
         .unwrap();
@@ -76,9 +88,10 @@ async fn status_returns_dashboard_wire_contract() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(json["recording"], false);
-    assert_eq!(json["current_segment_id"], Value::Null);
-    assert_eq!(json["current_segment_dur_ms"], Value::Null);
+    assert_eq!(json["recorder"]["phase"], "idle");
+    assert_eq!(json["recorder"]["session"], 0);
+    assert_eq!(json["recorder"]["current_segment"], Value::Null);
+    assert_eq!(json["recorder"]["detail"], Value::Null);
     assert_eq!(json["camera_state"], "running");
     assert_eq!(json["boot_id"], BOOT_ID);
     assert!(json["uptime_s"].as_u64().is_some());
@@ -89,12 +102,11 @@ async fn status_returns_dashboard_wire_contract() {
 }
 
 #[tokio::test]
-async fn status_reports_open_segment_metadata_while_recording() {
+async fn status_reports_null_current_segment_while_starting() {
     let rec_dir = TempRecDir::new();
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/clips/seg_00000.ts");
-    fs::copy(fixture, rec_dir.path.join("seg_00000.ts")).unwrap();
+    rec_dir.write("seg_00042.ts", b"finished");
 
-    let response = dancam::app(state(rec_dir.path.clone(), true))
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::starting_at(43)))
         .oneshot(status_request())
         .await
         .unwrap();
@@ -103,13 +115,61 @@ async fn status_reports_open_segment_metadata_while_recording() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(json["recording"], true);
-    assert_eq!(json["current_segment_id"], 0);
-    let dur_ms = json["current_segment_dur_ms"].as_u64().unwrap();
+    assert_eq!(json["recorder"]["phase"], "starting");
+    assert_eq!(json["recorder"]["current_segment"], Value::Null);
+}
+
+#[tokio::test]
+async fn status_reports_fsm_owned_open_segment_metadata_while_recording() {
+    let rec_dir = TempRecDir::new();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/clips/seg_00000.ts");
+    fs::copy(fixture, rec_dir.path.join("seg_00000.ts")).unwrap();
+
+    let response = dancam::app(state(
+        rec_dir.path.clone(),
+        StubBackend::recording_segment(0),
+    ))
+    .oneshot(status_request())
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["recorder"]["phase"], "recording");
+    assert_eq!(json["recorder"]["current_segment"]["id"], 0);
+    let dur_ms = json["recorder"]["current_segment"]["dur_ms"]
+        .as_u64()
+        .unwrap();
     assert!(
         (dur_ms as i64 - 30_000).abs() <= 100,
         "duration was {dur_ms} ms"
     );
+}
+
+impl StubBackend {
+    fn idle() -> Self {
+        Self {
+            hub: EventHub::new(CameraState::Running),
+        }
+    }
+
+    fn starting_at(start_segment: SegmentId) -> Self {
+        let hub = EventHub::new(CameraState::Running);
+        hub.drive(Input::StartCommand { start_segment }, 1000);
+        Self { hub }
+    }
+
+    fn recording_segment(id: SegmentId) -> Self {
+        let hub = EventHub::new(CameraState::Running);
+        hub.drive(Input::StartCommand { start_segment: id }, 1000);
+        hub.drive(
+            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id }),
+            1100,
+        );
+        Self { hub }
+    }
 }
 
 fn status_request() -> Request<Body> {
@@ -130,6 +190,10 @@ impl TempRecDir {
             std::env::temp_dir().join(format!("dancam-status-route-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&path).unwrap();
         Self { path }
+    }
+
+    fn write(&self, name: &str, bytes: &[u8]) {
+        fs::write(self.path.join(name), bytes).unwrap();
     }
 }
 

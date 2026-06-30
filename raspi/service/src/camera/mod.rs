@@ -1,6 +1,8 @@
 use std::{
     env,
+    path::PathBuf,
     process::Stdio,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -15,8 +17,13 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 use crate::{
     backend::{Backend, BackendError, FrameStream},
+    clips::max_clip_seq,
+    event_hub::{EventConnection, EventHub},
+    events::Snapshot,
     jpeg::JpegSplitter,
-    status::{CameraState, ChildEvent, Status},
+    recorder::{RecorderEvent, RecorderPhase, SegmentId},
+    sysfacts::{DiskUsage, MemInfo},
+    world::{CameraState, Input, LiveStatus, TempC},
 };
 
 const COMMAND_CAPACITY: usize = 8;
@@ -30,6 +37,7 @@ const BACKOFF_RESET_AFTER: Duration = Duration::from_secs(30);
 pub struct CameraConfig {
     program: String,
     args: Vec<String>,
+    rec_dir: PathBuf,
 }
 
 impl CameraConfig {
@@ -40,6 +48,7 @@ impl CameraConfig {
         Self {
             program: program.into(),
             args: args.into_iter().map(Into::into).collect(),
+            rec_dir: PathBuf::from(crate::DEFAULT_REC_DIR),
         }
     }
 
@@ -53,23 +62,26 @@ impl CameraConfig {
 
         let rec_dir = env::var("DANCAM_REC_DIR").unwrap_or_else(|_| "/home/dan/rec".to_string());
         let preview_fps = env::var("DANCAM_PREVIEW_FPS").unwrap_or_else(|_| "10".to_string());
-        Self::new(
+        let mut config = Self::new(
             "python3",
             [
                 "/usr/local/lib/dancam/camera.py".to_string(),
                 "--rec-dir".to_string(),
-                rec_dir,
+                rec_dir.clone(),
                 "--preview-fps".to_string(),
                 preview_fps,
             ],
-        )
+        );
+        config.rec_dir = PathBuf::from(rec_dir);
+        config
     }
 }
 
 #[derive(Clone)]
 pub struct CameraBackend {
     frames_tx: watch::Sender<Option<Bytes>>,
-    status_rx: watch::Receiver<Status>,
+    hub: Arc<EventHub>,
+    rec_dir: Arc<std::path::Path>,
     commands_tx: mpsc::Sender<Command>,
 }
 
@@ -78,21 +90,23 @@ pub struct CameraProcess;
 impl CameraProcess {
     pub fn spawn(config: CameraConfig) -> (CameraBackend, SupervisorControl) {
         let (frames_tx, _) = watch::channel::<Option<Bytes>>(None);
-        let (status_tx, status_rx) = watch::channel(Status::starting());
+        let hub = Arc::new(EventHub::new(CameraState::Starting));
         let (commands_tx, commands_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let rec_dir: Arc<std::path::Path> = Arc::from(config.rec_dir.clone().into_boxed_path());
 
         let supervisor = tokio::spawn(supervise(
             config,
             frames_tx.clone(),
-            status_tx,
+            hub.clone(),
             commands_rx,
             shutdown_rx,
         ));
 
         let backend = CameraBackend {
             frames_tx,
-            status_rx,
+            hub,
+            rec_dir,
             commands_tx,
         };
         let control = SupervisorControl {
@@ -127,17 +141,54 @@ impl Backend for CameraBackend {
     }
 
     async fn start_recording(&self) -> Result<(), BackendError> {
-        self.command_and_wait(CommandKind::StartRecording, |status| status.recording)
-            .await
+        if self.hub.phase() == RecorderPhase::Recording {
+            return Ok(());
+        }
+        let start_segment = max_clip_seq(self.rec_dir.as_ref())
+            .map(|seq| seq.saturating_add(1))
+            .unwrap_or(0);
+        self.command_and_wait(
+            CommandKind::StartRecording,
+            Some(Input::StartCommand { start_segment }),
+            |status| status.phase == RecorderPhase::Recording,
+        )
+        .await
     }
 
     async fn stop_recording(&self) -> Result<(), BackendError> {
-        self.command_and_wait(CommandKind::StopRecording, |status| !status.recording)
-            .await
+        if self.hub.phase() == RecorderPhase::Idle {
+            return Ok(());
+        }
+        self.command_and_wait(
+            CommandKind::StopRecording,
+            Some(Input::StopCommand),
+            |status| status.phase == RecorderPhase::Idle,
+        )
+        .await
     }
 
-    fn status(&self) -> Status {
-        self.status_rx.borrow().clone()
+    fn snapshot(&self) -> Snapshot {
+        self.hub.snapshot()
+    }
+
+    fn connect(&self) -> EventConnection {
+        self.hub.connect()
+    }
+
+    fn unpullable_from(&self) -> Option<SegmentId> {
+        self.hub.unpullable_from()
+    }
+
+    fn set_context(&self, boot_id: Arc<str>, started: Instant) {
+        self.hub.set_context(boot_id, started);
+    }
+
+    fn tick(&self) {
+        self.hub.tick();
+    }
+
+    fn update_telemetry(&self, storage: Option<DiskUsage>, temp_c: TempC, mem: Option<MemInfo>) {
+        self.hub.update_telemetry(storage, temp_c, mem);
     }
 }
 
@@ -145,31 +196,38 @@ impl CameraBackend {
     async fn command_and_wait(
         &self,
         kind: CommandKind,
-        predicate: impl Fn(&Status) -> bool,
+        command_input: Option<Input>,
+        predicate: impl Fn(&LiveStatus) -> bool,
     ) -> Result<(), BackendError> {
-        let mut status_rx = self.status_rx.clone();
-        if predicate(&status_rx.borrow()) {
+        let mut live_rx = self.hub.live_rx();
+        if predicate(&live_rx.borrow()) {
             return Ok(());
         }
 
-        if status_rx.borrow().camera_state != CameraState::Running {
+        if live_rx.borrow().camera_state != CameraState::Running {
             return Err(BackendError::CameraOffline);
         }
 
         let (ack_tx, ack_rx) = oneshot::channel();
+        let (permit_tx, permit_rx) = oneshot::channel();
         self.commands_tx
-            .send(Command { kind, ack_tx })
+            .send(Command {
+                kind,
+                permit_rx,
+                ack_tx,
+            })
             .await
             .map_err(|_| BackendError::Channel)?;
+        if let Some(input) = command_input {
+            self.hub.drive_now(input);
+        }
+        let _ = permit_tx.send(());
         ack_rx.await.map_err(|_| BackendError::Channel)??;
 
         tokio::time::timeout(COMMAND_TIMEOUT, async {
             loop {
-                status_rx
-                    .changed()
-                    .await
-                    .map_err(|_| BackendError::Channel)?;
-                let status = status_rx.borrow_and_update().clone();
+                live_rx.changed().await.map_err(|_| BackendError::Channel)?;
+                let status = live_rx.borrow_and_update().clone();
                 if predicate(&status) {
                     return Ok(());
                 }
@@ -205,20 +263,33 @@ impl CommandKind {
 
 struct Command {
     kind: CommandKind,
+    permit_rx: oneshot::Receiver<()>,
     ack_tx: oneshot::Sender<Result<(), BackendError>>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum ChildEvent {
+    Ready,
+    RecordingStarted,
+    RecordingStopped,
+    Error {
+        #[serde(default)]
+        detail: String,
+    },
 }
 
 async fn supervise(
     config: CameraConfig,
     frames_tx: watch::Sender<Option<Bytes>>,
-    status_tx: watch::Sender<Status>,
+    hub: Arc<EventHub>,
     mut commands_rx: mpsc::Receiver<Command>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
     let mut backoff = BACKOFF_BASE;
 
     loop {
-        let _ = status_tx.send(Status::starting());
+        hub.drive_now(Input::CameraState(CameraState::Starting));
         let started = Instant::now();
 
         match spawn_child(&config).await {
@@ -226,7 +297,7 @@ async fn supervise(
                 match run_child(
                     child,
                     frames_tx.clone(),
-                    status_tx.clone(),
+                    hub.clone(),
                     &mut commands_rx,
                     &mut shutdown_rx,
                 )
@@ -234,12 +305,18 @@ async fn supervise(
                 {
                     ChildOutcome::Shutdown => {
                         frames_tx.send_replace(None);
-                        let _ = status_tx.send(Status::offline());
+                        hub.drive_now(Input::CameraState(CameraState::Offline));
+                        hub.drive_now(Input::Fail {
+                            detail: "camera supervisor shut down".to_string(),
+                        });
                         return;
                     }
                     ChildOutcome::Exited => {
                         frames_tx.send_replace(None);
-                        let _ = status_tx.send(Status::restarting());
+                        hub.drive_now(Input::CameraState(CameraState::Restarting));
+                        hub.drive_now(Input::Fail {
+                            detail: "camera process exited".to_string(),
+                        });
                     }
                 }
 
@@ -250,14 +327,20 @@ async fn supervise(
             Err(error) => {
                 tracing::error!(%error, "failed to start camera child");
                 frames_tx.send_replace(None);
-                let _ = status_tx.send(Status::restarting());
+                hub.drive_now(Input::CameraState(CameraState::Restarting));
+                hub.drive_now(Input::Fail {
+                    detail: format!("failed to start camera child: {error}"),
+                });
             }
         }
 
         tokio::select! {
             _ = tokio::time::sleep(backoff) => {}
             _ = &mut shutdown_rx => {
-                let _ = status_tx.send(Status::offline());
+                hub.drive_now(Input::CameraState(CameraState::Offline));
+                hub.drive_now(Input::Fail {
+                    detail: "camera supervisor shut down".to_string(),
+                });
                 return;
             }
         }
@@ -283,7 +366,7 @@ enum ChildOutcome {
 async fn run_child(
     mut child: Child,
     frames_tx: watch::Sender<Option<Bytes>>,
-    status_tx: watch::Sender<Status>,
+    hub: Arc<EventHub>,
     commands_rx: &mut mpsc::Receiver<Command>,
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> ChildOutcome {
@@ -307,7 +390,7 @@ async fn run_child(
     };
 
     let stdout_task = tokio::spawn(drain_stdout(stdout, frames_tx));
-    let stderr_task = tokio::spawn(parse_stderr(stderr, status_tx));
+    let stderr_task = tokio::spawn(parse_stderr(stderr, hub));
 
     loop {
         tokio::select! {
@@ -320,7 +403,10 @@ async fn run_child(
                     return ChildOutcome::Shutdown;
                 };
 
-                let result = write_command(&mut stdin, command.kind).await;
+                let result = match command.permit_rx.await {
+                    Ok(()) => write_command(&mut stdin, command.kind).await,
+                    Err(_) => Err(BackendError::Channel),
+                };
                 let _ = command.ack_tx.send(result);
             }
             wait_result = child.wait() => {
@@ -376,28 +462,28 @@ async fn drain_stdout(mut stdout: ChildStdout, frames_tx: watch::Sender<Option<B
     }
 }
 
-async fn parse_stderr(stderr: ChildStderr, status_tx: watch::Sender<Status>) {
+async fn parse_stderr(stderr: ChildStderr, hub: Arc<EventHub>) {
     let mut lines = BufReader::new(stderr).lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
         match serde_json::from_str::<ChildEvent>(&line) {
             Ok(ChildEvent::Ready) => {
-                let _ = status_tx.send(Status::running(false));
+                hub.drive_now(Input::CameraState(CameraState::Running));
             }
             Ok(ChildEvent::RecordingStarted) => {
-                patch_status(&status_tx, |status| {
-                    status.recording = true;
-                    status.camera_state = CameraState::Running;
-                });
+                let session = hub.session();
+                hub.drive_now(Input::Recorder(RecorderEvent::RecordingStarted { session }));
             }
             Ok(ChildEvent::RecordingStopped) => {
-                patch_status(&status_tx, |status| {
-                    status.recording = false;
-                    status.camera_state = CameraState::Running;
+                let session = hub.session();
+                hub.drive_now(Input::RecordingStopped {
+                    session,
+                    finalized: None,
                 });
             }
             Ok(ChildEvent::Error { detail }) => {
                 tracing::error!(%detail, "camera child error event");
+                hub.drive_now(Input::Fail { detail });
             }
             Err(_) => {
                 tracing::info!(line = %line, "camera child stderr");
@@ -406,8 +492,22 @@ async fn parse_stderr(stderr: ChildStderr, status_tx: watch::Sender<Status>) {
     }
 }
 
-fn patch_status(status_tx: &watch::Sender<Status>, patch: impl FnOnce(&mut Status)) {
-    let mut status = status_tx.borrow().clone();
-    patch(&mut status);
-    let _ = status_tx.send(status);
+#[cfg(test)]
+mod tests {
+    use super::ChildEvent;
+
+    #[test]
+    fn child_event_parses_stderr_contract() {
+        assert_eq!(
+            serde_json::from_str::<ChildEvent>(r#"{"event":"ready"}"#).unwrap(),
+            ChildEvent::Ready
+        );
+        assert_eq!(
+            serde_json::from_str::<ChildEvent>(r#"{"event":"error","detail":"camera failed"}"#)
+                .unwrap(),
+            ChildEvent::Error {
+                detail: "camera failed".to_string()
+            }
+        );
+    }
 }

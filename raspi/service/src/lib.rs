@@ -20,13 +20,16 @@ use crate::backend::Backend;
 pub mod backend;
 pub mod camera;
 mod clips;
+pub mod event_hub;
+pub mod events;
 mod health;
 mod jpeg;
 pub mod preview;
+pub mod recorder;
 mod recording;
-pub mod status;
 mod sysfacts;
 mod ts_duration;
+pub mod world;
 
 use ts_duration::DurationCache;
 
@@ -47,9 +50,13 @@ impl AppState {
     where
         B: Backend,
     {
+        let started = Instant::now();
+        let boot_id: Arc<str> = Arc::from(boot_id);
+        backend.set_context(boot_id.clone(), started);
+
         Self {
-            boot_id: Arc::from(boot_id),
-            started: Instant::now(),
+            boot_id,
+            started,
             backend: Arc::new(backend),
             rec_dir: Arc::from(PathBuf::from(DEFAULT_REC_DIR).into_boxed_path()),
             clip_durations: Arc::new(DurationCache::new()),
@@ -66,7 +73,8 @@ impl AppState {
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health::health))
-        .route("/v1/status", get(status::status))
+        .route("/v1/status", get(events::status))
+        .route("/v1/events", get(events::events))
         .route("/v1/clips", get(clips::list_clips))
         .route("/v1/clips/{id}", get(clips::serve_clip))
         .route("/v1/preview/live.mjpeg", get(preview::live_mjpeg))

@@ -44,6 +44,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+    dancam::events::spawn_heartbeat(state.backend.clone(), Duration::from_secs(2));
+    dancam::events::spawn_telemetry(
+        state.backend.clone(),
+        state.rec_dir.clone(),
+        Duration::from_secs(2),
+    );
+
     tracing::info!(%local_addr, "listening");
 
     axum::serve(listener, app(state))

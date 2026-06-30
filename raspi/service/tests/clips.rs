@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, pin::Pin};
+use std::{fs, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use axum::{
@@ -13,14 +13,17 @@ use tower::ServiceExt;
 
 use dancam::{
     backend::{Backend, BackendError, FrameStream},
-    status::{CameraState, Status},
+    event_hub::{EventConnection, EventHub},
+    events::Snapshot,
+    recorder::{RecorderEvent, SegmentId},
+    world::{CameraState, Input},
     AppState,
 };
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 
 struct StubBackend {
-    recording: bool,
+    hub: EventHub,
 }
 
 #[async_trait]
@@ -37,11 +40,20 @@ impl Backend for StubBackend {
         Ok(())
     }
 
-    fn status(&self) -> Status {
-        Status {
-            recording: self.recording,
-            camera_state: CameraState::Running,
-        }
+    fn snapshot(&self) -> Snapshot {
+        self.hub.snapshot()
+    }
+
+    fn connect(&self) -> EventConnection {
+        self.hub.connect()
+    }
+
+    fn unpullable_from(&self) -> Option<SegmentId> {
+        self.hub.unpullable_from()
+    }
+
+    fn set_context(&self, boot_id: Arc<str>, started: Instant) {
+        self.hub.set_context(boot_id, started);
     }
 }
 
@@ -52,7 +64,7 @@ async fn clips_route_lists_finished_clips_and_headers() {
     rec_dir.write("seg_00001.ts", b"one-one");
     rec_dir.write("seg_00002.ts", b"two");
 
-    let response = dancam::app(state(rec_dir.path.clone(), true))
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::starting_at(2)))
         .oneshot(
             Request::builder()
                 .uri("/v1/clips")
@@ -101,7 +113,7 @@ async fn clips_route_reports_duration_for_real_transport_stream() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/clips/seg_00000.ts");
     fs::copy(fixture, rec_dir.path.join("seg_00000.ts")).unwrap();
 
-    let response = dancam::app(state(rec_dir.path.clone(), false))
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(
             Request::builder()
                 .uri("/v1/clips")
@@ -133,7 +145,7 @@ async fn clips_route_returns_empty_for_missing_dir() {
     let rec_dir = TempRecDir::new();
     let missing = rec_dir.path.join("missing");
 
-    let response = dancam::app(state(missing, false))
+    let response = dancam::app(state(missing, StubBackend::idle()))
         .oneshot(
             Request::builder()
                 .uri("/v1/clips")
@@ -157,7 +169,7 @@ async fn serve_clip_returns_exact_bytes_and_headers() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
 
-    let response = dancam::app(state(rec_dir.path.clone(), false))
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(clip_request("/v1/clips/7"))
         .await
         .unwrap();
@@ -193,7 +205,7 @@ async fn serve_clip_open_ended_range_returns_partial_content() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
 
-    let response = dancam::app(state(rec_dir.path.clone(), false))
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(clip_request_with_headers(
             "/v1/clips/7",
             &[(header::RANGE.as_str(), "bytes=3-")],
@@ -221,7 +233,7 @@ async fn serve_clip_open_ended_range_returns_partial_content() {
 async fn serve_clip_closed_and_suffix_ranges_slice_the_body() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
-    let app = dancam::app(state(rec_dir.path.clone(), false));
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
 
     let closed = app
         .clone()
@@ -259,7 +271,7 @@ async fn serve_clip_closed_and_suffix_ranges_slice_the_body() {
 async fn serve_clip_honors_matching_if_range_and_ignores_a_mismatch() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
-    let app = dancam::app(state(rec_dir.path.clone(), false));
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
 
     // Quoted, matching validator -> the Range is honored (206).
     let matching = app
@@ -311,7 +323,7 @@ async fn serve_clip_unsatisfiable_range_returns_416() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
 
-    let response = dancam::app(state(rec_dir.path.clone(), false))
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(clip_request_with_headers(
             "/v1/clips/7",
             &[(header::RANGE.as_str(), "bytes=100-")],
@@ -331,7 +343,10 @@ async fn serve_clip_excludes_open_segment_while_recording() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00006.ts", b"finished");
     rec_dir.write("seg_00007.ts", b"open");
-    let app = dancam::app(state(rec_dir.path.clone(), true));
+    let app = dancam::app(state(
+        rec_dir.path.clone(),
+        StubBackend::recording_segment(7),
+    ));
 
     let open_response = app
         .clone()
@@ -352,11 +367,66 @@ async fn serve_clip_excludes_open_segment_while_recording() {
 }
 
 #[tokio::test]
+async fn clips_exclude_reserved_start_segment_before_open_ack() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00042.ts", b"finished");
+    rec_dir.write("seg_00043.ts", b"partial");
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::starting_at(43)));
+
+    let clips_response = app.clone().oneshot(clips_request()).await.unwrap();
+    assert_eq!(clips_response.status(), StatusCode::OK);
+    let clips_json = response_json(clips_response).await;
+    let clips = clips_json["clips"].as_array().unwrap();
+    assert_eq!(
+        clips
+            .iter()
+            .map(|clip| clip["id"].as_u64())
+            .collect::<Vec<_>>(),
+        [Some(42)]
+    );
+
+    let partial_response = app.oneshot(clip_request("/v1/clips/43")).await.unwrap();
+    assert_eq!(partial_response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn clips_keep_finalized_rollover_visible_after_failure() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00043.ts", b"finalized");
+    rec_dir.write("seg_00044.ts", b"partial");
+    let app = dancam::app(state(
+        rec_dir.path.clone(),
+        StubBackend::failed_after_roll(43, 44),
+    ));
+
+    let clips_response = app.clone().oneshot(clips_request()).await.unwrap();
+    assert_eq!(clips_response.status(), StatusCode::OK);
+    let clips_json = response_json(clips_response).await;
+    let clips = clips_json["clips"].as_array().unwrap();
+    assert_eq!(
+        clips
+            .iter()
+            .map(|clip| clip["id"].as_u64())
+            .collect::<Vec<_>>(),
+        [Some(43)]
+    );
+
+    let partial_response = app
+        .clone()
+        .oneshot(clip_request("/v1/clips/44"))
+        .await
+        .unwrap();
+    assert_eq!(partial_response.status(), StatusCode::NOT_FOUND);
+    let finalized_response = app.oneshot(clip_request("/v1/clips/43")).await.unwrap();
+    assert_eq!(finalized_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn serve_clip_returns_not_found_for_missing_id() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
 
-    let response = dancam::app(state(rec_dir.path.clone(), false))
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(clip_request("/v1/clips/8"))
         .await
         .unwrap();
@@ -364,12 +434,87 @@ async fn serve_clip_returns_not_found_for_missing_id() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
-fn state(rec_dir: PathBuf, recording: bool) -> AppState {
-    AppState::new(BOOT_ID.to_string(), StubBackend { recording }).with_rec_dir(rec_dir)
+fn state(rec_dir: PathBuf, backend: StubBackend) -> AppState {
+    AppState::new(BOOT_ID.to_string(), backend).with_rec_dir(rec_dir)
+}
+
+impl StubBackend {
+    fn idle() -> Self {
+        Self {
+            hub: EventHub::new(CameraState::Running),
+        }
+    }
+
+    fn starting_at(start_segment: SegmentId) -> Self {
+        let hub = EventHub::new(CameraState::Running);
+        hub.drive(Input::StartCommand { start_segment }, 1000);
+        Self { hub }
+    }
+
+    fn recording_segment(id: SegmentId) -> Self {
+        let hub = EventHub::new(CameraState::Running);
+        hub.drive(Input::StartCommand { start_segment: id }, 1000);
+        hub.drive(
+            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id }),
+            1100,
+        );
+        Self { hub }
+    }
+
+    fn failed_after_roll(start: SegmentId, open: SegmentId) -> Self {
+        let hub = EventHub::new(CameraState::Running);
+        hub.drive(
+            Input::StartCommand {
+                start_segment: start,
+            },
+            1000,
+        );
+        hub.drive(
+            Input::Recorder(RecorderEvent::SegmentOpened {
+                session: 1,
+                id: start,
+            }),
+            1100,
+        );
+        hub.drive(
+            Input::Recorder(RecorderEvent::SegmentClosed {
+                session: 1,
+                id: start,
+            }),
+            1200,
+        );
+        hub.drive(
+            Input::Recorder(RecorderEvent::SegmentOpened {
+                session: 1,
+                id: open,
+            }),
+            1300,
+        );
+        hub.drive(
+            Input::Fail {
+                detail: "camera process exited".to_string(),
+            },
+            1400,
+        );
+        Self { hub }
+    }
 }
 
 fn clip_request(uri: &str) -> Request<Body> {
     clip_request_with_headers(uri, &[])
+}
+
+fn clips_request() -> Request<Body> {
+    Request::builder()
+        .uri("/v1/clips")
+        .header("Host", "localhost:8080")
+        .body(Body::empty())
+        .unwrap()
+}
+
+async fn response_json(response: axum::http::Response<Body>) -> Value {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
 }
 
 fn clip_request_with_headers(uri: &str, headers: &[(&str, &str)]) -> Request<Body> {

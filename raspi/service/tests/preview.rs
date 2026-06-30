@@ -12,8 +12,11 @@ use tower::ServiceExt;
 
 use dancam::{
     backend::{Backend, BackendError, FrameStream},
+    event_hub::{EventConnection, EventHub},
+    events::Snapshot,
     preview::frame_part,
-    status::{CameraState, Status},
+    recorder::SegmentId,
+    world::CameraState,
     AppState,
 };
 
@@ -21,6 +24,7 @@ const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 
 struct StubBackend {
     frames: Vec<Bytes>,
+    hub: EventHub,
 }
 
 #[async_trait]
@@ -38,16 +42,27 @@ impl Backend for StubBackend {
         Ok(())
     }
 
-    fn status(&self) -> Status {
-        Status {
-            recording: false,
-            camera_state: CameraState::Running,
-        }
+    fn snapshot(&self) -> Snapshot {
+        self.hub.snapshot()
+    }
+
+    fn connect(&self) -> EventConnection {
+        self.hub.connect()
+    }
+
+    fn unpullable_from(&self) -> Option<SegmentId> {
+        None
     }
 }
 
 fn state(frames: Vec<Bytes>) -> AppState {
-    AppState::new(BOOT_ID.to_string(), StubBackend { frames })
+    AppState::new(
+        BOOT_ID.to_string(),
+        StubBackend {
+            frames,
+            hub: EventHub::new(CameraState::Running),
+        },
+    )
 }
 
 #[tokio::test]

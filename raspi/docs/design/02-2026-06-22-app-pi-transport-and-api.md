@@ -68,6 +68,25 @@
 > still holds; the app now remuxes the pulled TS to a local MP4 and plays that local
 > file.
 
+> **Note (2026-06-30):** The events plane is now realized by
+> `10-2026-06-30-recorder-fsm-and-events-sse.md`. `GET /v1/events` is
+> snapshot-first SSE followed by ordered deltas and `heartbeat`; `seq` is carried by
+> the SSE `id:` line, while event `at_ms` and `t_ms` are monotonic milliseconds since
+> boot and are display/ordering aids, not wall-clock evidence. `GET /v1/status` is now
+> a one-shot `Snapshot` with nested `recorder{phase,session,current_segment,detail}`
+> instead of the earlier flat `recording` / `current_segment_id` shape. Start and stop
+> still return bare acknowledgements; read-your-writes state moves through the ordered
+> event stream. `GET /v1/clips` and `GET /v1/clips/{id}` exclude clips by the recorder
+> FSM's `unpullable_from` floor, so partial open files are never listed or served
+> during start, recording, rollover, or recorder failure. The realized v1 event set is
+> recording lifecycle (`recording_starting`, `recording_started`, `segment_opened`,
+> `clip_finalized`, `recording_stopping`, `recording_stopped`, `recorder_failed`),
+> raw telemetry deltas (`storage_changed`, `temp_changed`, `mem_changed`),
+> `camera_state_changed`, and `heartbeat`. This replaces the original threshold-alert
+> event names (`storage_full`, `temp_warning`) with raw-state deltas and defers
+> `incident_saved`, `incident_resolved`, and `time_synced` as additive future events
+> under the existing unknown-event tolerance rule.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --

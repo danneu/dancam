@@ -1,12 +1,12 @@
 use std::path::Path;
 
-#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct DiskUsage {
     pub used: u64,
     pub total: u64,
 }
 
-#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct MemInfo {
     pub total: u64,
     pub available: u64,

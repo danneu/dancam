@@ -67,9 +67,8 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
             .unwrap(),
     )
     .await;
-    assert_eq!(stopped_status["recording"], false);
-    assert_eq!(stopped_status["current_segment_id"], Value::Null);
-    assert_eq!(stopped_status["current_segment_dur_ms"], Value::Null);
+    assert_eq!(stopped_status["recorder"]["phase"], "idle");
+    assert_eq!(stopped_status["recorder"]["current_segment"], Value::Null);
 
     let snapshot = segment_snapshot(&rec_dir.path);
     tokio::time::sleep(roll_interval * 2).await;
@@ -90,7 +89,10 @@ async fn poll_status_for_segment(
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
             let json = response_json(response).await;
-            if let Some(id) = json["current_segment_id"].as_u64().map(|id| id as u32) {
+            if let Some(id) = json["recorder"]["current_segment"]["id"]
+                .as_u64()
+                .map(|id| id as u32)
+            {
                 if previous.is_none_or(|previous| id > previous) {
                     return id;
                 }
