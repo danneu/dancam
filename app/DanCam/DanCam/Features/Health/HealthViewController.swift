@@ -45,8 +45,8 @@ final class HealthViewController: UIViewController {
         observation = store.observe { [weak self] state in
             self?.render(state)
         }
-        connectionObservation = appStore.observe(\.connection.lastStatus) { [weak self] status in
-            self?.renderTelemetry(status)
+        connectionObservation = appStore.observe(\.link.world) { [weak self] world in
+            self?.renderTelemetry(world)
         }
         store.send(.onAppear)
     }
@@ -140,13 +140,13 @@ final class HealthViewController: UIViewController {
         timeLabel.text = "Pi time: \(response.map { "\($0.tMs) ms" } ?? "--")"
     }
 
-    private func renderTelemetry(_ status: StatusResponse?) {
+    private func renderTelemetry(_ world: World?) {
         for view in telemetryStack.arrangedSubviews {
             telemetryStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
 
-        for row in HealthTelemetry.rows(for: status) {
+        for row in HealthTelemetry.rows(for: world) {
             let label = UILabel()
             label.font = .preferredFont(forTextStyle: .body)
             label.adjustsFontForContentSizeCategory = true

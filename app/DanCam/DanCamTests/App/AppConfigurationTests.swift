@@ -13,7 +13,7 @@ struct AppConfigurationTests {
         #expect(configuration.cameraAPIBaseURL == expected)
         #expect(configuration.cameraAPIInterfacePinning == .wifi)
         #expect(configuration.cameraAPIConnectTimeout == .seconds(2))
-        #expect(configuration.statusFetchTimeout == .seconds(3))
+        #expect(configuration.heartbeatTimeout == .seconds(6))
     }
 
     @Test func environmentOverrideWinsOverInfoPlistOverride() throws {
@@ -89,7 +89,7 @@ struct AppConfigurationTests {
         #expect(pinning == .disabled)
     }
 
-    @Test func validConnectTimeoutOverrideScalesStatusFetchTimeout() {
+    @Test func validConnectTimeoutOverrideDoesNotChangeHeartbeatTimeout() {
         let configuration = AppConfiguration.live(
             environment: [
                 AppConfiguration.cameraAPIConnectTimeoutEnvironmentKey: "5000",
@@ -98,7 +98,7 @@ struct AppConfigurationTests {
         )
 
         #expect(configuration.cameraAPIConnectTimeout == .seconds(5))
-        #expect(configuration.statusFetchTimeout == .seconds(6))
+        #expect(configuration.heartbeatTimeout == .seconds(6))
     }
 
     @Test func invalidConnectTimeoutOverridesFallBackToDefault() {
@@ -111,7 +111,7 @@ struct AppConfigurationTests {
             )
 
             #expect(configuration.cameraAPIConnectTimeout == .seconds(2))
-            #expect(configuration.statusFetchTimeout == .seconds(3))
+            #expect(configuration.heartbeatTimeout == .seconds(6))
         }
     }
 }

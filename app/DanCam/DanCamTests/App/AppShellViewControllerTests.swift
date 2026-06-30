@@ -11,17 +11,16 @@ struct AppShellViewControllerTests {
             navigationController: UINavigationController(rootViewController: spy),
             store: store
         )
+        let world = CameraSamples.world()
         shell.loadViewIfNeeded()
 
-        store.send(.connection(.statusResponse(.failure(.http(503)))))
-        store.send(.connection(.statusResponse(.failure(.transport("lost")))))
-        store.send(.connection(.statusResponse(.failure(.decoding("bad")))))
+        store.send(.streamFailed)
         #expect(spy.resumeCount == 0)
 
-        store.send(.connection(.statusResponse(.success(.sample(recording: true)))))
+        store.send(.event(.snapshot(world)))
         #expect(spy.resumeCount == 1)
 
-        store.send(.connection(.stop))
+        store.send(.streamStopped)
     }
 
     @Test func firstContactConnectDoesNotResume() {
@@ -33,10 +32,10 @@ struct AppShellViewControllerTests {
         )
         shell.loadViewIfNeeded()
 
-        store.send(.connection(.statusResponse(.success(.sample(recording: true)))))
+        store.send(.event(.snapshot(CameraSamples.world())))
         #expect(spy.resumeCount == 0)
 
-        store.send(.connection(.stop))
+        store.send(.streamStopped)
     }
 
     private func makeStore() -> AppStore {
@@ -44,13 +43,12 @@ struct AppShellViewControllerTests {
             initialState: AppFeature.State(),
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError("Health is not used by AppShellViewControllerTests.") }),
-                status: StatusClient(fetch: {
-                    try await Task.sleep(for: .seconds(60))
-                    return StatusResponse.sample(recording: false)
-                }),
+                events: .noop,
+                clips: .noop,
                 sleep: { _ in
                     try? await Task.sleep(for: .seconds(60))
-                }
+                },
+                heartbeatTimeout: { throw CancellationError() }
             ),
             reduce: AppFeature.reduce
         )
@@ -62,19 +60,5 @@ private final class ResumeSpy: UIViewController, ConnectionResumable {
 
     func resumeLiveWork() {
         resumeCount += 1
-    }
-}
-
-private extension StatusResponse {
-    static func sample(recording: Bool, uptimeS: UInt64 = 1) -> StatusResponse {
-        StatusResponse(
-            recording: recording,
-            cameraState: .running,
-            bootId: "boot-123",
-            uptimeS: uptimeS,
-            storage: Storage(used: 100, total: 1000),
-            tempC: TempC(soc: nil, sensor: nil),
-            mem: nil
-        )
     }
 }

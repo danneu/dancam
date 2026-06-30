@@ -1,23 +1,26 @@
 import Foundation
 
 enum ClipsFeature {
-    enum State: Equatable {
-        case idle
-        case loading
-        case loaded([Clip])
-        case failed(String)
+    struct State: Equatable {
+        var clips: [Clip] = []
+        var status: Status = .idle
+
+        enum Status: Equatable {
+            case idle
+            case loading
+            case failed(String)
+        }
     }
 
     enum Action: Equatable {
-        case onAppear
-        case onDisappear
-        case poll
+        case load
         case refresh
+        case onDisappear
+        case clipFinalized(Clip)
         case clipsResponse(Result<ClipsResponse, ClipsError>)
     }
 
-    private static let pollID = "clips-poll"
-    private static let pollInterval = Duration.seconds(10)
+    private static let fetchID = "clips-fetch"
 
     static func reduce(
         state: inout State,
@@ -25,27 +28,30 @@ enum ClipsFeature {
         dependencies: AppDependencies
     ) -> Effect<Action> {
         switch action {
-        case .onAppear, .poll, .refresh:
-            if case .idle = state {
-                state = .loading
-            }
+        case .load, .refresh:
+            state.status = .loading
             return fetchEffect(dependencies: dependencies)
 
         case .onDisappear:
-            return .cancel(id: pollID)
+            return .cancel(id: fetchID)
+
+        case .clipFinalized(let clip):
+            state.clips = merged(existing: state.clips, incoming: [clip])
+            return .none
 
         case .clipsResponse(.success(let response)):
-            state = .loaded(response.clips)
-            return schedulePoll(dependencies: dependencies)
+            state.clips = merged(existing: state.clips, incoming: response.clips)
+            state.status = .idle
+            return .none
 
         case .clipsResponse(.failure(let error)):
-            state = .failed(error.displayMessage)
-            return schedulePoll(dependencies: dependencies)
+            state.status = .failed(error.displayMessage)
+            return .none
         }
     }
 
     private static func fetchEffect(dependencies: AppDependencies) -> Effect<Action> {
-        .run(id: pollID, cancelInFlight: true) { send in
+        .run(id: fetchID, cancelInFlight: true) { send in
             do {
                 let response = try await dependencies.clips.fetch()
                 guard Task.isCancelled == false else { return }
@@ -64,11 +70,18 @@ enum ClipsFeature {
         }
     }
 
-    private static func schedulePoll(dependencies: AppDependencies) -> Effect<Action> {
-        .run(id: pollID, cancelInFlight: true) { send in
-            await dependencies.sleep(pollInterval)
-            guard Task.isCancelled == false else { return }
-            await send(.poll)
+    private static func merged(existing: [Clip], incoming: [Clip]) -> [Clip] {
+        var byID: [Int: Clip] = [:]
+
+        for clip in existing {
+            byID[clip.id] = clip
+        }
+        for clip in incoming {
+            byID[clip.id] = clip
+        }
+
+        return byID.values.sorted { lhs, rhs in
+            lhs.id > rhs.id
         }
     }
 }

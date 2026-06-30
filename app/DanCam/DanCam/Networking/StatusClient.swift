@@ -23,7 +23,7 @@ nonisolated enum StatusError: Error, Equatable {
 nonisolated struct StatusClient {
     typealias OpenByteStream = @Sendable (URL, Data) async throws -> AsyncThrowingStream<Data, Error>
 
-    var fetch: @Sendable () async throws -> StatusResponse
+    var fetch: @Sendable () async throws -> World
 
     static func live(
         baseURL: URL,
@@ -71,7 +71,7 @@ nonisolated struct StatusClient {
             do {
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
-                return try decoder.decode(StatusResponse.self, from: data)
+                return try decoder.decode(World.self, from: data)
             } catch {
                 throw StatusError.decoding(error.localizedDescription)
             }
@@ -79,8 +79,13 @@ nonisolated struct StatusClient {
     }
 
     static let noop = StatusClient {
-        StatusResponse(
-            recording: false,
+        World(
+            recorder: RecorderSnapshot(
+                phase: .idle,
+                session: 0,
+                currentSegment: nil,
+                detail: nil
+            ),
             cameraState: .offline,
             bootId: "",
             uptimeS: 0,

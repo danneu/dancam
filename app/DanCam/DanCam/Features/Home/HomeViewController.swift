@@ -1,6 +1,7 @@
 import UIKit
 
 nonisolated struct LiveSegment: Equatable, Sendable {
+    var sessionId: UInt64
     var id: Int
     var seedDurMs: UInt64?
     var anchor: ContinuousClock.Instant
@@ -25,23 +26,24 @@ nonisolated enum HomeRow: Equatable, Sendable {
 
     static func compose(
         clips: [Clip],
-        recording: Bool,
-        currentSegmentId: Int?,
-        currentSegmentDurMs: UInt64?,
+        recorder: RecorderSnapshot?,
         previousLive: LiveSegment?,
         now: ContinuousClock.Instant
     ) -> [HomeRow] {
         var rows = clips.map(HomeRow.finished)
-        guard recording, let currentSegmentId else {
+        guard let recorder, let currentSegment = recorder.currentSegment else {
             return rows
         }
 
         let live: LiveSegment
-        if let previousLive, previousLive.id == currentSegmentId {
-            if let currentSegmentDurMs {
+        if let previousLive,
+           previousLive.sessionId == recorder.session,
+           previousLive.id == currentSegment.id {
+            if let durMs = currentSegment.durMs {
                 live = LiveSegment(
-                    id: currentSegmentId,
-                    seedDurMs: max(currentSegmentDurMs, previousLive.elapsedDurMs(at: now)),
+                    sessionId: recorder.session,
+                    id: currentSegment.id,
+                    seedDurMs: max(durMs, previousLive.elapsedDurMs(at: now)),
                     anchor: now
                 )
             } else {
@@ -49,8 +51,9 @@ nonisolated enum HomeRow: Equatable, Sendable {
             }
         } else {
             live = LiveSegment(
-                id: currentSegmentId,
-                seedDurMs: currentSegmentDurMs,
+                sessionId: recorder.session,
+                id: currentSegment.id,
+                seedDurMs: currentSegment.durMs,
                 anchor: now
             )
         }
@@ -75,7 +78,6 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     private var recordingObservation: StoreObservation?
     private var connectionObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
-    private var manualRefreshObservation: StoreObservation?
 
     private let statusPillsStack = UIStackView()
     private let tempWarningPill = StatusPillView()
@@ -92,7 +94,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     private let clock = ContinuousClock()
 
     private var recordingState: RecordingFeature.State = .unknown
-    private var lastStatus: StatusResponse?
+    private var world: World?
     private var finishedClips: [Clip] = []
     private var rows: [HomeRow] = []
     private var liveTickTimer: Timer?
@@ -134,27 +136,20 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         recordingObservation = store.observe(\.recording) { [weak self] state in
             self?.recordingState = state
             self?.renderRecording(state)
-            self?.renderRows()
         }
-        connectionObservation = store.observe(\.connection.lastStatus) { [weak self] status in
-            self?.lastStatus = status
-            self?.renderConnectionPills(status)
+        connectionObservation = store.observe(\.link.world) { [weak self] world in
+            self?.world = world
+            self?.renderConnectionPills(world)
             self?.renderRows()
         }
         clipsObservation = store.observe(\.clips) { [weak self] state in
             self?.renderClips(state)
-        }
-        manualRefreshObservation = store.observe(\.pendingManualRefresh) { [weak self] pending in
-            if pending == false {
-                self?.refreshControl.endRefreshing()
-            }
         }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         isVisible = true
-        store.send(.clips(.onAppear))
         updateLiveTickTimer()
     }
 
@@ -170,7 +165,6 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     }
 
     func resumeLiveWork() {
-        store.send(.clips(.refresh))
         previewViewController.reconnect()
     }
 
@@ -288,13 +282,13 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         ])
     }
 
-    private func renderConnectionPills(_ status: StatusResponse?) {
+    private func renderConnectionPills(_ world: World?) {
         tempWarningPill.isHidden = true
         errorPill.isHidden = true
 
-        if let response = status {
-            renderTempWarning(sensor: response.tempC.sensor)
-            renderCameraError(response: response)
+        if let world {
+            renderTempWarning(sensor: world.tempC.sensor)
+            renderCameraError(world: world)
         }
 
         statusPillsStack.isHidden = tempWarningPill.isHidden && errorPill.isHidden
@@ -315,8 +309,8 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         tempWarningPill.isHidden = false
     }
 
-    private func renderCameraError(response: StatusResponse) {
-        guard response.cameraState == .offline else {
+    private func renderCameraError(world: World) {
+        guard world.cameraState == .offline else {
             errorPill.isHidden = true
             return
         }
@@ -341,13 +335,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     }
 
     private func renderClips(_ state: ClipsFeature.State) {
-        switch state {
-        case .loaded(let clips):
-            finishedClips = clips
-        case .idle, .loading, .failed:
-            break
-        }
-
+        finishedClips = state.clips
         renderRows()
     }
 
@@ -356,9 +344,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         let previousLive = rows.first?.liveSegment
         rows = HomeRow.compose(
             clips: finishedClips,
-            recording: recordingState.showsLiveSegment,
-            currentSegmentId: lastStatus?.currentSegmentId,
-            currentSegmentDurMs: lastStatus?.currentSegmentDurMs,
+            recorder: world?.recorder,
             previousLive: previousLive,
             now: now
         )
@@ -410,6 +396,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     @objc private func refreshPulled() {
         store.send(.manualRefresh)
         previewViewController.reconnect()
+        refreshControl.endRefreshing()
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -464,17 +451,6 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
                 ClipViewerViewController(dependencies: dependencies, clip: clip),
                 animated: true
             )
-        }
-    }
-}
-
-private extension RecordingFeature.State {
-    var showsLiveSegment: Bool {
-        switch self {
-        case .recording, .stopping:
-            return true
-        case .unknown, .idle, .starting, .failed:
-            return false
         }
     }
 }

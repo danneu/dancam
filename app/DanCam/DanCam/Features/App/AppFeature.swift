@@ -1,18 +1,29 @@
+import Foundation
+
 enum AppFeature {
     struct State: Equatable {
-        var connection = ConnectionFeature.State()
+        var link: Link = .connecting
         var recording: RecordingFeature.State = .unknown
-        var clips: ClipsFeature.State = .idle
-        var pendingManualRefresh = false
+        var clips = ClipsFeature.State()
+        var streamReconnectAttempt = 0
     }
 
     enum Action: Equatable {
-        case connection(ConnectionFeature.Action)
+        case streamStarted
+        case streamStopped
+        case event(CameraEvent)
+        case streamFailed
+        case streamReconnect
+        case heartbeatTimedOut
         case recording(RecordingFeature.Action)
         case clips(ClipsFeature.Action)
         case recordTapped
         case manualRefresh
     }
+
+    private static let streamID = "events-stream"
+    private static let heartbeatID = "events-heartbeat"
+    private static let reconnectID = "events-reconnect"
 
     static func reduce(
         state: inout State,
@@ -20,41 +31,97 @@ enum AppFeature {
         dependencies: AppDependencies
     ) -> Effect<Action> {
         switch action {
-        case .connection(let action):
-            let previousRecording = state.connection.lastStatus?.recording
-            let previousSegmentId = state.connection.lastStatus?.currentSegmentId
-            let connectionEffect = ConnectionFeature.reduce(
-                state: &state.connection,
-                action: action,
-                dependencies: dependencies
-            )
-            .map(Action.connection)
-            var effects = [connectionEffect]
-
-            if state.connection.lastStatus?.recording != previousRecording,
-               let recording = state.connection.lastStatus?.recording {
-                effects.append(
-                    reduceRecording(
-                        state: &state,
-                        action: .statusObserved(recording: recording),
-                        dependencies: dependencies
-                    )
-                )
+        case .streamStarted:
+            if case .offline = state.link {
+                // Preserve the offline -> online recovery edge until the next snapshot.
+            } else if state.link.onlineWorld == nil {
+                state.link = .connecting
             }
 
-            if let currentSegmentId = state.connection.lastStatus?.currentSegmentId,
-               currentSegmentId != previousSegmentId {
+            return .merge([
+                .cancel(id: reconnectID),
+                streamEffect(dependencies: dependencies),
+                armHeartbeat(dependencies: dependencies),
+            ])
+
+        case .streamStopped:
+            state.streamReconnectAttempt = 0
+            return .merge([
+                .cancel(id: streamID),
+                .cancel(id: heartbeatID),
+                .cancel(id: reconnectID),
+            ])
+
+        case .event(let event):
+            let previousPhase = state.link.world?.recorder.phase
+            var effects = [armHeartbeat(dependencies: dependencies)]
+
+            state.link.fold(event)
+
+            if case .snapshot = event {
+                state.streamReconnectAttempt = 0
                 effects.append(
                     ClipsFeature.reduce(
                         state: &state.clips,
-                        action: .refresh,
+                        action: .load,
                         dependencies: dependencies
                     )
                     .map(Action.clips)
                 )
             }
 
-            return effects.count == 1 ? connectionEffect : .merge(effects)
+            if case .clipFinalized(let clip) = event {
+                effects.append(
+                    ClipsFeature.reduce(
+                        state: &state.clips,
+                        action: .clipFinalized(clip),
+                        dependencies: dependencies
+                    )
+                    .map(Action.clips)
+                )
+            }
+
+            if let phase = state.link.world?.recorder.phase,
+               phase != previousPhase {
+                effects.append(
+                    reduceRecording(
+                        state: &state,
+                        action: .recorderPhaseObserved(phase),
+                        dependencies: dependencies
+                    )
+                )
+            }
+
+            return .merge(effects)
+
+        case .streamFailed:
+            state.link.wentOffline()
+            state.streamReconnectAttempt += 1
+            return .merge([
+                .cancel(id: heartbeatID),
+                scheduleReconnect(
+                    attempt: state.streamReconnectAttempt,
+                    dependencies: dependencies
+                ),
+            ])
+
+        case .heartbeatTimedOut:
+            state.link.wentOffline()
+            state.streamReconnectAttempt += 1
+            return .merge([
+                .cancel(id: streamID),
+                .cancel(id: heartbeatID),
+                scheduleReconnect(
+                    attempt: state.streamReconnectAttempt,
+                    dependencies: dependencies
+                ),
+            ])
+
+        case .streamReconnect:
+            return .merge([
+                streamEffect(dependencies: dependencies),
+                armHeartbeat(dependencies: dependencies),
+            ])
 
         case .recording(let action):
             return reduceRecording(
@@ -64,18 +131,12 @@ enum AppFeature {
             )
 
         case .clips(let action):
-            let clipsEffect = ClipsFeature.reduce(
+            return ClipsFeature.reduce(
                 state: &state.clips,
                 action: action,
                 dependencies: dependencies
             )
             .map(Action.clips)
-
-            if case .clipsResponse = action {
-                state.pendingManualRefresh = false
-            }
-
-            return clipsEffect
 
         case .recordTapped:
             switch state.recording {
@@ -96,21 +157,12 @@ enum AppFeature {
             }
 
         case .manualRefresh:
-            state.pendingManualRefresh = true
-            return .merge([
-                ClipsFeature.reduce(
-                    state: &state.clips,
-                    action: .refresh,
-                    dependencies: dependencies
-                )
-                .map(Action.clips),
-                ConnectionFeature.reduce(
-                    state: &state.connection,
-                    action: .poll,
-                    dependencies: dependencies
-                )
-                .map(Action.connection),
-            ])
+            return ClipsFeature.reduce(
+                state: &state.clips,
+                action: .refresh,
+                dependencies: dependencies
+            )
+            .map(Action.clips)
         }
     }
 
@@ -119,40 +171,71 @@ enum AppFeature {
         action: RecordingFeature.Action,
         dependencies: AppDependencies
     ) -> Effect<Action> {
-        let previous = state.recording
-        let recordingEffect = RecordingFeature.reduce(
+        RecordingFeature.reduce(
             state: &state.recording,
             action: action,
             dependencies: dependencies
         )
         .map(Action.recording)
-
-        guard shouldRefreshClips(from: previous, to: state.recording) else {
-            return recordingEffect
-        }
-
-        return .merge([
-            recordingEffect,
-            ClipsFeature.reduce(
-                state: &state.clips,
-                action: .refresh,
-                dependencies: dependencies
-            )
-            .map(Action.clips),
-        ])
     }
 
-    private static func shouldRefreshClips(
-        from previous: RecordingFeature.State,
-        to next: RecordingFeature.State
-    ) -> Bool {
-        guard case .idle = next else { return false }
+    private static func streamEffect(dependencies: AppDependencies) -> Effect<Action> {
+        .run(id: streamID, cancelInFlight: true) { send in
+            do {
+                for try await event in dependencies.events.connect() {
+                    guard Task.isCancelled == false else { return }
+                    await send(.event(event))
+                }
 
-        switch previous {
-        case .recording, .stopping:
-            return true
-        case .unknown, .idle, .starting, .failed:
-            return false
+                guard Task.isCancelled == false else { return }
+                await send(.streamFailed)
+            } catch is CancellationError {
+                return
+            } catch let error as URLError where error.code == .cancelled {
+                return
+            } catch {
+                guard Task.isCancelled == false else { return }
+                await send(.streamFailed)
+            }
+        }
+    }
+
+    private static func armHeartbeat(dependencies: AppDependencies) -> Effect<Action> {
+        .run(id: heartbeatID, cancelInFlight: true) { send in
+            do {
+                try await dependencies.heartbeatTimeout()
+                guard Task.isCancelled == false else { return }
+                await send(.heartbeatTimedOut)
+            } catch is CancellationError {
+                return
+            } catch let error as URLError where error.code == .cancelled {
+                return
+            } catch {
+                guard Task.isCancelled == false else { return }
+                await send(.heartbeatTimedOut)
+            }
+        }
+    }
+
+    private static func scheduleReconnect(
+        attempt: Int,
+        dependencies: AppDependencies
+    ) -> Effect<Action> {
+        .run(id: reconnectID, cancelInFlight: true) { send in
+            await dependencies.sleep(reconnectDelay(for: attempt))
+            guard Task.isCancelled == false else { return }
+            await send(.streamReconnect)
+        }
+    }
+
+    private static func reconnectDelay(for attempt: Int) -> Duration {
+        switch attempt {
+        case 0, 1:
+            .seconds(1)
+        case 2:
+            .seconds(2)
+        default:
+            .seconds(4)
         }
     }
 }

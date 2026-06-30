@@ -4,88 +4,94 @@ import Testing
 
 @MainActor
 struct ClipsFeatureTests {
-    @Test func onAppearFetchesClipsAndPollsAgain() async {
-        let first = ClipsResponse.sample(ids: [1])
-        let second = ClipsResponse.sample(ids: [2, 1])
-        let queue = ClipsFetchQueue([.success(first), .success(second)])
+    @Test func loadFetchesClipsOnce() async {
+        let response = CameraSamples.clipsResponse(ids: [2, 1])
+        let queue = ClipsFetchQueue([.success(response)])
         let store = TestStore(
-            initialState: ClipsFeature.State.idle,
-            dependencies: dependencies(queue: queue, sleep: { _ in }),
+            initialState: ClipsFeature.State(),
+            dependencies: dependencies(queue: queue),
             reduce: ClipsFeature.reduce
         )
 
-        await store.send(.onAppear) {
-            $0 = .loading
+        await store.send(.load) {
+            $0.status = .loading
         }
-        await store.receive(.clipsResponse(.success(first))) {
-            $0 = .loaded(first.clips)
-        }
-        await store.receive(.poll)
-        await store.receive(.clipsResponse(.success(second))) {
-            $0 = .loaded(second.clips)
+        await store.receive(.clipsResponse(.success(response))) {
+            $0.clips = response.clips
+            $0.status = .idle
         }
     }
 
-    @Test func refreshTriggersImmediateFetch() async {
-        let initial = ClipsResponse.sample(ids: [1])
-        let refreshed = ClipsResponse.sample(ids: [2, 1])
-        let queue = ClipsFetchQueue([.success(initial), .success(refreshed)])
+    @Test func clipFinalizedPrependsAndDedupsRegardlessOfStatus() async {
+        let oldClip = CameraSamples.clip(id: 1)
+        let newClip = CameraSamples.clip(id: 2)
+        let updatedOld = CameraSamples.clip(id: 1, durMs: 30_000)
         let store = TestStore(
-            initialState: ClipsFeature.State.idle,
-            dependencies: dependencies(queue: queue, sleep: { _ in }),
+            initialState: ClipsFeature.State(
+                clips: [oldClip],
+                status: .loading
+            ),
+            dependencies: dependencies(),
             reduce: ClipsFeature.reduce
         )
 
-        await store.send(.onAppear) {
-            $0 = .loading
+        await store.send(.clipFinalized(newClip)) {
+            $0.clips = [newClip, oldClip]
         }
-        await store.receive(.clipsResponse(.success(initial))) {
-            $0 = .loaded(initial.clips)
-        }
-        await store.send(.refresh)
-        await store.receive(.clipsResponse(.success(refreshed))) {
-            $0 = .loaded(refreshed.clips)
+        await store.send(.clipFinalized(updatedOld)) {
+            $0.clips = [newClip, updatedOld]
         }
     }
 
-    @Test func failureStillSchedulesRecoveryPoll() async {
-        let recovered = ClipsResponse.sample(ids: [1])
-        let queue = ClipsFetchQueue([.failure(.http(503)), .success(recovered)])
+    @Test func staleLoadResponseMergesWithFoldedFinalizedClip() async {
+        let folded = CameraSamples.clip(id: 3)
+        let staleResponse = CameraSamples.clipsResponse(ids: [2, 1])
         let store = TestStore(
-            initialState: ClipsFeature.State.idle,
-            dependencies: dependencies(queue: queue, sleep: { _ in }),
+            initialState: ClipsFeature.State(
+                clips: [folded],
+                status: .loading
+            ),
+            dependencies: dependencies(),
             reduce: ClipsFeature.reduce
         )
 
-        await store.send(.onAppear) {
-            $0 = .loading
+        await store.send(.clipsResponse(.success(staleResponse))) {
+            $0.clips = [folded] + staleResponse.clips
+            $0.status = .idle
         }
-        await store.receive(.clipsResponse(.failure(.http(503)))) {
-            $0 = .failed("HTTP 503")
-        }
-        await store.receive(.poll)
-        await store.receive(.clipsResponse(.success(recovered))) {
-            $0 = .loaded(recovered.clips)
+    }
+
+    @Test func failureKeepsExistingClips() async {
+        let existing = [CameraSamples.clip(id: 4)]
+        let store = TestStore(
+            initialState: ClipsFeature.State(clips: existing, status: .loading),
+            dependencies: dependencies(),
+            reduce: ClipsFeature.reduce
+        )
+
+        await store.send(.clipsResponse(.failure(.http(503)))) {
+            $0.clips = existing
+            $0.status = .failed("HTTP 503")
         }
     }
 
     @Test func onDisappearCancelsInFlightFetch() async {
         let started = AsyncSignal()
         let store = TestStore(
-            initialState: ClipsFeature.State.idle,
+            initialState: ClipsFeature.State(),
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError() }),
                 clips: ClipsClient(fetch: {
                     await started.signal()
                     try await Task.sleep(for: .seconds(60))
-                    return ClipsResponse.sample(ids: [1])
+                    return CameraSamples.clipsResponse(ids: [1])
                 })
             ),
             reduce: ClipsFeature.reduce
         )
 
-        await store.send(.onAppear) {
-            $0 = .loading
+        await store.send(.load) {
+            $0.status = .loading
         }
         await started.wait()
         await store.send(.onDisappear)
@@ -95,13 +101,16 @@ struct ClipsFeatureTests {
     }
 
     private func dependencies(
-        queue: ClipsFetchQueue,
-        sleep: @escaping @Sendable (Duration) async -> Void
+        queue: ClipsFetchQueue? = nil
     ) -> AppDependencies {
         AppDependencies(
             health: HealthClient(fetch: { fatalError() }),
-            clips: ClipsClient(fetch: { try await queue.fetch() }),
-            sleep: sleep
+            clips: ClipsClient(fetch: {
+                guard let queue else {
+                    fatalError("Clips fetch should not be called.")
+                }
+                return try await queue.fetch()
+            })
         )
     }
 }
@@ -120,25 +129,5 @@ private actor ClipsFetchQueue {
         case .failure(let error):
             throw error
         }
-    }
-}
-
-private extension ClipsResponse {
-    static func sample(ids: [Int]) -> ClipsResponse {
-        ClipsResponse(
-            clips: ids.map {
-                Clip(
-                    id: $0,
-                    startMs: nil,
-                    durMs: nil,
-                    bytes: UInt64($0 * 100),
-                    locked: false,
-                    etag: "\($0)-\($0 * 100)",
-                    timeApproximate: true
-                )
-            },
-            serverTimeMs: 123456789,
-            nextCursor: nil
-        )
     }
 }

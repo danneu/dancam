@@ -4,7 +4,7 @@ import Testing
 
 @MainActor
 struct RecordingFeatureTests {
-    @Test func statusObservedSeedsRecordingState() async {
+    @Test func recorderPhaseSeedsRecordingState() async {
         let store = TestStore(
             initialState: RecordingFeature.State.unknown,
             dependencies: AppDependencies(
@@ -14,8 +14,59 @@ struct RecordingFeatureTests {
             reduce: RecordingFeature.reduce
         )
 
-        await store.send(.statusObserved(recording: true)) {
+        await store.send(.recorderPhaseObserved(.recording)) {
             $0 = .recording
+        }
+    }
+
+    @Test func commandPhasesMoveNonCommandingClient() async {
+        let store = TestStore(
+            initialState: RecordingFeature.State.idle,
+            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            reduce: RecordingFeature.reduce
+        )
+
+        await store.send(.recorderPhaseObserved(.starting)) {
+            $0 = .starting
+        }
+        await store.send(.recorderPhaseObserved(.recording)) {
+            $0 = .recording
+        }
+        await store.send(.recorderPhaseObserved(.stopping)) {
+            $0 = .stopping
+        }
+        await store.send(.recorderPhaseObserved(.idle)) {
+            $0 = .idle
+        }
+    }
+
+    @Test func optimisticStartingIgnoresStaleIdleButAcceptsRecording() async {
+        let store = TestStore(
+            initialState: RecordingFeature.State.starting,
+            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            reduce: RecordingFeature.reduce
+        )
+
+        await store.send(.recorderPhaseObserved(.idle))
+        #expect(store.state == .starting)
+
+        await store.send(.recorderPhaseObserved(.recording)) {
+            $0 = .recording
+        }
+    }
+
+    @Test func optimisticStoppingIgnoresStaleRecordingButAcceptsIdle() async {
+        let store = TestStore(
+            initialState: RecordingFeature.State.stopping,
+            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            reduce: RecordingFeature.reduce
+        )
+
+        await store.send(.recorderPhaseObserved(.recording))
+        #expect(store.state == .stopping)
+
+        await store.send(.recorderPhaseObserved(.idle)) {
+            $0 = .idle
         }
     }
 
@@ -92,17 +143,5 @@ struct RecordingFeatureTests {
 
         #expect(store.state == .starting)
         store.expectNoReceivedActions()
-    }
-
-    @Test func statusObservedIgnoredWhileStarting() async {
-        let store = TestStore(
-            initialState: RecordingFeature.State.starting,
-            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
-            reduce: RecordingFeature.reduce
-        )
-
-        await store.send(.statusObserved(recording: false))
-
-        #expect(store.state == .starting)
     }
 }

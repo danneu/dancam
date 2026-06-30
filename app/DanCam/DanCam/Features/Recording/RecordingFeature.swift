@@ -14,7 +14,7 @@ enum RecordingFeature {
         case startTapped
         case stopTapped
         case recordingResponse(Result<Bool, RecordingError>)
-        case statusObserved(recording: Bool)
+        case recorderPhaseObserved(RecorderPhase)
     }
 
     static func reduce(
@@ -75,12 +75,39 @@ enum RecordingFeature {
             state = .failed(error.displayMessage)
             return .none
 
-        case .statusObserved(let isRecording):
+        case .recorderPhaseObserved(let phase):
             switch state {
-            case .starting, .stopping:
-                break
+            case .starting:
+                switch phase {
+                case .recording:
+                    state = .recording
+                case .error:
+                    state = .failed("Recorder failed")
+                case .idle, .starting, .stopping:
+                    break
+                }
+            case .stopping:
+                switch phase {
+                case .idle:
+                    state = .idle
+                case .error:
+                    state = .failed("Recorder failed")
+                case .starting, .recording, .stopping:
+                    break
+                }
             case .unknown, .idle, .recording, .failed:
-                state = isRecording ? .recording : .idle
+                switch phase {
+                case .idle:
+                    state = .idle
+                case .starting:
+                    state = .starting
+                case .recording:
+                    state = .recording
+                case .stopping:
+                    state = .stopping
+                case .error:
+                    state = .failed("Recorder failed")
+                }
             }
             return .none
         }

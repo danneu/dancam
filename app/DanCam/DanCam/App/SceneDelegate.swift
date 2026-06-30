@@ -28,15 +28,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.shell = shell
         window.makeKeyAndVisible()
         rootViewController.loadViewIfNeeded()
-        appStore.send(.connection(.start))
+        appStore.send(.streamStarted)
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
-        appStore?.send(.connection(.start))
+        appStore?.send(.streamStarted)
         (shell?.topViewController as? ConnectionResumable)?.resumeLiveWork()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
-        appStore?.send(.connection(.stop))
+        appStore?.send(.streamStopped)
     }
 }

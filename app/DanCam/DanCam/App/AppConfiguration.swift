@@ -12,8 +12,8 @@ nonisolated struct AppConfiguration: Equatable {
     var cameraAPIBaseURL: URL
     var cameraAPIInterfacePinning: InterfacePinning
     var cameraAPIConnectTimeout: Duration
-    var statusFetchTimeout: Duration {
-        cameraAPIConnectTimeout + .seconds(1)
+    var heartbeatTimeout: Duration {
+        .seconds(6)
     }
 
     static func live(

@@ -10,21 +10,24 @@ nonisolated enum ConnectionCoordination {
         let tone: Tone
     }
 
-    static func presentation(for connectivity: ConnectionFeature.Connectivity) -> StripPresentation {
-        switch connectivity {
+    static func presentation(for link: Link) -> StripPresentation {
+        switch link {
         case .connecting:
             StripPresentation(caption: "Connecting", tone: .neutral)
-        case .connected:
+        case .online:
             StripPresentation(caption: "Connected", tone: .positive)
-        case .disconnected:
+        case .offline:
             StripPresentation(caption: "Not connected", tone: .negative)
         }
     }
 
     static func shouldResumeLiveWork(
-        from previous: ConnectionFeature.Connectivity,
-        to next: ConnectionFeature.Connectivity
+        from previous: Link,
+        to next: Link
     ) -> Bool {
-        previous == .disconnected && next == .connected
+        if case .offline = previous, case .online = next {
+            return true
+        }
+        return false
     }
 }

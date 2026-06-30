@@ -4,12 +4,15 @@ import Testing
 
 struct StatusClientTests {
     @Test(.tags(.networking))
-    func liveClientBuildsRequestAndDecodesStatusResponse() async throws {
+    func liveClientBuildsRequestAndDecodesWorldSnapshot() async throws {
         let payload = Data("""
         {
-          "recording": true,
-          "current_segment_id": 7,
-          "current_segment_dur_ms": 1234,
+          "recorder": {
+            "phase": "recording",
+            "session": 7,
+            "current_segment": { "id": 43, "dur_ms": 1234 },
+            "detail": null
+          },
           "camera_state": "running",
           "boot_id": "boot-123",
           "uptime_s": 42,
@@ -42,10 +45,13 @@ struct StatusClientTests {
         \r
 
         """)
-        #expect(response == StatusResponse(
-            recording: true,
-            currentSegmentId: 7,
-            currentSegmentDurMs: 1234,
+        #expect(response == World(
+            recorder: RecorderSnapshot(
+                phase: .recording,
+                session: 7,
+                currentSegment: RecorderSegment(id: 43, durMs: 1234),
+                detail: nil
+            ),
             cameraState: .running,
             bootId: "boot-123",
             uptimeS: 42,

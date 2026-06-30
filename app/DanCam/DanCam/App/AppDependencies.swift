@@ -3,6 +3,7 @@ import Foundation
 struct AppDependencies {
     var health: HealthClient
     var status: StatusClient
+    var events: EventsClient
     var clips: ClipsClient
     var clipPull: ClipPullClient
     var clipRemuxer: ClipRemuxer
@@ -10,11 +11,12 @@ struct AppDependencies {
     var preview: PreviewClient
     var recording: RecordingClient
     var sleep: @Sendable (Duration) async -> Void
-    var statusFetchTimeout: @Sendable () async throws -> Void
+    var heartbeatTimeout: @Sendable () async throws -> Void
 
     init(
         health: HealthClient,
         status: StatusClient = .noop,
+        events: EventsClient = .noop,
         clips: ClipsClient = .noop,
         clipPull: ClipPullClient = .noop,
         clipRemuxer: ClipRemuxer = .noop,
@@ -24,12 +26,13 @@ struct AppDependencies {
         sleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
-        statusFetchTimeout: @escaping @Sendable () async throws -> Void = {
+        heartbeatTimeout: @escaping @Sendable () async throws -> Void = {
             try await Task.sleep(for: .seconds(3600))
         }
     ) {
         self.health = health
         self.status = status
+        self.events = events
         self.clips = clips
         self.clipPull = clipPull
         self.clipRemuxer = clipRemuxer
@@ -37,7 +40,7 @@ struct AppDependencies {
         self.preview = preview
         self.recording = recording
         self.sleep = sleep
-        self.statusFetchTimeout = statusFetchTimeout
+        self.heartbeatTimeout = heartbeatTimeout
     }
 
     init(configuration: AppConfiguration = .live()) {
@@ -47,6 +50,11 @@ struct AppDependencies {
             connectTimeout: configuration.cameraAPIConnectTimeout
         )
         status = .live(
+            baseURL: configuration.cameraAPIBaseURL,
+            pinning: configuration.cameraAPIInterfacePinning,
+            connectTimeout: configuration.cameraAPIConnectTimeout
+        )
+        events = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
             connectTimeout: configuration.cameraAPIConnectTimeout
@@ -76,8 +84,8 @@ struct AppDependencies {
         sleep = { duration in
             try? await Task.sleep(for: duration)
         }
-        statusFetchTimeout = {
-            try await Task.sleep(for: configuration.statusFetchTimeout)
+        heartbeatTimeout = {
+            try await Task.sleep(for: configuration.heartbeatTimeout)
         }
     }
 

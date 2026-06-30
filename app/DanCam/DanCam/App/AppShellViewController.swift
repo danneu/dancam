@@ -6,7 +6,7 @@ final class AppShellViewController: UIViewController {
     private let strip = ConnectionStatusStripView()
 
     private var observation: StoreObservation?
-    private var previousConnectivity: ConnectionFeature.Connectivity?
+    private var previousLink: Link?
 
     init(
         navigationController: UINavigationController,
@@ -46,8 +46,8 @@ final class AppShellViewController: UIViewController {
         configureViews()
         embeddedNavigationController.didMove(toParent: self)
 
-        observation = store.observe(\.connection.connectivity) { [weak self] connectivity in
-            self?.render(connectivity)
+        observation = store.observe(\.link) { [weak self] link in
+            self?.render(link)
         }
     }
 
@@ -70,17 +70,17 @@ final class AppShellViewController: UIViewController {
         ])
     }
 
-    private func render(_ connectivity: ConnectionFeature.Connectivity) {
-        strip.configure(ConnectionCoordination.presentation(for: connectivity))
+    private func render(_ link: Link) {
+        strip.configure(ConnectionCoordination.presentation(for: link))
 
-        if let previousConnectivity,
+        if let previousLink,
            ConnectionCoordination.shouldResumeLiveWork(
-               from: previousConnectivity,
-               to: connectivity
+               from: previousLink,
+               to: link
            ) {
             (embeddedNavigationController.topViewController as? ConnectionResumable)?.resumeLiveWork()
         }
 
-        previousConnectivity = connectivity
+        previousLink = link
     }
 }

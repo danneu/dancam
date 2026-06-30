@@ -3,25 +3,27 @@ import Testing
 
 struct ConnectionCoordinationTests {
     @Test func presentationMapsCaptionAndTone() {
-        let cases: [(ConnectionFeature.Connectivity, ConnectionCoordination.StripPresentation)] = [
+        let world = CameraSamples.world()
+        let cases: [(Link, ConnectionCoordination.StripPresentation)] = [
             (.connecting, .init(caption: "Connecting", tone: .neutral)),
-            (.connected, .init(caption: "Connected", tone: .positive)),
-            (.disconnected, .init(caption: "Not connected", tone: .negative)),
+            (.online(world), .init(caption: "Connected", tone: .positive)),
+            (.offline(last: world), .init(caption: "Not connected", tone: .negative)),
         ]
 
-        for (connectivity, expected) in cases {
-            #expect(ConnectionCoordination.presentation(for: connectivity) == expected)
+        for (link, expected) in cases {
+            #expect(ConnectionCoordination.presentation(for: link) == expected)
         }
     }
 
-    @Test func resumesLiveWorkOnlyFromDisconnected() {
-        let cases: [(ConnectionFeature.Connectivity, ConnectionFeature.Connectivity, Bool)] = [
-            (.disconnected, .connected, true),
-            (.connecting, .connected, false),
-            (.connected, .connected, false),
-            (.connected, .disconnected, false),
-            (.disconnected, .disconnected, false),
-            (.connecting, .disconnected, false),
+    @Test func resumesLiveWorkOnlyFromOfflineToOnline() {
+        let world = CameraSamples.world()
+        let cases: [(Link, Link, Bool)] = [
+            (.offline(last: world), .online(world), true),
+            (.connecting, .online(world), false),
+            (.online(world), .online(world), false),
+            (.online(world), .offline(last: world), false),
+            (.offline(last: world), .offline(last: world), false),
+            (.connecting, .offline(last: nil), false),
         ]
 
         for (previous, next, expected) in cases {

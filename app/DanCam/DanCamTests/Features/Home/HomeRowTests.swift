@@ -2,38 +2,53 @@ import Testing
 @testable import DanCam
 
 struct HomeRowTests {
-    @Test func composeShowsLiveRowOnlyWhenRecordingWithSegmentId() {
+    @Test func composeShowsLiveRowOnlyWhenRecorderHasCurrentSegment() {
         let clock = ContinuousClock()
-        let clip = Clip.sample(id: 4)
+        let clip = CameraSamples.clip(id: 4)
 
         #expect(HomeRow.compose(
             clips: [clip],
-            recording: false,
-            currentSegmentId: 7,
-            currentSegmentDurMs: 1_000,
+            recorder: RecorderSnapshot(
+                phase: .recording,
+                session: 7,
+                currentSegment: nil,
+                detail: nil
+            ),
             previousLive: nil,
             now: clock.now
         ) == [.finished(clip)])
 
         #expect(HomeRow.compose(
             clips: [clip],
-            recording: true,
-            currentSegmentId: nil,
-            currentSegmentDurMs: 1_000,
-            previousLive: nil,
+            recorder: RecorderSnapshot(
+                phase: .idle,
+                session: 7,
+                currentSegment: nil,
+                detail: nil
+            ),
+            previousLive: LiveSegment(
+                sessionId: 7,
+                id: 7,
+                seedDurMs: 1_000,
+                anchor: clock.now
+            ),
             now: clock.now
         ) == [.finished(clip)])
 
         let rows = HomeRow.compose(
             clips: [clip],
-            recording: true,
-            currentSegmentId: 7,
-            currentSegmentDurMs: 1_000,
+            recorder: RecorderSnapshot(
+                phase: .recording,
+                session: 7,
+                currentSegment: RecorderSegment(id: 7, durMs: 1_000),
+                detail: nil
+            ),
             previousLive: nil,
             now: clock.now
         )
 
         #expect(rows.count == 2)
+        #expect(rows.first?.liveSegment?.sessionId == 7)
         #expect(rows.first?.liveSegment?.id == 7)
         #expect(Array(rows.dropFirst()) == [.finished(clip)])
     }
@@ -41,18 +56,22 @@ struct HomeRowTests {
     @Test func composePreservesAnchorWhenSameSegmentHasNoPiDuration() throws {
         let clock = ContinuousClock()
         let anchor = clock.now
-        let previous = LiveSegment(id: 7, seedDurMs: 5_000, anchor: anchor)
+        let previous = LiveSegment(sessionId: 7, id: 7, seedDurMs: 5_000, anchor: anchor)
 
         let rows = HomeRow.compose(
             clips: [],
-            recording: true,
-            currentSegmentId: 7,
-            currentSegmentDurMs: nil,
+            recorder: RecorderSnapshot(
+                phase: .recording,
+                session: 7,
+                currentSegment: RecorderSegment(id: 7, durMs: nil),
+                detail: nil
+            ),
             previousLive: previous,
             now: anchor.advanced(by: .seconds(3))
         )
 
         let live = try #require(rows.first?.liveSegment)
+        #expect(live.sessionId == 7)
         #expect(live.id == 7)
         #expect(live.seedDurMs == 5_000)
         #expect(live.anchor == anchor)
@@ -61,35 +80,67 @@ struct HomeRowTests {
     @Test func composeReseedsWhenSegmentIdChanges() throws {
         let clock = ContinuousClock()
         let anchor = clock.now
-        let previous = LiveSegment(id: 7, seedDurMs: 5_000, anchor: anchor)
+        let previous = LiveSegment(sessionId: 7, id: 7, seedDurMs: 5_000, anchor: anchor)
         let now = anchor.advanced(by: .seconds(3))
 
         let rows = HomeRow.compose(
             clips: [],
-            recording: true,
-            currentSegmentId: 8,
-            currentSegmentDurMs: 400,
+            recorder: RecorderSnapshot(
+                phase: .recording,
+                session: 7,
+                currentSegment: RecorderSegment(id: 8, durMs: 400),
+                detail: nil
+            ),
             previousLive: previous,
             now: now
         )
 
         let live = try #require(rows.first?.liveSegment)
+        #expect(live.sessionId == 7)
         #expect(live.id == 8)
         #expect(live.seedDurMs == 400)
+        #expect(live.anchor == now)
+    }
+
+    @Test func composeReseedsWhenSessionChanges() throws {
+        let clock = ContinuousClock()
+        let anchor = clock.now
+        let previous = LiveSegment(sessionId: 7, id: 7, seedDurMs: 5_000, anchor: anchor)
+        let now = anchor.advanced(by: .seconds(3))
+
+        let rows = HomeRow.compose(
+            clips: [],
+            recorder: RecorderSnapshot(
+                phase: .recording,
+                session: 8,
+                currentSegment: RecorderSegment(id: 7, durMs: 200),
+                detail: nil
+            ),
+            previousLive: previous,
+            now: now
+        )
+
+        let live = try #require(rows.first?.liveSegment)
+        #expect(live.sessionId == 8)
+        #expect(live.id == 7)
+        #expect(live.seedDurMs == 200)
         #expect(live.anchor == now)
     }
 
     @Test func composeReseedsSameSegmentFromPiDurationWithoutTickingBackward() throws {
         let clock = ContinuousClock()
         let anchor = clock.now
-        let previous = LiveSegment(id: 7, seedDurMs: 10_000, anchor: anchor)
+        let previous = LiveSegment(sessionId: 7, id: 7, seedDurMs: 10_000, anchor: anchor)
         let now = anchor.advanced(by: .seconds(3))
 
         let clampedRows = HomeRow.compose(
             clips: [],
-            recording: true,
-            currentSegmentId: 7,
-            currentSegmentDurMs: 12_000,
+            recorder: RecorderSnapshot(
+                phase: .recording,
+                session: 7,
+                currentSegment: RecorderSegment(id: 7, durMs: 12_000),
+                detail: nil
+            ),
             previousLive: previous,
             now: now
         )
@@ -99,28 +150,17 @@ struct HomeRowTests {
 
         let advancedRows = HomeRow.compose(
             clips: [],
-            recording: true,
-            currentSegmentId: 7,
-            currentSegmentDurMs: 15_000,
+            recorder: RecorderSnapshot(
+                phase: .recording,
+                session: 7,
+                currentSegment: RecorderSegment(id: 7, durMs: 15_000),
+                detail: nil
+            ),
             previousLive: previous,
             now: now
         )
         let advanced = try #require(advancedRows.first?.liveSegment)
         #expect(advanced.seedDurMs == 15_000)
         #expect(advanced.anchor == now)
-    }
-}
-
-private extension Clip {
-    static func sample(id: Int) -> Clip {
-        Clip(
-            id: id,
-            startMs: nil,
-            durMs: nil,
-            bytes: UInt64(id * 100),
-            locked: false,
-            etag: "\(id)-\(id * 100)",
-            timeApproximate: true
-        )
     }
 }
