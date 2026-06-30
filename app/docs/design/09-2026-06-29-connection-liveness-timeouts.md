@@ -90,6 +90,9 @@ Hard or risky:
   receive-idle deadline needs its own policy so slow but valid 2.4 GHz transfers are
   not killed incorrectly.
 
+> **Note (2026-06-30):** the deferred post-connect receive-idle policy (the
+> unbounded preview/clip-pull receive loops) is now decided in ADR 11.
+
 ## Alternatives considered
 
 - **Use `NWPathMonitor` or reachability as the connection truth.** Rejected again.

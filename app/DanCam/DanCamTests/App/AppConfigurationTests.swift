@@ -13,6 +13,7 @@ struct AppConfigurationTests {
         #expect(configuration.cameraAPIBaseURL == expected)
         #expect(configuration.cameraAPIInterfacePinning == .wifi)
         #expect(configuration.cameraAPIConnectTimeout == .seconds(2))
+        #expect(configuration.cameraAPIReceiveIdleTimeout == .seconds(8))
         #expect(configuration.heartbeatTimeout == .seconds(6))
     }
 
@@ -101,6 +102,18 @@ struct AppConfigurationTests {
         #expect(configuration.heartbeatTimeout == .seconds(6))
     }
 
+    @Test func validReceiveIdleTimeoutOverrideDoesNotChangeHeartbeatTimeout() {
+        let configuration = AppConfiguration.live(
+            environment: [
+                AppConfiguration.cameraAPIReceiveIdleTimeoutEnvironmentKey: "12000",
+            ],
+            infoDictionary: [:]
+        )
+
+        #expect(configuration.cameraAPIReceiveIdleTimeout == .seconds(12))
+        #expect(configuration.heartbeatTimeout == .seconds(6))
+    }
+
     @Test func invalidConnectTimeoutOverridesFallBackToDefault() {
         for rawValue in ["abc", "0", "-1"] {
             let configuration = AppConfiguration.live(
@@ -113,5 +126,44 @@ struct AppConfigurationTests {
             #expect(configuration.cameraAPIConnectTimeout == .seconds(2))
             #expect(configuration.heartbeatTimeout == .seconds(6))
         }
+    }
+
+    @Test func invalidReceiveIdleTimeoutOverridesFallBackToDefault() {
+        for rawValue in ["abc", "0", "-1"] {
+            let configuration = AppConfiguration.live(
+                environment: [
+                    AppConfiguration.cameraAPIReceiveIdleTimeoutEnvironmentKey: rawValue,
+                ],
+                infoDictionary: [:]
+            )
+
+            #expect(configuration.cameraAPIReceiveIdleTimeout == .seconds(8))
+            #expect(configuration.heartbeatTimeout == .seconds(6))
+        }
+    }
+
+    @Test func receiveIdleTimeoutOverridesMustExceedHeartbeatTimeout() {
+        let belowHeartbeat = AppConfiguration.live(
+            environment: [
+                AppConfiguration.cameraAPIReceiveIdleTimeoutEnvironmentKey: "5000",
+            ],
+            infoDictionary: [:]
+        )
+        let equalHeartbeat = AppConfiguration.live(
+            environment: [
+                AppConfiguration.cameraAPIReceiveIdleTimeoutEnvironmentKey: "6000",
+            ],
+            infoDictionary: [:]
+        )
+        let aboveHeartbeat = AppConfiguration.live(
+            environment: [
+                AppConfiguration.cameraAPIReceiveIdleTimeoutEnvironmentKey: "7000",
+            ],
+            infoDictionary: [:]
+        )
+
+        #expect(belowHeartbeat.cameraAPIReceiveIdleTimeout == .seconds(8))
+        #expect(equalHeartbeat.cameraAPIReceiveIdleTimeout == .seconds(8))
+        #expect(aboveHeartbeat.cameraAPIReceiveIdleTimeout == .seconds(7))
     }
 }

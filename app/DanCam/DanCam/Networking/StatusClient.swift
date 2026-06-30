@@ -28,14 +28,16 @@ nonisolated struct StatusClient {
     static func live(
         baseURL: URL,
         pinning: InterfacePinning,
-        connectTimeout: Duration
+        connectTimeout: Duration,
+        receiveIdleTimeout: Duration
     ) -> StatusClient {
         live(baseURL: baseURL, pinning: pinning) { url, request in
             try await NWByteStream.open(
                 url: url,
                 request: request,
                 pinning: pinning,
-                connectTimeout: connectTimeout
+                connectTimeout: connectTimeout,
+                receiveIdleTimeout: receiveIdleTimeout
             )
         }
     }

@@ -6,14 +6,18 @@ nonisolated struct AppConfiguration: Equatable {
     static let cameraAPIPinWiFiEnvironmentKey = "DANCAM_PIN_WIFI"
     static let cameraAPIPinWiFiInfoKey = "DANCAMPinWiFi"
     static let cameraAPIConnectTimeoutEnvironmentKey = "DANCAM_CONNECT_TIMEOUT_MS"
+    static let cameraAPIReceiveIdleTimeoutEnvironmentKey = "DANCAM_RECEIVE_IDLE_TIMEOUT_MS"
     static let defaultCameraAPIBaseURL = URL(string: "http://10.42.0.1:8080")!
     static let defaultCameraAPIConnectTimeout = Duration.seconds(2)
+    static let defaultCameraAPIReceiveIdleTimeout = Duration.seconds(8)
+    static let defaultHeartbeatTimeout = Duration.seconds(6)
 
     var cameraAPIBaseURL: URL
     var cameraAPIInterfacePinning: InterfacePinning
     var cameraAPIConnectTimeout: Duration
+    var cameraAPIReceiveIdleTimeout: Duration
     var heartbeatTimeout: Duration {
-        .seconds(6)
+        Self.defaultHeartbeatTimeout
     }
 
     static func live(
@@ -32,7 +36,8 @@ nonisolated struct AppConfiguration: Equatable {
                 infoDictionary: infoDictionary,
                 baseURL: baseURL
             ),
-            cameraAPIConnectTimeout: configuredCameraAPIConnectTimeout(environment: environment)
+            cameraAPIConnectTimeout: configuredCameraAPIConnectTimeout(environment: environment),
+            cameraAPIReceiveIdleTimeout: configuredCameraAPIReceiveIdleTimeout(environment: environment)
         )
     }
 
@@ -58,6 +63,19 @@ nonisolated struct AppConfiguration: Equatable {
     static func configuredCameraAPIConnectTimeout(environment: [String: String]) -> Duration {
         configuredDuration(fromMilliseconds: environment[cameraAPIConnectTimeoutEnvironmentKey])
             ?? defaultCameraAPIConnectTimeout
+    }
+
+    static func configuredCameraAPIReceiveIdleTimeout(environment: [String: String]) -> Duration {
+        guard let duration = configuredDuration(fromMilliseconds: environment[cameraAPIReceiveIdleTimeoutEnvironmentKey]) else {
+            return defaultCameraAPIReceiveIdleTimeout
+        }
+
+        // Keep the events heartbeat timeout as the first liveness authority.
+        guard duration > defaultHeartbeatTimeout else {
+            return defaultCameraAPIReceiveIdleTimeout
+        }
+
+        return duration
     }
 
     private static func configuredURL(from value: String?) -> URL? {

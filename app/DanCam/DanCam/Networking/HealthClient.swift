@@ -25,14 +25,16 @@ nonisolated struct HealthClient {
     static func live(
         baseURL: URL = URL(string: "http://127.0.0.1:8080")!,
         pinning: InterfacePinning = .disabled,
-        connectTimeout: Duration
+        connectTimeout: Duration,
+        receiveIdleTimeout: Duration
     ) -> HealthClient {
         live(baseURL: baseURL, pinning: pinning) { url, request in
             try await NWByteStream.open(
                 url: url,
                 request: request,
                 pinning: pinning,
-                connectTimeout: connectTimeout
+                connectTimeout: connectTimeout,
+                receiveIdleTimeout: receiveIdleTimeout
             )
         }
     }

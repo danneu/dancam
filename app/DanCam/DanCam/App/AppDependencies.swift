@@ -47,39 +47,46 @@ struct AppDependencies {
         health = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout
+            connectTimeout: configuration.cameraAPIConnectTimeout,
+            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         status = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout
+            connectTimeout: configuration.cameraAPIConnectTimeout,
+            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         events = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout
+            connectTimeout: configuration.cameraAPIConnectTimeout,
+            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         clips = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout
+            connectTimeout: configuration.cameraAPIConnectTimeout,
+            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         clipPull = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout
+            connectTimeout: configuration.cameraAPIConnectTimeout,
+            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         clipRemuxer = .live
         progressiveSegmenter = .live
         preview = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout
+            connectTimeout: configuration.cameraAPIConnectTimeout,
+            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         recording = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout
+            connectTimeout: configuration.cameraAPIConnectTimeout,
+            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         sleep = { duration in
             try? await Task.sleep(for: duration)

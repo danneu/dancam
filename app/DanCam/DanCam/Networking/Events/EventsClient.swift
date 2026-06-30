@@ -31,14 +31,16 @@ nonisolated struct EventsClient {
     static func live(
         baseURL: URL,
         pinning: InterfacePinning,
-        connectTimeout: Duration
+        connectTimeout: Duration,
+        receiveIdleTimeout: Duration
     ) -> EventsClient {
         live(baseURL: baseURL, pinning: pinning) { url, request in
             try await NWByteStream.open(
                 url: url,
                 request: request,
                 pinning: pinning,
-                connectTimeout: connectTimeout
+                connectTimeout: connectTimeout,
+                receiveIdleTimeout: receiveIdleTimeout
             )
         }
     }

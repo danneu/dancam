@@ -24,6 +24,7 @@ nonisolated struct RecordingClient {
         baseURL: URL,
         pinning: InterfacePinning,
         connectTimeout: Duration,
+        receiveIdleTimeout: Duration,
         makeIdempotencyKey: @escaping @Sendable () -> String = { UUID().uuidString }
     ) -> RecordingClient {
         live(
@@ -35,7 +36,8 @@ nonisolated struct RecordingClient {
                 url: url,
                 request: request,
                 pinning: pinning,
-                connectTimeout: connectTimeout
+                connectTimeout: connectTimeout,
+                receiveIdleTimeout: receiveIdleTimeout
             )
         }
     }

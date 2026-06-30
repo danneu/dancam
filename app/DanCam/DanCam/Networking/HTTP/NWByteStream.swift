@@ -5,6 +5,7 @@ nonisolated enum NWByteStreamError: Error, Equatable {
     case missingHost
     case invalidPort
     case connectTimedOut
+    case receiveIdleTimedOut
 }
 
 nonisolated enum NWByteStream {
@@ -12,7 +13,8 @@ nonisolated enum NWByteStream {
         url: URL,
         request: Data,
         pinning: InterfacePinning,
-        connectTimeout: Duration
+        connectTimeout: Duration,
+        receiveIdleTimeout: Duration
     ) async throws -> AsyncThrowingStream<Data, Error> {
         guard let host = url.host else {
             throw NWByteStreamError.missingHost
@@ -33,16 +35,32 @@ nonisolated enum NWByteStream {
             using: parameters
         )
         let lifecycle = NWConnectionLifecycle(connection)
+        let queue = DispatchQueue(label: "com.danneu.dancam.nw-byte-stream")
+        let queueKey = DispatchSpecificKey<Bool>()
+        queue.setSpecific(key: queueKey, value: true)
 
-        try await start(connection: connection, lifecycle: lifecycle, connectTimeout: connectTimeout)
+        try await start(
+            connection: connection,
+            lifecycle: lifecycle,
+            queue: queue,
+            connectTimeout: connectTimeout
+        )
         try await send(request, on: connection, lifecycle: lifecycle)
 
         return AsyncThrowingStream { continuation in
+            let receiveResolution = receive(
+                from: connection,
+                lifecycle: lifecycle,
+                queue: queue,
+                queueKey: queueKey,
+                receiveIdleTimeout: receiveIdleTimeout,
+                continuation: continuation
+            )
+
             continuation.onTermination = { _ in
                 lifecycle.cancel()
+                receiveResolution.terminate()
             }
-
-            receive(from: connection, continuation: continuation)
         }
     }
 
@@ -58,10 +76,9 @@ nonisolated enum NWByteStream {
     private static func start(
         connection: NWConnection,
         lifecycle: NWConnectionLifecycle,
+        queue: DispatchQueue,
         connectTimeout: Duration
     ) async throws {
-        let queue = DispatchQueue(label: "com.danneu.dancam.nw-byte-stream")
-
         try Task.checkCancellation()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -106,7 +123,7 @@ nonisolated enum NWByteStream {
         }
     }
 
-    private static func dispatchInterval(for duration: Duration) -> DispatchTimeInterval {
+    fileprivate static func dispatchInterval(for duration: Duration) -> DispatchTimeInterval {
         let components = duration.components
         let attosecondsPerMillisecond: Int64 = 1_000_000_000_000_000
         let attosecondMilliseconds = components.attoseconds / attosecondsPerMillisecond
@@ -145,21 +162,24 @@ nonisolated enum NWByteStream {
 
     private static func receive(
         from connection: NWConnection,
+        lifecycle: NWConnectionLifecycle,
+        queue: DispatchQueue,
+        queueKey: DispatchSpecificKey<Bool>,
+        receiveIdleTimeout: Duration,
         continuation: AsyncThrowingStream<Data, Error>.Continuation
-    ) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, error in
-            if let data, data.isEmpty == false {
-                continuation.yield(data)
-            }
-
-            if let error {
-                continuation.finish(throwing: error)
-            } else if isComplete {
-                continuation.finish()
-            } else {
-                receive(from: connection, continuation: continuation)
-            }
+    ) -> NWConnectionReceiveResolution {
+        let resolution = NWConnectionReceiveResolution(
+            connection: connection,
+            lifecycle: lifecycle,
+            queue: queue,
+            queueKey: queueKey,
+            receiveIdleTimeout: receiveIdleTimeout,
+            continuation: continuation
+        )
+        queue.async {
+            resolution.start()
         }
+        return resolution
     }
 }
 
@@ -191,6 +211,114 @@ nonisolated private final class NWConnectionStartResolution: @unchecked Sendable
             continuation.resume()
         case .failure(let error):
             continuation.resume(throwing: error)
+        }
+    }
+}
+
+// Swift cannot express this queue affinity: start, receive callbacks, deadline
+// rearming, and termination all serialize through the connection queue.
+nonisolated private final class NWConnectionReceiveResolution: @unchecked Sendable {
+    private let connection: NWConnection
+    private let lifecycle: NWConnectionLifecycle
+    private let queue: DispatchQueue
+    private let queueKey: DispatchSpecificKey<Bool>
+    private let receiveIdleTimeout: Duration
+    private let continuation: AsyncThrowingStream<Data, Error>.Continuation
+    private var didFinish = false
+    private var idleWorkItem: DispatchWorkItem?
+
+    init(
+        connection: NWConnection,
+        lifecycle: NWConnectionLifecycle,
+        queue: DispatchQueue,
+        queueKey: DispatchSpecificKey<Bool>,
+        receiveIdleTimeout: Duration,
+        continuation: AsyncThrowingStream<Data, Error>.Continuation
+    ) {
+        self.connection = connection
+        self.lifecycle = lifecycle
+        self.queue = queue
+        self.queueKey = queueKey
+        self.receiveIdleTimeout = receiveIdleTimeout
+        self.continuation = continuation
+    }
+
+    func start() {
+        guard didFinish == false else { return }
+
+        armDeadline()
+        receiveNext()
+    }
+
+    func terminate() {
+        runOnQueue {
+            guard self.didFinish == false else { return }
+
+            self.didFinish = true
+            self.idleWorkItem?.cancel()
+            self.idleWorkItem = nil
+        }
+    }
+
+    private func receiveNext() {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, error in
+            guard self.didFinish == false else { return }
+
+            self.idleWorkItem?.cancel()
+            self.idleWorkItem = nil
+
+            if let data, data.isEmpty == false {
+                self.continuation.yield(data)
+            }
+
+            if let error {
+                self.finish(.failure(error), cancelConnection: false)
+            } else if isComplete {
+                self.finish(.success(()), cancelConnection: false)
+            } else {
+                self.armDeadline()
+                self.receiveNext()
+            }
+        }
+    }
+
+    private func armDeadline() {
+        idleWorkItem?.cancel()
+
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.finish(.failure(NWByteStreamError.receiveIdleTimedOut), cancelConnection: true)
+        }
+        idleWorkItem = deadline
+        queue.asyncAfter(
+            deadline: .now() + NWByteStream.dispatchInterval(for: receiveIdleTimeout),
+            execute: deadline
+        )
+    }
+
+    private func finish(_ result: Result<Void, Error>, cancelConnection: Bool) {
+        guard didFinish == false else { return }
+
+        didFinish = true
+        idleWorkItem?.cancel()
+        idleWorkItem = nil
+
+        if cancelConnection {
+            lifecycle.cancel()
+        }
+
+        switch result {
+        case .success:
+            continuation.finish()
+        case .failure(let error):
+            continuation.finish(throwing: error)
+        }
+    }
+
+    private func runOnQueue(_ operation: @escaping @Sendable () -> Void) {
+        if DispatchQueue.getSpecific(key: queueKey) == true {
+            operation()
+        } else {
+            queue.sync(execute: operation)
         }
     }
 }

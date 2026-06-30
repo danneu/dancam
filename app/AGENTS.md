@@ -112,3 +112,7 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   fragments over loopback while a clip pull is still running.
 - `09-2026-06-29-connection-liveness-timeouts.md` -- bound transport connect and
   monitor status-fetch liveness so stale "Connected" cannot hang indefinitely.
+- `10-2026-06-29-event-folded-state-machines.md` -- fold the ordered Pi event stream
+  into root app state and use SSE heartbeat timeout as connection truth.
+- `11-2026-06-30-receive-idle-deadline.md` -- bound post-connect receive idleness in
+  the shared `NWByteStream` transport.
