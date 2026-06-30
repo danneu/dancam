@@ -1,0 +1,29 @@
+{
+  "type": "snapshot",
+  "recorder": {
+    "phase": "recording",
+    "session": 7,
+    "current_segment": {
+      "id": 43,
+      "dur_ms": 12000
+    },
+    "detail": null
+  },
+  "camera_state": "running",
+  "boot_id": "boot-7f3a91c2",
+  "uptime_s": 120,
+  "storage": {
+    "used": 1000000000,
+    "total": 32000000000
+  },
+  "temp_c": {
+    "soc": 51.5,
+    "sensor": null
+  },
+  "mem": {
+    "total": 512000000,
+    "available": 256000000,
+    "swap_total": 134217728,
+    "swap_used": 0
+  }
+}

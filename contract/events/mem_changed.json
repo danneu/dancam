@@ -1,0 +1,7 @@
+{
+  "type": "mem_changed",
+  "total": 512000000,
+  "available": 256000000,
+  "swap_total": 134217728,
+  "swap_used": 0
+}

@@ -1,0 +1,6 @@
+{
+  "type": "recorder_failed",
+  "session": 7,
+  "detail": "camera process exited",
+  "at_ms": 9400
+}

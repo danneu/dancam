@@ -1,0 +1,10 @@
+{
+  "type": "clip_finalized",
+  "id": 42,
+  "start_ms": null,
+  "dur_ms": 30000,
+  "bytes": 1048576,
+  "locked": false,
+  "etag": "42-1048576",
+  "time_approximate": true
+}
