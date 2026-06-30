@@ -116,3 +116,5 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   into root app state and use SSE heartbeat timeout as connection truth.
 - `11-2026-06-30-receive-idle-deadline.md` -- bound post-connect receive idleness in
   the shared `NWByteStream` transport.
+- `12-2026-06-30-bounded-resilient-clip-pull.md` -- make clip pull retry by byte
+  progress, bound no-progress and runaway reconnects, and surface typed failures.

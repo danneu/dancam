@@ -141,6 +141,137 @@ struct ClipPullClientTests {
     }
 
     @Test(.tags(.networking))
+    func manyProgressingDropsStillCompleteAfterStallBudget() async throws {
+        let full = Data("abcdefghijklmnop".utf8)
+        let etag = "1-16"
+        var steps: [ScriptedResponder.Step] = [
+            .drop([ok200(total: full.count, etag: etag, body: Data(full.prefix(1)))]),
+        ]
+
+        for start in 1...8 {
+            steps.append(.drop([
+                partial206(
+                    start: start,
+                    end: full.count - 1,
+                    total: full.count,
+                    etag: etag,
+                    body: Data(full.dropFirst(start).prefix(1)),
+                    contentLength: full.count - start
+                ),
+            ]))
+        }
+
+        steps.append(.finish([
+            partial206(
+                start: 9,
+                end: full.count - 1,
+                total: full.count,
+                etag: etag,
+                body: Data(full.dropFirst(9)),
+                contentLength: full.count - 9
+            ),
+        ]))
+
+        let responder = ScriptedResponder(steps)
+        let client = try makeClient(responder)
+
+        let events = try await collect(client.pull(108, etag))
+        let requests = await responder.requests
+        try #require(requests.count == 10)
+
+        let resumeRequests = requests.dropFirst().map { String(decoding: $0, as: UTF8.self) }
+        #expect(resumeRequests.enumerated().allSatisfy { index, request in
+            request.contains("\r\nRange: bytes=\(index + 1)-\r\n")
+        })
+        #expect(progressValues(events).map(\.bytesWritten) == Array(1...9).map(UInt64.init) + [16])
+
+        let result = try requireCompleted(events)
+        defer { try? FileManager.default.removeItem(at: result.fileURL) }
+        #expect(try Data(contentsOf: result.fileURL) == full)
+        #expect(result.bytes == UInt64(full.count))
+    }
+
+    @Test(.tags(.networking))
+    func consecutiveStallsExhaustBudget() async throws {
+        let maxConsecutiveStalls = 3
+        let responder = ScriptedResponder(Array(repeating: .drop([]), count: maxConsecutiveStalls))
+        let client = try makeClient(responder, maxConsecutiveStalls: maxConsecutiveStalls)
+
+        let error = await pullError(client.pull(109, "1-12"))
+        let requests = await responder.requests
+
+        expectExhausted(error, reason: .consecutiveStalls)
+        #expect(requests.count == maxConsecutiveStalls)
+        #expect(tempClipFiles(clipID: 109).isEmpty)
+    }
+
+    @Test(.tags(.networking))
+    func progressResetsConsecutiveStallBudget() async throws {
+        let full = Data("abcdef".utf8)
+        let etag = "1-6"
+        let responder = ScriptedResponder([
+            .drop([]),
+            .drop([ok200(total: full.count, etag: etag, body: Data(full.prefix(2)))]),
+            .drop([]),
+            .drop([partial206(
+                start: 2,
+                end: full.count - 1,
+                total: full.count,
+                etag: etag,
+                body: Data(full.dropFirst(2).prefix(2)),
+                contentLength: full.count - 2
+            )]),
+            .drop([]),
+            .finish([partial206(
+                start: 4,
+                end: full.count - 1,
+                total: full.count,
+                etag: etag,
+                body: Data(full.dropFirst(4)),
+                contentLength: full.count - 4
+            )]),
+        ])
+        let client = try makeClient(responder, maxConsecutiveStalls: 2)
+
+        let events = try await collect(client.pull(110, etag))
+        let requests = await responder.requests
+        try #require(requests.count == 6)
+
+        #expect(progressValues(events).map(\.bytesWritten) == [2, 4, 6])
+
+        let result = try requireCompleted(events)
+        defer { try? FileManager.default.removeItem(at: result.fileURL) }
+        #expect(try Data(contentsOf: result.fileURL) == full)
+    }
+
+    @Test(.tags(.networking))
+    func totalReconnectCeilingStopsForeverProgressingLink() async throws {
+        let maxTotalReconnects = 3
+        let steps = (0...maxTotalReconnects).map { index in
+            ScriptedResponder.Step.drop([
+                ok200(
+                    total: 100,
+                    etag: "fresh-\(index)",
+                    body: Data([UInt8(index)])
+                ),
+            ])
+        }
+        let responder = ScriptedResponder(steps)
+        let client = try makeClient(
+            responder,
+            maxConsecutiveStalls: 2,
+            maxTotalReconnects: maxTotalReconnects
+        )
+
+        let error = await pullError(client.pull(111, "initial"))
+        let requests = await responder.requests
+
+        expectExhausted(error, reason: .totalReconnects)
+        #expect(requests.count == maxTotalReconnects + 1)
+        #expect(tempClipFiles(clipID: 111).isEmpty)
+    }
+
+    @Test(.tags(.networking))
     func rejectsAResumeWithAMismatchedStart() async throws {
         let full = Data("abcdefghijkl".utf8)
         let etag = "1-12"
@@ -178,6 +309,93 @@ struct ClipPullClientTests {
         let error = await pullError(client.pull(105, etag))
         expectMalformed(error)
         #expect(tempClipFiles(clipID: 105).isEmpty)
+    }
+
+    @Test(.tags(.networking))
+    func ranged200WithSameValidatorIsMalformed() async throws {
+        let full = Data("abcdefghijkl".utf8)
+        let etag = "1-12"
+        let call1 = ok200(total: full.count, etag: etag, body: Data(full.prefix(5)))
+        let call2 = ok200(total: full.count, etag: etag, body: full)
+
+        let responder = ScriptedResponder([.drop([call1]), .finish([call2])])
+        let client = try makeClient(responder)
+
+        let error = await pullError(client.pull(112, etag))
+        let requests = await responder.requests
+
+        expectMalformed(error)
+        #expect(requests.count == 2)
+        #expect(tempClipFiles(clipID: 112).isEmpty)
+    }
+
+    @Test(.tags(.networking))
+    func ranged200WithoutValidatorIsMalformed() async throws {
+        let full = Data("abcdefghijkl".utf8)
+        let etag = "1-12"
+        let call1 = ok200(total: full.count, etag: etag, body: Data(full.prefix(5)))
+        let call2 = ok200WithoutETag(total: full.count, body: full)
+
+        let responder = ScriptedResponder([.drop([call1]), .finish([call2])])
+        let client = try makeClient(responder)
+
+        let error = await pullError(client.pull(113, etag))
+        let requests = await responder.requests
+
+        expectMalformed(error)
+        #expect(requests.count == 2)
+        #expect(tempClipFiles(clipID: 113).isEmpty)
+    }
+
+    @Test(.tags(.networking))
+    func receiveIdleTimeoutAfterProgressRetriesAndResumes() async throws {
+        let full = Data("abcdefghijkl".utf8)
+        let etag = "1-12"
+        let call1 = ok200(total: full.count, etag: etag, body: Data(full.prefix(5)))
+        let call2 = partial206(
+            start: 5,
+            end: full.count - 1,
+            total: full.count,
+            etag: etag,
+            body: Data(full.dropFirst(5))
+        )
+
+        let responder = ScriptedResponder([
+            .throwAfter([call1], NWByteStreamError.receiveIdleTimedOut),
+            .finish([call2]),
+        ])
+        let client = try makeClient(responder, maxConsecutiveStalls: 1)
+
+        let events = try await collect(client.pull(114, etag))
+        let requests = await responder.requests
+        try #require(requests.count == 2)
+
+        let resume = String(decoding: requests[1], as: UTF8.self)
+        #expect(resume.contains("\r\nRange: bytes=5-\r\n"))
+
+        let result = try requireCompleted(events)
+        defer { try? FileManager.default.removeItem(at: result.fileURL) }
+        #expect(try Data(contentsOf: result.fileURL) == full)
+    }
+
+    @Test(.tags(.networking))
+    func receiveIdleTimeoutBeforeBodyCountsAsNoProgressStall() async throws {
+        let maxConsecutiveStalls = 3
+        let full = Data("abcdefghijkl".utf8)
+        let etag = "1-12"
+        let headOnly = ok200(total: full.count, etag: etag, body: Data())
+        let responder = ScriptedResponder(Array(
+            repeating: .throwAfter([headOnly], NWByteStreamError.receiveIdleTimedOut),
+            count: maxConsecutiveStalls
+        ))
+        let client = try makeClient(responder, maxConsecutiveStalls: maxConsecutiveStalls)
+
+        let error = await pullError(client.pull(115, etag))
+        let requests = await responder.requests
+
+        expectExhausted(error, reason: .consecutiveStalls)
+        #expect(requests.count == maxConsecutiveStalls)
+        #expect(tempClipFiles(clipID: 115).isEmpty)
     }
 
     @Test(.tags(.networking))
@@ -258,9 +476,18 @@ struct ClipPullClientTests {
 
     // MARK: - Helpers
 
-    private func makeClient(_ responder: ScriptedResponder) throws -> ClipPullClient {
+    private func makeClient(
+        _ responder: ScriptedResponder,
+        maxConsecutiveStalls: Int = 6,
+        maxTotalReconnects: Int = 256
+    ) throws -> ClipPullClient {
         let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
-        return ClipPullClient.live(baseURL: baseURL, sleep: { _ in }) { _, request in
+        return ClipPullClient.live(
+            baseURL: baseURL,
+            sleep: { _ in },
+            maxConsecutiveStalls: maxConsecutiveStalls,
+            maxTotalReconnects: maxTotalReconnects
+        ) { _, request in
             try await responder.open(request: request)
         }
     }
@@ -277,12 +504,30 @@ struct ClipPullClientTests {
         )
     }
 
-    private func partial206(start: Int, end: Int, total: Int, etag: String, body: Data) -> Data {
+    private func ok200WithoutETag(total: Int, body: Data) -> Data {
+        MJPEGWireBuilder.response(
+            statusCode: 200,
+            headers: [
+                ("Content-Type", "application/mp2t"),
+                ("Content-Length", "\(total)"),
+            ],
+            body: body
+        )
+    }
+
+    private func partial206(
+        start: Int,
+        end: Int,
+        total: Int,
+        etag: String,
+        body: Data,
+        contentLength: Int? = nil
+    ) -> Data {
         MJPEGWireBuilder.response(
             statusCode: 206,
             headers: [
                 ("Content-Type", "application/mp2t"),
-                ("Content-Length", "\(body.count)"),
+                ("Content-Length", "\(contentLength ?? body.count)"),
                 ("Content-Range", "bytes \(start)-\(end)/\(total)"),
                 ("ETag", "\"\(etag)\""),
             ],
@@ -314,6 +559,14 @@ struct ClipPullClientTests {
             Issue.record("Expected ClipPullError.malformedResponse, got \(String(describing: error)).")
             return
         }
+    }
+
+    private func expectExhausted(_ error: Error?, reason: ClipPullError.ExhaustionReason) {
+        guard case .exhausted(let actualReason) = error as? ClipPullError else {
+            Issue.record("Expected ClipPullError.exhausted(\(reason)), got \(String(describing: error)).")
+            return
+        }
+        #expect(actualReason == reason)
     }
 
     private func progressValues(
@@ -387,6 +640,7 @@ private actor ScriptedResponder {
     enum Step {
         case drop([Data]) // yield the chunks, then finish(throwing:) -- a link drop
         case finish([Data]) // yield the chunks, then finish() cleanly
+        case throwAfter([Data], Error) // yield the chunks, then finish with the given error
         case throwOnOpen // throw before returning a stream -- a connect failure
     }
 
@@ -407,6 +661,8 @@ private actor ScriptedResponder {
             return AsyncStreamHelpers.droppingByteStream(chunks)
         case .finish(let chunks):
             return AsyncStreamHelpers.byteStream(chunks)
+        case .throwAfter(let chunks, let error):
+            return AsyncStreamHelpers.droppingByteStream(chunks, error: error)
         }
     }
 }

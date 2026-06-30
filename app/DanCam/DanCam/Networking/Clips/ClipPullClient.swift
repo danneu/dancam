@@ -15,11 +15,36 @@ nonisolated enum ClipPullEvent: Equatable, Sendable {
     case completed(ClipPullResult)
 }
 
-nonisolated enum ClipPullError: Error, Equatable {
+nonisolated enum ClipPullError: Error, Equatable, Sendable {
+    enum ExhaustionReason: Equatable, Sendable {
+        case consecutiveStalls
+        case totalReconnects
+    }
+
     case http(Int)
     case malformedResponse(String)
     case file(String)
     case transport(String)
+    case exhausted(ExhaustionReason)
+}
+
+extension ClipPullError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .http(let status):
+            "Clip pull failed with HTTP \(status)."
+        case .malformedResponse(let message):
+            "Clip pull response was invalid: \(message)"
+        case .file(let message):
+            "Could not prepare clip file: \(message)"
+        case .transport(let message):
+            "Camera transfer failed: \(message)"
+        case .exhausted(.consecutiveStalls):
+            "Clip pull stopped after repeated reconnects without progress."
+        case .exhausted(.totalReconnects):
+            "Clip pull stopped after too many reconnects."
+        }
+    }
 }
 
 nonisolated struct ClipPullClient {
@@ -49,6 +74,8 @@ nonisolated struct ClipPullClient {
         baseURL: URL,
         pinning: InterfacePinning = .disabled,
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) },
+        maxConsecutiveStalls: Int = 6,
+        maxTotalReconnects: Int = 256,
         openByteStream: @escaping OpenByteStream
     ) -> ClipPullClient {
         ClipPullClient { clipID, etag in
@@ -64,6 +91,8 @@ nonisolated struct ClipPullClient {
                     listETag: etag,
                     openByteStream: openByteStream,
                     sleep: sleep,
+                    maxConsecutiveStalls: maxConsecutiveStalls,
+                    maxTotalReconnects: maxTotalReconnects,
                     continuation: continuation
                 )
             }
@@ -83,9 +112,8 @@ nonisolated struct ClipPullClient {
     }
 
     /// Bounded retry budget for a single `pull()`. A pull rides out drops by
-    /// reconnecting and resuming from the last byte; exhausting these attempts
-    /// surfaces as `.transport`. Tune once the spike's pull-time numbers land.
-    private static let maxAttempts = 6
+    /// reconnecting and resuming from the last byte; it gives up after repeated
+    /// no-progress reconnects or an absolute runaway reconnect ceiling.
     private static let baseBackoff = Duration.milliseconds(250)
     private static let maxBackoff = Duration.seconds(4)
 
@@ -94,7 +122,7 @@ nonisolated struct ClipPullClient {
 
     private enum AttemptOutcome {
         case completed
-        case retry
+        case retry(madeProgress: Bool)
     }
 
     private static func producePull(
@@ -103,6 +131,8 @@ nonisolated struct ClipPullClient {
         listETag: String,
         openByteStream: @escaping OpenByteStream,
         sleep: @escaping Sleep,
+        maxConsecutiveStalls: Int,
+        maxTotalReconnects: Int,
         continuation: AsyncThrowingStream<ClipPullEvent, Error>.Continuation
     ) async {
         var outputURL: URL?
@@ -134,10 +164,10 @@ nonisolated struct ClipPullClient {
             var bytesWritten: UInt64 = 0
             var expectedBytes: UInt64?
             var resumeETag = httpEntityTag(listETag)
-            var attempt = 0
+            var consecutiveStalls = 0
+            var totalReconnects = 0
 
             attempts: while true {
-                attempt += 1
                 let outcome = try await runAttempt(
                     clipURL: clipURL,
                     openByteStream: openByteStream,
@@ -151,11 +181,22 @@ nonisolated struct ClipPullClient {
                 switch outcome {
                 case .completed:
                     break attempts
-                case .retry:
-                    guard attempt < maxAttempts else {
-                        throw ClipPullError.transport("Pull failed after \(maxAttempts) attempts.")
+                case .retry(let madeProgress):
+                    totalReconnects += 1
+                    if madeProgress {
+                        consecutiveStalls = 0
+                    } else {
+                        consecutiveStalls += 1
                     }
-                    try await sleep(backoffDuration(forAttempt: attempt))
+
+                    if consecutiveStalls >= maxConsecutiveStalls {
+                        throw ClipPullError.exhausted(.consecutiveStalls)
+                    }
+                    if totalReconnects > maxTotalReconnects {
+                        throw ClipPullError.exhausted(.totalReconnects)
+                    }
+
+                    try await sleep(backoffDuration(forConsecutiveStalls: consecutiveStalls))
                 }
             }
 
@@ -226,11 +267,12 @@ nonisolated struct ClipPullClient {
             throw CancellationError()
         } catch {
             // A connect / open failure before any stream -- ride it out.
-            return .retry
+            return .retry(madeProgress: false)
         }
 
         var headParser = HTTPResponseHeadParser()
         var bodyDecoder: HTTPBodyDecoder?
+        var wroteBodyBytesThisAttempt = false
 
         do {
             for try await chunk in byteStream {
@@ -250,25 +292,25 @@ nonisolated struct ClipPullClient {
                             resumeETag: &resumeETag,
                             continuation: continuation
                         )
-                        try writeDecodedChunks(
+                        wroteBodyBytesThisAttempt = try writeDecodedChunks(
                             from: leftoverBody,
                             decoder: &decoder,
                             fileHandle: fileHandle,
                             bytesWritten: &bytesWritten,
                             expectedBytes: expectedBytes,
                             continuation: continuation
-                        )
+                        ) || wroteBodyBytesThisAttempt
                         bodyDecoder = decoder
                     }
                 } else {
-                    try writeDecodedChunks(
+                    wroteBodyBytesThisAttempt = try writeDecodedChunks(
                         from: chunk,
                         decoder: &bodyDecoder!,
                         fileHandle: fileHandle,
                         bytesWritten: &bytesWritten,
                         expectedBytes: expectedBytes,
                         continuation: continuation
-                    )
+                    ) || wroteBodyBytesThisAttempt
                 }
 
                 if bodyDecoder?.isComplete == true {
@@ -285,13 +327,13 @@ nonisolated struct ClipPullClient {
             throw error
         } catch {
             // A mid-stream transport drop (`finish(throwing:)`) -- ride it out.
-            return .retry
+            return .retry(madeProgress: wroteBodyBytesThisAttempt)
         }
 
         // The stream ended. A framed body that never completed is a premature EOF
         // (a dropped link), which is retryable, not terminal.
         guard bodyDecoder?.isComplete == true else {
-            return .retry
+            return .retry(madeProgress: wroteBodyBytesThisAttempt)
         }
 
         // `isComplete` only means *this response's* framed body arrived; for a `206`
@@ -375,13 +417,14 @@ nonisolated struct ClipPullClient {
             // The validator changed (`If-Range` ignored): the disk now holds the wrong
             // representation. Truncate, rewrite from 0, and track the new validator so
             // a later drop resumes against it rather than the stale list etag.
+            guard let etag = head.headerValue("etag"), etag != resumeETag else {
+                throw ClipPullError.malformedResponse("Ranged 200 did not carry a new validator.")
+            }
             try fileHandle.truncate(atOffset: 0)
             try fileHandle.seek(toOffset: 0)
             bytesWritten = 0
             expectedBytes = contentLength(from: head)
-            if let etag = head.headerValue("etag") {
-                resumeETag = etag
-            }
+            resumeETag = etag
             continuation.yield(.restarted)
             return HTTPBodyDecoder(head: head)
         case 416:
@@ -396,8 +439,9 @@ nonisolated struct ClipPullClient {
         }
     }
 
-    private static func backoffDuration(forAttempt attempt: Int) -> Duration {
-        let multiplier = 1 << min(attempt - 1, 16)
+    private static func backoffDuration(forConsecutiveStalls consecutiveStalls: Int) -> Duration {
+        let exponent = max(consecutiveStalls - 1, 0)
+        let multiplier = 1 << min(exponent, 16)
         let scaled = baseBackoff * multiplier
         return scaled < maxBackoff ? scaled : maxBackoff
     }
@@ -437,12 +481,15 @@ nonisolated struct ClipPullClient {
         bytesWritten: inout UInt64,
         expectedBytes: UInt64?,
         continuation: AsyncThrowingStream<ClipPullEvent, Error>.Continuation
-    ) throws {
+    ) throws -> Bool {
+        var didWrite = false
         for decodedChunk in try decoder.append(data) where decodedChunk.isEmpty == false {
             fileHandle.write(decodedChunk)
             bytesWritten += UInt64(decodedChunk.count)
+            didWrite = true
             continuation.yield(.progress(bytesWritten: bytesWritten, expected: expectedBytes))
         }
+        return didWrite
     }
 
     private static func seconds(in duration: Duration) -> Double {

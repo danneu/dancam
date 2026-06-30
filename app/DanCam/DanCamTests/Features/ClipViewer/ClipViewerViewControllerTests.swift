@@ -129,6 +129,29 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func failedPullRendersLocalizedErrorDescription() async throws {
+        let pullError = ClipPullError.transport("Link dropped during pull.")
+        let expectedMessage = try #require(pullError.errorDescription)
+        let controller = makeController(
+            clipPull: ClipPullClient { _, _ in
+                AsyncThrowingStream { continuation in
+                    continuation.finish(throwing: pullError)
+                }
+            },
+            progressiveSegmenter: .noop,
+            remuxer: ClipRemuxer { _, _ in
+                Issue.record("Failed pull should not start remuxing.")
+                return ClipRemuxResult(fileURL: URL(filePath: "/dev/null"), duration: .zero, bytes: 0)
+            }
+        )
+
+        controller.loadViewIfNeeded()
+
+        try await waitUntil { controller.statusText == "Clip failed" }
+        #expect(controller.resultText == expectedMessage)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func segmenterFailureFallsBackToFinalizedMP4() async throws {
         let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
         let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
