@@ -33,7 +33,9 @@ pub mod world;
 
 use ts_duration::DurationCache;
 
-pub const DEFAULT_REC_DIR: &str = "/home/dan/rec";
+// Fallback only. The deployed unit sets DANCAM_REC_DIR to the same path via
+// StateDirectory=dancam.
+pub const DEFAULT_REC_DIR: &str = "/var/lib/dancam/rec";
 
 #[derive(Clone)]
 pub struct AppState {

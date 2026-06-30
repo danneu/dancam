@@ -37,7 +37,7 @@ plus one app-side base-URL change.
 - **Rescue path: reboot-revert + join-AP.** No extra hardware. The `autoconnect no`
   AP profile + an `autoconnect yes` home-Wi-Fi profile means a power-cycle always
   returns the Pi to home Wi-Fi. To reach the Pi live while it is in AP mode, the Mac
-  joins the Pi's SSID and `ssh dan@10.42.0.1`. (USB-gadget `g_ether` and serial UART
+  joins the Pi's SSID and `ssh <user>@10.42.0.1`. (USB-gadget `g_ether` and serial UART
   remain documented heavier fallbacks if this proves too thin in practice, but are
   not set up now.)
 - **Gateway IP: `10.42.0.1`**, pinned via `ipv4.addresses 10.42.0.1/24` on the AP
@@ -79,7 +79,7 @@ plus one app-side base-URL change.
 ## Bring-up sequence
 
 ### Phase 0 -- Baseline and undo (still a home-Wi-Fi client)
-- Confirm the known-good world: `ssh dan@dancam.local` works, `raspi/deploy.sh`
+- Confirm the known-good world: `ssh <user>@dancam.local` works, `raspi/deploy.sh`
   succeeds, `/v1/health` returns `200` over the LAN. This is the rollback target.
 - Deploy the current service now, while still on home Wi-Fi, so the AP phase is
   purely network-layer.
@@ -153,7 +153,7 @@ The smallest change that proves the `200`:
 1. With the AP up and confirmed live, join the Pi's SSID from the Mac (the Mac drops
    home Wi-Fi for the duration).
 2. Confirm a DHCP lease in the `10.42.0.0/24` subnet, `ping 10.42.0.1`, and
-   `ssh dan@10.42.0.1` succeeds. Once the rescue join works you have live control, so
+   `ssh <user>@10.42.0.1` succeeds. Once the rescue join works you have live control, so
    **disarm the pending revert** (`sudo systemctl stop <transient-unit>.timer`, the
    name from Phase 3) before A3/A4 -- otherwise the 5-minute timer reasserts home Wi-Fi
    mid-test and the AP vanishes, reading as a spurious "AP dropped" failure. The
@@ -211,7 +211,7 @@ Keep the record truthful as hardware reveals reality:
   reconciliation note, captive-probe-lever status.
 - `raspi/docs/design/` -- new ADR 06 for AP networking decisions.
 - `app/DanCam/DanCam/App/AppDependencies.swift` -- the one app-side base-URL change.
-- `raspi/deploy.sh` -- `DANCAM_HOST=dan@10.42.0.1` override if deploying over the AP.
+- `raspi/deploy.sh` -- `DANCAM_HOST=<user>@10.42.0.1` override if deploying over the AP.
 - `docs/roadmap.md` -- `pine` acceptance criteria to check off.
 
 ## Notes
@@ -230,7 +230,7 @@ Keep the record truthful as hardware reveals reality:
   as the strongest local congestion and channel 1 as the least-bad 1/6/11 option in
   the desk environment.
 - The first AP-client proof used a physical iPhone rather than the Mac because joining
-  `dancam-dev` from the Mac's only Wi-Fi interface drops `peluchonet` and can cut off
+  `dancam-dev` from the Mac's only Wi-Fi interface drops `<home-wifi>` and can cut off
   the agent session.
 - The captive-probe DNS lever was left unapplied because the one-shot Safari fetch and
   physical app fetch both worked after joining `dancam-dev`; the docs keep it as
@@ -238,16 +238,16 @@ Keep the record truthful as hardware reveals reality:
 - Follow-up investigation found no previous-boot journal after reset, so the final
   physical-app restore failure cannot be proven from Pi logs. A controlled current-boot
   test with
-  `sudo systemd-run --unit=dancam-restore-home-wifi-test --on-active=90s /usr/bin/nmcli connection up netplan-wlan0-peluchonet`
+  `sudo systemd-run --unit=dancam-restore-home-wifi-test --on-active=90s /usr/bin/nmcli connection up netplan-wlan0-<name>`
   succeeded: the timer fired, NetworkManager deactivated `dancam-ap`, stopped
-  shared-mode dnsmasq, rejoined `peluchonet`, and got the `192.168.1.160` lease.
+  shared-mode dnsmasq, rejoined `<home-wifi>`, and got the `192.168.1.160` lease.
   Use the named-unit and absolute-path command form in docs going forward.
 - Follow-up persistent-iOS testing found that the iPhone could leave and rejoin
   `dancam-dev`, then reconnect in the app and show camera info without a captive
   sheet blocking or dropping the association. The dnsmasq captive-probe NXDOMAIN
   drop-in remains unapplied. Pi logs showed the iPhone lease at `10.42.0.97`,
   plus DHCP release/reacquisition across the leave/rejoin test. The 12-minute
-  named restore timer fired and returned the Pi to `peluchonet` at
+  named restore timer fired and returned the Pi to `<home-wifi>` at
   `192.168.1.160`.
 
 ## Follow Up
@@ -258,7 +258,7 @@ Keep the record truthful as hardware reveals reality:
   iPhone leave/rejoin worked and the app reconnected without captive blocking, so no
   drop-in was applied.
 - Investigate why `sudo systemd-run --on-active=5min nmcli connection up
-  netplan-wlan0-peluchonet` did not return the Pi to `peluchonet` during the final
+  netplan-wlan0-<name>` did not return the Pi to `<home-wifi>` during the final
   physical-app AP proof; keep power-cycle as the recovery backstop until this is
   understood. Follow-up: previous-boot logs were unavailable after reset, but the
   named-unit absolute-path timer form was verified in the current boot.

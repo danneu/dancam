@@ -99,7 +99,8 @@ mock first.
             `changed=0` (idempotency gate -- catches the nmcli cipher-list churn).
       - [x] Real-Pi regression checks pass: picamera2 imports, `allow-interfaces=wlan0`
             (no spaces), AP cipher pins `rsn`/`ccmp`/`ccmp`, iPhone joins `dancam-dev`,
-            `just raspi-deploy` unchanged, `groups dan` includes `video`.
+            `dancam` service user has `video`, and the service opens the camera as
+            `dancam`.
       - [x] Docs land in lockstep: ADR 09 (`just adr-check` green), README renumbered to
             the pinned 8-section runbook, `raspi/AGENTS.md` flipped to "playbook is the
             source of truth."

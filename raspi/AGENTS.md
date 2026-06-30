@@ -145,7 +145,7 @@ Same Raspberry Pi OS base, two configurations:
 |---|---|---|
 | Root filesystem | writable -- edit & restart freely | read-only (overlayfs) |
 | Network | joins home Wi-Fi as a client; AP is a manual `dancam-ap` toggle | runs the AP (NetworkManager hotspot, 2.4 GHz) |
-| Access | `ssh dan@dancam.local` over the LAN; if AP is up, use a separate client, not the Mac's only Wi-Fi interface | phone joins the Pi's AP |
+| Access | `ssh <your-username>@dancam.local` over the LAN; if AP is up, use a separate client, not the Mac's only Wi-Fi interface | phone joins the Pi's AP |
 | Recordings | a folder on root is fine early | dedicated journaled `/data` partition |
 
 The early swoops live in the dev image. Read-only root, AP mode, and the partition
@@ -176,7 +176,7 @@ early swoops) -- not something to fight while iterating.
   customize Trixie, and the 2.0.6-2.0.8 stable releases can leave headless SSH off
   by emitting the deprecated `enable_ssh` key (fixed in the 2.0.9 prerelease and
   stable in 2.0.10). Editing files on the boot partition is the legacy fallback.
-  Boot headless, then `ssh dan@dancam.local` over the LAN (mDNS). No monitor or
+  Boot headless, then `ssh <your-username>@dancam.local` over the LAN (mDNS). No monitor or
   keyboard, and no card-shuffling after this.
 - The playbook scopes Avahi/mDNS to the Wi-Fi interface --
   `allow-interfaces=wlan0` in `/etc/avahi/avahi-daemon.conf` (see
@@ -248,7 +248,7 @@ shell, not `rustup target add`.
 - AP bring-up / car path: the phone joins the Pi's AP and talks to
   `http://10.42.0.1:8080/v1/...`. The dev AP profile does not autoconnect; schedule a
   detached revert before flipping it over SSH:
-  `sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up netplan-wlan0-peluchonet`.
+  `sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up "$DANCAM_HOME_WIFI"`.
   Use a fresh unit name if that one is already loaded. From the Mac, `just raspi-ap
   [minutes]` wraps this arm + AP flip and prints a local countdown to the revert; it
   detaches the AP-up as a transient `dancam-go-ap` unit so the SSH session returns
@@ -288,6 +288,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   windshield artifacts.
 - `09-2026-06-26-pi-system-layer-config-ansible.md` (Accepted) -- the Pi's system
   layer (apt, camera overlay, Avahi scoping, locale, the `dancam-ap` profile sans PSK,
-  `dan`'s `video` group) is provisioned declaratively with Ansible from the Mac;
+  the `dancam` service user's `video` group) is provisioned declaratively with
+  Ansible from the Mac;
   `deploy.sh` keeps the binary/unit and the README becomes a bootstrap/verify/ops
   runbook.

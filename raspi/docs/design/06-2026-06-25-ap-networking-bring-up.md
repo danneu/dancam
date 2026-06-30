@@ -40,7 +40,7 @@ by default:
 - `ipv6.method ignore`
 - `connection.autoconnect no`
 
-The home-Wi-Fi profile, `netplan-wlan0-peluchonet`, remains the default
+The home-Wi-Fi profile, `<home-wifi>`, remains the default
 autoconnect profile on the dev image. Bringing `dancam-ap` up intentionally
 tears down the home-Wi-Fi client connection; a power cycle returns to home Wi-Fi
 because the AP profile does not autoconnect.
@@ -84,7 +84,7 @@ Before flipping to AP mode over SSH, schedule a detached NetworkManager revert
 owned by systemd:
 
 ```sh
-sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up netplan-wlan0-peluchonet
+sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up <your-home-wifi>
 ```
 
 Do not rely on a foreground `sleep && nmcli ...` in the SSH session; the session
@@ -101,7 +101,7 @@ home profile. In follow-up on 2026-06-25, the earlier physical-app proof failure
 could not be proven from logs because the dev image had no previous-boot journal
 after reset. A controlled current-boot test using the named unit and absolute
 `/usr/bin/nmcli` path did succeed: systemd fired the timer, NetworkManager
-deactivated `dancam-ap`, stopped the shared-mode dnsmasq, rejoined `peluchonet`,
+deactivated `dancam-ap`, stopped the shared-mode dnsmasq, rejoined `<home-wifi>`,
 and reacquired `192.168.1.160`.
 
 Verification from this bring-up:
@@ -135,12 +135,12 @@ Verification from this bring-up:
   `dancam-2.local` after a boot-time Avahi conflict. `dancam-2.local` resolved
   and served `/v1/health`, while `dancam.local` timed out. Restarting Avahi
   reclaimed `dancam.local`; adding `allow-interfaces=wlan0` made the fix survive
-  a reboot and a `dancam-ap` -> `peluchonet` toggle. After the change,
+  a reboot and a `dancam-ap` -> `<home-wifi>` toggle. After the change,
   `curl http://dancam.local:8080/v1/health` returned `200` and Avahi stayed
   `running [dancam.local]` with no conflict retry.
 
 During an API-backed coding session, do not use the Mac's only Wi-Fi interface
-as the AP client. Joining `dancam-dev` from the Mac drops `peluchonet` and can
+as the AP client. Joining `dancam-dev` from the Mac drops `<home-wifi>` and can
 cut off the agent session. Use a physical iPhone or a second Wi-Fi adapter for
 AP client verification.
 

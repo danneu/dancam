@@ -8,16 +8,17 @@
 #
 # Defaults target the dev image (Pi on home Wi-Fi as `dancam.local`). Override via
 # env, e.g.:
-#   DANCAM_HOST=dan@192.168.1.50 ./raspi/deploy.sh
-#   DANCAM_HOST=dan@10.42.0.1 ./raspi/deploy.sh    # while joined to the Pi AP
+#   DANCAM_HOST=pi@192.168.1.50 ./raspi/deploy.sh
+#   DANCAM_HOST=<user>@10.42.0.1 ./raspi/deploy.sh # while joined to the Pi AP
 #   DANCAM_HEALTH_TIMEOUT=120 ./raspi/deploy.sh    # seconds to wait for /v1/health after restart (default 60)
 #
 # Requires: nix (flakes) on the Mac; SSH access to the Pi; passwordless or
 # interactive sudo on the Pi (the install step uses `ssh -t` so sudo can prompt).
 set -euo pipefail
 
-HOST="${DANCAM_HOST:-dan@dancam.local}"
-SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519_danneu}"
+HOST="${DANCAM_HOST:-pi@dancam.local}"
+SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+SSH_KEY="${SSH_KEY/#\~/$HOME}"
 TARGET="${DANCAM_TARGET:-aarch64-unknown-linux-musl}"
 PORT="${DANCAM_PORT:-8080}"
 

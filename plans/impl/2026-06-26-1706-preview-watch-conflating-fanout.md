@@ -241,5 +241,5 @@ is wanted before relying on this, run the manual smoke against a deployed
   empty-probe during the restart window.
 - Both new tests pass `--rec-dir <temp>` (beyond the plan's illustrative flag list),
   matching the sibling tests: the fake driver's `start()` calls `ensure_rec_dir`, which
-  would fail on the default `/home/dan/rec` on the dev Mac and keep the child from
+  would fail on the default `/home/<user>/rec` on the dev Mac and keep the child from
   reaching `ready`.

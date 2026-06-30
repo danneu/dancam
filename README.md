@@ -9,6 +9,34 @@ Hardware: [Raspberry Pi Zero 2 W](https://www.raspberrypi.com/products/raspberry
 
 OS: Raspberry Pi OS Lite (64-bit) was at release 2026-06-18 as of writing this.
 
+## Configure for your hardware
+
+Create the gitignored local config file once, then run the Pi recipes through
+`just` so they load it automatically:
+
+```sh
+cp .env.example .env
+```
+
+Edit `.env`:
+
+- `DANCAM_HOST=<your-username>@dancam.local` -- the user must match the Raspberry Pi
+  Imager username you pick in section 1. When mDNS is flaky, keep the same user and
+  replace the host with the Pi's raw LAN IP.
+- `DANCAM_SSH_KEY=~/.ssh/id_ed25519` -- the private key whose `.pub` counterpart you
+  add in Imager.
+- `DANCAM_HOME_WIFI=<your-home-wifi>` -- the Pi's NetworkManager home-Wi-Fi
+  connection name, found on the Pi with `nmcli connection show`. Current Raspberry
+  Pi OS images often name the Imager-created profile `preconfigured`.
+
+These are connection settings only. The camera service always runs as the fixed
+`dancam` system user and records under `/var/lib/dancam/rec`; there is no service
+user to configure. `raspi/ansible/inventory.ini` is tracked and contains only the
+shared `dancam.local` host constant.
+
+Direct `./raspi/deploy.sh` runs do not auto-load `.env`; either use
+`just raspi-deploy` or export the same variables in your shell first.
+
 ## 1. Flash Raspberry Pi OS Lite
 
 Flash the microSD with **Raspberry Pi Imager 2.0.10 or newer** (older Imager can't
@@ -18,13 +46,13 @@ customize Trixie -- 1.9.x writes the wrong format and 2.0.6-2.0.8 can leave SSH 
 2. **Choose storage:** the microSD.
 3. **Edit Settings** (the OS-customization step) and set:
    - Hostname: `dancam`
-   - Username `dan` + a password
+   - Username `<your-username>` + a password
    - Enable SSH -> "Allow public-key authentication only", and add your
      `~/.ssh/<your-key>.pub`
    - Configure wireless LAN: your home Wi-Fi SSID + password (so it joins headless)
 4. Write the card, insert it in the Pi, and power on (the `PWR` micro-USB
-   port). First boot runs cloud-init -- it creates `dan`, installs your key, joins
-   Wi-Fi, and sets the hostname, then reboots once. Give it ~60-90s.
+   port). First boot runs cloud-init -- it creates `<your-username>`, installs your
+   key, joins Wi-Fi, and sets the hostname, then reboots once. Give it ~60-90s.
 
 ## 2. SSH in
 
@@ -33,7 +61,7 @@ counterpart of the `.pub` you added when flashing (omit `-i` if it's a default n
 like `id_ed25519`):
 
 ```sh
-ssh -i ~/.ssh/<your-key> dan@dancam.local
+ssh -i ~/.ssh/<your-key> <your-username>@dancam.local
 ```
 
 Confirm it came up as the 64-bit Trixie kernel (`aarch64` / `v8` = 64-bit):
@@ -45,9 +73,10 @@ uname -a
 ## 3. Provision the system layer (Ansible)
 
 The Pi's onboard system state -- apt upgrade, the IMX708 camera overlay, the camera
-process dependencies (`python3-picamera2`, `ffmpeg`), mDNS scoping, the `en_US.UTF-8`
-locale, the `dancam-ap` access-point profile (without its password), and `dan`'s
-`video`-group membership -- is provisioned declaratively with Ansible. The playbook
+process dependencies (`python3-picamera2`, `ffmpeg`), mDNS scoping, the
+`en_US.UTF-8` locale, the `dancam-ap` access-point profile (without its password),
+and the `dancam` service user's `video`-group membership -- is provisioned
+declaratively with Ansible. The playbook
 (`raspi/ansible/site.yml`) is the source of truth for that state; the *why* behind each
 choice lives in its task comments (see also
 `raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`). Run it from the
@@ -58,7 +87,7 @@ upstream:
 just raspi-provision          # converge the Pi; reboots itself if a task needs it
 ```
 
-It prompts once for `dan`'s sudo password. When mDNS is flaky, target a raw LAN IP:
+It prompts once for your sudo password. When mDNS is flaky, target a raw LAN IP:
 `just raspi-provision host=192.168.1.50`.
 
 Preview what would change without touching the Pi (the drift detector), or lint the
@@ -91,7 +120,7 @@ Optionally pull the image to the Mac to eyeball focus/orientation:
 
 ```sh
 # run on the Mac
-scp -i ~/.ssh/<your-key> dan@dancam.local:/tmp/test.jpg ~/Desktop/dancam-test.jpg
+scp -i ~/.ssh/<your-key> <your-username>@dancam.local:/tmp/test.jpg ~/Desktop/dancam-test.jpg
 ```
 
 ## 5. Verify the camera process dependencies
@@ -132,7 +161,7 @@ timer. Replace the home profile name if `nmcli connection show` reports a
 different one:
 
 ```sh
-HOME_WIFI_CONNECTION=netplan-wlan0-peluchonet
+HOME_WIFI_CONNECTION="${DANCAM_HOME_WIFI:-<your-home-wifi>}"
 sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up "$HOME_WIFI_CONNECTION"
 sudo nmcli connection up dancam-ap
 ```
@@ -154,7 +183,7 @@ journalctl -b -u dancam-restore-home-wifi.service -u dancam-restore-home-wifi.ti
 
 Power cycling also returns this dev image to home Wi-Fi because `dancam-ap` does
 not autoconnect. Do not join `dancam-dev` from the Mac during an active remote
-LLM session if the Mac's only internet path is `peluchonet`; use the iPhone for
+LLM session if the Mac's only internet path is your home Wi-Fi; use the iPhone for
 AP testing.
 
 ## 7. Deploy and run the service
@@ -167,6 +196,9 @@ root:
 just raspi-deploy   # wraps ./raspi/deploy.sh
 ```
 
+Provision first: the unit runs as `User=dancam`, and `just raspi-provision`
+creates that system user before deploy starts the service.
+
 This ships a static aarch64 binary, the camera process
 (`/usr/local/lib/dancam/camera.py`), and the systemd unit (`dancam.service`),
 enables/restarts the service, then waits for `/v1/health` to answer (polling up
@@ -176,13 +208,16 @@ service is ready to test. The deployed unit sets:
 ```ini
 Environment=DANCAM_BIND=0.0.0.0:8080
 Environment=DANCAM_BACKEND=camera
-Environment=DANCAM_REC_DIR=/home/dan/rec
+Environment=DANCAM_REC_DIR=/var/lib/dancam/rec
+User=dancam
+StateDirectory=dancam
 ```
 
 `DANCAM_BACKEND=camera` makes the service spawn one long-lived Picamera2 owner
 process. That process owns libcamera, emits low-res MJPEG preview on stdout, and
-writes H.264 MPEG-TS recording segments under `DANCAM_REC_DIR`. It also locks the
-IMX708 lens to infinity with autofocus disabled; see
+writes H.264 MPEG-TS recording segments under `/var/lib/dancam/rec` as the fixed
+`dancam` service user. It also locks the IMX708 lens to infinity with autofocus
+disabled; see
 `raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`. Local `just raspi-mock`
 still defaults to the mock backend and cycles committed test-pattern frames.
 
@@ -231,11 +266,11 @@ ffplay http://dancam.local:8080/v1/preview/live.mjpeg
 Smoke-test the camera owner directly on the Pi before trusting a longer run:
 
 ```sh
-rm -rf /home/dan/rec-smoke
+rm -rf ~/rec-smoke
 rm -f /tmp/dancam-camera-commands /tmp/dancam-preview.mjpeg /tmp/dancam-camera-events.log
 mkfifo /tmp/dancam-camera-commands
 python3 /usr/local/lib/dancam/camera.py \
-  --rec-dir /home/dan/rec-smoke \
+  --rec-dir ~/rec-smoke \
   --preview-fps 10 \
   < /tmp/dancam-camera-commands \
   > /tmp/dancam-preview.mjpeg \
@@ -251,8 +286,8 @@ printf '{"cmd":"stop_recording"}\n{"cmd":"shutdown"}\n' >&3
 exec 3>&-
 wait "$CAMERA_PID"
 grep -E '"ready"|"recording_started"|"recording_stopped"' /tmp/dancam-camera-events.log
-ls -lh /home/dan/rec-smoke/seg_*.ts
-ffmpeg -v error -i /home/dan/rec-smoke/seg_00000.ts -f null -
+ls -lh ~/rec-smoke/seg_*.ts
+ffmpeg -v error -i ~/rec-smoke/seg_00000.ts -f null -
 rm -f /tmp/dancam-camera-commands
 ```
 
@@ -261,17 +296,18 @@ free memory/swap activity, SoC and sensor temperatures, preview smoothness, and
 verify the second start/stop cycle continues segment numbering instead of
 overwriting the first session.
 
-Because the smoke command runs as the interactive `dan` user but deployment runs
-under systemd with no login session, also verify the unit can open the camera:
+The smoke command runs as your interactive login user, but deployment runs as the
+fixed `dancam` service user under systemd with no login session. Verify the
+service user can open the camera:
 
 ```sh
-id dan
+id dancam
 ls -l /dev/video11 /dev/dma_heap/* 2>/dev/null
 sudo systemctl restart dancam
 journalctl -u dancam -n 80 --no-pager | grep '"ready"'
 ```
 
-`dan` must have group access to `/dev/video11` for hardware MJPEG and
+`dancam` must have group access to `/dev/video11` for hardware MJPEG and
 `/dev/dma_heap/*` for libcamera buffers. The journal check proves the systemd
 context, not just an interactive shell, can start the camera process.
 

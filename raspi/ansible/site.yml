@@ -1,9 +1,10 @@
 ---
 # The dancam Pi system layer, declaratively. Ansible owns onboard system state
 # (apt, the config.txt camera overlay, Avahi scoping, locale, the dancam-ap profile,
-# dan's video group); deploy.sh still owns the dancam binary + systemd unit, and the
-# README owns the human-only/runtime-only steps. One home per fact: a command lives
-# here, its hard-won "why" lives as the # comment on the action it justifies. See
+# the dancam service user's video group); deploy.sh still owns the dancam binary +
+# systemd unit, and the README owns the human-only/runtime-only steps. One home per
+# fact: a command lives here, its hard-won "why" lives as the # comment on the
+# action it justifies. See
 # raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md.
 - name: Converge the dancam Pi system layer
   hosts: dancam
@@ -131,20 +132,19 @@
         method6: ignore
         state: present
 
-    - name: Ensure dan is in the video group
+    - name: Ensure the dancam service user exists and is in the video group
       # jet's Picamera2 camera owner (DANCAM_BACKEND=camera, set on the deployed
-      # unit) opens the camera under systemd as user dan, which needs video-group
-      # membership to reach /dev/video11 (bcm2835-codec, used by the hardware
-      # MJPEGEncoder) and /dev/dma_heap/* (libcamera buffers). The Raspberry Pi
-      # Imager default user already gets video, so on the Imager bootstrap path this
-      # is a no-op -- but guaranteeing it declaratively is the whole point of this
-      # layer: a re-image or alternate provisioning path where the default user lacks
-      # video would otherwise provision clean yet fail the camera at runtime.
-      # append: true so we never strip dan's other groups. This is system state, so
-      # the playbook owns it rather than SupplementaryGroups on the deploy.sh-owned
-      # unit.
+      # unit) opens the camera under systemd as the fixed dancam service user, which
+      # needs video-group membership to reach /dev/video11 (bcm2835-codec, used by
+      # the hardware MJPEGEncoder) and /dev/dma_heap/* (libcamera buffers). A fresh
+      # system user has no supplementary groups by default, so this is now
+      # load-bearing system state rather than a re-guarantee of the Imager login
+      # user's defaults. The playbook owns it rather than SupplementaryGroups on the
+      # deploy.sh-owned unit.
       ansible.builtin.user:
-        name: dan
+        name: dancam
+        system: true
+        create_home: false
         groups: video
         append: true
 

@@ -1,6 +1,19 @@
 # ADR: Pi system-layer configuration via Ansible
 
 - **Status:** Accepted
+- **Amended:** 2026-06-30 by `11-2026-06-30-forkable-pi-config.md`. Two specifics
+  below are superseded: (1) the service no longer runs as the login user -- it runs
+  as a dedicated `dancam` system user, so `deploy.sh` does not render or own
+  `User=`/the rec dir; the unit statically declares `User=dancam`,
+  `StateDirectory=dancam`, and `DANCAM_REC_DIR=/var/lib/dancam/rec`. (2) The "No
+  `StateDirectory`/mkdir task owns the rec dir" statement is superseded: the unit
+  now uses `StateDirectory=dancam` (systemd creates `/var/lib/dancam`); `camera.py`
+  still self-creates the `rec` subdir. The playbook's video-group task now ensures
+  the `dancam` system user exists (was: the login user). The system-layer
+  ownership split otherwise stands: the playbook owns system state (now including
+  the `dancam` user), the unit owns how the service runs (fixed user + state dir),
+  and `deploy.sh` ships the binary + unit and its de-personalized connection
+  defaults.
 - **Date:** 2026-06-26
 - **Owner:** raspi
 - **Related:** root `AGENTS.md` (the README-is-the-runbook convention this revises);
@@ -48,19 +61,19 @@ Ownership splits three ways with no overlap:
   `config.txt` camera overlay (`camera_auto_detect=0` + `dtoverlay=imx708`); the
   camera-process apt deps (`python3-picamera2`, `ffmpeg`); Avahi `wlan0` scoping; the
   `en_US.UTF-8` locale; the `dancam-ap` NetworkManager profile (every setting **except
-  the PSK**); and `dan`'s `video`-group membership. Driven by `just raspi-provision`
+  the PSK**); and the login user's `video`-group membership. Driven by `just raspi-provision`
   (converge), `just raspi-provision-check` (`--check --diff` drift detector), and
   `just raspi-provision-lint` (hardware-free `--syntax-check` + `ansible-lint` gate).
 - **`deploy.sh` is untouched.** It still owns the Nix cross-build + rsync of the
   `dancam` binary and the systemd unit, and the fast restart loop. The unit's
-  `DANCAM_BACKEND=camera` and `DANCAM_REC_DIR=/home/dan/rec` envs stay the unit's
+  `DANCAM_BACKEND=camera` and recording-directory envs stay the unit's
   (deploy.sh-owned) concern; Ansible deliberately does not manage them. No
   `StateDirectory`/mkdir task owns the rec dir either -- `camera.py` self-creates it
   at startup.
 - **The README becomes a thin bootstrap/verify/ops runbook.** It owns what Ansible
   structurally cannot: GUI flash + Imager version traps, first boot, SSH bootstrap,
   the camera smoke-test, the `from picamera2` import-verify (a runtime check under
-  `User=dan`, which Ansible cannot make), the AP safe-flip timer procedure, the AP
+  `User=<login user>`, which Ansible cannot make), the AP safe-flip timer procedure, the AP
   smoke-test, and the one deliberate manual secret step below.
 
 **Single docs-split principle: one home per fact.** A command lives where it executes

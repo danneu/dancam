@@ -72,7 +72,7 @@ via `#[serde(rename_all = "snake_case")]`, matching `health.rs`.
 - `boot_id`, `uptime_s`: from `AppState` (same as `health.rs`). Intentionally
   overlaps `/v1/health`; that is fine. **Do not grow `/v1/health`.**
 - `storage`: `statvfs` on `rec_dir`. Works cross-platform, but `null` whenever the
-  path does not exist -- and the **default** `rec_dir` (`/home/dan/rec`) does not exist
+  path does not exist -- and the **default** `rec_dir` (`/home/<user>/rec`) does not exist
   on macOS, so the Mac default yields `storage: null`. Pointing `DANCAM_REC_DIR` at a
   real folder (as the human checkpoints do) makes it report that volume -- a fine
   non-null exercise. `null` on any error.
@@ -129,7 +129,7 @@ Add `rec_dir` to shared state, two handlers, and one sysfacts module.
 
 1. **`AppState` gains `rec_dir: Arc<Path>`** (`src/lib.rs`). Keep `AppState::new`
    signature unchanged **and pure**: it defaults `rec_dir` to the plain constant
-   `/home/dan/rec` (matching `camera/mod.rs`'s default) -- it does **not** read the
+   `/home/<user>/rec` (matching `camera/mod.rs`'s default) -- it does **not** read the
    environment, so `tests/status.rs`/`tests/clips.rs` stay deterministic. Add a
    `with_rec_dir(self, PathBuf) -> Self` builder so existing tests and `main.rs` stay
    green and `tests/clips.rs` can point at a temp dir. `main.rs` reads `DANCAM_REC_DIR`

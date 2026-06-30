@@ -286,7 +286,7 @@ tap-to-viewer is still broken).
 ## Measure (physical -- Dan runs these; this is the actual spike output)
 
 Deploy the new Pi endpoint (`just raspi-deploy`), start recording and **leave it running**
-(don't stop it -- ~40 s in, a finished ~38 MB `seg_*.ts` exists in `/home/dan/rec` to pull,
+(don't stop it -- ~40 s in, a finished ~38 MB `seg_*.ts` exists in `/home/<user>/rec` to pull,
 while the camera keeps writing the open segment), flip the AP (`just raspi-ap [minutes]`,
 auto-revert armed), join `dancam-dev` from the iPhone. Recording-during-pull is the point,
 not a setup nicety -- see the matrix.

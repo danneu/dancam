@@ -63,7 +63,8 @@ impl CameraConfig {
             }
         }
 
-        let rec_dir = env::var("DANCAM_REC_DIR").unwrap_or_else(|_| "/home/dan/rec".to_string());
+        let rec_dir =
+            env::var("DANCAM_REC_DIR").unwrap_or_else(|_| crate::DEFAULT_REC_DIR.to_string());
         let preview_fps = env::var("DANCAM_PREVIEW_FPS").unwrap_or_else(|_| "10".to_string());
         let mut config = Self::new(
             "python3",

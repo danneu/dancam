@@ -1,3 +1,5 @@
+set dotenv-load := true
+
 # Build the Raspberry Pi Rust service for the local host.
 raspi-build:
     cargo build --manifest-path raspi/service/Cargo.toml
@@ -17,13 +19,23 @@ raspi-deploy:
 
 # Provision the Pi's system layer with Ansible over home Wi-Fi (apt, camera overlay,
 # mDNS, locale, AP profile, video group). Override the address with host=192.168.1.50
-# when mDNS is flaky. Prompts once for dan's sudo password.
+# when mDNS is flaky. Prompts once for your sudo password.
 raspi-provision host='dancam.local':
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e ansible_host={{host}} --ask-become-pass'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HOST="${DANCAM_HOST:-pi@dancam.local}"
+    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+    SSH_KEY="${SSH_KEY/#\~/$HOME}"
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
 
 # Dry-run the provision: show what is out of sync on the Pi without changing anything.
 raspi-provision-check host='dancam.local':
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e ansible_host={{host}} --ask-become-pass --check --diff'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HOST="${DANCAM_HOST:-pi@dancam.local}"
+    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+    SSH_KEY="${SSH_KEY/#\~/$HOME}"
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass --check --diff' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
 
 # Hardware-free gate: syntax + ansible-lint the playbook on the Mac, no Pi connection.
 raspi-provision-lint:
@@ -35,9 +47,10 @@ raspi-provision-lint:
 raspi-ap minutes="5":
     #!/usr/bin/env bash
     set -euo pipefail
-    HOST="${DANCAM_HOST:-dan@dancam.local}"
-    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519_danneu}"
-    HOME_WIFI="${DANCAM_HOME_WIFI:-netplan-wlan0-peluchonet}"
+    HOST="${DANCAM_HOST:-pi@dancam.local}"
+    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+    SSH_KEY="${SSH_KEY/#\~/$HOME}"
+    HOME_WIFI="${DANCAM_HOME_WIFI:-preconfigured}"
     SECS=$(( {{minutes}} * 60 ))
 
     echo "==> arming +{{minutes}}min revert to $HOME_WIFI, then flipping Pi to AP (dancam-dev)"

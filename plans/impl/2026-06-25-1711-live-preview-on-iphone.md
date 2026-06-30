@@ -441,7 +441,7 @@ recording** -- that is `jet`'s risk, recorded in Phase 5.
 > confirmation before proceeding.
 
 After confirmation, the agent (over SSH; `deploy.sh` already uses the key
-`~/.ssh/id_ed25519_danneu` to `dan@dancam.local`) does as much as possible itself,
+`~/.ssh/id_ed25519` to `<user>@dancam.local`) does as much as possible itself,
 pausing only if SSH host-key trust or `sudo` prompts for input:
 - Verify rpicam flags on the installed build: `ssh ... rpicam-vid --help` (confirm
   `--codec mjpeg`, `--framerate`, `--quality`, `-t 0`, `-o -`, `--flush`). Capture a
@@ -457,8 +457,8 @@ pausing only if SSH host-key trust or `sudo` prompts for input:
   marker-segment parsing -- walk APPn/SOF/SOS lengths to the true EOI -- is the fallback
   only if the SOI-follows heuristic proves insufficient; record it as a `jet` note if
   so.)
-- Confirm `dan` can open the camera under systemd: check `groups dan` for `video`. If
-  missing, add `SupplementaryGroups=video` to the unit (or `usermod -aG video dan`) --
+- Confirm `<user>` can open the camera under systemd: check `groups <user>` for `video`. If
+  missing, add `SupplementaryGroups=video` to the unit (or `usermod -aG video <user>`) --
   an onboard-state change the README must capture.
 
 > **PAUSE #3 -- ask Dan only if SSH/sudo prompts** for a host-key fingerprint or the
@@ -494,7 +494,7 @@ SSH-to-Pi drops), then coordinates Dan.
 - Agent (over SSH, Pi still on home Wi-Fi): arm the home-Wi-Fi restore timer and bring
   up the AP, per README section 6:
   `sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli
-  connection up netplan-wlan0-peluchonet` then `sudo nmcli connection up dancam-ap`.
+  connection up netplan-wlan0-<name>` then `sudo nmcli connection up dancam-ap`.
   (Use a fresh unit name if that one is loaded.) The agent notes it will lose SSH to
   the Pi at this point; the restore timer / power-cycle returns the Pi to home Wi-Fi.
 
@@ -635,9 +635,9 @@ keep-alive pooling is `jet`'s).
   `rpicam-vid --list-cameras` sees the IMX708 at index 0. A 5-frame hardware sample had
   exactly 5 SOI and 5 EOI markers, so the existing `JpegSplitter` did not need the
   nested-marker upgrade.
-- The `dan` account already has the `video` group on the Pi, so the systemd unit only
+- The `<user>` account already has the `video` group on the Pi, so the systemd unit only
   needed `DANCAM_BACKEND=camera`; no `SupplementaryGroups=video` change was required.
-- `just raspi-deploy` works with `DANCAM_HOST=dan@dancam.local`; deploying to the raw
+- `just raspi-deploy` works with `DANCAM_HOST=<user>@dancam.local`; deploying to the raw
   `192.168.1.160` IP failed host-key verification because that raw IP was not a trusted
   known-host entry.
 - Home-LAN preview with the camera backend returned the expected multipart headers and

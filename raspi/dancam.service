@@ -4,8 +4,9 @@
 # on boot (this is also how the car image auto-records on boot) and restarts on
 # crash. Logs go to journald: `journalctl -u dancam -f`.
 #
-# Hardening (dedicated service user, sandboxing, logs off the read-only root) is a
-# later pass -- see raspi/AGENTS.md dev-image-vs-car-image notes.
+# The dedicated service user and state directory are active now. Remaining
+# hardening (sandboxing, logs off the read-only root) is a later pass -- see
+# raspi/AGENTS.md dev-image-vs-car-image notes.
 
 [Unit]
 Description=dancam camera-unit service (control + media API)
@@ -21,13 +22,15 @@ Environment=DANCAM_BIND=0.0.0.0:8080
 # The deployed Pi uses the real camera backend. Local cargo runs default to the
 # mock backend unless DANCAM_BACKEND=camera is set explicitly.
 Environment=DANCAM_BACKEND=camera
-# Dev-image recording directory. The camera process creates it on startup; the
-# car image later points this at the journaled footage partition.
-Environment=DANCAM_REC_DIR=/home/dan/rec
+# Recording directory under the systemd-managed state directory. systemd creates
+# /var/lib/dancam owned by the service user; the camera process creates rec/.
+# The car image later points footage at the journaled partition.
+Environment=DANCAM_REC_DIR=/var/lib/dancam/rec
 ExecStart=/usr/local/bin/dancam
 Restart=on-failure
 RestartSec=2
-User=dan
+User=dancam
+StateDirectory=dancam
 NoNewPrivileges=true
 
 [Install]

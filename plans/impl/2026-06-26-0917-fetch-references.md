@@ -102,8 +102,8 @@ Two correctness details (both flagged in review):
 # so the pin in scripts/fetch-references.sh can be confirmed/bumped to match.
 set -euo pipefail
 
-HOST="${DANCAM_HOST:-dan@dancam.local}"
-SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519_danneu}"
+HOST="${DANCAM_HOST:-<user>@dancam.local}"
+SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
 echo "==> querying python3-picamera2 on $HOST"
 ssh -i "$SSH_KEY" "$HOST" '

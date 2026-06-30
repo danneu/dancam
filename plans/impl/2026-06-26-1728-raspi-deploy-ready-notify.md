@@ -123,7 +123,7 @@ Notes:
 
 1. **Happy path:** `just raspi-deploy` with the Pi on home Wi-Fi. Expect the new
    `==> waiting ...` line, then `==> dancam is up and serving ... ready to test`,
-   and a macOS banner `dancam deploy / Up on dan@dancam.local -- ready to test`
+   and a macOS banner `dancam deploy / Up on <user>@dancam.local -- ready to test`
    with the `Glass` sound. Confirm the banner appears only after the health line,
    not before.
 2. **Slow/again:** re-run immediately (idempotent) -- the probe should succeed on

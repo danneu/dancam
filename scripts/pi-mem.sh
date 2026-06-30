@@ -5,8 +5,9 @@
 # is healthy. The Pi Zero 2 W only has 512MB, so this is worth checking often.
 set -euo pipefail
 
-HOST="${DANCAM_HOST:-dan@dancam.local}"
-SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519_danneu}"
+HOST="${DANCAM_HOST:-pi@dancam.local}"
+SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+SSH_KEY="${SSH_KEY/#\~/$HOME}"
 
 echo "==> memory report from $HOST"
 ssh -i "$SSH_KEY" "$HOST" '

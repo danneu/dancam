@@ -90,7 +90,7 @@ end-to-end with no hardware.
   test constructs via `recording_to` with a small interval.
 
 - **Point the `raspi-mock` recipe at a writable scratch rec dir.** `raspi-mock`
-  (`cargo run`, no env) falls back to `DEFAULT_REC_DIR` (`/home/dan/rec`,
+  (`cargo run`, no env) falls back to `DEFAULT_REC_DIR` (`/home/<user>/rec`,
   `raspi/service/src/lib.rs#DEFAULT_REC_DIR`) -- a Linux path absent on the Mac dev box, so
   the new writer would have nowhere to write and the live row would never appear under
   `just raspi-mock`. Update `raspi-mock` to set `DANCAM_REC_DIR` to a gitignored scratch
@@ -301,7 +301,7 @@ Behavioral and structure-insensitive only:
 1. Run the extended mock for the simulator: `just raspi-mock` on `http://127.0.0.1:8080`
    (confirm recipe names with `just --list`). The recipe sets a writable scratch
    `DANCAM_REC_DIR` (so the writer has somewhere to write -- not the nonexistent
-   `/home/dan/rec`) and a short `DANCAM_MOCK_SEGMENT_SECS` (so rollover is quick), with no
+   `/home/<user>/rec`) and a short `DANCAM_MOCK_SEGMENT_SECS` (so rollover is quick), with no
    manual env. Use `8080`, not `raspi-mock-lan`'s `9000`: the app's `HostPolicy` only
    accepts allowlisted hosts on port `8080`, so a `:9000` `Host` header returns
    `421 Misdirected Request` before the live row is exercised.

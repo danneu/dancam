@@ -535,7 +535,7 @@ def command_int(command: dict[str, Any], field: str) -> int | None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rec-dir", default=os.environ.get("DANCAM_REC_DIR", "/home/dan/rec"))
+    parser.add_argument("--rec-dir", default=os.environ.get("DANCAM_REC_DIR", "/var/lib/dancam/rec"))
     parser.add_argument("--preview-fps", type=float, default=10)
     parser.add_argument("--fake", action="store_true")
     parser.add_argument("--fake-sensor-fps", type=float, default=30)

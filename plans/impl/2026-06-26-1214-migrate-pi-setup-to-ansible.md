@@ -29,13 +29,13 @@ Human-only and runtime-only steps stay in the README.
 ## Scope and boundaries (three owners, no overlap)
 
 - **Ansible** owns system state: apt, `config.txt` camera overlay, Avahi scoping,
-  locale, the `dancam-ap` NetworkManager profile, and `dan`'s `video`-group
+  locale, the `dancam-ap` NetworkManager profile, and `<user>`'s `video`-group
   membership (the camera backend needs it).
 - **`deploy.sh` is untouched** -- it owns the Nix cross-build + rsync of the
   `dancam` binary and the systemd unit, and the fast restart loop. Not folded into
   Ansible: the hot dev loop must stay seconds, not a playbook run. The unit now
   carries `Environment=DANCAM_BACKEND=camera` (swoop `fox`, commit `b47a943`) and
-  `Environment=DANCAM_REC_DIR=/home/dan/rec` (swoop `jet`, commit `8eac682`); both
+  `Environment=DANCAM_REC_DIR=/home/<user>/rec` (swoop `jet`, commit `8eac682`); both
   envs stay the unit's (deploy.sh-owned) concern -- Ansible deliberately does **not**
   manage them, so the boundary is intentional, not an omission. No Ansible
   `StateDirectory`/mkdir task is missing for the rec dir either: `camera.py` creates
@@ -54,12 +54,12 @@ Human-only and runtime-only steps stay in the README.
 raspi/ansible/
   ansible.cfg      # interpreter_python=auto_silent; inventory=inventory.ini;
                    # ssh StrictHostKeyChecking=accept-new; pipelining=True
-  inventory.ini    # [dancam] dancam ansible_host=dancam.local ansible_user=dan
-                   #          ansible_ssh_private_key_file=~/.ssh/id_ed25519_danneu
+  inventory.ini    # [dancam] dancam ansible_host=dancam.local ansible_user=<user>
+                   #          ansible_ssh_private_key_file=~/.ssh/id_ed25519
   site.yml         # one play, hosts: dancam, become: true, tasks + handlers
 ```
 
-Mirrors `deploy.sh` defaults (`dan@dancam.local`, key `id_ed25519_danneu`). The
+Mirrors `deploy.sh` defaults (`<user>@dancam.local`, key `id_ed25519`). The
 host is overridable via the Just recipes' `host` parameter (below) for when mDNS
 is flaky and you need to address the Pi at a raw LAN IP. **Provisioning always
 runs over home Wi-Fi** -- task 1 (`apt`) needs internet, and the Pi's AP mode is
@@ -150,16 +150,16 @@ The handlers already carry names (the string `notify:` targets them by).
    secret field unmanaged is also what keeps this task idempotent (round-tripping NM
    secret fields through the module is an unreliable diff). autoconnect=false so
    bringing it up never strands the Mac.`
-9. `ansible.builtin.user` -- `name: dan`, `groups: video`, `append: true`.
+9. `ansible.builtin.user` -- `name: <user>`, `groups: video`, `append: true`.
    `# jet's Picamera2 camera owner (DANCAM_BACKEND=camera, set on the deployed unit)
-   opens the camera under systemd as user dan, which needs video-group membership to
+   opens the camera under systemd as user <user>, which needs video-group membership to
    reach /dev/video11 (bcm2835-codec, used by the hardware MJPEGEncoder) and
    /dev/dma_heap/* (libcamera buffers). The
    Raspberry Pi Imager default user already gets video, so on the Imager bootstrap
    path this is a no-op -- but guaranteeing it declaratively is the whole point of
    this layer: a re-image or alternate provisioning path where the default user
    lacks video would otherwise provision clean yet fail the camera at runtime.
-   append: true so we never strip dan's other groups. This is system state, so the
+   append: true so we never strip <user>'s other groups. This is system state, so the
    playbook owns it rather than SupplementaryGroups on the deploy.sh-owned unit.`
 
 Note: tasks 4-5 deliberately stay on `lineinfile` -- `config.txt` is not INI (its
@@ -211,7 +211,7 @@ playbook does not disturb it (the `psk` field is not managed).
     Mirrors the `just adr-check` precedent: catch YAML/module errors on the Mac
     before reaching for a Pi. `--syntax-check` is shallow (no module-arg
     validation), so `ansible-lint` carries the real coverage.
-  - `--ask-become-pass` because `dan`'s sudo needs a password (same reason
+  - `--ask-become-pass` because `<user>`'s sudo needs a password (same reason
     `deploy.sh` uses `ssh -t`). All provisioning runs over home Wi-Fi (see the
     inventory note); there is no AP provisioning path.
 
@@ -240,7 +240,7 @@ playbook does not disturb it (the `psk` field is not managed).
   the source-verified reason the cipher props must be YAML lists for idempotency.
   Cross-ref ADR 06 **as amended 2026-06-25** (the cipher pin it now automates),
   ADR 07 (`jet`'s Picamera2 owner -- the reason task 3 installs
-  `python3-picamera2`/`ffmpeg` and task 9 guarantees `dan`'s `video` group), and
+  `python3-picamera2`/`ffmpeg` and task 9 guarantees `<user>`'s `video` group), and
   ADR 05 / ADR 01 (the read-only-root deploy model it must respect).
 - **`README.md`**: replace the command bodies of the system-layer steps -- step 3
   (apt upgrade), step 4's config.txt camera-overlay commands only (the camera
@@ -258,7 +258,7 @@ playbook does not disturb it (the `psk` field is not managed).
   the next `nmcli connection up`/`device reapply`) is ops prose that **stays** in the
   README runbook; (b) step 5's `python3 -c "from picamera2 import Picamera2"`
   import-verify and the systemd device/group check **stay** as ops prose -- they
-  confirm the deployed camera opens under `User=dan` with no login session, a runtime
+  confirm the deployed camera opens under `User=<user>` with no login session, a runtime
   check Ansible structurally cannot make; (c) do **not** clobber the deployed-camera
   material in section 9 (`README.md#9. Deploy and run the service`) when
   trimming -- it documents `jet`'s `DANCAM_BACKEND=camera` Picamera2 owner, the
@@ -311,7 +311,7 @@ playbook does not disturb it (the `psk` field is not managed).
   `raspi/docs/design/06-2026-06-25-ap-networking-bring-up.md` (locked profile spec,
   **amended 2026-06-25 for the cipher pin**); `raspi/deploy.sh` (host/key defaults
   to mirror); `raspi/dancam.service` (now carries `DANCAM_BACKEND=camera` and
-  `DANCAM_REC_DIR=/home/dan/rec`, both stay deploy.sh's).
+  `DANCAM_REC_DIR=/home/<user>/rec`, both stay deploy.sh's).
 
 ## Verification
 
@@ -369,9 +369,9 @@ Steps 0-1 are Mac-only (no Pi); steps 2-12 are end to end on the real Pi.
 10. AP path (existing runbook): arm the home-Wi-Fi restore timer, bring `dancam-ap`
     up, join `dancam-dev` from the iPhone, fetch `http://10.42.0.1:8080/v1/health`.
 11. `just raspi-deploy` still works unchanged (binary + unit).
-12. Camera permissions (task 9): `groups dan` includes `video`, so the deployed
+12. Camera permissions (task 9): `groups <user>` includes `video`, so the deployed
     `DANCAM_BACKEND=camera` service can open the camera under systemd. (No-op on an
-    Imager-flashed Pi where `dan` already has it; the task guarantees it regardless.)
+    Imager-flashed Pi where `<user>` already has it; the task guarantees it regardless.)
 
 ## Out of scope / deferred
 
