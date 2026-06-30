@@ -48,6 +48,12 @@ empty drops, and receive-idle timeouts before body bytes are no-progress
 reconnects. Mid-stream drops and receive-idle timeouts after body bytes reset
 the stall count.
 
+A local temp-file failure (write/truncate/seek, or the finalizing close that can
+report a deferred write error -- disk full, I/O error, revoked sandbox) is
+terminal `ClipPullError.file`, never a retry, because reconnecting cannot fix
+local storage. Such a failure ends the pull and deletes the partial temp file
+rather than re-entering the resume loop.
+
 Harden ranged `200` handling. A `200` response to a ranged `If-Range` resume is
 accepted only when it carries an `ETag` different from the validator the app just
 sent. That is the validator-change restart case: truncate the temp file, rewrite

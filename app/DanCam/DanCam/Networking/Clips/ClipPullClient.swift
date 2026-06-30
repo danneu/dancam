@@ -36,7 +36,7 @@ extension ClipPullError: LocalizedError {
         case .malformedResponse(let message):
             "Clip pull response was invalid: \(message)"
         case .file(let message):
-            "Could not prepare clip file: \(message)"
+            "Could not save clip file: \(message)"
         case .transport(let message):
             "Camera transfer failed: \(message)"
         case .exhausted(.consecutiveStalls):
@@ -205,8 +205,8 @@ nonisolated struct ClipPullClient {
             let throughput = elapsedSeconds > 0
                 ? Double(bytesWritten) * 8.0 / 1_000_000.0 / elapsedSeconds
                 : 0
-            outputHandle.closeFile()
             fileHandle = nil
+            try mappingLocalFileErrors("close clip file") { try outputHandle.close() }
             shouldKeepOutput = true
             logger.info(
                 "clip_id=\(clipID, privacy: .public) bytes=\(bytesWritten, privacy: .public) elapsed_s=\(elapsedSeconds, privacy: .public) throughput_mbps=\(throughput, privacy: .public)"
@@ -420,8 +420,10 @@ nonisolated struct ClipPullClient {
             guard let etag = head.headerValue("etag"), etag != resumeETag else {
                 throw ClipPullError.malformedResponse("Ranged 200 did not carry a new validator.")
             }
-            try fileHandle.truncate(atOffset: 0)
-            try fileHandle.seek(toOffset: 0)
+            try mappingLocalFileErrors("reset clip file for restart") {
+                try fileHandle.truncate(atOffset: 0)
+                try fileHandle.seek(toOffset: 0)
+            }
             bytesWritten = 0
             expectedBytes = contentLength(from: head)
             resumeETag = etag
@@ -474,6 +476,20 @@ nonisolated struct ClipPullClient {
         return UInt64(value.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// Run a local temp-file operation, mapping any failure to a terminal
+    /// `ClipPullError.file`. A write/truncate/seek/close failure (disk full, I/O
+    /// error, revoked sandbox -- close can surface a deferred write error) is NOT a
+    /// transport drop -- reconnecting and resuming cannot fix local storage -- so it
+    /// must end the pull, not re-enter the resume loop.
+    /// Routing it through `.file` lands it in `runAttempt`'s terminal `ClipPullError`
+    /// catch instead of the bare `.retry` catch that rides out network drops.
+    private static func mappingLocalFileErrors<T>(
+        _ context: String, _ body: () throws -> T
+    ) throws -> T {
+        do { return try body() }
+        catch { throw ClipPullError.file("\(context): \(error.localizedDescription)") }
+    }
+
     private static func writeDecodedChunks(
         from data: Data,
         decoder: inout HTTPBodyDecoder,
@@ -484,7 +500,9 @@ nonisolated struct ClipPullClient {
     ) throws -> Bool {
         var didWrite = false
         for decodedChunk in try decoder.append(data) where decodedChunk.isEmpty == false {
-            fileHandle.write(decodedChunk)
+            try mappingLocalFileErrors("write clip body") {
+                try fileHandle.write(contentsOf: decodedChunk)
+            }
             bytesWritten += UInt64(decodedChunk.count)
             didWrite = true
             continuation.yield(.progress(bytesWritten: bytesWritten, expected: expectedBytes))
