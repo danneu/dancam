@@ -1,6 +1,6 @@
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::{Duration, Instant},
@@ -17,8 +17,9 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 use crate::{
     backend::{Backend, BackendError, FrameStream},
-    clips::max_clip_seq,
+    clips::{clip_meta, max_clip_seq},
     event_hub::{EventConnection, EventHub},
+    events::Event,
     events::Snapshot,
     jpeg::JpegSplitter,
     recorder::{RecorderEvent, RecorderPhase, SegmentId},
@@ -45,10 +46,12 @@ impl CameraConfig {
         program: impl Into<String>,
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
+        let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+        let rec_dir = rec_dir_arg(&args).unwrap_or_else(|| PathBuf::from(crate::DEFAULT_REC_DIR));
         Self {
             program: program.into(),
-            args: args.into_iter().map(Into::into).collect(),
-            rec_dir: PathBuf::from(crate::DEFAULT_REC_DIR),
+            args,
+            rec_dir,
         }
     }
 
@@ -75,6 +78,15 @@ impl CameraConfig {
         config.rec_dir = PathBuf::from(rec_dir);
         config
     }
+}
+
+fn rec_dir_arg(args: &[String]) -> Option<PathBuf> {
+    args.iter()
+        .find_map(|arg| arg.strip_prefix("--rec-dir=").map(PathBuf::from))
+        .or_else(|| {
+            args.windows(2)
+                .find_map(|window| (window[0] == "--rec-dir").then(|| PathBuf::from(&window[1])))
+        })
 }
 
 #[derive(Clone)]
@@ -144,12 +156,23 @@ impl Backend for CameraBackend {
         if self.hub.phase() == RecorderPhase::Recording {
             return Ok(());
         }
+        if self.hub.live_status().camera_state != CameraState::Running {
+            return Err(BackendError::CameraOffline);
+        }
+
         let start_segment = max_clip_seq(self.rec_dir.as_ref())
             .map(|seq| seq.saturating_add(1))
             .unwrap_or(0);
+        let events = self.hub.drive_now(Input::StartCommand { start_segment });
+        let Some(session) = starting_session(&events) else {
+            return Ok(());
+        };
+
         self.command_and_wait(
-            CommandKind::StartRecording,
-            Some(Input::StartCommand { start_segment }),
+            ChildCommand::StartRecording {
+                session_id: session,
+                start_segment_index: start_segment,
+            },
             |status| status.phase == RecorderPhase::Recording,
         )
         .await
@@ -159,11 +182,18 @@ impl Backend for CameraBackend {
         if self.hub.phase() == RecorderPhase::Idle {
             return Ok(());
         }
-        self.command_and_wait(
-            CommandKind::StopRecording,
-            Some(Input::StopCommand),
-            |status| status.phase == RecorderPhase::Idle,
-        )
+        if self.hub.live_status().camera_state != CameraState::Running {
+            return Err(BackendError::CameraOffline);
+        }
+
+        let events = self.hub.drive_now(Input::StopCommand);
+        if !has_recording_stopping(&events) {
+            return Ok(());
+        }
+
+        self.command_and_wait(ChildCommand::StopRecording, |status| {
+            status.phase == RecorderPhase::Idle
+        })
         .await
     }
 
@@ -195,8 +225,7 @@ impl Backend for CameraBackend {
 impl CameraBackend {
     async fn command_and_wait(
         &self,
-        kind: CommandKind,
-        command_input: Option<Input>,
+        command: ChildCommand,
         predicate: impl Fn(&LiveStatus) -> bool,
     ) -> Result<(), BackendError> {
         let mut live_rx = self.hub.live_rx();
@@ -209,20 +238,18 @@ impl CameraBackend {
         }
 
         let (ack_tx, ack_rx) = oneshot::channel();
-        let (permit_tx, permit_rx) = oneshot::channel();
         self.commands_tx
-            .send(Command {
-                kind,
-                permit_rx,
-                ack_tx,
-            })
+            .send(Command { command, ack_tx })
             .await
             .map_err(|_| BackendError::Channel)?;
-        if let Some(input) = command_input {
-            self.hub.drive_now(input);
-        }
-        let _ = permit_tx.send(());
         ack_rx.await.map_err(|_| BackendError::Channel)??;
+        let status = live_rx.borrow().clone();
+        if predicate(&status) {
+            return Ok(());
+        }
+        if command_failed(&status) {
+            return Err(BackendError::CameraOffline);
+        }
 
         tokio::time::timeout(COMMAND_TIMEOUT, async {
             loop {
@@ -231,10 +258,7 @@ impl CameraBackend {
                 if predicate(&status) {
                     return Ok(());
                 }
-                if matches!(
-                    status.camera_state,
-                    CameraState::Restarting | CameraState::Offline
-                ) {
+                if command_failed(&status) {
                     return Err(BackendError::CameraOffline);
                 }
             }
@@ -244,35 +268,44 @@ impl CameraBackend {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum CommandKind {
-    StartRecording,
+struct Command {
+    command: ChildCommand,
+    ack_tx: oneshot::Sender<Result<(), BackendError>>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+enum ChildCommand {
+    StartRecording {
+        session_id: u64,
+        start_segment_index: SegmentId,
+    },
     StopRecording,
     Shutdown,
-}
-
-impl CommandKind {
-    fn json_line(self) -> &'static [u8] {
-        match self {
-            CommandKind::StartRecording => b"{\"cmd\":\"start_recording\"}\n",
-            CommandKind::StopRecording => b"{\"cmd\":\"stop_recording\"}\n",
-            CommandKind::Shutdown => b"{\"cmd\":\"shutdown\"}\n",
-        }
-    }
-}
-
-struct Command {
-    kind: CommandKind,
-    permit_rx: oneshot::Receiver<()>,
-    ack_tx: oneshot::Sender<Result<(), BackendError>>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum ChildEvent {
     Ready,
-    RecordingStarted,
-    RecordingStopped,
+    RecordingStarted {
+        #[serde(rename = "session_id")]
+        session: u64,
+    },
+    SegmentOpened {
+        #[serde(rename = "session_id")]
+        session: u64,
+        id: SegmentId,
+    },
+    SegmentClosed {
+        #[serde(rename = "session_id")]
+        session: u64,
+        id: SegmentId,
+    },
+    RecordingStopped {
+        #[serde(rename = "session_id")]
+        session: u64,
+    },
     Error {
         #[serde(default)]
         detail: String,
@@ -298,6 +331,7 @@ async fn supervise(
                     child,
                     frames_tx.clone(),
                     hub.clone(),
+                    Arc::from(config.rec_dir.clone().into_boxed_path()),
                     &mut commands_rx,
                     &mut shutdown_rx,
                 )
@@ -367,6 +401,7 @@ async fn run_child(
     mut child: Child,
     frames_tx: watch::Sender<Option<Bytes>>,
     hub: Arc<EventHub>,
+    rec_dir: Arc<Path>,
     commands_rx: &mut mpsc::Receiver<Command>,
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> ChildOutcome {
@@ -390,23 +425,20 @@ async fn run_child(
     };
 
     let stdout_task = tokio::spawn(drain_stdout(stdout, frames_tx));
-    let stderr_task = tokio::spawn(parse_stderr(stderr, hub));
+    let stderr_task = tokio::spawn(parse_stderr(stderr, hub, rec_dir));
 
     loop {
         tokio::select! {
             command = commands_rx.recv() => {
                 let Some(command) = command else {
-                    let _ = write_command(&mut stdin, CommandKind::Shutdown).await;
+                    let _ = write_command(&mut stdin, &ChildCommand::Shutdown).await;
                     let _ = child.wait().await;
                     stdout_task.abort();
                     stderr_task.abort();
                     return ChildOutcome::Shutdown;
                 };
 
-                let result = match command.permit_rx.await {
-                    Ok(()) => write_command(&mut stdin, command.kind).await,
-                    Err(_) => Err(BackendError::Channel),
-                };
+                let result = write_command(&mut stdin, &command.command).await;
                 let _ = command.ack_tx.send(result);
             }
             wait_result = child.wait() => {
@@ -418,7 +450,7 @@ async fn run_child(
                 return ChildOutcome::Exited;
             }
             _ = &mut *shutdown_rx => {
-                let _ = write_command(&mut stdin, CommandKind::Shutdown).await;
+                let _ = write_command(&mut stdin, &ChildCommand::Shutdown).await;
                 if tokio::time::timeout(SHUTDOWN_TIMEOUT, child.wait()).await.is_err() {
                     let _ = child.kill().await;
                     let _ = child.wait().await;
@@ -433,10 +465,12 @@ async fn run_child(
 
 async fn write_command(
     stdin: &mut tokio::process::ChildStdin,
-    kind: CommandKind,
+    command: &ChildCommand,
 ) -> Result<(), BackendError> {
+    let mut line = serde_json::to_vec(command).map_err(|_| BackendError::Channel)?;
+    line.push(b'\n');
     stdin
-        .write_all(kind.json_line())
+        .write_all(&line)
         .await
         .map_err(|_| BackendError::CameraOffline)?;
     stdin.flush().await.map_err(|_| BackendError::CameraOffline)
@@ -462,24 +496,82 @@ async fn drain_stdout(mut stdout: ChildStdout, frames_tx: watch::Sender<Option<B
     }
 }
 
-async fn parse_stderr(stderr: ChildStderr, hub: Arc<EventHub>) {
+async fn parse_stderr(stderr: ChildStderr, hub: Arc<EventHub>, rec_dir: Arc<Path>) {
     let mut lines = BufReader::new(stderr).lines();
+    let mut last_opened: Option<(u64, SegmentId)> = None;
+    let mut pending_closed: Option<(u64, SegmentId)> = None;
 
     while let Ok(Some(line)) = lines.next_line().await {
         match serde_json::from_str::<ChildEvent>(&line) {
             Ok(ChildEvent::Ready) => {
                 hub.drive_now(Input::CameraState(CameraState::Running));
             }
-            Ok(ChildEvent::RecordingStarted) => {
-                let session = hub.session();
+            Ok(ChildEvent::RecordingStarted { session }) => {
                 hub.drive_now(Input::Recorder(RecorderEvent::RecordingStarted { session }));
             }
-            Ok(ChildEvent::RecordingStopped) => {
-                let session = hub.session();
-                hub.drive_now(Input::RecordingStopped {
-                    session,
-                    finalized: None,
-                });
+            Ok(ChildEvent::SegmentOpened { session, id }) => {
+                if let Some((closed_session, closed_id)) = pending_closed.take() {
+                    if closed_session == session {
+                        match clip_meta(rec_dir.as_ref(), closed_id, None) {
+                            Some(finalized) => {
+                                hub.drive_now(Input::SegmentRollover {
+                                    session,
+                                    finalized,
+                                    opened: id,
+                                });
+                                last_opened = Some((session, id));
+                            }
+                            None => {
+                                hub.drive_now(Input::Fail {
+                                    detail: format!("failed to stat finalized segment {closed_id}"),
+                                });
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            closed_session,
+                            opened_session = session,
+                            "dropping cross-session segment rollover"
+                        );
+                        hub.drive_now(Input::Recorder(RecorderEvent::SegmentOpened {
+                            session,
+                            id,
+                        }));
+                        last_opened = Some((session, id));
+                    }
+                } else {
+                    hub.drive_now(Input::Recorder(RecorderEvent::SegmentOpened {
+                        session,
+                        id,
+                    }));
+                    last_opened = Some((session, id));
+                }
+            }
+            Ok(ChildEvent::SegmentClosed { session, id }) => {
+                pending_closed = Some((session, id));
+            }
+            Ok(ChildEvent::RecordingStopped { session }) => {
+                let mut final_stat_failed = false;
+                let finalized = match last_opened {
+                    Some((opened_session, id)) if opened_session == session => {
+                        match clip_meta(rec_dir.as_ref(), id, None) {
+                            Some(finalized) => Some(finalized),
+                            None => {
+                                final_stat_failed = true;
+                                hub.drive_now(Input::Fail {
+                                    detail: format!("failed to stat final segment {id}"),
+                                });
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                };
+                if !final_stat_failed {
+                    hub.drive_now(Input::RecordingStopped { session, finalized });
+                }
+                pending_closed = None;
+                last_opened = None;
             }
             Ok(ChildEvent::Error { detail }) => {
                 tracing::error!(%detail, "camera child error event");
@@ -492,9 +584,29 @@ async fn parse_stderr(stderr: ChildStderr, hub: Arc<EventHub>) {
     }
 }
 
+fn starting_session(events: &[crate::event_hub::SeqEvent]) -> Option<u64> {
+    events.iter().find_map(|event| match event.event {
+        Event::RecordingStarting { session, .. } => Some(session),
+        _ => None,
+    })
+}
+
+fn has_recording_stopping(events: &[crate::event_hub::SeqEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event.event, Event::RecordingStopping { .. }))
+}
+
+fn command_failed(status: &LiveStatus) -> bool {
+    matches!(
+        status.camera_state,
+        CameraState::Restarting | CameraState::Offline
+    ) || status.phase == RecorderPhase::Error
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ChildEvent;
+    use super::{ChildCommand, ChildEvent};
 
     #[test]
     fn child_event_parses_stderr_contract() {
@@ -503,11 +615,47 @@ mod tests {
             ChildEvent::Ready
         );
         assert_eq!(
+            serde_json::from_str::<ChildEvent>(r#"{"event":"recording_started","session_id":7}"#)
+                .unwrap(),
+            ChildEvent::RecordingStarted { session: 7 }
+        );
+        assert_eq!(
+            serde_json::from_str::<ChildEvent>(
+                r#"{"event":"segment_opened","session_id":7,"id":5}"#
+            )
+            .unwrap(),
+            ChildEvent::SegmentOpened { session: 7, id: 5 }
+        );
+        assert_eq!(
+            serde_json::from_str::<ChildEvent>(
+                r#"{"event":"segment_closed","session_id":7,"id":5}"#
+            )
+            .unwrap(),
+            ChildEvent::SegmentClosed { session: 7, id: 5 }
+        );
+        assert_eq!(
+            serde_json::from_str::<ChildEvent>(r#"{"event":"recording_stopped","session_id":7}"#)
+                .unwrap(),
+            ChildEvent::RecordingStopped { session: 7 }
+        );
+        assert_eq!(
             serde_json::from_str::<ChildEvent>(r#"{"event":"error","detail":"camera failed"}"#)
                 .unwrap(),
             ChildEvent::Error {
                 detail: "camera failed".to_string()
             }
+        );
+    }
+
+    #[test]
+    fn child_command_serializes_start_payload() {
+        assert_eq!(
+            serde_json::to_string(&ChildCommand::StartRecording {
+                session_id: 7,
+                start_segment_index: 5
+            })
+            .unwrap(),
+            r#"{"cmd":"start_recording","session_id":7,"start_segment_index":5}"#
         );
     }
 }

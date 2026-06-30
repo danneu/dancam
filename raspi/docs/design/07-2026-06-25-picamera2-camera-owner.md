@@ -77,3 +77,20 @@ control API; the parent can restart the child and surface camera state to the ap
 - **Build the all-Rust camera owner now.** Deferred. It is still the likely end state
   for the car image, but Picamera2 is the fastest supported path to validate the
   concurrency risk on real hardware.
+
+## 2026-06-30 update: session-scoped lifecycle events
+
+The stdio contract now lets Rust own recorder session and segment allocation. A
+`start_recording` command carries `session_id` and `start_segment_index`; the child
+passes `start_segment_index` to ffmpeg's segment muxer and echoes `session_id` on
+`recording_started`, `segment_opened`, `segment_closed`, and `recording_stopped`.
+The `error` event stays session-less because Rust maps it to the recorder control
+failure path for the live session.
+
+Rollover is synthesized by a session-scoped directory watcher. The watcher ignores
+files below the Rust-provided baseline, emits `segment_closed` for the previous open
+segment and `segment_opened` for the new one, and does not drive rollover itself.
+The final segment of a session intentionally has no `segment_closed`; Rust treats
+`recording_stopped` as the finalization signal and builds `ClipMeta` for the last
+`segment_opened` cursor. The fake driver adds `--fake-segment-secs` for lifecycle
+tests, while `--fake-crash-after` remains the crash-path test hook.

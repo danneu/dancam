@@ -4,7 +4,12 @@ use std::{
     time::Duration,
 };
 
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use bytes::Bytes;
+use http_body_util::BodyExt;
 use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines},
@@ -12,13 +17,18 @@ use tokio::{
     sync::mpsc,
 };
 use tokio_stream::StreamExt;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 use dancam::{
     backend::Backend,
     camera::{CameraConfig, CameraProcess},
+    recorder::RecorderPhase,
     world::CameraState,
+    AppState,
 };
+
+const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 
 #[derive(Default)]
 struct TestJpegSplitter {
@@ -118,6 +128,23 @@ async fn send_command(stdin: &mut tokio::process::ChildStdin, cmd: &str) {
     stdin.flush().await.unwrap();
 }
 
+async fn send_start_command(
+    stdin: &mut tokio::process::ChildStdin,
+    session_id: u64,
+    start_segment_index: u32,
+) {
+    stdin
+        .write_all(
+            format!(
+                "{{\"cmd\":\"start_recording\",\"session_id\":{session_id},\"start_segment_index\":{start_segment_index}}}\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    stdin.flush().await.unwrap();
+}
+
 #[tokio::test]
 async fn python_fake_self_test_passes_without_picamera2() {
     if !python3_available().await {
@@ -135,7 +162,7 @@ async fn python_fake_self_test_passes_without_picamera2() {
 }
 
 #[tokio::test]
-async fn python_fake_contract_creates_rec_dir_and_continues_segments() {
+async fn python_fake_contract_honors_start_segment_and_emits_lifecycle() {
     if !python3_available().await {
         return;
     }
@@ -148,6 +175,8 @@ async fn python_fake_contract_creates_rec_dir_and_continues_segments() {
         .arg(&rec_dir)
         .arg("--preview-fps")
         .arg("10")
+        .arg("--fake-segment-secs")
+        .arg("0.2")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -171,17 +200,21 @@ async fn python_fake_contract_creates_rec_dir_and_continues_segments() {
     assert!(frame.starts_with(&[0xff, 0xd8]));
     assert!(frame.ends_with(&[0xff, 0xd9]));
 
-    send_command(&mut stdin, "start_recording").await;
-    wait_for_event(&mut lines, "recording_started").await;
-    send_command(&mut stdin, "start_recording").await;
-    wait_for_event(&mut lines, "recording_started").await;
+    send_start_command(&mut stdin, 99, 5).await;
+    let started = wait_for_event(&mut lines, "recording_started").await;
+    assert_eq!(started["session_id"], 99);
+    let opened = wait_for_event(&mut lines, "segment_opened").await;
+    assert_eq!(opened["session_id"], 99);
+    assert_eq!(opened["id"], 5);
+    let closed = wait_for_event(&mut lines, "segment_closed").await;
+    assert_eq!(closed["session_id"], 99);
+    assert_eq!(closed["id"], 5);
+    let rolled = wait_for_event(&mut lines, "segment_opened").await;
+    assert_eq!(rolled["session_id"], 99);
+    assert_eq!(rolled["id"], 6);
     send_command(&mut stdin, "stop_recording").await;
-    wait_for_event(&mut lines, "recording_stopped").await;
-
-    send_command(&mut stdin, "start_recording").await;
-    wait_for_event(&mut lines, "recording_started").await;
-    send_command(&mut stdin, "stop_recording").await;
-    wait_for_event(&mut lines, "recording_stopped").await;
+    let stopped = wait_for_event(&mut lines, "recording_stopped").await;
+    assert_eq!(stopped["session_id"], 99);
     send_command(&mut stdin, "shutdown").await;
 
     let status = tokio::time::timeout(Duration::from_secs(2), child.wait())
@@ -195,7 +228,9 @@ async fn python_fake_contract_creates_rec_dir_and_continues_segments() {
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect::<Vec<_>>();
     segments.sort();
-    assert_eq!(segments, ["seg_00000.ts", "seg_00001.ts"]);
+    assert!(segments.contains(&"seg_00005.ts".to_string()));
+    assert!(segments.contains(&"seg_00006.ts".to_string()));
+    assert!(!segments.contains(&"seg_00004.ts".to_string()));
 
     let _ = fs::remove_dir_all(rec_dir);
 }
@@ -241,6 +276,81 @@ async fn supervisor_confirms_start_stop_and_records_with_idle_preview_subscriber
 }
 
 #[tokio::test]
+async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("supervisor-lifecycle");
+    fs::create_dir_all(&rec_dir).unwrap();
+    fs::write(rec_dir.join("seg_00004.ts"), b"seed").unwrap();
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "10".to_string(),
+            "--fake-segment-secs".to_string(),
+            "0.2".to_string(),
+        ],
+    );
+    let (backend, control) = CameraProcess::spawn(config);
+    let app = dancam::app(
+        AppState::new(BOOT_ID.to_string(), backend.clone()).with_rec_dir(rec_dir.clone()),
+    );
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    let start = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/start"))
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+
+    wait_for_current_segment(&backend, 5).await;
+    let rolled = wait_for_newer_segment(&backend, 5).await;
+
+    let stop = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/stop"))
+        .await
+        .unwrap();
+    assert_eq!(stop.status(), StatusCode::OK);
+
+    let clips_response = app.clone().oneshot(get_request("/v1/clips")).await.unwrap();
+    assert_eq!(clips_response.status(), StatusCode::OK);
+    let clips_json = response_json(clips_response).await;
+    assert!(
+        clips_json["clips"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|clip| clip["id"].as_u64() == Some(rolled as u64)),
+        "clips were {clips_json}"
+    );
+
+    let pulled = app
+        .oneshot(get_request(&format!("/v1/clips/{rolled}")))
+        .await
+        .unwrap();
+    assert_eq!(pulled.status(), StatusCode::OK);
+    assert!(!pulled
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .is_empty());
+
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
 async fn supervisor_marks_child_restarting_after_crash() {
     if !python3_available().await {
         return;
@@ -263,6 +373,11 @@ async fn supervisor_marks_child_restarting_after_crash() {
     let (backend, control) = CameraProcess::spawn(config);
 
     wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+    wait_for_recorder_phase(&backend, RecorderPhase::Error).await;
+    let snapshot = backend.snapshot();
+    assert_eq!(snapshot.recorder.current_segment, None);
+    assert!(snapshot.recorder.detail.is_some());
     wait_for_camera_state(&backend, CameraState::Restarting).await;
 
     control.shutdown().await;
@@ -379,4 +494,75 @@ async fn wait_for_camera_state(backend: &impl Backend, expected: CameraState) {
     })
     .await
     .unwrap_or_else(|_| panic!("timed out waiting for camera state {expected:?}"));
+}
+
+async fn wait_for_recorder_phase(backend: &impl Backend, expected: RecorderPhase) {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            if backend.snapshot().recorder.phase == expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for recorder phase {expected:?}"));
+}
+
+async fn wait_for_current_segment(backend: &impl Backend, expected: u32) {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            if backend
+                .snapshot()
+                .recorder
+                .current_segment
+                .as_ref()
+                .is_some_and(|segment| segment.id == expected)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for segment {expected}"));
+}
+
+async fn wait_for_newer_segment(backend: &impl Backend, previous: u32) -> u32 {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            if let Some(segment) = backend.snapshot().recorder.current_segment {
+                if segment.id > previous {
+                    return segment.id;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for segment newer than {previous}"))
+}
+
+async fn response_json(response: axum::http::Response<Body>) -> Value {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+fn get_request(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .header("Host", "localhost:8080")
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn recording_request(uri: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("Host", "localhost:8080")
+        .header("Content-Type", "application/json")
+        .header("Idempotency-Key", Uuid::new_v4().to_string())
+        .body(Body::from("{}"))
+        .unwrap()
 }

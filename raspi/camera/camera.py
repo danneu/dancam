@@ -39,15 +39,6 @@ def compute_skip(sensor_fps: float, preview_fps: float) -> int:
     return max(1, math.ceil(sensor_fps / preview_fps))
 
 
-def next_segment_index(rec_dir: Path) -> int:
-    highest = -1
-    for path in rec_dir.iterdir():
-        match = SEGMENT_RE.match(path.name)
-        if match:
-            highest = max(highest, int(match.group(1)))
-    return highest + 1
-
-
 def ensure_rec_dir(rec_dir: Path) -> None:
     rec_dir.mkdir(parents=True, exist_ok=True)
     if not rec_dir.is_dir():
@@ -75,6 +66,27 @@ def emit_event(event: str, **fields: Any) -> None:
     print(json.dumps(payload, separators=(",", ":")), file=sys.stderr, flush=True)
 
 
+def detect_segment_events(baseline: int, prev_max: int | None, names: list[str]) -> list[dict[str, int]]:
+    seqs = sorted(
+        {
+            int(match.group(1))
+            for name in names
+            if (match := SEGMENT_RE.match(name)) is not None
+            and int(match.group(1)) >= baseline
+            and (prev_max is None or int(match.group(1)) > prev_max)
+        }
+    )
+
+    events: list[dict[str, int]] = []
+    current = prev_max
+    for seq in seqs:
+        if current is not None:
+            events.append({"event": "segment_closed", "id": current})
+        events.append({"event": "segment_opened", "id": seq})
+        current = seq
+    return events
+
+
 def run_self_test() -> int:
     assert compute_skip(30, 12) == 3
     assert compute_skip(30, 10) == 3
@@ -96,6 +108,16 @@ def run_self_test() -> int:
         "-segment_start_number",
         "7",
         "/rec/seg_%05d.ts",
+    ]
+    assert detect_segment_events(43, None, ["seg_00042.ts"]) == []
+    assert detect_segment_events(43, None, ["seg_00042.ts", "seg_00043.ts"]) == [
+        {"event": "segment_opened", "id": 43}
+    ]
+    assert detect_segment_events(
+        43, 43, ["seg_00042.ts", "seg_00043.ts", "seg_00044.ts"]
+    ) == [
+        {"event": "segment_closed", "id": 43},
+        {"event": "segment_opened", "id": 44},
     ]
     return 0
 
@@ -157,6 +179,7 @@ class FakeCameraDriver:
         preview_fps: float,
         fake_sensor_fps: float,
         fake_crash_after: int | None,
+        fake_segment_secs: float,
         frames: "queue.Queue[bytes]",
         shutdown: threading.Event,
     ):
@@ -164,6 +187,7 @@ class FakeCameraDriver:
         self.preview_fps = preview_fps
         self.fake_sensor_fps = fake_sensor_fps
         self.fake_crash_after = fake_crash_after
+        self.fake_segment_secs = fake_segment_secs
         self.frames = frames
         self.shutdown = shutdown
         self.skip = compute_skip(fake_sensor_fps, preview_fps)
@@ -172,6 +196,9 @@ class FakeCameraDriver:
         self.recording = threading.Event()
         self.lock = threading.Lock()
         self.current_segment: Path | None = None
+        self.current_segment_index: int | None = None
+        self.current_session_id: int | None = None
+        self.segment_started_at: float | None = None
 
     def start(self) -> None:
         ensure_rec_dir(self.rec_dir)
@@ -179,15 +206,17 @@ class FakeCameraDriver:
         self.preview_thread.start()
         emit_event("ready")
 
-    def start_recording(self) -> None:
+    def start_recording(self, session_id: int, start_segment_index: int) -> None:
         with self.lock:
             if self.recording.is_set():
-                emit_event("recording_started")
+                emit_event("recording_started", session_id=self.current_session_id or session_id)
                 return
 
-            index = next_segment_index(self.rec_dir)
-            self.current_segment = self.rec_dir / f"seg_{index:05d}.ts"
+            self.current_session_id = session_id
+            self.current_segment_index = start_segment_index
+            self.current_segment = self.rec_dir / f"seg_{start_segment_index:05d}.ts"
             self.current_segment.write_bytes(b"fake segment\n")
+            self.segment_started_at = time.monotonic()
             self.recording.set()
             self.recording_thread = threading.Thread(
                 target=self._recording_loop,
@@ -196,20 +225,28 @@ class FakeCameraDriver:
             )
             self.recording_thread.start()
 
-        emit_event("recording_started")
+        emit_event("recording_started", session_id=session_id)
+        emit_event("segment_opened", session_id=session_id, id=start_segment_index)
 
     def stop_recording(self) -> None:
         with self.lock:
             was_recording = self.recording.is_set()
+            session_id = self.current_session_id
             self.recording.clear()
             thread = self.recording_thread
             self.recording_thread = None
-            self.current_segment = None
 
         if was_recording and thread is not None:
             thread.join(timeout=1)
 
-        emit_event("recording_stopped")
+        with self.lock:
+            self.current_segment = None
+            self.current_segment_index = None
+            self.current_session_id = None
+            self.segment_started_at = None
+
+        if was_recording and session_id is not None:
+            emit_event("recording_stopped", session_id=session_id)
 
     def shutdown_driver(self) -> None:
         self.stop_recording()
@@ -235,7 +272,30 @@ class FakeCameraDriver:
 
     def _recording_loop(self) -> None:
         while self.recording.is_set():
-            segment = self.current_segment
+            events: list[dict[str, int]] = []
+            with self.lock:
+                if (
+                    self.segment_started_at is not None
+                    and self.current_segment_index is not None
+                    and time.monotonic() - self.segment_started_at >= self.fake_segment_secs
+                ):
+                    old = self.current_segment_index
+                    new = old + 1
+                    self.current_segment_index = new
+                    self.current_segment = self.rec_dir / f"seg_{new:05d}.ts"
+                    self.current_segment.write_bytes(b"fake segment\n")
+                    self.segment_started_at = time.monotonic()
+                    events = [
+                        {"event": "segment_closed", "id": old},
+                        {"event": "segment_opened", "id": new},
+                    ]
+                session_id = self.current_session_id
+                segment = self.current_segment
+
+            if session_id is not None:
+                for event in events:
+                    emit_event(event["event"], session_id=session_id, id=event["id"])
+
             if segment is not None:
                 with segment.open("ab") as file:
                     file.write(b"tick\n")
@@ -259,6 +319,9 @@ class RealCameraDriver:
         self.preview_encoder = None
         self.h264_encoder = None
         self.recording = False
+        self.current_session_id: int | None = None
+        self.segment_watcher_shutdown: threading.Event | None = None
+        self.segment_watcher_thread: threading.Thread | None = None
 
     def start(self) -> None:
         ensure_rec_dir(self.rec_dir)
@@ -303,31 +366,57 @@ class RealCameraDriver:
         )
         emit_event("ready")
 
-    def start_recording(self) -> None:
+    def start_recording(self, session_id: int, start_segment_index: int) -> None:
         if self.recording:
-            emit_event("recording_started")
+            emit_event("recording_started", session_id=self.current_session_id or session_id)
             return
 
         from picamera2.encoders import H264Encoder
         from picamera2.outputs import FfmpegOutput
 
-        index = next_segment_index(self.rec_dir)
-        output = recording_ffmpeg_output(self.rec_dir, index)
-        self.h264_encoder = H264Encoder(bitrate=10_000_000, repeat=True, iperiod=30)
-        self.picam2.start_encoder(
-            self.h264_encoder,
-            FfmpegOutput(output, audio=False),
-            name="main",
+        watcher_shutdown = threading.Event()
+        watcher_thread = threading.Thread(
+            target=self._watch_segment_events,
+            args=(session_id, start_segment_index, watcher_shutdown),
+            name="segment-watcher",
+            daemon=True,
         )
+        watcher_thread.start()
+
+        output = recording_ffmpeg_output(self.rec_dir, start_segment_index)
+        self.h264_encoder = H264Encoder(bitrate=10_000_000, repeat=True, iperiod=30)
+        try:
+            self.picam2.start_encoder(
+                self.h264_encoder,
+                FfmpegOutput(output, audio=False),
+                name="main",
+            )
+        except Exception:
+            watcher_shutdown.set()
+            watcher_thread.join(timeout=1)
+            raise
+
         self.recording = True
-        emit_event("recording_started")
+        self.current_session_id = session_id
+        self.segment_watcher_shutdown = watcher_shutdown
+        self.segment_watcher_thread = watcher_thread
+        emit_event("recording_started", session_id=session_id)
 
     def stop_recording(self) -> None:
+        session_id = self.current_session_id
         if self.recording and self.h264_encoder is not None:
             self.picam2.stop_encoder(self.h264_encoder)
             self.h264_encoder = None
             self.recording = False
-        emit_event("recording_stopped")
+        if self.segment_watcher_shutdown is not None:
+            self.segment_watcher_shutdown.set()
+        if self.segment_watcher_thread is not None:
+            self.segment_watcher_thread.join(timeout=1)
+        self.segment_watcher_shutdown = None
+        self.segment_watcher_thread = None
+        self.current_session_id = None
+        if session_id is not None:
+            emit_event("recording_stopped", session_id=session_id)
 
     def shutdown_driver(self) -> None:
         try:
@@ -338,6 +427,29 @@ class RealCameraDriver:
         finally:
             self.shutdown.set()
 
+    def _watch_segment_events(
+        self,
+        session_id: int,
+        baseline: int,
+        watcher_shutdown: threading.Event,
+    ) -> None:
+        prev_max: int | None = None
+
+        def scan_once() -> None:
+            nonlocal prev_max
+            try:
+                names = [path.name for path in self.rec_dir.iterdir()]
+            except FileNotFoundError:
+                names = []
+            for event in detect_segment_events(baseline, prev_max, names):
+                emit_event(event["event"], session_id=session_id, id=event["id"])
+                if event["event"] == "segment_opened":
+                    prev_max = event["id"]
+
+        while not watcher_shutdown.wait(0.25):
+            scan_once()
+        scan_once()
+
 
 def run(args: argparse.Namespace) -> int:
     if args.preview_fps <= 0:
@@ -345,6 +457,9 @@ def run(args: argparse.Namespace) -> int:
         return 1
     if args.fake_sensor_fps <= 0:
         emit_event("error", detail="--fake-sensor-fps must be positive")
+        return 1
+    if args.fake_segment_secs <= 0:
+        emit_event("error", detail="--fake-segment-secs must be positive")
         return 1
 
     rec_dir = Path(args.rec_dir).expanduser()
@@ -361,6 +476,7 @@ def run(args: argparse.Namespace) -> int:
             preview_fps=args.preview_fps,
             fake_sensor_fps=args.fake_sensor_fps,
             fake_crash_after=args.fake_crash_after,
+            fake_segment_secs=args.fake_segment_secs,
             frames=frames,
             shutdown=shutdown,
         )
@@ -385,7 +501,15 @@ def run(args: argparse.Namespace) -> int:
 
             match command.get("cmd"):
                 case "start_recording":
-                    driver.start_recording()
+                    session_id = command_int(command, "session_id")
+                    start_segment_index = command_int(command, "start_segment_index")
+                    if session_id is None or start_segment_index is None:
+                        emit_event(
+                            "error",
+                            detail="start_recording requires integer session_id and start_segment_index",
+                        )
+                        continue
+                    driver.start_recording(session_id, start_segment_index)
                 case "stop_recording":
                     driver.stop_recording()
                 case "shutdown":
@@ -400,6 +524,15 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
 
+def command_int(command: dict[str, Any], field: str) -> int | None:
+    value = command.get(field)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rec-dir", default=os.environ.get("DANCAM_REC_DIR", "/home/dan/rec"))
@@ -407,6 +540,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fake", action="store_true")
     parser.add_argument("--fake-sensor-fps", type=float, default=30)
     parser.add_argument("--fake-crash-after", type=int)
+    parser.add_argument("--fake-segment-secs", type=float, default=30)
     parser.add_argument("--self-test", action="store_true")
     return parser.parse_args()
 
