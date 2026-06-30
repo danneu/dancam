@@ -203,4 +203,4 @@ No README change: app-only, no Pi provisioning/onboard-state impact.
 
 ## Commit progress
 - [x] 1. fix(app): make clip-pull local file failures terminal
-- [ ] 2. refactor(app): replace deprecated FileHandle.closeFile() with throwing close()
+- [x] 2. refactor(app): replace deprecated FileHandle.closeFile() with throwing close()

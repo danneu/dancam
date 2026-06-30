@@ -220,19 +220,19 @@ nonisolated struct ClipPullClient {
             )))
             continuation.finish()
         } catch is CancellationError {
-            fileHandle?.closeFile()
+            try? fileHandle?.close()
             if shouldKeepOutput == false, let outputURL {
                 try? FileManager.default.removeItem(at: outputURL)
             }
             continuation.finish()
         } catch let error as ClipPullError {
-            fileHandle?.closeFile()
+            try? fileHandle?.close()
             if shouldKeepOutput == false, let outputURL {
                 try? FileManager.default.removeItem(at: outputURL)
             }
             continuation.finish(throwing: error)
         } catch {
-            fileHandle?.closeFile()
+            try? fileHandle?.close()
             if shouldKeepOutput == false, let outputURL {
                 try? FileManager.default.removeItem(at: outputURL)
             }

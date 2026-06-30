@@ -159,7 +159,7 @@ nonisolated private final class ProgressiveSegmenterPipeline: @unchecked Sendabl
         guard isCancelled == false else { return }
 
         isCancelled = true
-        fileHandle?.closeFile()
+        try? fileHandle?.close()
         fileHandle = nil
         server?.shutdown()
         server = nil
@@ -217,7 +217,7 @@ nonisolated private final class ProgressiveSegmenterPipeline: @unchecked Sendabl
         guard didFail == false else { return }
 
         didFail = true
-        fileHandle?.closeFile()
+        try? fileHandle?.close()
         fileHandle = nil
         server?.shutdown()
         server = nil
