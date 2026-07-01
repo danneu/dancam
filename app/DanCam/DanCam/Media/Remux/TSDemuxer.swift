@@ -41,7 +41,7 @@ nonisolated enum TSDemuxer {
 }
 
 nonisolated struct IncrementalTSDemuxer {
-    private static let logger = Logger(subsystem: "com.danneu.dancam", category: "ts-demux")
+    private static let logger = Log.tsDemux
 
     private var residual = Data()
     private var parserState = TransportStreamH264Parser.State()

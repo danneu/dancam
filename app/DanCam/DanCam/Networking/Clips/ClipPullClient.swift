@@ -118,7 +118,7 @@ nonisolated struct ClipPullClient {
     private static let baseBackoff = Duration.milliseconds(250)
     private static let maxBackoff = Duration.seconds(4)
 
-    private static let logger = Logger(subsystem: "com.danneu.dancam", category: "pull")
+    private static let logger = Log.pull
     private static let signposter = OSSignposter(logger: logger)
 
     private enum AttemptOutcome {

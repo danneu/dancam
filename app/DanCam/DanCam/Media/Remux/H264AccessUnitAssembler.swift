@@ -2,7 +2,7 @@ import Foundation
 import OSLog
 
 nonisolated enum H264AccessUnitAssembler {
-    private static let logger = Logger(subsystem: "com.danneu.dancam", category: "h264-au")
+    private static let logger = Log.h264
 
     /// Strictly-increasing DTS is the per-clip assembler contract (see the timestamp
     /// invariant in raspi ADR 01). Returns the positive tick gap, or nil when `next` does
