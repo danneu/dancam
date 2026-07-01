@@ -1,10 +1,12 @@
 import UIKit
 
 final class HealthViewController: UIViewController {
+    private let dependencies: AppDependencies
     private let store: Store<HealthFeature.State, HealthFeature.Action, AppDependencies>
     private let appStore: AppStore
     private var observation: StoreObservation?
     private var connectionObservation: StoreObservation?
+    private(set) var lastExportOutcome: Result<String, Error>?
 
     private let scrollView = UIScrollView()
     private let statusLabel = UILabel()
@@ -16,11 +18,13 @@ final class HealthViewController: UIViewController {
     private let telemetryStack = UIStackView()
     private let errorLabel = UILabel()
     private let reloadButton = UIButton(type: .system)
+    private let exportLogsButton = UIButton(type: .system)
 
     init(
         dependencies: AppDependencies,
         store appStore: AppStore
     ) {
+        self.dependencies = dependencies
         store = Store(
             initialState: .idle,
             dependencies: dependencies,
@@ -75,6 +79,18 @@ final class HealthViewController: UIViewController {
         reloadButton.setTitle("Reload", for: .normal)
         reloadButton.addTarget(self, action: #selector(reloadTapped), for: .touchUpInside)
 
+        exportLogsButton.setTitle("Export logs", for: .normal)
+        exportLogsButton.addTarget(self, action: #selector(exportLogsTapped), for: .touchUpInside)
+
+        let buttonStack = UIStackView(arrangedSubviews: [
+            reloadButton,
+            exportLogsButton,
+        ])
+        buttonStack.axis = .horizontal
+        buttonStack.spacing = 12
+        buttonStack.alignment = .fill
+        buttonStack.distribution = .fillEqually
+
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = UIStackView(arrangedSubviews: [
@@ -86,7 +102,7 @@ final class HealthViewController: UIViewController {
             telemetryHeaderLabel,
             telemetryStack,
             errorLabel,
-            reloadButton,
+            buttonStack,
         ])
         stack.axis = .vertical
         stack.spacing = 12
@@ -158,5 +174,65 @@ final class HealthViewController: UIViewController {
 
     @objc private func reloadTapped() {
         store.send(.reload)
+    }
+
+    @objc private func exportLogsTapped() {
+        Task { [weak self] in
+            await self?.exportLogs()
+        }
+    }
+
+    func buildExportText() async -> Result<String, Error> {
+        let result: Result<String, Error>
+
+        do {
+            let body = try await dependencies.logExporter.export(.seconds(600))
+            result = .success("""
+            DanCam log export
+            App version: \(Self.appVersion)
+            State snapshot: \(appStore.state.logSnapshot)
+
+            \(body)
+            """)
+        } catch {
+            result = .failure(error)
+        }
+
+        lastExportOutcome = result
+        return result
+    }
+
+    func exportLogsForTesting() async {
+        await exportLogs()
+    }
+
+    var errorText: String? {
+        errorLabel.text
+    }
+
+    var isErrorVisible: Bool {
+        errorLabel.isHidden == false
+    }
+
+    private func exportLogs() async {
+        switch await buildExportText() {
+        case .success(let text):
+            if errorLabel.text?.hasPrefix("Log export failed:") == true {
+                errorLabel.isHidden = true
+                errorLabel.text = nil
+            }
+            let activityController = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+            present(activityController, animated: true)
+        case .failure(let error):
+            errorLabel.isHidden = false
+            errorLabel.text = "Log export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private static var appVersion: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info["CFBundleVersion"] as? String ?? "unknown"
+        return "\(version) (\(build))"
     }
 }

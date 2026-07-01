@@ -385,7 +385,7 @@ point is `assemble(packets:timescale:)` (no init). So:
 - [x] 1. Log namespace and convention
 - [x] 2. Reducer transition hook
 - [x] 3. Pipeline coverage
-- [ ] 4. In-app export
+- [x] 4. In-app export
 - [ ] 5. Docs
 
 ## Implementation notes
@@ -395,6 +395,8 @@ point is `assemble(packets:timescale:)` (no init). So:
 - The remux facade logs untyped non-cancellation terminal errors at the same outer
   boundary as `ClipRemuxError` so AVFoundation or file-I/O failures still produce one
   `clip_id`-keyed root-cause line.
+- The live log exporter enumerates `OSLogStore` from an awaited detached task so the
+  synchronous store fetch does not run on the app target's default main actor.
 
 ## Follow Up
 
@@ -402,3 +404,8 @@ point is `assemble(packets:timescale:)` (no init). So:
   `app/DanCam/DanCamTests/Networking/Preview/PreviewClientTests.swift#realHyperChunkedFixtureDecodesMockFrameSequence`;
   it failed twice under `just app-test` on July 1, 2026, but passed when run in
   isolation.
+- Fix the pre-existing Swift concurrency warnings in
+  `app/DanCam/DanCam/Features/Home/HomeViewController.swift#stopLiveTickTimer` and
+  `app/DanCam/DanCam/Features/Home/HomeViewController.swift#updateVisibleLiveElapsed`;
+  timer/deinit paths call main-actor-isolated methods from synchronous nonisolated
+  contexts.

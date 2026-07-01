@@ -10,6 +10,7 @@ struct AppDependencies {
     var clipCache: ClipCache
     var preview: PreviewClient
     var recording: RecordingClient
+    var logExporter: LogExporter
     var sleep: @Sendable (Duration) async -> Void
     var heartbeatTimeout: @Sendable () async throws -> Void
 
@@ -23,6 +24,7 @@ struct AppDependencies {
         clipCache: ClipCache = .noop,
         preview: PreviewClient = .noop,
         recording: RecordingClient = .noop,
+        logExporter: LogExporter = .noop,
         sleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
@@ -39,6 +41,7 @@ struct AppDependencies {
         self.clipCache = clipCache
         self.preview = preview
         self.recording = recording
+        self.logExporter = logExporter
         self.sleep = sleep
         self.heartbeatTimeout = heartbeatTimeout
     }
@@ -93,6 +96,7 @@ struct AppDependencies {
             connectTimeout: configuration.cameraAPIConnectTimeout,
             receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
+        logExporter = .live
         sleep = { duration in
             try? await Task.sleep(for: duration)
         }
