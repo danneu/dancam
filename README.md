@@ -206,7 +206,7 @@ to `DANCAM_HEALTH_TIMEOUT`s, default 60) and fires a macOS notification when the
 service is ready to test. The deployed unit sets:
 
 ```ini
-Environment=DANCAM_BIND=0.0.0.0:8080
+Environment=DANCAM_BIND=[::]:8080
 Environment=DANCAM_BACKEND=camera
 Environment=DANCAM_REC_DIR=/var/lib/dancam/rec
 User=dancam

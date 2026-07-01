@@ -257,4 +257,4 @@ to `[::]:9000`, its loopback health check already passes (port-keyed) rather tha
 ## Commit progress
 
 - [x] 1. fix(raspi): key the Host allowlist to the bound port
-- [ ] 2. fix(raspi): bind the service dual-stack so dancam.local IPv6 resolves
+- [x] 2. fix(raspi): bind the service dual-stack so dancam.local IPv6 resolves

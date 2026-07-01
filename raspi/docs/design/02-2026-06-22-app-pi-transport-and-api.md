@@ -1,6 +1,7 @@
 # ADR: app<->Pi transport and API
 
 - **Status:** Accepted
+- **Amended:** 2026-07-01 -- service listen socket is dual-stack; Host port check uses the bound port.
 - **Date:** 2026-06-22
 - **Owner:** raspi (the Pi serves the wire contract; the canonical copy lives here)
 - **Related:** root `AGENTS.md` (all five cross-cutting principles);
@@ -86,6 +87,14 @@
 > event names (`storage_full`, `temp_warning`) with raw-state deltas and defers
 > `incident_saved`, `incident_resolved`, and `time_synced` as additive future events
 > under the existing unknown-event tolerance rule.
+
+> **Note (2026-07-01): Listen socket.** The deployed service binds one dual-stack
+> `[::]:8080` socket with `IPV6_V6ONLY` disabled, accepting IPv6 and IPv4-mapped
+> clients. That matches Avahi's A and AAAA advertisement for `dancam.local` and avoids
+> Happy Eyeballs connection refusals when iOS tries IPv6 first; the AP path remains
+> IPv4-only per ADR 06. The Host allowlist still gates by name, but an explicit Host
+> port is compared to the service's actually-bound port instead of a hardcoded 8080.
+> On the deployed Pi that port is still 8080.
 
 ## Context
 

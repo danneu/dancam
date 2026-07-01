@@ -134,7 +134,7 @@ over raw `cargo` commands unless they need to test a lower-level Cargo behavior.
 - `just raspi-build` -- build the service for the local host.
 - `just raspi-test` -- run the service test suite.
 - `just raspi-mock` -- run the mock Pi service on `127.0.0.1:8080`.
-- `just raspi-mock-lan` -- run the mock Pi service on `0.0.0.0:9000` for testing from
+- `just raspi-mock-lan` -- run the mock Pi service on `[::]:9000` for testing from
   another LAN device, such as the iPhone.
 
 ### Dev image vs. car image
@@ -230,9 +230,10 @@ shell, not `rustup target add`.
 
 - A **systemd unit** (`raspi/dancam.service`, installed to `/etc/systemd/system/`
   by `deploy.sh`) runs the service: auto-start on boot (also how the car image
-  auto-records on boot) and restart-on-crash. It sets `DANCAM_BIND=0.0.0.0:8080` so
-  the service listens on all interfaces and `DANCAM_BACKEND=camera` so preview uses
-  the real camera; the binary defaults to loopback-only and the mock backend.
+  auto-records on boot) and restart-on-crash. It sets `DANCAM_BIND=[::]:8080` so
+  the service listens on the dual-stack wildcard and `DANCAM_BACKEND=camera` so
+  preview uses the real camera; the binary defaults to loopback-only and the mock
+  backend.
 - Logs: `journalctl -u dancam -f`. Under the read-only car image, point logs at
   `/data` or keep them in RAM -- root is not writable.
 

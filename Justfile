@@ -94,9 +94,9 @@ raspi-mock:
 raspi-mock-clips:
     cd raspi/service && DANCAM_REC_DIR=assets/clips cargo run
 
-# Run the mock Pi service on 0.0.0.0:9000 for LAN device testing.
+# Run the mock Pi service on [::]:9000 for LAN device testing.
 raspi-mock-lan:
-    cd raspi/service && DANCAM_BIND=0.0.0.0:9000 cargo run
+    cd raspi/service && DANCAM_BIND=[::]:9000 cargo run
 
 # Validate ADR filenames: format, per-side contiguous sequence, seq/date order.
 adr-check:

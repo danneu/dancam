@@ -4,7 +4,7 @@ use dancam::{
     app,
     backend::MockBackend,
     camera::{CameraConfig, CameraProcess, SupervisorControl},
-    resolve_boot_id, AppState,
+    dual_stack_listener, resolve_boot_id, AppState,
 };
 use tokio::net::TcpListener;
 
@@ -13,7 +13,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let bind = env::var("DANCAM_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
-    let listener = TcpListener::bind(&bind).await?;
+    let std_listener = dual_stack_listener(&bind)?;
+    std_listener.set_nonblocking(true)?;
+    let listener = TcpListener::from_std(std_listener)?;
     let local_addr = listener.local_addr()?;
     let boot_id = resolve_boot_id();
     let rec_dir = env::var_os("DANCAM_REC_DIR")

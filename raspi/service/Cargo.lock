@@ -106,6 +106,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "socket2",
  "tokio",
  "tokio-stream",
  "tokio-util",

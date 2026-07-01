@@ -15,10 +15,11 @@ Wants=network.target
 
 [Service]
 Type=exec
-# The binary defaults to loopback-only 127.0.0.1:8080. Bind all interfaces so the
-# phone (on the AP) and the Mac (on the LAN) can reach it. 8080 is unprivileged,
-# so no root / CAP_NET_BIND_SERVICE needed.
-Environment=DANCAM_BIND=0.0.0.0:8080
+# The binary defaults to loopback-only 127.0.0.1:8080. Bind the dual-stack [::]
+# wildcard (the binary disables IPV6_V6ONLY) so the phone on the AP (IPv4) and
+# the Mac on the LAN (IPv4 or IPv6) can reach it. 8080 is unprivileged, so no
+# root / CAP_NET_BIND_SERVICE needed.
+Environment=DANCAM_BIND=[::]:8080
 # The deployed Pi uses the real camera backend. Local cargo runs default to the
 # mock backend unless DANCAM_BACKEND=camera is set explicitly.
 Environment=DANCAM_BACKEND=camera

@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    net::{SocketAddr, TcpListener},
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -14,6 +15,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use socket2::{Domain, Protocol, Socket, Type};
 
 use crate::backend::Backend;
 
@@ -94,6 +96,31 @@ pub fn app(state: AppState) -> Router {
         ))
         .layer(middleware::from_fn_with_state(state.clone(), proto_headers))
         .with_state(state)
+}
+
+/// Build a listening TCP socket for `bind` (an `IP:port` literal).
+///
+/// IPv6 sockets are made dual-stack so an IPv6 wildcard also accepts IPv4-mapped
+/// clients. The returned listener is blocking; callers that hand it to Tokio must
+/// set nonblocking mode first.
+pub fn dual_stack_listener(bind: &str) -> std::io::Result<TcpListener> {
+    let addr: SocketAddr = bind.parse().map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid DANCAM_BIND {bind:?}: {e}"),
+        )
+    })?;
+
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    if addr.is_ipv6() {
+        // macOS defaults IPv6 listeners to v6-only; the Pi advertises both families.
+        socket.set_only_v6(false)?;
+    }
+    socket.set_reuse_address(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(1024)?;
+
+    Ok(socket.into())
 }
 
 pub fn resolve_boot_id() -> String {
@@ -216,7 +243,14 @@ fn parse_host_header(raw_host: &str) -> Option<(String, Option<u16>)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_boot_id, parse_host_header, HostPolicy};
+    use std::{
+        io::ErrorKind,
+        net::{TcpListener, TcpStream},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use super::{dual_stack_listener, parse_boot_id, parse_host_header, HostPolicy};
 
     #[test]
     fn parse_boot_id_trims_procfs_newline() {
@@ -228,6 +262,20 @@ mod tests {
             parse_boot_id("3f1c0e7a-8f3b-4e15-b196-20e0416af749"),
             "3f1c0e7a-8f3b-4e15-b196-20e0416af749"
         );
+    }
+
+    #[test]
+    fn dual_stack_listener_accepts_ipv4_client() {
+        let listener = dual_stack_listener("[::]:0").expect("bind [::]:0");
+
+        assert_accepts_ipv4_client(listener);
+    }
+
+    #[test]
+    fn ipv4_listener_accepts_ipv4_client() {
+        let listener = dual_stack_listener("127.0.0.1:0").expect("bind 127.0.0.1:0");
+
+        assert_accepts_ipv4_client(listener);
     }
 
     #[test]
@@ -269,5 +317,39 @@ mod tests {
             parse_host_header("DANCAM.local"),
             Some(("dancam.local".to_string(), None))
         );
+    }
+
+    fn assert_accepts_ipv4_client(listener: TcpListener) {
+        let port = listener.local_addr().expect("listener local addr").port();
+        listener.set_nonblocking(true).expect("set nonblocking");
+        let accept_thread = thread::spawn(move || accept_before_deadline(listener));
+
+        let client = TcpStream::connect(("127.0.0.1", port)).expect("connect IPv4 client");
+        drop(client);
+
+        accept_thread
+            .join()
+            .expect("accept thread panicked")
+            .expect("accept IPv4 client");
+    }
+
+    fn accept_before_deadline(listener: TcpListener) -> std::io::Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        loop {
+            match listener.accept() {
+                Ok((_stream, _addr)) => return Ok(()),
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            "listener did not accept IPv4 client",
+                        ));
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 }
