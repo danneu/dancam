@@ -55,6 +55,23 @@ correctness) and `swift-testing-pro` (TestStore + reducer tests). `swiftui-pro` 
 used because the app is UIKit. `swiftdata-pro` applies only if/when SwiftData
 persistence lands. Prefer Swift Testing over XCTest for new unit tests.
 
+## Logging
+
+App diagnostics use Apple unified logging through the app-owned `Log` namespace.
+
+- Subsystem: `com.danneu.dancam`.
+- Categories double as greppable tags (`reducer`, `pull`, `remux`, `playback`, `nav`,
+  and media parser categories).
+- Levels: `.error` for failures, `.notice` for state transitions and pipeline
+  boundaries that must reach exports, `.info` for live detail, and `.debug` for hot
+  paths and no-op transitions. `.notice` and higher are the export-critical levels;
+  `.info` and `.debug` are live/in-memory diagnostics and can be absent from in-app
+  log exports.
+- Diagnostic values default to `privacy: .public`; opt specific values back to
+  private only when they are actually sensitive.
+- Use `clip_id=<Int>` as the correlation field for clip pull, remux, playback, and
+  cache-adjacent logs.
+
 ## CarPlay
 
 The surprising constraint: third-party CarPlay apps **cannot render a live camera
@@ -121,3 +138,5 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   progress, bound no-progress and runaway reconnects, and surface typed failures.
 - `13-2026-07-01-durable-clip-cache.md` -- delete the progressive loopback player and
   make cached fast-start MP4 the sole clip playback and future export artifact.
+- `14-2026-07-01-structured-logging-and-export.md` -- use Apple unified logging as the
+  app's diagnostic stream and expose current-process log export from the Debug screen.

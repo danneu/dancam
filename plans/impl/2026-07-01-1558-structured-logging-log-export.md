@@ -386,7 +386,7 @@ point is `assemble(packets:timescale:)` (no init). So:
 - [x] 2. Reducer transition hook
 - [x] 3. Pipeline coverage
 - [x] 4. In-app export
-- [ ] 5. Docs
+- [x] 5. Docs
 
 ## Implementation notes
 

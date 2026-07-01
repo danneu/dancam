@@ -86,6 +86,11 @@ app-build:
 app-test:
     xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' -only-testing:DanCamTests test
 
+# For a physical device, use Console.app and filter subsystem == "com.danneu.dancam".
+# Stream DanCam unified logs from the booted simulator.
+app-logs:
+    xcrun simctl spawn booted log stream --level debug --predicate 'subsystem == "com.danneu.dancam"'
+
 # Run the mock Pi service on 127.0.0.1:8080 for local dev.
 raspi-mock:
     cd raspi/service && DANCAM_REC_DIR=.mock-rec DANCAM_MOCK_SEGMENT_SECS=5 cargo run
