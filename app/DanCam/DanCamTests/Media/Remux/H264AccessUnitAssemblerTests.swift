@@ -109,13 +109,13 @@ struct H264AccessUnitAssemblerTests {
         var readyEventCount = 0
 
         for packet in [first, malformed, second] {
-            let output = try assembler.append([packet])
+            let output = assembler.append([packet])
             streamingUnits.append(contentsOf: output.accessUnits)
             if output.didBecomeReady {
                 readyEventCount += 1
             }
         }
-        streamingUnits.append(contentsOf: try assembler.finish().accessUnits)
+        streamingUnits.append(contentsOf: assembler.finish().accessUnits)
 
         #expect(readyEventCount == 1)
         #expect(streamingUnits == batch.accessUnits)
@@ -137,7 +137,7 @@ struct H264AccessUnitAssemblerTests {
         var readyEventCount = 0
 
         for packet in packets {
-            let output = try assembler.append([packet])
+            let output = assembler.append([packet])
             actualUnits.append(contentsOf: output.accessUnits)
             if let sps = output.sps {
                 actualSPS = sps
@@ -150,7 +150,7 @@ struct H264AccessUnitAssemblerTests {
             }
         }
 
-        actualUnits.append(contentsOf: try assembler.finish().accessUnits)
+        actualUnits.append(contentsOf: assembler.finish().accessUnits)
 
         #expect(actualSPS == expected.sps)
         #expect(actualPPS == expected.pps)
@@ -168,7 +168,7 @@ struct H264AccessUnitAssemblerTests {
         let pps = nal(8, [0xee, 0x3c])
         var assembler = StreamingH264AccessUnitAssembler()
 
-        let spsOutput = try assembler.append([
+        let spsOutput = assembler.append([
             H264PESPacket(payload: annexB([sps]), ptsTicks: 0, dtsTicks: 0),
         ])
         #expect(spsOutput.sps == sps)
@@ -176,7 +176,7 @@ struct H264AccessUnitAssemblerTests {
         #expect(spsOutput.didBecomeReady == false)
         #expect(spsOutput.accessUnits.isEmpty)
 
-        let ppsOutput = try assembler.append([
+        let ppsOutput = assembler.append([
             H264PESPacket(payload: annexB([pps]), ptsTicks: 3_000, dtsTicks: 3_000),
         ])
         #expect(ppsOutput.sps == nil)
@@ -184,7 +184,7 @@ struct H264AccessUnitAssemblerTests {
         #expect(ppsOutput.didBecomeReady)
         #expect(ppsOutput.accessUnits.isEmpty)
 
-        let sliceOutput = try assembler.append([
+        let sliceOutput = assembler.append([
             H264PESPacket(
                 payload: annexB([
                     nal(9, [0xf0]),
@@ -201,7 +201,7 @@ struct H264AccessUnitAssemblerTests {
         #expect(sliceOutput.didBecomeReady == false)
         #expect(sliceOutput.accessUnits.isEmpty)
 
-        let finalOutput = try assembler.finish()
+        let finalOutput = assembler.finish()
         #expect(finalOutput.didBecomeReady == false)
         #expect(finalOutput.accessUnits.count == 1)
     }
@@ -230,18 +230,18 @@ struct H264AccessUnitAssemblerTests {
             dtsTicks: 6_000
         )
 
-        let firstOutput = try assembler.append([multiUnitPacket])
+        let firstOutput = assembler.append([multiUnitPacket])
         #expect(firstOutput.didBecomeReady)
         #expect(firstOutput.accessUnits.isEmpty)
 
-        let secondOutput = try assembler.append([nextPacket])
+        let secondOutput = assembler.append([nextPacket])
         #expect(secondOutput.accessUnits.count == 2)
         #expect(secondOutput.accessUnits.map(\.dtsTicks) == [0, 3_000])
         #expect(secondOutput.accessUnits.map(\.durationTicks) == [3_000, 3_000])
         #expect(secondOutput.accessUnits.map(\.isKeyFrame) == [true, false])
         #expect(secondOutput.accessUnits.map(\.nalTypes) == [[7, 8, 9, 5], [9, 1]])
 
-        let finalOutput = try assembler.finish()
+        let finalOutput = assembler.finish()
         #expect(finalOutput.accessUnits.count == 1)
         let finalAccessUnit = try #require(finalOutput.accessUnits.first)
         #expect(finalAccessUnit.dtsTicks == 6_000)
@@ -249,32 +249,102 @@ struct H264AccessUnitAssemblerTests {
     }
 
     @Test
-    func streamingAssemblerRejectsOutOfOrderDTS() throws {
+    func streamingAssemblerDropsOutOfOrderDTS() {
+        let packets = outOfOrderDTSPackets()
+
         var assembler = StreamingH264AccessUnitAssembler()
-        let first = H264PESPacket(
-            payload: annexB([
-                nal(7, [0x64]),
-                nal(8, [0xee]),
-                nal(9, [0xf0]),
-                nal(5, [0x88]),
-            ]),
+        var units: [H264AccessUnit] = []
+        for packet in packets {
+            units.append(contentsOf: assembler.append([packet]).accessUnits)
+        }
+        units.append(contentsOf: assembler.finish().accessUnits)
+
+        #expect(units.count == 3)
+        #expect(units.map(\.dtsTicks) == [0, 3_000, 6_000])
+        #expect(units.map(\.isKeyFrame) == [true, false, false])
+    }
+
+    @Test
+    func batchAssemblerDropsOutOfOrderDTS() throws {
+        let clip = try H264AccessUnitAssembler.assemble(
+            packets: outOfOrderDTSPackets(),
+            timescale: 90_000
+        )
+
+        #expect(clip.accessUnits.count == 3)
+        #expect(clip.accessUnits.map(\.dtsTicks) == [0, 3_000, 6_000])
+        #expect(clip.accessUnits.map(\.isKeyFrame) == [true, false, false])
+    }
+
+    @Test
+    func assemblersTruncateAndAgreeAtDTSWrap() throws {
+        let base = Int64(1) << 33
+        let p0 = H264PESPacket(
+            payload: annexB([nal(9, [0xf0]), nal(7, [0x64]), nal(8, [0xee]), nal(5, [0x88])]),
+            ptsTicks: base - 6_000,
+            dtsTicks: base - 6_000
+        )
+        let p1 = H264PESPacket(
+            payload: annexB([nal(9, [0xf0]), nal(1, [0x11])]),
+            ptsTicks: base - 3_000,
+            dtsTicks: base - 3_000
+        )
+        let p2 = H264PESPacket(
+            payload: annexB([nal(9, [0xf0]), nal(1, [0x22])]),
+            ptsTicks: 0,
+            dtsTicks: 0
+        )
+        let p3 = H264PESPacket(
+            payload: annexB([nal(9, [0xf0]), nal(1, [0x33])]),
             ptsTicks: 3_000,
             dtsTicks: 3_000
         )
-        let second = H264PESPacket(
-            payload: annexB([
-                nal(9, [0xf0]),
-                nal(1, [0x99]),
-            ]),
-            ptsTicks: 1_000,
-            dtsTicks: 1_000
-        )
+        let packets = [p0, p1, p2, p3]
 
-        _ = try assembler.append([first])
+        let batch = try H264AccessUnitAssembler.assemble(packets: packets, timescale: 90_000)
 
-        #expect(throws: ClipRemuxError.invalidH264("DTS not strictly increasing")) {
-            _ = try assembler.append([second])
+        var assembler = StreamingH264AccessUnitAssembler()
+        var streamingUnits: [H264AccessUnit] = []
+        for packet in packets {
+            streamingUnits.append(contentsOf: assembler.append([packet]).accessUnits)
         }
+        streamingUnits.append(contentsOf: assembler.finish().accessUnits)
+
+        #expect(batch.accessUnits.count == 2)
+        #expect(batch.accessUnits.map(\.dtsTicks) == [base - 6_000, base - 3_000])
+        try assertAccessUnits(
+            streamingUnits,
+            match: batch.accessUnits,
+            finalDurationToleranceTicks: 3_000
+        )
+    }
+
+    /// An isolated backward-DTS glitch: `P_bad` (dts 1000) steps back between `P1`
+    /// (dts 3000) and `P2` (dts 6000). Both assemblers drop `P_bad` and keep the
+    /// three in-order units.
+    private func outOfOrderDTSPackets() -> [H264PESPacket] {
+        [
+            H264PESPacket(
+                payload: annexB([nal(9, [0xf0]), nal(7, [0x64]), nal(8, [0xee]), nal(5, [0x88])]),
+                ptsTicks: 0,
+                dtsTicks: 0
+            ),
+            H264PESPacket(
+                payload: annexB([nal(9, [0xf0]), nal(1, [0x11])]),
+                ptsTicks: 3_000,
+                dtsTicks: 3_000
+            ),
+            H264PESPacket(
+                payload: annexB([nal(9, [0xf0]), nal(1, [0x22])]),
+                ptsTicks: 1_000,
+                dtsTicks: 1_000
+            ),
+            H264PESPacket(
+                payload: annexB([nal(9, [0xf0]), nal(1, [0x33])]),
+                ptsTicks: 6_000,
+                dtsTicks: 6_000
+            ),
+        ]
     }
 
     private func annexB(_ units: [Data]) -> Data {

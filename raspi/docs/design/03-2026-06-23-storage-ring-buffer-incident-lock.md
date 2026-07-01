@@ -347,6 +347,15 @@ On boot, the coordinator rebuilds state by:
    > it does not reconcile against `index.log`. When the storage coordinator
    > lands, indexed records remain primary (`mono_end_ms - mono_start_ms`) and
    > TS-PTS parsing becomes the missing-record rebuild fallback described here.
+   > **Note (2026-06-30):** `ts_duration` now rejects an **implausible PTS span** --
+   > one exceeding a 10-minute cap, far above the 30 s `segment_time` -- and returns
+   > `None` (unknown duration) rather than a confidently-wrong multi-hour value. This
+   > catches a 33-bit PTS wrap (~26.5 h span) and any in-segment discontinuity that
+   > inflates the span, making the small-segment whole-file path consistent with the
+   > large-segment head/tail path (which already returns `None` when
+   > `tail.max < head.min`). Duration is best-effort metadata off the recording path;
+   > the per-clip timestamp contract that makes a plausible span the norm is owned by
+   > `01-2026-06-22-crash-safe-recording.md`.
 3. Scanning `incidents/*/` and `state/seen-keys.log` to rebuild incidents,
    idempotency state, and eviction floors. Hardlinks are the lock truth.
 4. Reconciling torn state: drop index entries with no file; discard a torn final

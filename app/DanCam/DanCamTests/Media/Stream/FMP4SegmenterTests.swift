@@ -75,7 +75,7 @@ struct FMP4SegmenterTests {
         var pps: Data?
 
         for packet in packets {
-            let output = try assembler.append([packet])
+            let output = assembler.append([packet])
             accessUnits.append(contentsOf: output.accessUnits)
             if let outputSPS = output.sps {
                 sps = outputSPS
@@ -85,7 +85,7 @@ struct FMP4SegmenterTests {
             }
         }
 
-        accessUnits.append(contentsOf: try assembler.finish().accessUnits)
+        accessUnits.append(contentsOf: assembler.finish().accessUnits)
 
         return DemuxedH264Clip(
             accessUnits: accessUnits,

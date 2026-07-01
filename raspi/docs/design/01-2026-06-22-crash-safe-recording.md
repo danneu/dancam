@@ -38,6 +38,24 @@
 > The `.ts` recording format, short segmentation, inline headers, and crash-safety
 > layers in this ADR remain unchanged.
 
+> **Note (2026-06-30):** This ADR is the authoritative home for the **per-clip
+> timestamp contract** the recording format implies (previously written down nowhere).
+> `recording_ffmpeg_output` (`raspi/camera/camera.py#recording_ffmpeg_output`) applies
+> `-bsf:v setts=pts=N*DURATION:dts=N*DURATION`, forcing `PTS == DTS` in coded order, and
+> `-reset_timestamps 1` with `-segment_time 30`; combined with one `.ts` segment per
+> served clip, each clip's DTS starts near 0, increases strictly frame to frame, and
+> never approaches the 2^33 PTS/DTS wrap. Consumers rely on this: the app's
+> `H264AccessUnitAssembler` (batch and streaming) and the Pi's `ts_duration` treat a
+> non-strictly-increasing DTS or an implausibly large PTS span as *impossible under
+> contract*, so a violation can only mean corruption (the crash-safe threat model) or
+> an out-of-contract producer. Both handle it by **graceful degradation** -- drop the
+> offending access unit / report unknown duration -- never a crash or a whole-clip
+> failure. A 33-bit wrap needs no special 2^33 arithmetic: it is just one trigger of the
+> generic discontinuity policy. The contract is regression-guarded, not merely
+> documented: `raspi/camera/camera.py#run_self_test` asserts the exact ffmpeg arg vector
+> (`setts=pts=N*DURATION:dts=N*DURATION`, `-segment_time 30`, `-reset_timestamps 1`), so
+> silently dropping any of these fails the self-test. Append-only per the ADR convention.
+
 ## Context
 
 The camera unit is powered from the car. When the engine goes off, power is cut

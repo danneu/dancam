@@ -353,9 +353,9 @@ struct TSDemuxerTests {
     }
 
     /// Feeds both the clean and corrupted PES streams through a fresh streaming
-    /// assembler (the unit that throws "DTS not strictly increasing" today) and
-    /// asserts the corrupted stream neither throws nor loses monotonicity, and
-    /// emits exactly one fewer access unit.
+    /// assembler and asserts the corrupted stream keeps its DTS monotonic and emits
+    /// exactly one fewer access unit. The assembler drops any non-increasing-DTS unit
+    /// rather than throwing, so a corrupt PES never aborts the stream.
     private func assertStreamingStaysMonotonic(
         clean: [H264PESPacket],
         corrupted: [H264PESPacket],
@@ -369,8 +369,8 @@ struct TSDemuxerTests {
 
     private func streamingAccessUnits(_ packets: [H264PESPacket]) throws -> [H264AccessUnit] {
         var assembler = StreamingH264AccessUnitAssembler()
-        var accessUnits = try assembler.append(packets).accessUnits
-        accessUnits.append(contentsOf: try assembler.finish().accessUnits)
+        var accessUnits = assembler.append(packets).accessUnits
+        accessUnits.append(contentsOf: assembler.finish().accessUnits)
         return accessUnits
     }
 

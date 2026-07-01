@@ -2,6 +2,17 @@ import Foundation
 import OSLog
 
 nonisolated enum H264AccessUnitAssembler {
+    private static let logger = Logger(subsystem: "com.danneu.dancam", category: "h264-au")
+
+    /// Strictly-increasing DTS is the per-clip assembler contract (see the timestamp
+    /// invariant in raspi ADR 01). Returns the positive tick gap, or nil when `next` does
+    /// not strictly advance `previous` (duplicate DTS, backward corruption, or a 33-bit
+    /// wrap) -- callers drop the offending access unit.
+    static func strictlyIncreasingGap(after previous: Int64, to next: Int64) -> Int64? {
+        let gap = next - previous
+        return gap > 0 ? gap : nil
+    }
+
     static func assemble(
         packets: [H264PESPacket],
         timescale: Int32
@@ -10,9 +21,8 @@ nonisolated enum H264AccessUnitAssembler {
         var pps: Data?
         var pendingUnits: [PendingAccessUnit] = []
 
-        let sortedPackets = packets.sorted(by: { $0.dtsTicks < $1.dtsTicks })
-        for index in sortedPackets.indices {
-            let packet = sortedPackets[index]
+        for index in packets.indices {
+            let packet = packets[index]
             let nalUnits = splitAnnexB(packet.payload)
             guard nalUnits.isEmpty == false else { continue }
 
@@ -34,7 +44,7 @@ nonisolated enum H264AccessUnitAssembler {
             let groups = splitAccessUnitGroups(nalUnits)
             let packetDuration = inferredPacketDuration(
                 at: index,
-                in: sortedPackets,
+                in: packets,
                 groupCount: groups.count
             )
 
@@ -71,27 +81,28 @@ nonisolated enum H264AccessUnitAssembler {
         let frameDuration = inferredFrameDuration(from: pendingUnits)
         var accessUnits: [H264AccessUnit] = []
         accessUnits.reserveCapacity(pendingUnits.count)
+        var held: PendingAccessUnit?
+        var didLogDiscontinuity = false
 
-        for index in pendingUnits.indices {
-            let current = pendingUnits[index]
-            let duration: Int64
-            if pendingUnits.indices.contains(index + 1) {
-                duration = pendingUnits[index + 1].dtsTicks - current.dtsTicks
-                guard duration > 0 else {
-                    throw ClipRemuxError.invalidH264("Access-unit DTS values are not strictly increasing.")
+        for pending in pendingUnits {
+            if let heldUnit = held {
+                guard let duration = strictlyIncreasingGap(
+                    after: heldUnit.dtsTicks,
+                    to: pending.dtsTicks
+                ) else {
+                    if didLogDiscontinuity == false {
+                        didLogDiscontinuity = true
+                        logger.notice("Dropped an access unit whose DTS did not strictly increase.")
+                    }
+                    continue
                 }
-            } else {
-                duration = frameDuration
+                accessUnits.append(heldUnit.accessUnit(durationTicks: duration))
             }
+            held = pending
+        }
 
-            accessUnits.append(H264AccessUnit(
-                sampleData: current.sampleData,
-                ptsTicks: current.ptsTicks,
-                dtsTicks: current.dtsTicks,
-                durationTicks: duration,
-                isKeyFrame: current.isKeyFrame,
-                nalTypes: current.nalTypes
-            ))
+        if let held {
+            accessUnits.append(held.accessUnit(durationTicks: frameDuration))
         }
 
         return DemuxedH264Clip(
@@ -238,6 +249,17 @@ nonisolated enum H264AccessUnitAssembler {
         var dtsTicks: Int64
         var isKeyFrame: Bool
         var nalTypes: [UInt8]
+
+        func accessUnit(durationTicks: Int64) -> H264AccessUnit {
+            H264AccessUnit(
+                sampleData: sampleData,
+                ptsTicks: ptsTicks,
+                dtsTicks: dtsTicks,
+                durationTicks: durationTicks,
+                isKeyFrame: isKeyFrame,
+                nalTypes: nalTypes
+            )
+        }
     }
 }
 
@@ -253,6 +275,7 @@ nonisolated struct StreamingH264AccessUnitAssembler {
     private var deferredPacket: DeferredPacket?
     private var recentDurations: [Int64] = []
     private var didLogMultiAccessUnitPES = false
+    private var didLogDTSDiscontinuity = false
 
     init(
         timescale: Int32 = 90_000,
@@ -269,20 +292,20 @@ nonisolated struct StreamingH264AccessUnitAssembler {
         var didBecomeReady: Bool
     }
 
-    mutating func append(_ packets: [H264PESPacket]) throws -> Output {
+    mutating func append(_ packets: [H264PESPacket]) -> Output {
         var output = makeOutput()
 
         for packet in packets {
-            try flushDeferredPacket(nextDTS: packet.dtsTicks, into: &output)
-            try append(packet, into: &output)
+            flushDeferredPacket(nextDTS: packet.dtsTicks, into: &output)
+            append(packet, into: &output)
         }
 
         return output
     }
 
-    mutating func finish() throws -> Output {
+    mutating func finish() -> Output {
         var output = makeOutput()
-        try flushDeferredPacket(nextDTS: nil, into: &output)
+        flushDeferredPacket(nextDTS: nil, into: &output)
 
         if let held {
             output.accessUnits.append(held.accessUnit(durationTicks: inferredFrameDuration()))
@@ -295,7 +318,7 @@ nonisolated struct StreamingH264AccessUnitAssembler {
     private mutating func append(
         _ packet: H264PESPacket,
         into output: inout Output
-    ) throws {
+    ) {
         let nalUnits = H264AccessUnitAssembler.splitAnnexB(packet.payload)
         latchParameterSets(from: nalUnits, into: &output)
 
@@ -305,7 +328,7 @@ nonisolated struct StreamingH264AccessUnitAssembler {
         guard pendingUnits.isEmpty == false else { return }
 
         if pendingUnits.count == 1 {
-            try push(pendingUnits[0], into: &output)
+            push(pendingUnits[0], into: &output)
         } else {
             logMultiAccessUnitPESIfNeeded(count: pendingUnits.count)
             deferredPacket = DeferredPacket(
@@ -377,16 +400,16 @@ nonisolated struct StreamingH264AccessUnitAssembler {
     private mutating func flushDeferredPacket(
         nextDTS: Int64?,
         into output: inout Output
-    ) throws {
+    ) {
         guard let deferredPacket else { return }
         self.deferredPacket = nil
 
         let unitDuration: Int64
-        if let nextDTS {
-            let packetDuration = nextDTS - deferredPacket.dtsTicks
-            guard packetDuration > 0 else {
-                throw ClipRemuxError.invalidH264("DTS not strictly increasing")
-            }
+        if let nextDTS,
+           let packetDuration = H264AccessUnitAssembler.strictlyIncreasingGap(
+               after: deferredPacket.dtsTicks,
+               to: nextDTS
+           ) {
             unitDuration = max(1, packetDuration / Int64(deferredPacket.units.count))
         } else {
             unitDuration = inferredFrameDuration()
@@ -397,18 +420,21 @@ nonisolated struct StreamingH264AccessUnitAssembler {
             let offset = Int64(index) * unitDuration
             pending.ptsTicks += offset
             pending.dtsTicks += offset
-            try push(pending, into: &output)
+            push(pending, into: &output)
         }
     }
 
     private mutating func push(
         _ pending: PendingAccessUnit,
         into output: inout Output
-    ) throws {
+    ) {
         if let held {
-            let duration = pending.dtsTicks - held.dtsTicks
-            guard duration > 0 else {
-                throw ClipRemuxError.invalidH264("DTS not strictly increasing")
+            guard let duration = H264AccessUnitAssembler.strictlyIncreasingGap(
+                after: held.dtsTicks,
+                to: pending.dtsTicks
+            ) else {
+                logDTSDiscontinuityOnce()
+                return
             }
             recordDuration(duration)
             output.accessUnits.append(held.accessUnit(durationTicks: duration))
@@ -443,6 +469,13 @@ nonisolated struct StreamingH264AccessUnitAssembler {
 
         didLogMultiAccessUnitPES = true
         Self.logger.notice("Deferred \(count) H.264 access units from one PES until the next DTS.")
+    }
+
+    private mutating func logDTSDiscontinuityOnce() {
+        guard didLogDTSDiscontinuity == false else { return }
+
+        didLogDTSDiscontinuity = true
+        Self.logger.notice("Dropped an access unit whose DTS did not strictly increase.")
     }
 
     private struct PendingAccessUnit {

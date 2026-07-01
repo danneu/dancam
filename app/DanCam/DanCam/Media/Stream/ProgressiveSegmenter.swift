@@ -193,7 +193,7 @@ nonisolated private final class ProgressiveSegmenterPipeline: @unchecked Sendabl
     private func consume(packets: [H264PESPacket]) throws {
         guard packets.isEmpty == false else { return }
 
-        let output = try assembler.append(packets)
+        let output = assembler.append(packets)
         try consume(output: output)
     }
 

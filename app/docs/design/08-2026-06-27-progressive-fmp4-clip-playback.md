@@ -163,6 +163,20 @@ Hard or risky:
   continuity-counter tracking stay deferred; the new `discardCurrentPES()` and
   `lastFinishedDTS` PES-lifecycle seams are what a continuity-counter check will
   reuse.
+- 2026-06-30 update: both H.264 assemblers now **drop** any access unit whose DTS
+  does not strictly increase, rather than throwing `ClipRemuxError.invalidH264` and
+  failing the whole clip -- the last un-softened "one anomaly fails the clip" site.
+  They share one primitive (`H264AccessUnitAssembler.strictlyIncreasingGap`): emit the
+  held unit on a positive gap, drop and log-once otherwise. The batch `assemble` no
+  longer pre-sorts packets by DTS; for an in-contract stream decode order already is
+  DTS order (the fixture parity test proves it), and dropping the sort makes a backward
+  step visible to the drop policy instead of silently reordering it into a single
+  ~26.5h-duration sample. A 33-bit PTS/DTS wrap needs no special 2^33 arithmetic: it is
+  one trigger of the generic discontinuity policy, so the durable finalizer and the
+  progressive path both truncate at the discontinuity and stay consistent (the
+  finalizer writes a valid MP4 up to the cut; the progressive playlist finalizes up to
+  the cut on pull completion). The per-clip strictly-increasing-DTS contract this
+  relies on is owned by `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`.
 
 Mitigations:
 

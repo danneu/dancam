@@ -11,6 +11,7 @@ const TS_SYNC: u8 = 0x47;
 const TS_CLOCK_HZ: u64 = 90_000;
 const HEAD_WINDOW: u64 = 256 * 1024;
 const TAIL_WINDOW: u64 = 512 * 1024;
+const MAX_PLAUSIBLE_SEGMENT_MS: u64 = 10 * 60 * 1000; // segment_time is 30s; 10 min is unambiguous headroom
 
 #[derive(Debug, PartialEq, Eq)]
 struct PtsSpan {
@@ -105,9 +106,11 @@ fn duration_ms_from_span(span: PtsSpan) -> Option<u64> {
         .max
         .checked_sub(span.min)?
         .checked_add(span.frame_interval)?;
-    ticks
-        .checked_mul(1000)
-        .map(|ms_ticks| ms_ticks / TS_CLOCK_HZ)
+    let ms = ticks.checked_mul(1000)? / TS_CLOCK_HZ;
+    if ms > MAX_PLAUSIBLE_SEGMENT_MS {
+        return None;
+    }
+    Some(ms)
 }
 
 fn scan_pts_bounds(buf: &[u8]) -> Option<PtsSpan> {
@@ -366,6 +369,13 @@ mod tests {
             segment_duration_ms(&temp.path, buf.len() as u64),
             Some((tail_pts + 3000) * 1000 / 90_000)
         );
+    }
+
+    #[test]
+    fn duration_is_none_for_wrapping_pts_span() {
+        let buf = pts_buffer(&[(1 << 33) - 3000, 0, 3000]);
+        let temp = TempFile::write("wrap.ts", &buf);
+        assert_eq!(segment_duration_ms(&temp.path, buf.len() as u64), None);
     }
 
     #[test]
