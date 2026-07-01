@@ -8,6 +8,8 @@ use axum::{
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::Value;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use tokio_stream::Stream;
 use tower::ServiceExt;
 
@@ -528,6 +530,41 @@ async fn serve_clip_returns_not_found_for_missing_id() {
 
     let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(clip_request("/v1/clips/8"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn serve_clip_returns_unavailable_for_permission_denied_file() {
+    let rec_dir = TempRecDir::new();
+    let clip_path = rec_dir.path.join("seg_00007.ts");
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    fs::set_permissions(&clip_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+    if fs::File::open(&clip_path).is_ok() {
+        fs::set_permissions(&clip_path, fs::Permissions::from_mode(0o600)).unwrap();
+        return;
+    }
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(clip_request("/v1/clips/7"))
+        .await
+        .unwrap();
+
+    fs::set_permissions(&clip_path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn serve_clip_returns_not_found_for_directory_named_like_clip() {
+    let rec_dir = TempRecDir::new();
+    fs::create_dir(rec_dir.path.join("seg_00009.ts")).unwrap();
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(clip_request("/v1/clips/9"))
         .await
         .unwrap();
 

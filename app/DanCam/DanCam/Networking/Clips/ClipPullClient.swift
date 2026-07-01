@@ -126,6 +126,8 @@ nonisolated struct ClipPullClient {
         case retry(madeProgress: Bool)
     }
 
+    private struct RetriableServerStatus: Error {}
+
     private static func producePull(
         clipID: Int,
         clipURL: URL,
@@ -340,6 +342,8 @@ nonisolated struct ClipPullClient {
             throw ClipPullError.malformedResponse(String(describing: error))
         } catch let error as HTTPBodyDecodingError {
             throw ClipPullError.malformedResponse(String(describing: error))
+        } catch is RetriableServerStatus {
+            return .retry(madeProgress: false)
         } catch let error as ClipPullError {
             throw error
         } catch {
@@ -403,6 +407,14 @@ nonisolated struct ClipPullClient {
         continuation: AsyncThrowingStream<ClipPullEvent, Error>.Continuation
     ) throws -> HTTPBodyDecoder {
         let status = head.statusCode
+        if status == 503 {
+            // The Pi returns 503 only for a transient serve_clip read error
+            // (EIO/EBUSY/EACCES on the SD card): the segment is present and
+            // pullable, the read just failed, so reconnect and resume rather
+            // than abandon the clip. Every other status, including any other
+            // 5xx, falls through to the terminal path below.
+            throw RetriableServerStatus()
+        }
 
         // No bytes on disk yet: a plain `GET` answered by a full `200`.
         if usedRange == false {

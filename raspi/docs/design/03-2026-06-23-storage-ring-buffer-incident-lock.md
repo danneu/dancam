@@ -414,6 +414,11 @@ if GC unlinks the directory entry. A stale listing that loses the race to GC get
 a clean 404 and can re-list or resume by `ETag`. The service caps concurrent or
 idle pull fds and treats unlinked-but-open bytes conservatively in GC accounting.
 
+> **Note (2026-07-01):** The clean `404` above is the GC-race /
+> `ErrorKind::NotFound` case. Transient non-NotFound read/open/stat/seek failures now
+> surface as `503 Service Unavailable` and are retriable under the transport ADR's
+> clip-pull error semantics.
+
 This serialization closes the named races: GC vs lock, GC vs post-roll,
 GC vs reader, concurrent locks, and lock during finalize.
 

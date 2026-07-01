@@ -1,5 +1,5 @@
 use std::{
-    io::SeekFrom,
+    io::{self, SeekFrom},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -114,8 +114,8 @@ pub async fn serve_clip(
     }
 
     let path = state.rec_dir.join(segment_filename(id));
-    let mut file = File::open(path).await.map_err(|_| ClipError::NotFound)?;
-    let metadata = file.metadata().await.map_err(|_| ClipError::NotFound)?;
+    let mut file = File::open(path).await.map_err(io_error_to_clip_error)?;
+    let metadata = file.metadata().await.map_err(io_error_to_clip_error)?;
     if !metadata.is_file() {
         return Err(ClipError::NotFound);
     }
@@ -138,7 +138,7 @@ pub async fn serve_clip(
             let len = end - start + 1;
             file.seek(SeekFrom::Start(start))
                 .await
-                .map_err(|_| ClipError::NotFound)?;
+                .map_err(io_error_to_clip_error)?;
             let body = Body::from_stream(ReaderStream::new(file.take(len)));
             Ok(partial_response(body, start, end, total, len, &etag))
         }
@@ -368,9 +368,17 @@ fn server_time_ms() -> u64 {
         .unwrap_or(0)
 }
 
-#[derive(Debug)]
+fn io_error_to_clip_error(error: io::Error) -> ClipError {
+    match error.kind() {
+        io::ErrorKind::NotFound => ClipError::NotFound,
+        _ => ClipError::Unavailable,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum ClipError {
     NotFound,
+    Unavailable,
     RangeNotSatisfiable { total: u64 },
 }
 
@@ -378,6 +386,7 @@ impl IntoResponse for ClipError {
     fn into_response(self) -> Response {
         match self {
             ClipError::NotFound => StatusCode::NOT_FOUND.into_response(),
+            ClipError::Unavailable => StatusCode::SERVICE_UNAVAILABLE.into_response(),
             ClipError::RangeNotSatisfiable { total } => Response::builder()
                 .status(StatusCode::RANGE_NOT_SATISFIABLE)
                 .header(header::CONTENT_RANGE, format!("bytes */{total}"))
@@ -390,15 +399,27 @@ impl IntoResponse for ClipError {
 #[cfg(test)]
 mod tests {
     use super::{
-        http_etag, max_clip_seq, read_finished_clips, resolve_limit, resolve_range,
-        RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
+        http_etag, io_error_to_clip_error, max_clip_seq, read_finished_clips, resolve_limit,
+        resolve_range, ClipError, RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
     };
     use crate::ts_duration::DurationCache;
-    use std::{fs, path::Path};
+    use std::{fs, io, path::Path};
 
     #[test]
     fn http_etag_quotes_the_seq_bytes_pair() {
         assert_eq!(http_etag(1, 7), "\"1-7\"");
+    }
+
+    #[test]
+    fn io_error_to_clip_error_preserves_not_found_and_retries_other_io() {
+        assert_eq!(
+            io_error_to_clip_error(io::Error::from(io::ErrorKind::NotFound)),
+            ClipError::NotFound
+        );
+        assert_eq!(
+            io_error_to_clip_error(io::Error::from(io::ErrorKind::PermissionDenied)),
+            ClipError::Unavailable
+        );
     }
 
     #[test]

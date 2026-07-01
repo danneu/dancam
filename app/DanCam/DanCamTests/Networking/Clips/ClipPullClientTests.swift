@@ -97,6 +97,40 @@ struct ClipPullClientTests {
     }
 
     @Test(.tags(.networking))
+    func retriesFromResumeWhenServerReturns503() async throws {
+        let full = Data("abcdefghijkl".utf8)
+        let etag = "1-12"
+        let call1 = ok200(total: full.count, etag: etag, body: Data(full.prefix(5)))
+        let call3 = partial206(
+            start: 5,
+            end: 11,
+            total: full.count,
+            etag: etag,
+            body: Data(full.dropFirst(5))
+        )
+
+        let responder = ScriptedResponder([.drop([call1]), .finish([wire503()]), .finish([call3])])
+        let client = try makeClient(responder)
+
+        let events = try await collect(client.pull(116, etag))
+        let requests = await responder.requests
+        try #require(requests.count == 3)
+
+        let resumeAfterDrop = String(decoding: requests[1], as: UTF8.self)
+        let resumeAfter503 = String(decoding: requests[2], as: UTF8.self)
+        #expect(resumeAfterDrop.contains("\r\nRange: bytes=5-\r\n"))
+        #expect(resumeAfterDrop.contains("\r\nIf-Range: \"1-12\"\r\n"))
+        #expect(resumeAfter503.contains("\r\nRange: bytes=5-\r\n"))
+        #expect(resumeAfter503.contains("\r\nIf-Range: \"1-12\"\r\n"))
+
+        let result = try requireCompleted(events)
+        defer { try? FileManager.default.removeItem(at: result.fileURL) }
+        #expect(try Data(contentsOf: result.fileURL) == full)
+        #expect(result.bytes == UInt64(full.count))
+        #expect(result.resolvedETag == "\"1-12\"")
+    }
+
+    @Test(.tags(.networking))
     func retriesFromHeadWhenDropLandsBeforeAnyBody() async throws {
         let full = Data("abcdefghijkl".utf8)
         let etag = "1-12"
@@ -118,6 +152,30 @@ struct ClipPullClientTests {
         let result = try requireCompleted(events)
         defer { try? FileManager.default.removeItem(at: result.fileURL) }
         #expect(try Data(contentsOf: result.fileURL) == full)
+    }
+
+    @Test(.tags(.networking))
+    func retriesFromHeadWhenServerReturns503() async throws {
+        let full = Data("abcdefghijkl".utf8)
+        let etag = "1-12"
+        let call2 = ok200(total: full.count, etag: etag, body: full)
+
+        let responder = ScriptedResponder([.finish([wire503()]), .finish([call2])])
+        let client = try makeClient(responder)
+
+        let events = try await collect(client.pull(117, etag))
+        let requests = await responder.requests
+        try #require(requests.count == 2)
+
+        let requestTexts = requests.map { String(decoding: $0, as: UTF8.self) }
+        #expect(requestTexts.allSatisfy { $0.contains("\r\nRange:") == false })
+        #expect(requestTexts.allSatisfy { $0.contains("\r\nIf-Range:") == false })
+
+        let result = try requireCompleted(events)
+        defer { try? FileManager.default.removeItem(at: result.fileURL) }
+        #expect(try Data(contentsOf: result.fileURL) == full)
+        #expect(result.bytes == UInt64(full.count))
+        #expect(result.resolvedETag == "\"1-12\"")
     }
 
     @Test(.tags(.networking))
@@ -205,6 +263,23 @@ struct ClipPullClientTests {
         expectExhausted(error, reason: .consecutiveStalls)
         #expect(requests.count == maxConsecutiveStalls)
         #expect(tempClipFiles(clipID: 109).isEmpty)
+    }
+
+    @Test(.tags(.networking))
+    func persistent503ExhaustsConsecutiveStallBudget() async throws {
+        let maxConsecutiveStalls = 3
+        let responder = ScriptedResponder(Array(
+            repeating: .finish([wire503()]),
+            count: maxConsecutiveStalls
+        ))
+        let client = try makeClient(responder, maxConsecutiveStalls: maxConsecutiveStalls)
+
+        let error = await pullError(client.pull(118, "1-12"))
+        let requests = await responder.requests
+
+        expectExhausted(error, reason: .consecutiveStalls)
+        #expect(requests.count == maxConsecutiveStalls)
+        #expect(tempClipFiles(clipID: 118).isEmpty)
     }
 
     @Test(.tags(.networking))
@@ -329,6 +404,32 @@ struct ClipPullClientTests {
         expectMalformed(error)
         #expect(requests.count == 2)
         #expect(tempClipFiles(clipID: 112).isEmpty)
+    }
+
+    @Test(.tags(.networking))
+    func http404StaysTerminal() async throws {
+        let responder = ScriptedResponder([.finish([wire404()])])
+        let client = try makeClient(responder)
+
+        let error = await pullError(client.pull(119, "1-12"))
+        let requests = await responder.requests
+
+        expectHTTP(error, status: 404)
+        #expect(requests.count == 1)
+        #expect(tempClipFiles(clipID: 119).isEmpty)
+    }
+
+    @Test(.tags(.networking))
+    func http500StaysTerminal() async throws {
+        let responder = ScriptedResponder([.finish([wire500()])])
+        let client = try makeClient(responder)
+
+        let error = await pullError(client.pull(120, "1-12"))
+        let requests = await responder.requests
+
+        expectHTTP(error, status: 500)
+        #expect(requests.count == 1)
+        #expect(tempClipFiles(clipID: 120).isEmpty)
     }
 
     @Test(.tags(.networking))
@@ -518,6 +619,30 @@ struct ClipPullClientTests {
         )
     }
 
+    private func wire503() -> Data {
+        MJPEGWireBuilder.response(
+            statusCode: 503,
+            headers: [("Content-Length", "0")],
+            body: Data()
+        )
+    }
+
+    private func wire404() -> Data {
+        MJPEGWireBuilder.response(
+            statusCode: 404,
+            headers: [("Content-Length", "0")],
+            body: Data()
+        )
+    }
+
+    private func wire500() -> Data {
+        MJPEGWireBuilder.response(
+            statusCode: 500,
+            headers: [("Content-Length", "0")],
+            body: Data()
+        )
+    }
+
     private func partial206(
         start: Int,
         end: Int,
@@ -562,6 +687,14 @@ struct ClipPullClientTests {
             Issue.record("Expected ClipPullError.malformedResponse, got \(String(describing: error)).")
             return
         }
+    }
+
+    private func expectHTTP(_ error: Error?, status: Int) {
+        guard case .http(let actualStatus) = error as? ClipPullError else {
+            Issue.record("Expected ClipPullError.http(\(status)), got \(String(describing: error)).")
+            return
+        }
+        #expect(actualStatus == status)
     }
 
     private func expectExhausted(_ error: Error?, reason: ClipPullError.ExhaustionReason) {

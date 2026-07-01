@@ -7,6 +7,16 @@
   `app/docs/design/11-2026-06-30-receive-idle-deadline.md`;
   root `AGENTS.md` (cross-cutting app<->Pi local API principle)
 
+> **Note (2026-07-01): HTTP 503 ride-through.** The rideable failure set now
+> includes only HTTP `503 Service Unavailable` from `GET /v1/clips/{id}`. The Pi uses
+> `503` as its deliberate present-but-temporarily-unreadable clip signal, matching RFC
+> 9110 section 15.6.4's temporary-unavailability meaning. The pull attempt returns
+> `.retry(madeProgress: false)`, so persistent `503` responses exhaust the existing
+> consecutive-stall budget while transient `503` responses reconnect and resume. All
+> other HTTP statuses remain terminal, including `404` and every other 5xx: `404`
+> still means gone/not pullable, while `500`/`501`/`505` are genuine or permanent
+> server failures that must surface instead of being masked as stall exhaustion.
+
 ## Context
 
 ADR 02 records that clip resume is the normal case on the Pi's 2.4 GHz link. The

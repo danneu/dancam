@@ -96,6 +96,15 @@
 > port is compared to the service's actually-bound port instead of a hardcoded 8080.
 > On the deployed Pi that port is still 8080.
 
+> **Note (2026-07-01): Clip-pull error semantics.** For `GET /v1/clips/{id}`,
+> `404 Not Found` means the segment is not pullable or is gone, including the normal
+> race where GC deleted it before the client opened it. `503 Service Unavailable`
+> means a non-NotFound IO failure prevented serving a present clip, such as a
+> transient SD-card read/open/stat/seek error, and is the only retriable HTTP status
+> in the clip-pull contract. `416 Range Not Satisfiable` keeps its existing
+> resumable-EOF meaning. The app rides exactly `503` as a resumable no-progress retry
+> and treats every other HTTP status, including every other 5xx, as terminal.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --
