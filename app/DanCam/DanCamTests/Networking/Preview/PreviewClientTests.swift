@@ -59,10 +59,7 @@ struct PreviewClientTests {
         let expectedFrames = try (0..<4).map { index in
             try Data(contentsOf: mockPreviewFrameURL(index: index))
         }
-        let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
-        let client = PreviewClient.live(baseURL: baseURL, pinning: .disabled) { _, _ in
-            pacedByteStream(fixture)
-        }
+        let client = try client(chunks: slices(of: fixture, size: 1_024))
 
         let frames = try await collect(client.connect(), count: expectedFrames.count)
 
@@ -76,7 +73,11 @@ struct PreviewClientTests {
         let frame = Data("jpeg".utf8)
         let wire = MJPEGWireBuilder.response(body: MJPEGWireBuilder.part(frame))
         let baseURL = try #require(URL(string: "http://10.42.0.1:8080"))
-        let client = PreviewClient.live(baseURL: baseURL, pinning: .wifi) { _, request in
+        let client = PreviewClient.live(
+            baseURL: baseURL,
+            pinning: .wifi,
+            bufferingPolicy: .unbounded
+        ) { _, request in
             await capture.append(request)
             return AsyncStreamHelpers.byteStream([wire])
         }
@@ -122,7 +123,11 @@ struct PreviewClientTests {
     @Test(.tags(.networking))
     func byteStreamFailureMapsToConnectionFailed() async throws {
         let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
-        let client = PreviewClient.live(baseURL: baseURL, pinning: .disabled) { _, _ in
+        let client = PreviewClient.live(
+            baseURL: baseURL,
+            pinning: .disabled,
+            bufferingPolicy: .unbounded
+        ) { _, _ in
             throw URLError(.cannotConnectToHost)
         }
 
@@ -142,7 +147,11 @@ struct PreviewClientTests {
         let frame = Data("jpeg".utf8)
         let wire = MJPEGWireBuilder.response(body: MJPEGWireBuilder.part(frame))
         let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
-        let client = PreviewClient.live(baseURL: baseURL, pinning: .disabled) { _, _ in
+        let client = PreviewClient.live(
+            baseURL: baseURL,
+            pinning: .disabled,
+            bufferingPolicy: .unbounded
+        ) { _, _ in
             AsyncThrowingStream { continuation in
                 continuation.onTermination = { _ in
                     Task {
@@ -165,9 +174,78 @@ struct PreviewClientTests {
         await byteStreamTerminated.wait()
     }
 
+    @Test(.tags(.networking))
+    func bufferingNewestDropsStaleFramesForSlowConsumer() async throws {
+        let frames = [
+            Data("zero".utf8),
+            Data("one".utf8),
+            Data("two".utf8),
+            Data("three".utf8),
+        ]
+        var body = Data()
+        for frame in frames {
+            body.append(MJPEGWireBuilder.part(frame))
+        }
+        let wire = MJPEGWireBuilder.response(body: body)
+        let allFramesBuffered = AsyncSignal()
+        let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
+        let byteStream = gatedByteStream(wire: wire, allFramesBuffered: allFramesBuffered)
+        let client = PreviewClient.live(
+            baseURL: baseURL,
+            pinning: .disabled,
+            bufferingPolicy: .bufferingNewest(1)
+        ) { _, _ in
+            byteStream
+        }
+
+        let stream = client.connect()
+        await allFramesBuffered.wait()
+        let deliveredFrames = try await collectToEnd(stream)
+
+        #expect(deliveredFrames == [
+            PreviewFrame(sequence: 3, jpeg: frames[3]),
+        ])
+    }
+
+    @Test(.tags(.networking))
+    func unboundedBufferingDeliversAllFramesToSlowConsumer() async throws {
+        let frames = [
+            Data("zero".utf8),
+            Data("one".utf8),
+            Data("two".utf8),
+            Data("three".utf8),
+        ]
+        var body = Data()
+        for frame in frames {
+            body.append(MJPEGWireBuilder.part(frame))
+        }
+        let wire = MJPEGWireBuilder.response(body: body)
+        let allFramesBuffered = AsyncSignal()
+        let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
+        let byteStream = gatedByteStream(wire: wire, allFramesBuffered: allFramesBuffered)
+        let client = PreviewClient.live(
+            baseURL: baseURL,
+            pinning: .disabled,
+            bufferingPolicy: .unbounded
+        ) { _, _ in
+            byteStream
+        }
+
+        let stream = client.connect()
+        await allFramesBuffered.wait()
+        let deliveredFrames = try await collectToEnd(stream)
+
+        #expect(deliveredFrames.map(\.sequence) == Array(frames.indices))
+        #expect(deliveredFrames.map(\.jpeg) == frames)
+    }
+
     private func client(chunks: [Data]) throws -> PreviewClient {
         let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
-        return PreviewClient.live(baseURL: baseURL, pinning: .disabled) { _, _ in
+        return PreviewClient.live(
+            baseURL: baseURL,
+            pinning: .disabled,
+            bufferingPolicy: .unbounded
+        ) { _, _ in
             AsyncStreamHelpers.byteStream(chunks)
         }
     }
@@ -186,6 +264,34 @@ struct PreviewClientTests {
         }
 
         return frames
+    }
+
+    private func collectToEnd(
+        _ stream: AsyncThrowingStream<PreviewFrame, Error>
+    ) async throws -> [PreviewFrame] {
+        var frames: [PreviewFrame] = []
+
+        for try await frame in stream {
+            frames.append(frame)
+        }
+
+        return frames
+    }
+
+    private func slices(of data: Data, size: Int) -> [Data] {
+        stride(from: data.startIndex, to: data.endIndex, by: size).map { start in
+            Data(data[start..<min(start + size, data.endIndex)])
+        }
+    }
+
+    private func gatedByteStream(
+        wire: Data,
+        allFramesBuffered: AsyncSignal
+    ) -> AsyncThrowingStream<Data, Error> {
+        let gate = GatedByteStream(wire: wire, allFramesBuffered: allFramesBuffered)
+        return AsyncThrowingStream(unfolding: {
+            await gate.next()
+        })
     }
 
     private func expectPreviewError(
@@ -225,27 +331,25 @@ struct PreviewClientTests {
             .appending(path: "preview")
             .appending(path: filename)
     }
+}
 
-    private func pacedByteStream(
-        _ data: Data,
-        chunkSize: Int = 1_024
-    ) -> AsyncThrowingStream<Data, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                var offset = data.startIndex
-                while offset < data.endIndex {
-                    let end = data.index(offset, offsetBy: chunkSize, limitedBy: data.endIndex) ?? data.endIndex
-                    continuation.yield(Data(data[offset..<end]))
-                    offset = end
-                    try await Task.sleep(for: .milliseconds(1))
-                }
+private actor GatedByteStream {
+    private let wire: Data
+    private let allFramesBuffered: AsyncSignal
+    private var didYieldWire = false
 
-                continuation.finish()
-            }
+    init(wire: Data, allFramesBuffered: AsyncSignal) {
+        self.wire = wire
+        self.allFramesBuffered = allFramesBuffered
+    }
 
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
+    func next() async -> Data? {
+        guard didYieldWire == false else {
+            await allFramesBuffered.signal()
+            return nil
         }
+
+        didYieldWire = true
+        return wire
     }
 }

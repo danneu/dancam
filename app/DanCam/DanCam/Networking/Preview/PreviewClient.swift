@@ -43,7 +43,12 @@ nonisolated struct PreviewClient {
         connectTimeout: Duration,
         receiveIdleTimeout: Duration
     ) -> PreviewClient {
-        live(baseURL: baseURL, pinning: pinning) { url, request in
+        live(
+            baseURL: baseURL,
+            pinning: pinning,
+            // Lossy by design: live preview wants the freshest frame; stale frames must not queue behind a slow consumer.
+            bufferingPolicy: .bufferingNewest(1)
+        ) { url, request in
             try await NWByteStream.open(
                 url: url,
                 request: request,
@@ -57,6 +62,7 @@ nonisolated struct PreviewClient {
     static func live(
         baseURL: URL,
         pinning: InterfacePinning,
+        bufferingPolicy: AsyncThrowingStream<PreviewFrame, Error>.Continuation.BufferingPolicy,
         openByteStream: @escaping OpenByteStream
     ) -> PreviewClient {
         let previewURL = baseURL.appending(path: "v1/preview/live.mjpeg")
@@ -65,7 +71,7 @@ nonisolated struct PreviewClient {
             let (stream, continuation) = AsyncThrowingStream.makeStream(
                 of: PreviewFrame.self,
                 throwing: Error.self,
-                bufferingPolicy: .bufferingNewest(1)
+                bufferingPolicy: bufferingPolicy
             )
 
             let producerTask = Task.detached {
