@@ -2,7 +2,7 @@ import Foundation
 import OSLog
 
 nonisolated enum TSDemuxer {
-    static func demuxH264(from url: URL) throws -> DemuxedH264Clip {
+    static func demuxH264(from url: URL, clipID: Int? = nil) throws -> DemuxedH264Clip {
         let data: Data
         do {
             data = try Data(contentsOf: url)
@@ -10,25 +10,26 @@ nonisolated enum TSDemuxer {
             throw ClipRemuxError.file("Could not read \(url.lastPathComponent): \(error.localizedDescription)")
         }
 
-        return try demuxH264(from: data)
+        return try demuxH264(from: data, clipID: clipID)
     }
 
-    static func demuxH264(from data: Data) throws -> DemuxedH264Clip {
-        let packets = try demuxH264PESPackets(from: data)
+    static func demuxH264(from data: Data, clipID: Int? = nil) throws -> DemuxedH264Clip {
+        let packets = try demuxH264PESPackets(from: data, clipID: clipID)
 
         return try H264AccessUnitAssembler.assemble(
             packets: packets,
-            timescale: TransportStreamH264Parser.clockTimescale
+            timescale: TransportStreamH264Parser.clockTimescale,
+            clipID: clipID
         )
     }
 
-    static func demuxH264PESPackets(from data: Data) throws -> [H264PESPacket] {
+    static func demuxH264PESPackets(from data: Data, clipID: Int? = nil) throws -> [H264PESPacket] {
         // The finalizer shares the tolerant incremental path: it resyncs after
         // garbage, skips per-packet anomalies (dropping at most one PES each),
         // drops any sub-188-byte residual tail, and emits the final truncated PES
         // as-is so the MP4 can play up to the cut. Appending the whole file creates
         // one transient copy into the demuxer's residual.
-        var demuxer = IncrementalTSDemuxer()
+        var demuxer = IncrementalTSDemuxer(clipID: clipID)
         var packets = demuxer.append(data)
         packets.append(contentsOf: demuxer.finish())
 
@@ -43,6 +44,7 @@ nonisolated enum TSDemuxer {
 nonisolated struct IncrementalTSDemuxer {
     private static let logger = Log.tsDemux
 
+    private let clipID: Int?
     private var residual = Data()
     private var parserState = TransportStreamH264Parser.State()
     private var isSynced = true
@@ -50,7 +52,8 @@ nonisolated struct IncrementalTSDemuxer {
     private var droppedPacketCount = 0
     private var didLogDroppedPacket = false
 
-    init(clockTimescale _: Int32 = TransportStreamH264Parser.clockTimescale) {
+    init(clockTimescale _: Int32 = TransportStreamH264Parser.clockTimescale, clipID: Int? = nil) {
+        self.clipID = clipID
     }
 
     // Never throws: a per-packet anomaly can only skip that packet (dropping at
@@ -126,14 +129,26 @@ nonisolated struct IncrementalTSDemuxer {
         guard didLogResync == false else { return }
 
         didLogResync = true
-        Self.logger.notice("Resynchronized TS parser after dropping \(skippedByteCount) bytes.")
+        if let clipID {
+            Self.logger.notice(
+                "clip_id=\(clipID, privacy: .public) Resynchronized TS parser after dropping \(skippedByteCount, privacy: .public) bytes."
+            )
+        } else {
+            Self.logger.notice("Resynchronized TS parser after dropping \(skippedByteCount) bytes.")
+        }
     }
 
     private mutating func logDroppedPacketIfNeeded(_ reason: TransportStreamH264Parser.SkipReason) {
         guard didLogDroppedPacket == false else { return }
 
         didLogDroppedPacket = true
-        Self.logger.notice("Skipped a corrupt TS packet (\(String(describing: reason))) and continued.")
+        if let clipID {
+            Self.logger.notice(
+                "clip_id=\(clipID, privacy: .public) Skipped a corrupt TS packet (\(String(describing: reason), privacy: .public)) and continued."
+            )
+        } else {
+            Self.logger.notice("Skipped a corrupt TS packet (\(String(describing: reason))) and continued.")
+        }
     }
 }
 

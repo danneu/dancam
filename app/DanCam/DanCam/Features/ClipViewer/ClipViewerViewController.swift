@@ -1,4 +1,5 @@
 import AVKit
+import OSLog
 import UIKit
 
 @MainActor
@@ -17,6 +18,7 @@ final class ClipViewerViewController: UIViewController {
     private var state: ViewerState? {
         didSet {
             guard let state, state != oldValue else { return }
+            logViewerTransition(from: oldValue, to: state)
             render(state)
         }
     }
@@ -233,6 +235,9 @@ final class ClipViewerViewController: UIViewController {
 
     private func play(_ url: URL, source: PlaybackSource) {
         detachPlayer()
+        Log.playback.notice(
+            "clip_id=\(self.clip.id, privacy: .public) phase=play source=\(source.logLabel, privacy: .public)"
+        )
 
         let item = AVPlayerItem(url: url)
         let player = AVPlayer(playerItem: item)
@@ -282,8 +287,14 @@ final class ClipViewerViewController: UIViewController {
         switch source {
         case .cacheHit where didSelfHealCacheHitFailure == false:
             didSelfHealCacheHitFailure = true
+            Log.playback.notice(
+                "clip_id=\(self.clip.id, privacy: .public) phase=self_heal decision=repull source=cacheHit"
+            )
             startPull()
         case .cacheHit, .freshRemux:
+            Log.playback.notice(
+                "clip_id=\(self.clip.id, privacy: .public) phase=self_heal decision=fail source=\(source?.logLabel ?? "unknown", privacy: .public)"
+            )
             fail(message: message)
         case .none:
             break
@@ -296,6 +307,16 @@ final class ClipViewerViewController: UIViewController {
         removeTemporaryFiles()
         detachPlayer()
         state = .failed(message: message)
+    }
+
+    private func logViewerTransition(from oldState: ViewerState?, to newState: ViewerState) {
+        let oldPhase = oldState?.logPhase ?? "none"
+        let newPhase = newState.logPhase
+        guard oldPhase != newPhase else { return }
+
+        Log.playback.notice(
+            "clip_id=\(self.clip.id, privacy: .public) viewer \(oldPhase, privacy: .public) -> \(newPhase, privacy: .public)"
+        )
     }
 
     private func render(_ state: ViewerState) {
@@ -382,6 +403,15 @@ final class ClipViewerViewController: UIViewController {
     private enum PlaybackSource: Equatable {
         case cacheHit
         case freshRemux
+
+        var logLabel: String {
+            switch self {
+            case .cacheHit:
+                "cacheHit"
+            case .freshRemux:
+                "freshRemux"
+            }
+        }
     }
 
     private enum ViewerState: Equatable {
@@ -389,5 +419,18 @@ final class ClipViewerViewController: UIViewController {
         case preparing
         case playing(URL)
         case failed(message: String)
+
+        var logPhase: String {
+            switch self {
+            case .pulling:
+                "pulling"
+            case .preparing:
+                "preparing"
+            case .playing:
+                "playing"
+            case .failed:
+                "failed"
+            }
+        }
     }
 }

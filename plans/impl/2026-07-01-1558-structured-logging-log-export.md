@@ -384,7 +384,7 @@ point is `assemble(packets:timescale:)` (no init). So:
 
 - [x] 1. Log namespace and convention
 - [x] 2. Reducer transition hook
-- [ ] 3. Pipeline coverage
+- [x] 3. Pipeline coverage
 - [ ] 4. In-app export
 - [ ] 5. Docs
 
@@ -392,6 +392,9 @@ point is `assemble(packets:timescale:)` (no init). So:
 
 - Reducer summaries include `clip_count`, `paging`, and cursor presence so clips state
   transitions produce useful lines without logging full clip payloads or cursor values.
+- The remux facade logs untyped non-cancellation terminal errors at the same outer
+  boundary as `ClipRemuxError` so AVFoundation or file-I/O failures still produce one
+  `clip_id`-keyed root-cause line.
 
 ## Follow Up
 

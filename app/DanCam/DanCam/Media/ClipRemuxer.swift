@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 nonisolated struct ClipRemuxResult: Equatable, Sendable {
     var fileURL: URL
@@ -14,9 +15,22 @@ nonisolated struct ClipRemuxer: Sendable {
         do {
             return try await ClipRemuxerEngine.remux(
                 sourceURL: sourceURL,
-                outputURL: outputURL
+                outputURL: outputURL,
+                clipID: clipID
             )
+        } catch let error as ClipRemuxError {
+            Log.remux.error(
+                "clip_id=\(clipID, privacy: .public) phase=remux error=\(String(describing: error), privacy: .public)"
+            )
+            try? FileManager.default.removeItem(at: outputURL)
+            throw error
+        } catch let error as CancellationError {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw error
         } catch {
+            Log.remux.error(
+                "clip_id=\(clipID, privacy: .public) phase=remux error=\(String(describing: error), privacy: .public)"
+            )
             try? FileManager.default.removeItem(at: outputURL)
             throw error
         }

@@ -1,3 +1,4 @@
+import OSLog
 import UIKit
 
 final class AppShellViewController: UIViewController {
@@ -15,6 +16,7 @@ final class AppShellViewController: UIViewController {
         embeddedNavigationController = navigationController
         self.store = store
         super.init(nibName: nil, bundle: nil)
+        embeddedNavigationController.delegate = self
     }
 
     @available(*, unavailable)
@@ -82,5 +84,16 @@ final class AppShellViewController: UIViewController {
         }
 
         previousLink = link
+    }
+}
+
+extension AppShellViewController: UINavigationControllerDelegate {
+    func navigationController(
+        _ navigationController: UINavigationController,
+        didShow viewController: UIViewController,
+        animated: Bool
+    ) {
+        let name = String(describing: type(of: viewController))
+        Log.nav.notice("screen=\(name, privacy: .public)")
     }
 }

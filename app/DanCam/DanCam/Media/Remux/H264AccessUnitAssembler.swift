@@ -15,7 +15,8 @@ nonisolated enum H264AccessUnitAssembler {
 
     static func assemble(
         packets: [H264PESPacket],
-        timescale: Int32
+        timescale: Int32,
+        clipID: Int? = nil
     ) throws -> DemuxedH264Clip {
         var sps: Data?
         var pps: Data?
@@ -101,7 +102,13 @@ nonisolated enum H264AccessUnitAssembler {
                 ) else {
                     if didLogDiscontinuity == false {
                         didLogDiscontinuity = true
-                        logger.notice("Dropped an access unit whose DTS did not strictly increase.")
+                        if let clipID {
+                            logger.notice(
+                                "clip_id=\(clipID, privacy: .public) Dropped an access unit whose DTS did not strictly increase."
+                            )
+                        } else {
+                            logger.notice("Dropped an access unit whose DTS did not strictly increase.")
+                        }
                     }
                     continue
                 }

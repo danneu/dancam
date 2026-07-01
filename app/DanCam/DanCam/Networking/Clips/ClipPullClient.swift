@@ -170,6 +170,7 @@ nonisolated struct ClipPullClient {
 
             attempts: while true {
                 let outcome = try await runAttempt(
+                    clipID: clipID,
                     clipURL: clipURL,
                     openByteStream: openByteStream,
                     fileHandle: outputHandle,
@@ -197,7 +198,12 @@ nonisolated struct ClipPullClient {
                         throw ClipPullError.exhausted(.totalReconnects)
                     }
 
-                    try await sleep(backoffDuration(forConsecutiveStalls: consecutiveStalls))
+                    let backoff = backoffDuration(forConsecutiveStalls: consecutiveStalls)
+                    let reason = madeProgress ? "progress" : "stall"
+                    logger.notice(
+                        "clip_id=\(clipID, privacy: .public) phase=pull_reconnect reason=\(reason, privacy: .public) bytes=\(bytesWritten, privacy: .public) consecutive_stalls=\(consecutiveStalls, privacy: .public) total_reconnects=\(totalReconnects, privacy: .public) backoff_ms=\(milliseconds(in: backoff), privacy: .public)"
+                    )
+                    try await sleep(backoff)
                 }
             }
 
@@ -209,7 +215,7 @@ nonisolated struct ClipPullClient {
             fileHandle = nil
             try mappingLocalFileErrors("close clip file") { try outputHandle.close() }
             shouldKeepOutput = true
-            logger.info(
+            logger.notice(
                 "clip_id=\(clipID, privacy: .public) bytes=\(bytesWritten, privacy: .public) elapsed_s=\(elapsedSeconds, privacy: .public) throughput_mbps=\(throughput, privacy: .public)"
             )
 
@@ -232,13 +238,20 @@ nonisolated struct ClipPullClient {
             if shouldKeepOutput == false, let outputURL {
                 try? FileManager.default.removeItem(at: outputURL)
             }
+            logger.error(
+                "clip_id=\(clipID, privacy: .public) phase=pull error=\(String(describing: error), privacy: .public)"
+            )
             continuation.finish(throwing: error)
         } catch {
+            let pullError = ClipPullError.transport(error.localizedDescription)
             try? fileHandle?.close()
             if shouldKeepOutput == false, let outputURL {
                 try? FileManager.default.removeItem(at: outputURL)
             }
-            continuation.finish(throwing: ClipPullError.transport(error.localizedDescription))
+            logger.error(
+                "clip_id=\(clipID, privacy: .public) phase=pull error=\(String(describing: pullError), privacy: .public)"
+            )
+            continuation.finish(throwing: pullError)
         }
     }
 
@@ -247,6 +260,7 @@ nonisolated struct ClipPullClient {
     /// premature EOF, or a mid-stream transport error), and throws a terminal
     /// `ClipPullError`/`CancellationError` for everything else.
     private static func runAttempt(
+        clipID: Int,
         clipURL: URL,
         openByteStream: @escaping OpenByteStream,
         fileHandle: FileHandle,
@@ -286,6 +300,7 @@ nonisolated struct ClipPullClient {
                         continue
                     case .complete(let head, let leftoverBody):
                         var decoder = try prepareBodyDecoder(
+                            clipID: clipID,
                             head: head,
                             usedRange: usedRange,
                             fileHandle: fileHandle,
@@ -378,6 +393,7 @@ nonisolated struct ClipPullClient {
     /// `expectedBytes`, `resumeETag`, the file) as the status dictates, or throws a
     /// terminal error for a stale/buggy partial.
     private static func prepareBodyDecoder(
+        clipID: Int,
         head: HTTPResponseHead,
         usedRange: Bool,
         fileHandle: FileHandle,
@@ -426,6 +442,10 @@ nonisolated struct ClipPullClient {
                 try fileHandle.truncate(atOffset: 0)
                 try fileHandle.seek(toOffset: 0)
             }
+            let bytesDiscarded = bytesWritten
+            logger.notice(
+                "clip_id=\(clipID, privacy: .public) phase=pull_restart reason=validator_changed bytes_discarded=\(bytesDiscarded, privacy: .public)"
+            )
             bytesWritten = 0
             expectedBytes = contentLength(from: head)
             resumeETag = etag
@@ -515,5 +535,10 @@ nonisolated struct ClipPullClient {
     private static func seconds(in duration: Duration) -> Double {
         let components = duration.components
         return Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000.0
+    }
+
+    private static func milliseconds(in duration: Duration) -> Double {
+        let components = duration.components
+        return Double(components.seconds) * 1_000.0 + Double(components.attoseconds) / 1_000_000_000_000_000.0
     }
 }

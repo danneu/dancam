@@ -1,13 +1,15 @@
 import AVFoundation
 import Foundation
+import OSLog
 
 nonisolated enum ClipRemuxerEngine {
     static func remux(
         sourceURL: URL,
-        outputURL: URL
+        outputURL: URL,
+        clipID: Int
     ) async throws -> ClipRemuxResult {
         let worker = Task.detached(priority: .userInitiated) {
-            try remuxSynchronously(sourceURL: sourceURL, outputURL: outputURL)
+            try remuxSynchronously(sourceURL: sourceURL, outputURL: outputURL, clipID: clipID)
         }
 
         return try await withTaskCancellationHandler {
@@ -19,14 +21,28 @@ nonisolated enum ClipRemuxerEngine {
 
     private static func remuxSynchronously(
         sourceURL: URL,
-        outputURL: URL
+        outputURL: URL,
+        clipID: Int
     ) throws -> ClipRemuxResult {
         try Task.checkCancellation()
         let fileManager = FileManager.default
         try? fileManager.removeItem(at: outputURL)
 
-        let clip = try TSDemuxer.demuxH264(from: sourceURL)
-        return try write(clip: clip, to: outputURL)
+        let sourceBytes = try fileSize(sourceURL)
+        Log.remux.notice(
+            "clip_id=\(clipID, privacy: .public) phase=remux_start source_bytes=\(sourceBytes, privacy: .public)"
+        )
+
+        let clip = try TSDemuxer.demuxH264(from: sourceURL, clipID: clipID)
+        Log.remux.debug(
+            "clip_id=\(clipID, privacy: .public) first_decode_ticks=\(clip.firstDecodeTicks, privacy: .public)"
+        )
+
+        let result = try write(clip: clip, to: outputURL)
+        Log.remux.notice(
+            "clip_id=\(clipID, privacy: .public) phase=remux_finish out_bytes=\(result.bytes, privacy: .public) duration_s=\(seconds(in: result.duration), privacy: .public)"
+        )
+        return result
     }
 
     static func write(
@@ -112,6 +128,11 @@ nonisolated enum ClipRemuxerEngine {
 
     private static func duration(fromTicks ticks: Int64, timescale: Int32) -> Duration {
         .nanoseconds(Int64(Double(ticks) * 1_000_000_000.0 / Double(timescale)))
+    }
+
+    private static func seconds(in duration: Duration) -> Double {
+        let components = duration.components
+        return Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000.0
     }
 
     private static func fileSize(_ url: URL) throws -> UInt64 {
