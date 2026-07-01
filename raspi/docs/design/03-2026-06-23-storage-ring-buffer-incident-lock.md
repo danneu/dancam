@@ -356,6 +356,16 @@ On boot, the coordinator rebuilds state by:
    > `tail.max < head.min`). Duration is best-effort metadata off the recording path;
    > the per-clip timestamp contract that makes a plausible span the norm is owned by
    > `01-2026-06-22-crash-safe-recording.md`.
+   > **Note (2026-07-01):** The interim flat `seg_{seq:05}.ts` naming has been
+   > hardened before the coordinator. The Rust service and Python camera owner now
+   > share render/parse helpers whose parser accepts only filenames that round-trip
+   > through the renderer, so `seg_100000.ts` and later names remain visible while
+   > under-width or over-padded aliases stay ignored. The durable `high_water_seq`
+   > witness, `segments/seg-<seq>.ts` layout, and max-of-witnesses restart rule
+   > remain coordinator work. Deferring that state is safe for the current flat
+   > layout because no GC exists yet and the planned oldest-first eviction preserves
+   > the highest seq on the common path; the durable witness is the GC-edge
+   > robustness layer that prevents aliasing after deleted high segments.
 3. Scanning `incidents/*/` and `state/seen-keys.log` to rebuild incidents,
    idempotency state, and eviction floors. Hardlinks are the lock truth.
 4. Reconciling torn state: drop index entries with no file; discard a torn final

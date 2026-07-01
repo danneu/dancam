@@ -23,7 +23,7 @@ use crate::{
     clips::{clip_meta, max_clip_seq},
     event_hub::{EventConnection, EventHub, SeqEvent},
     events::Snapshot,
-    recorder::{RecorderEvent, SegmentId},
+    recorder::{segment_filename, RecorderEvent, SegmentId},
     sysfacts::{DiskUsage, MemInfo},
     ts_duration::{ts_pts_packet, DurationCache},
     world::{CameraState, Input, TempC},
@@ -441,7 +441,7 @@ async fn open_mock_segment(rec_dir: &Path, seq: u32) -> std::io::Result<tokio::f
     OpenOptions::new()
         .create(true)
         .append(true)
-        .open(rec_dir.join(format!("seg_{seq:05}.ts")))
+        .open(rec_dir.join(segment_filename(seq)))
         .await
 }
 

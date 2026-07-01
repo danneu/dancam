@@ -20,7 +20,9 @@ import time
 from typing import Any
 
 
-SEGMENT_RE = re.compile(r"^seg_(\d{5})\.ts$")
+SEGMENT_WIDTH = 5
+U32_MAX = 0xFFFF_FFFF
+SEGMENT_RE = re.compile(r"^seg_([0-9]+)\.ts$")
 FAKE_JPEG = (
     b"\xff\xd8"
     b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
@@ -79,8 +81,27 @@ def ensure_rec_dir(rec_dir: Path) -> None:
         raise RuntimeError(f"{rec_dir} is not writable")
 
 
+def segment_filename(seq: int) -> str:
+    return f"seg_{seq:0{SEGMENT_WIDTH}d}.ts"
+
+
+def segment_ffmpeg_pattern() -> str:
+    return f"seg_%0{SEGMENT_WIDTH}d.ts"
+
+
+def parse_segment_filename(name: str) -> int | None:
+    match = SEGMENT_RE.match(name)
+    if match is None:
+        return None
+
+    seq = int(match.group(1))
+    if seq > U32_MAX or segment_filename(seq) != name:
+        return None
+    return seq
+
+
 def recording_ffmpeg_output(rec_dir: Path, segment_start_number: int) -> str:
-    pattern = rec_dir / "seg_%05d.ts"
+    pattern = rec_dir / segment_ffmpeg_pattern()
     return (
         "-bsf:v setts=pts=N*DURATION:dts=N*DURATION "
         "-f segment "
@@ -99,15 +120,12 @@ def emit_event(event: str, **fields: Any) -> None:
 
 
 def detect_segment_events(baseline: int, prev_max: int | None, names: list[str]) -> list[dict[str, int]]:
-    seqs = sorted(
-        {
-            int(match.group(1))
-            for name in names
-            if (match := SEGMENT_RE.match(name)) is not None
-            and int(match.group(1)) >= baseline
-            and (prev_max is None or int(match.group(1)) > prev_max)
-        }
-    )
+    seq_set: set[int] = set()
+    for name in names:
+        seq = parse_segment_filename(name)
+        if seq is not None and seq >= baseline and (prev_max is None or seq > prev_max):
+            seq_set.add(seq)
+    seqs = sorted(seq_set)
 
     events: list[dict[str, int]] = []
     current = prev_max
@@ -141,6 +159,21 @@ def run_self_test() -> int:
         "7",
         "/rec/seg_%05d.ts",
     ]
+    for seq in [0, 5, 99999, 100000, U32_MAX]:
+        assert parse_segment_filename(segment_filename(seq)) == seq
+    assert segment_filename(0) == "seg_00000.ts"
+    assert segment_filename(100000) == "seg_100000.ts"
+    assert segment_filename(U32_MAX) == "seg_4294967295.ts"
+    for name in [
+        "seg_999.ts",
+        "seg_000005.ts",
+        "seg_+5.ts",
+        "seg_.ts",
+        "seg_abc.ts",
+        "seg_00005.mp4",
+        "seg_4294967296.ts",
+    ]:
+        assert parse_segment_filename(name) is None
     assert detect_segment_events(43, None, ["seg_00042.ts"]) == []
     assert detect_segment_events(43, None, ["seg_00042.ts", "seg_00043.ts"]) == [
         {"event": "segment_opened", "id": 43}
@@ -150,6 +183,10 @@ def run_self_test() -> int:
     ) == [
         {"event": "segment_closed", "id": 43},
         {"event": "segment_opened", "id": 44},
+    ]
+    assert detect_segment_events(99999, 99999, ["seg_99999.ts", "seg_100000.ts"]) == [
+        {"event": "segment_closed", "id": 99999},
+        {"event": "segment_opened", "id": 100000},
     ]
     return 0
 
@@ -246,7 +283,7 @@ class FakeCameraDriver:
 
             self.current_session_id = session_id
             self.current_segment_index = start_segment_index
-            self.current_segment = self.rec_dir / f"seg_{start_segment_index:05d}.ts"
+            self.current_segment = self.rec_dir / segment_filename(start_segment_index)
             self.current_segment.write_bytes(FAKE_SEGMENT)
             self.segment_started_at = time.monotonic()
             self.recording.set()
@@ -314,7 +351,7 @@ class FakeCameraDriver:
                     old = self.current_segment_index
                     new = old + 1
                     self.current_segment_index = new
-                    self.current_segment = self.rec_dir / f"seg_{new:05d}.ts"
+                    self.current_segment = self.rec_dir / segment_filename(new)
                     self.current_segment.write_bytes(FAKE_SEGMENT)
                     self.segment_started_at = time.monotonic()
                     events = [

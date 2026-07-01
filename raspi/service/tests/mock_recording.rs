@@ -81,6 +81,43 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
     assert_eq!(segment_snapshot(&rec_dir.path), snapshot);
 }
 
+#[tokio::test]
+async fn writer_mock_starts_after_six_digit_existing_segment_without_mutating_it() {
+    let rec_dir = TempRecDir::new();
+    fs::write(rec_dir.path.join("seg_99999.ts"), b"anchor").unwrap();
+    let sentinel = b"existing mock segment 100000";
+    fs::write(rec_dir.path.join("seg_100000.ts"), sentinel).unwrap();
+    let app = dancam::app(
+        AppState::new(
+            BOOT_ID.to_string(),
+            MockBackend::recording_to(rec_dir.path.clone(), Duration::from_secs(30)),
+        )
+        .with_rec_dir(rec_dir.path.clone()),
+    );
+
+    let start = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/start", "start-six-digit"))
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+
+    let first_segment = poll_status_for_segment(app.clone(), None, Duration::from_secs(2)).await;
+    assert_eq!(first_segment, 100001);
+    assert_eq!(
+        fs::read(rec_dir.path.join("seg_100000.ts"))
+            .unwrap()
+            .as_slice(),
+        sentinel
+    );
+
+    let stop = app
+        .oneshot(recording_request("/v1/recording/stop", "stop-six-digit"))
+        .await
+        .unwrap();
+    assert_eq!(stop.status(), StatusCode::OK);
+}
+
 async fn poll_status_for_segment(
     app: axum::Router,
     previous: Option<u32>,

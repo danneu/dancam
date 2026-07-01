@@ -9,7 +9,7 @@ use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::{
     clips::ClipMeta,
-    recorder::{CurrentSegment, RecorderSnapshot},
+    recorder::{segment_filename, CurrentSegment, RecorderSnapshot},
     sysfacts::{DiskUsage, MemInfo},
     world::{CameraState, TempC},
     AppState,
@@ -144,7 +144,7 @@ async fn enrich_current_segment(mut snapshot: Snapshot, state: &AppState) -> Sna
     let duration_cache = state.clip_durations.clone();
     let id = current.id;
     let dur_ms = match tokio::task::spawn_blocking(move || {
-        let path = rec_dir.join(format!("seg_{id:05}.ts"));
+        let path = rec_dir.join(segment_filename(id));
         let metadata = std::fs::metadata(&path).ok()?;
         if !metadata.is_file() {
             return None;

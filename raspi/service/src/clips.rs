@@ -17,7 +17,11 @@ use tokio::{
 };
 use tokio_util::io::ReaderStream;
 
-use crate::{recorder::SegmentId, ts_duration::DurationCache, AppState};
+use crate::{
+    recorder::{parse_segment_filename, segment_filename, SegmentId},
+    ts_duration::DurationCache,
+    AppState,
+};
 
 const MAX_CLIPS: usize = 500;
 
@@ -75,7 +79,7 @@ pub async fn serve_clip(
         return Err(ClipError::NotFound);
     }
 
-    let path = state.rec_dir.join(format!("seg_{id:05}.ts"));
+    let path = state.rec_dir.join(segment_filename(id));
     let mut file = File::open(path).await.map_err(|_| ClipError::NotFound)?;
     let metadata = file.metadata().await.map_err(|_| ClipError::NotFound)?;
     if !metadata.is_file() {
@@ -276,7 +280,7 @@ pub(crate) fn clip_meta(
     seq: SegmentId,
     duration_cache: Option<&DurationCache>,
 ) -> Option<ClipMeta> {
-    let path = rec_dir.join(format!("seg_{seq:05}.ts"));
+    let path = rec_dir.join(segment_filename(seq));
     let metadata = std::fs::metadata(&path).ok()?;
     if !metadata.is_file() {
         return None;
@@ -314,13 +318,7 @@ fn max_segment_seq(candidates: &[(u32, u64, PathBuf)]) -> Option<u32> {
 }
 
 fn clip_seq(path: &Path) -> Option<u32> {
-    let name = path.file_name()?.to_str()?;
-    let seq = name.strip_prefix("seg_")?.strip_suffix(".ts")?;
-    if seq.len() != 5 || !seq.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-
-    seq.parse().ok()
+    parse_segment_filename(path.file_name()?.to_str()?)
 }
 
 fn server_time_ms() -> u64 {
@@ -491,6 +489,30 @@ mod tests {
         write_file(&rec_dir.path, "seg_999.ts", b"ignored");
 
         assert_eq!(max_clip_seq(&rec_dir.path), Some(3));
+    }
+
+    #[test]
+    fn max_clip_seq_sees_six_digit_segments() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_99999.ts", b"almost");
+        write_file(&rec_dir.path, "seg_100000.ts", b"crossed");
+
+        assert_eq!(max_clip_seq(&rec_dir.path), Some(100000));
+    }
+
+    #[test]
+    fn read_finished_clips_lists_six_digit_segments_in_numeric_order() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_99999.ts", b"almost");
+        write_file(&rec_dir.path, "seg_100000.ts", b"crossed");
+        write_file(&rec_dir.path, "seg_999.ts", b"ignored");
+
+        let clips = read_finished_clips_for_test(&rec_dir.path, None);
+
+        assert_eq!(
+            clips.iter().map(|clip| clip.id).collect::<Vec<_>>(),
+            [100000, 99999]
+        );
     }
 
     fn write_file(dir: &Path, name: &str, bytes: &[u8]) {

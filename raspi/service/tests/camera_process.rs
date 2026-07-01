@@ -385,6 +385,44 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
 }
 
 #[tokio::test]
+async fn supervisor_starts_after_six_digit_existing_segment_without_overwrite() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("supervisor-six-digit");
+    fs::create_dir_all(&rec_dir).unwrap();
+    fs::write(rec_dir.join("seg_99999.ts"), b"anchor").unwrap();
+    let sentinel = b"existing segment 100000";
+    fs::write(rec_dir.join("seg_100000.ts"), sentinel).unwrap();
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "10".to_string(),
+        ],
+    );
+    let (backend, control) = CameraProcess::spawn(config);
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    backend.start_recording().await.unwrap();
+    wait_for_current_segment(&backend, 100001).await;
+    assert_eq!(
+        fs::read(rec_dir.join("seg_100000.ts")).unwrap().as_slice(),
+        sentinel
+    );
+
+    backend.stop_recording().await.unwrap();
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
 async fn supervisor_marks_child_restarting_after_crash() {
     if !python3_available().await {
         return;

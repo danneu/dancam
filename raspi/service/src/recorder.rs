@@ -1,6 +1,21 @@
 pub type SessionId = u64;
 pub type SegmentId = u32;
 
+const SEGMENT_FILENAME_WIDTH: usize = 5;
+
+/// Render the flat recording segment filename. The width is a minimum: after
+/// `99999`, names grow wider and remain valid.
+pub fn segment_filename(seq: SegmentId) -> String {
+    format!("seg_{seq:0width$}.ts", width = SEGMENT_FILENAME_WIDTH)
+}
+
+/// Parse exactly the names `segment_filename` can render, with no aliases.
+pub fn parse_segment_filename(name: &str) -> Option<SegmentId> {
+    let digits = name.strip_prefix("seg_")?.strip_suffix(".ts")?;
+    let seq = digits.parse::<SegmentId>().ok()?;
+    (segment_filename(seq) == name).then_some(seq)
+}
+
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RecorderPhase {
@@ -228,7 +243,36 @@ impl RecorderEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::{RecorderEvent, RecorderPhase, RecorderState};
+    use super::{
+        parse_segment_filename, segment_filename, RecorderEvent, RecorderPhase, RecorderState,
+    };
+
+    #[test]
+    fn segment_filename_round_trips_past_the_five_digit_boundary() {
+        for seq in [0, 5, 99999, 100000, u32::MAX] {
+            let name = segment_filename(seq);
+            assert_eq!(parse_segment_filename(&name), Some(seq));
+        }
+
+        assert_eq!(segment_filename(0), "seg_00000.ts");
+        assert_eq!(segment_filename(100000), "seg_100000.ts");
+        assert_eq!(segment_filename(u32::MAX), "seg_4294967295.ts");
+    }
+
+    #[test]
+    fn parse_segment_filename_rejects_non_rendered_aliases() {
+        for name in [
+            "seg_999.ts",
+            "seg_000005.ts",
+            "seg_+5.ts",
+            "seg_.ts",
+            "seg_abc.ts",
+            "seg_00005.mp4",
+            "seg_4294967296.ts",
+        ] {
+            assert_eq!(parse_segment_filename(name), None, "{name}");
+        }
+    }
 
     #[test]
     fn start_seeds_session_phase_and_unpullable_floor() {
