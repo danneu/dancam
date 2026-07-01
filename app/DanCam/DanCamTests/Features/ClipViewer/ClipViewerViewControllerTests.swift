@@ -5,6 +5,14 @@ import UIKit
 
 @MainActor
 struct ClipViewerViewControllerTests {
+    @Test func captionUsesClipMetadata() {
+        let controller = makeController()
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.captionText == Formatters.clipMetadata(durMs: 30_000, bytes: 1))
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func cacheHitPlaysLookedUpURLWithoutPulling() throws {
         let cacheURL = URL(filePath: "/tmp/dancam-cache-hit-\(UUID().uuidString).mp4")

@@ -12,6 +12,7 @@ final class ClipViewerViewController: UIViewController {
     private let resultLabel = UILabel()
     private let retryButton = UIButton(type: .system)
     private let playerContainerView = UIView()
+    private let captionLabel = UILabel()
 
     private var state: ViewerState? {
         didSet {
@@ -71,6 +72,10 @@ final class ClipViewerViewController: UIViewController {
         resultLabel.text
     }
 
+    var captionText: String? {
+        captionLabel.text
+    }
+
     var progressFraction: Float {
         progressView.progress
     }
@@ -116,10 +121,18 @@ final class ClipViewerViewController: UIViewController {
         playerContainerView.backgroundColor = .black
         playerContainerView.translatesAutoresizingMaskIntoConstraints = false
 
+        captionLabel.text = Formatters.clipMetadata(durMs: clip.durMs, bytes: clip.bytes)
+        captionLabel.font = .preferredFont(forTextStyle: .footnote)
+        captionLabel.adjustsFontForContentSizeCategory = true
+        captionLabel.textColor = .secondaryLabel
+        captionLabel.textAlignment = .center
+        captionLabel.numberOfLines = 0
+
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = UIStackView(arrangedSubviews: [
             playerContainerView,
+            captionLabel,
             statusLabel,
             progressView,
             resultLabel,
