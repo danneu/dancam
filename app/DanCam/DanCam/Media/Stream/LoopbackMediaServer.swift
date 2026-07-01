@@ -44,6 +44,13 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
     private let onFirstPlayableReady: @Sendable (URL) -> Void
     private var state = State()
 
+    /// - Parameter onFirstPlayableReady: invoked **at most once**, on the server's internal
+    ///   serial queue, when the init segment and first media segment are both available
+    ///   (the EVENT playlist becomes first playable). It runs in the server's isolation
+    ///   domain, not the caller's: the closure may capture only `Sendable`/immutable or
+    ///   internally synchronized handles by value (e.g. an `AsyncStream.Continuation`).
+    ///   Capturing a reference whose mutable state is confined to another serial domain still
+    ///   races, even by value -- to deliver into such state, hop to its owner domain instead.
     init(
         minimumTargetDuration: Int = 2,
         targetDurationMargin: Int = 1,

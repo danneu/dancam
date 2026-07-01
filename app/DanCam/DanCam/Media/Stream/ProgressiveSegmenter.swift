@@ -80,6 +80,9 @@ nonisolated struct ProgressiveSegmenter: Sendable {
 
 nonisolated private final class ProgressiveSegmenterPipeline: @unchecked Sendable {
     private let sourceURL: URL
+    /// Confined to the segmenter's serial demux `DispatchQueue`; never read or written from
+    /// another domain (e.g. the loopback server's callback queue -- capture this Sendable
+    /// continuation by value instead of reaching through the property).
     private var continuation: AsyncThrowingStream<ProgressiveSegmenterEvent, Error>.Continuation?
 
     private var fileHandle: FileHandle?
@@ -174,8 +177,13 @@ nonisolated private final class ProgressiveSegmenterPipeline: @unchecked Sendabl
     private func startIfNeeded() throws {
         guard fileHandle == nil else { return }
 
-        let server = try LoopbackMediaServer { [weak self] url in
-            self?.continuation?.yield(.firstPlayableReady(url: url))
+        // The server invokes this callback on its OWN serial queue. Capture the
+        // continuation by value (it is Sendable and stable for the pipeline's life)
+        // so the callback never reads this pipeline's demux-queue-confined
+        // `continuation` across serial domains. A yield that races teardown is harmless:
+        // dropped (`.terminated`) after finish(), else ignored by the consumer's state gate.
+        let server = try LoopbackMediaServer { [continuation = self.continuation] url in
+            continuation?.yield(.firstPlayableReady(url: url))
         }
         self.server = server
         continuation?.yield(.opened(workDirectory: server.workDirectory))
