@@ -228,14 +228,6 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
         }
     }
 
-    private static func setBlocking(_ fileDescriptor: Int32) {
-        let flags = Darwin.fcntl(fileDescriptor, F_GETFL, 0)
-        guard flags >= 0 else {
-            return
-        }
-        _ = Darwin.fcntl(fileDescriptor, F_SETFL, flags & ~O_NONBLOCK)
-    }
-
     private static func configureClientSocket(_ fileDescriptor: Int32) throws {
         var one: Int32 = 1
         guard Darwin.setsockopt(
@@ -299,7 +291,9 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
                 source.setEventHandler { [weak self] in
                     self?.readAvailableData(from: id)
                 }
+                source.setCancelHandler(handler: sourceCancelHandler(for: connection))
                 connection.readSource = source
+                connection.activeSourceCount += 1
                 state.connections[id] = connection
                 source.resume()
             } catch {
@@ -348,36 +342,87 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
         guard let connection = state.connections[id] else {
             return
         }
-
         connection.readSource?.cancel()
-        Self.setBlocking(connection.fileDescriptor)
-        response.withUnsafeBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else {
-                return
-            }
+        connection.pendingResponse = response
+        connection.writeOffset = 0
+        flushPendingWrite(for: id)
+    }
 
-            var bytesWritten = 0
-            while bytesWritten < rawBuffer.count {
+    private func flushPendingWrite(for id: UUID) {
+        guard let connection = state.connections[id] else {
+            return
+        }
+        switch writeRemainingBytes(of: connection) {
+        case .drained, .failed:
+            closeConnection(id)
+        case .wouldBlock:
+            ensureWriteSource(for: id, connection: connection)
+        }
+    }
+
+    private func writeRemainingBytes(of connection: ClientConnection) -> WriteOutcome {
+        let response = connection.pendingResponse
+        let count = response.count
+        if connection.writeOffset >= count {
+            return .drained   // also covers an empty response
+        }
+        return response.withUnsafeBytes { raw -> WriteOutcome in
+            guard let base = raw.baseAddress else {
+                return .drained
+            }
+            while connection.writeOffset < count {
                 let result = Darwin.write(
                     connection.fileDescriptor,
-                    baseAddress.advanced(by: bytesWritten),
-                    rawBuffer.count - bytesWritten
+                    base.advanced(by: connection.writeOffset),
+                    count - connection.writeOffset
                 )
-                guard result > 0 else {
-                    break
+                if result > 0 {
+                    connection.writeOffset += result
+                    continue
                 }
-                bytesWritten += result
+                if result < 0 && (errno == EWOULDBLOCK || errno == EAGAIN) {
+                    return .wouldBlock
+                }
+                return .failed   // result == 0, or EPIPE/ECONNRESET/EINTR/other
             }
+            return .drained
         }
-        closeConnection(id)
+    }
+
+    private func ensureWriteSource(for id: UUID, connection: ClientConnection) {
+        if connection.writeSource != nil {
+            return   // already armed
+        }
+        let source = DispatchSource.makeWriteSource(
+            fileDescriptor: connection.fileDescriptor,
+            queue: queue
+        )
+        source.setEventHandler { [weak self] in
+            self?.flushPendingWrite(for: id)
+        }
+        source.setCancelHandler(handler: sourceCancelHandler(for: connection))
+        connection.writeSource = source
+        connection.activeSourceCount += 1
+        source.resume()
     }
 
     private func closeConnection(_ id: UUID) {
         guard let connection = state.connections.removeValue(forKey: id) else {
             return
         }
+        connection.isClosing = true
         connection.readSource?.cancel()
-        Darwin.close(connection.fileDescriptor)
+        connection.writeSource?.cancel()
+        // fd closed by the last cancellation handler (activeSourceCount -> 0), not here.
+    }
+
+    private func sourceCancelHandler(for connection: ClientConnection) -> @Sendable () -> Void {
+        { [connection] in                                  // runs on the serial queue
+            connection.activeSourceCount -= 1
+            if connection.isClosing && connection.activeSourceCount == 0 {
+                Darwin.close(connection.fileDescriptor)     // exactly once, last handler
+            }
+        }
     }
 
     private func appendInitializationSegmentOnQueue(_ data: Data) {
@@ -585,6 +630,12 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
         var failure: LoopbackMediaServerError?
     }
 
+    private enum WriteOutcome {
+        case drained
+        case wouldBlock
+        case failed
+    }
+
     private struct MediaSegment {
         var uri: String
         var duration: CMTime
@@ -614,6 +665,11 @@ nonisolated private final class ClientConnection: @unchecked Sendable {
     let fileDescriptor: Int32
     var buffer = Data()
     var readSource: DispatchSourceRead?
+    var pendingResponse = Data()        // set once in send(); stable afterward
+    var writeOffset = 0                  // advances as bytes drain
+    var writeSource: DispatchSourceWrite?
+    var activeSourceCount = 0           // created+resumed sources not yet cancel-delivered
+    var isClosing = false               // set by closeConnection; gates the fd close
 
     init(fileDescriptor: Int32) {
         self.fileDescriptor = fileDescriptor

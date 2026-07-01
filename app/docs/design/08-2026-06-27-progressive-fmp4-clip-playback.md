@@ -177,8 +177,19 @@ Hard or risky:
   finalizer writes a valid MP4 up to the cut; the progressive playlist finalizes up to
   the cut on pull completion). The per-clip strictly-increasing-DTS contract this
   relies on is owned by `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`.
-
-Mitigations:
+- 2026-07-01 update: HTTP response writes are now non-blocking and event-driven. A
+  response drains via an inline write on the serial queue, falling back to a
+  per-connection `DispatchSource.makeWriteSource` **targeting that same serial queue**
+  only when the socket send buffer is full; the client socket is never flipped to
+  blocking. A slow or stuck loopback reader therefore can no longer stall segment
+  publication, playlist updates, `checkForFailure`, or teardown, all of which share
+  that one queue -- the blocking write was the lone exception to the file's otherwise
+  non-blocking socket model. Because this adds a second fd-backed source per
+  connection, the per-connection file descriptor is now closed only from each source's
+  cancellation handler (read and write), once libdispatch has released the handle
+  (`dispatch/source.h`); this removes the prior close-before-cancel-handler fd-reuse
+  race that inline `Darwin.close` after `cancel()` risked. A broken client connection
+  stays connection-local (it closes that connection, never fails the server).
 
 - Progressive failures never touch the source TS, finalizer task, or durable MP4
   path. They only tear down the progressive item and local HLS resources.
@@ -187,7 +198,10 @@ Mitigations:
 - The server is viewer-scoped and deletes its temporary fMP4 work directory on
   swap, dismiss, or failure.
 - Tests cover parser equivalence, segment duration publication, frozen target
-  duration behavior, HTTP `GET`/`HEAD`/`Range`, progressive fallback paths, late
+  duration behavior, HTTP `GET`/`HEAD`/`Range`, non-blocking serving under loopback
+  reader backpressure (large-body byte integrity, slow-drain byte integrity, and
+  publication and teardown staying responsive while a reader stalls) with a broken
+  client connection staying connection-local, progressive fallback paths, late
   first-playable suppression, and swap continuity.
 
 ## Alternatives considered
