@@ -82,14 +82,14 @@ struct ClipViewerViewControllerTests {
         #expect(controller.isShareButtonEnabled == true)
     }
 
-    @Test func shareItemProviderIsNilBeforePlaying() {
+    @Test func shareArtifactIsNilBeforePlaying() {
         let controller = makeController()
 
-        #expect(controller.makeShareItemProviderForTesting() == nil)
+        #expect(controller.makeShareArtifactForTesting() == nil)
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func cacheHitShareProviderUsesCachedMP4SuggestedNameAndMovieType() throws {
+    func cacheHitShareArtifactClonesCacheWithFriendlyMovieName() throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
@@ -101,7 +101,6 @@ struct ClipViewerViewControllerTests {
 
         controller.loadViewIfNeeded()
 
-        let provider = try #require(controller.makeShareItemProviderForTesting())
         let clip = Clip(
             id: 1,
             startMs: nil,
@@ -111,11 +110,56 @@ struct ClipViewerViewControllerTests {
             etag: "list-etag",
             timeApproximate: false
         )
-        let hasMovieType = provider.registeredTypeIdentifiers.contains { identifier in
-            UTType(identifier)?.conforms(to: .movie) == true
-        }
-        #expect(provider.suggestedName == Formatters.clipExportFilename(clip))
-        #expect(hasMovieType)
+        let artifact = try #require(controller.makeShareArtifactForTesting())
+        defer { if let dir = artifact.temporaryDirectory { try? FileManager.default.removeItem(at: dir) } }
+        #expect(artifact.url.lastPathComponent == Formatters.clipExportFilename(clip))
+        #expect(FileManager.default.fileExists(atPath: artifact.url.path))
+        #expect(try Data(contentsOf: artifact.url) == Data([0x02]))        // clone carries the cache bytes
+        #expect(UTType(filenameExtension: artifact.url.pathExtension)?.conforms(to: .movie) == true)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cloneFailureFallsBackToCacheURL() throws {
+        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+
+        controller.loadViewIfNeeded()
+
+        let blocker = try temporaryFile(extension: "blocker", contents: Data())  // a file, not a dir
+        defer { try? FileManager.default.removeItem(at: blocker) }
+        controller.shareScratchDirectory = blocker
+        let artifact = try #require(controller.makeShareArtifactForTesting())
+        #expect(artifact.url == cacheURL)             // shared the real cache file, ugly name and all
+        #expect(artifact.temporaryDirectory == nil)   // nothing owned -> handler skips, defer skips
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func viewWillDisappearCleansUpShareArtifacts() throws {
+        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+
+        controller.loadViewIfNeeded()
+
+        let artifact = try #require(controller.makeShareArtifactForTesting())
+        let directory = try #require(artifact.temporaryDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }   // safety net if the assert fails
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+
+        controller.viewWillDisappear(false)                            // house pattern -> tearDown()
+
+        #expect(FileManager.default.fileExists(atPath: directory.path) == false)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -146,7 +190,7 @@ struct ClipViewerViewControllerTests {
 
         #expect(controller.statusText == "Ready")
         #expect(controller.currentPlayerItemURL == missingCacheURL)
-        #expect(controller.makeShareItemProviderForTesting() == nil)
+        #expect(controller.makeShareArtifactForTesting() == nil)
 
         controller.shareTappedForTesting()
 

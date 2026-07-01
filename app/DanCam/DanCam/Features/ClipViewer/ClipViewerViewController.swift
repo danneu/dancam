@@ -31,7 +31,14 @@ final class ClipViewerViewController: UIViewController {
     private var currentPlaybackSource: PlaybackSource?
     private var currentItemURL: URL?
     private var temporaryFiles: Set<URL> = []
+    private var shareArtifactDirectories: Set<URL> = []
     private var didSelfHealCacheHitFailure = false
+
+    // Root for the per-share clone subdirectories. Internal (not private) with a single
+    // default so a test can point it at a regular file, forcing the clone below to fail and
+    // exercising the last-resort fallback -- no DI seam through AppDependencies.
+    var shareScratchDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "clip-share", directoryHint: .isDirectory)
 
     init(dependencies: AppDependencies, clip: Clip) {
         self.dependencies = dependencies
@@ -104,8 +111,9 @@ final class ClipViewerViewController: UIViewController {
         retry()
     }
 
-    func makeShareItemProviderForTesting() -> NSItemProvider? {
-        makeShareItemProvider()
+    func makeShareArtifactForTesting() -> (url: URL, temporaryDirectory: URL?)? {
+        guard let artifact = makeShareArtifact() else { return nil }
+        return (artifact.url, artifact.temporaryDirectory)
     }
 
     func shareTappedForTesting() {
@@ -192,31 +200,55 @@ final class ClipViewerViewController: UIViewController {
     }
 
     @objc private func shareTapped(_ sender: UIBarButtonItem) {
-        guard let provider = makeShareItemProvider() else {
+        guard let artifact = makeShareArtifact() else {
             if currentItemURL != nil {
-                startPull()
+                startPull()   // cache purged between .playing and the tap -> self-heal (ADR 13)
             }
             return
         }
 
-        let configuration = UIActivityItemsConfiguration(itemProviders: [provider])
-        let activityViewController = UIActivityViewController(activityItemsConfiguration: configuration)
+        let activityViewController = UIActivityViewController(
+            activityItems: [artifact.url],
+            applicationActivities: nil
+        )
         activityViewController.popoverPresentationController?.sourceItem = sender
+        if let directory = artifact.temporaryDirectory {
+            activityViewController.completionWithItemsHandler = { _, _, _, _ in
+                try? FileManager.default.removeItem(at: directory)
+            }
+        }
         present(activityViewController, animated: true)
     }
 
-    private func makeShareItemProvider() -> NSItemProvider? {
-        guard let url = currentItemURL else { return nil }
+    private struct ShareArtifact {
+        let url: URL
+        let temporaryDirectory: URL?   // non-nil only when we created a clone to clean up
+    }
 
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-              isDirectory.boolValue == false else {
-            return nil
+    private func makeShareArtifact() -> ShareArtifact? {
+        guard let cacheURL = currentItemURL, fileExistsAsFile(cacheURL) else { return nil }
+
+        let subdirectory = shareScratchDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let destination = subdirectory.appending(path: Formatters.clipExportFilename(clip))
+
+        do {
+            try FileManager.default.createDirectory(at: subdirectory, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: cacheURL, to: destination)  // APFS COW clone: instant, independent inode
+            shareArtifactDirectories.insert(subdirectory)
+            return ShareArtifact(url: destination, temporaryDirectory: subdirectory)
+        } catch {
+            try? FileManager.default.removeItem(at: subdirectory)
+            // Last resort: share the real cache file (ugly name) rather than fail -- but only
+            // if it still exists; if it was purged in the TOCTOU window, self-heal instead.
+            return fileExistsAsFile(cacheURL) ? ShareArtifact(url: cacheURL, temporaryDirectory: nil) : nil
         }
+    }
 
-        guard let provider = NSItemProvider(contentsOf: url) else { return nil }
-        provider.suggestedName = Formatters.clipExportFilename(clip)
-        return provider
+    private func fileExistsAsFile(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue == false
     }
 
     private func retry() {
@@ -437,6 +469,14 @@ final class ClipViewerViewController: UIViewController {
         pullTask = nil
         detachPlayer()
         removeTemporaryFiles()
+        removeShareArtifactDirectories()
+    }
+
+    private func removeShareArtifactDirectories() {
+        for directory in shareArtifactDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        shareArtifactDirectories.removeAll()
     }
 
     private func removeTemporaryFile(_ url: URL) {

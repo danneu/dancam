@@ -1,10 +1,51 @@
 # ADR: clip export share sheet
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-07-01: construction corrected after device
+  verification -- see "Correction 2026-07-01")
 - **Date:** 2026-07-01
 - **Owner:** app
 - **Related:** `13-2026-07-01-durable-clip-cache.md`; `../../../docs/roadmap.md`
   (swoop `tide`)
+
+## Correction 2026-07-01 (device-verified)
+
+The core decision below still stands: one system share sheet over the cached MP4. Only
+the construction mechanism changed, after the shipped version hung on a physical device.
+
+**Symptom.** After a clip reached "Ready" and the Share button enabled, tapping Share
+brought up the share sheet but it never became usable -- it stalled on "Preparing" and
+swallowed interaction, so the app looked unresponsive.
+
+**Load-bearing root cause.** The shipped path built the sheet via
+`UIActivityViewController(activityItemsConfiguration:)` over a lazy
+`NSItemProvider(contentsOf:)`. On device that combination fails to vend the local cache
+file to the sheet -- the signal is `error fetching item for URL:...clip-....mp4 : (null)`
+in the device log -- so the sheet never finishes preparing. The run loop stayed alive
+throughout (`event.heartbeat` / `event.tempChanged` reducer log lines kept flowing after
+the share errors), so this was a stalled modal share UI, not a frozen main thread. The
+`Only support loading options for CKShare and SWY types.` and
+`error fetching file provider domain for URL:... : (null)` log lines are benign -- they
+print for ordinary local file/text shares that work, and are not evidence of the failure.
+
+**Corrected mechanism.** Share the cached MP4 through the classic
+`UIActivityViewController(activityItems:applicationActivities:)` initializer over a real
+**file URL**, matching the app's already-working share path in
+`HealthViewController.swift#exportLogs`. Because the classic file path has no
+`suggestedName` hook, materialize a friendly-named copy of the cache MP4 (an APFS
+copy-on-write clone via `FileManager.copyItem`, instant and with an independent inode) at
+`tmp/clip-share/<UUID>/<friendlyName>.mp4` and share that. The `.mp4` extension gives the
+system the `public.movie`-conforming UTType, so Save Video, AirDrop, and Save to Files are
+all offered without a `UIActivityItemSource`. Clean the per-share subdirectory up in
+`completionWithItemsHandler`, with a `tearDown()` sweep as a safety net for the
+killed-app / missed-handler case. If the clone fails, fall back to sharing the real cache
+URL (ugly name) when it still exists, else return nil so the caller self-heals via a
+re-pull.
+
+**What this supersedes.** This promotes the "friendly-named temporary copy" already listed
+under Consequences and Alternatives to the primary mechanism. It supersedes the
+"`UIActivityItemsConfiguration(itemProviders:)` / `suggestedName`" construction described
+in the Decision below, and the "Pass `NSItemProvider` raw ... Rejected" and "Hardlink or
+copy the MP4 ... Rejected for now" alternatives.
 
 ## Context
 
