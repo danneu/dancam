@@ -29,7 +29,7 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
     private static let playlistPath = "/p.m3u8"
     private static let initializationPath = "/init.mp4"
 
-    let bindAddress = "127.0.0.1"
+    let boundAddress: String
     let workDirectory: URL
     let mediaPlaylistURL: URL
 
@@ -62,15 +62,23 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let listener = try Self.makeLoopbackListener()
-        let port = try Self.boundPort(for: listener)
-        guard let playlistURL = URL(string: "http://localhost:\(port)\(Self.playlistPath)") else {
+        let endpoint: BoundEndpoint
+        let playlistURL: URL
+        do {
+            endpoint = try Self.boundEndpoint(for: listener)
+            guard let url = URL(string: "http://localhost:\(endpoint.port)\(Self.playlistPath)") else {
+                throw URLError(.badURL)
+            }
+            playlistURL = url
+        } catch {
             Darwin.close(listener)
             try? fileManager.removeItem(at: directory)
-            throw URLError(.badURL)
+            throw error
         }
 
         listenerFileDescriptor = listener
         workDirectory = directory
+        boundAddress = endpoint.address
         mediaPlaylistURL = playlistURL
         self.minimumTargetDuration = minimumTargetDuration
         self.targetDurationMargin = targetDurationMargin
@@ -153,6 +161,8 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
             address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
             address.sin_family = sa_family_t(AF_INET)
             address.sin_port = in_port_t(0).bigEndian
+            // Loopback-only bind (ADR 08). A regression to "0.0.0.0" here is caught by
+            // LoopbackMediaServerTests, which asserts boundAddress read back via getsockname.
             guard Darwin.inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) == 1 else {
                 throw LoopbackMediaServerError.invalidLoopbackAddress
             }
@@ -182,7 +192,12 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
         }
     }
 
-    private static func boundPort(for fileDescriptor: Int32) throws -> UInt16 {
+    private struct BoundEndpoint {
+        var address: String
+        var port: UInt16
+    }
+
+    private static func boundEndpoint(for fileDescriptor: Int32) throws -> BoundEndpoint {
         var address = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
         let result = withUnsafeMutablePointer(to: &address) { pointer in
@@ -194,7 +209,13 @@ nonisolated final class LoopbackMediaServer: FMP4SegmentSink, @unchecked Sendabl
             throw LoopbackMediaServerError.listenerFailed(posixErrorDescription())
         }
 
-        return UInt16(bigEndian: address.sin_port)
+        var sinAddr = address.sin_addr
+        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        guard Darwin.inet_ntop(AF_INET, &sinAddr, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil else {
+            throw LoopbackMediaServerError.listenerFailed(posixErrorDescription())
+        }
+
+        return BoundEndpoint(address: String(cString: buffer), port: UInt16(bigEndian: address.sin_port))
     }
 
     private static func setNonBlocking(_ fileDescriptor: Int32) throws {

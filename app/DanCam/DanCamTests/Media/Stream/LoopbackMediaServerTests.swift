@@ -197,7 +197,7 @@ struct LoopbackMediaServerTests {
         let workDirectory = server.workDirectory
 
         #expect(server.mediaPlaylistURL.host == "localhost")
-        #expect(server.bindAddress == "127.0.0.1")
+        #expect(server.boundAddress == "127.0.0.1")
         #expect(FileManager.default.fileExists(atPath: workDirectory.path))
 
         server.shutdown()
