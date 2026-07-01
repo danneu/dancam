@@ -236,6 +236,10 @@ shell, not `rustup target add`.
   backend.
 - Logs: `journalctl -u dancam -f`. Under the read-only car image, point logs at
   `/data` or keep them in RAM -- root is not writable.
+- The dev image auto-reboots on a hard freeze via the on-board BCM2835 hardware
+  watchdog (systemd `RuntimeWatchdogSec`), recovering the service unattended; paired
+  persistent journald keeps the previous boot's logs for the post-mortem. See
+  `docs/design/12-2026-06-30-watchdog-and-persistent-journal.md`.
 
 ### Pointing the app at the unit
 
@@ -255,9 +259,11 @@ shell, not `rustup target add`.
   detaches the AP-up as a transient `dancam-go-ap` unit so the SSH session returns
   before Wi-Fi drops. After it returns, inspect it with
   `journalctl -b -u dancam-restore-home-wifi.service -u dancam-restore-home-wifi.timer`.
-  Power cycling also returns the dev image to home Wi-Fi. The current dev image keeps
-  only the current boot's journal, so previous-boot AP failures are lost after a
-  reset unless persistent journald is enabled later.
+  Power cycling also returns the dev image to home Wi-Fi. Persistent journald is now
+  enabled on the dev image, so previous-boot logs survive a reset -- including watchdog
+  reboots and abrupt power loss -- and a prior boot's AP failure is diagnosable via
+  `journalctl -b -1` (bounded by the last fsync; see
+  `docs/design/12-2026-06-30-watchdog-and-persistent-journal.md`).
 
 ## Design decisions (ADRs)
 
@@ -281,6 +287,11 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   Rust, cross-compiled on the dev host to a single static binary and run under
   systemd; the camera is driven as a subprocess, not linked. See the Build / run
   section above for the dev loop.
+- `06-2026-06-25-ap-networking-bring-up.md` (Accepted, amended 2026-06-25 for the
+  WPA2-AES cipher pin) -- the NetworkManager access point the phone joins on the car
+  path (`dancam-ap`: SSID `dancam-dev`, WPA2-AES pinned RSN/CCMP, channel 1,
+  `10.42.0.1/24`, shared IPv4, no autoconnect); the playbook provisions every field
+  but the PSK.
 - `07-2026-06-25-picamera2-camera-owner.md` (Accepted) -- the camera subprocess is a
   Picamera2 owner for `jet`, with a fixed stdout/stdin/stderr contract so a future
   all-Rust camera binary can replace it without changing the HTTP API.
@@ -293,3 +304,14 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   Ansible from the Mac;
   `deploy.sh` keeps the binary/unit and the README becomes a bootstrap/verify/ops
   runbook.
+- `10-2026-06-30-recorder-fsm-and-events-sse.md` (Accepted) -- the recorder state
+  machine (Idle/Starting/Recording/Stopping/Error) and how its transitions surface to
+  the app as `/v1/events` SSE snapshot + ordered deltas.
+- `11-2026-06-30-forkable-pi-config.md` (Accepted) -- prepares the repo for public
+  forks by splitting the per-machine SSH/Ansible login user from a fixed project-owned
+  `dancam` service user (static `User`/`StateDirectory`/rec dir), keeping only
+  connection params in a gitignored `.env`.
+- `12-2026-06-30-watchdog-and-persistent-journal.md` (Accepted) -- freeze recovery:
+  the on-board BCM2835 hardware watchdog (`RuntimeWatchdogSec`) auto-reboots a wedged
+  host, and persistent, size-capped journald keeps previous-boot logs for the
+  post-mortem (dev image).

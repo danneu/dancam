@@ -75,8 +75,9 @@ uname -a
 The Pi's onboard system state -- apt upgrade, the IMX708 camera overlay, the camera
 process dependencies (`python3-picamera2`, `ffmpeg`), mDNS scoping, the
 `en_US.UTF-8` locale, the `dancam-ap` access-point profile (without its password),
-and the `dancam` service user's `video`-group membership -- is provisioned
-declaratively with Ansible. The playbook
+the `dancam` service user's `video`-group membership, persistent journald (dev
+image), and the on-board hardware watchdog -- is provisioned declaratively with
+Ansible. The playbook
 (`raspi/ansible/site.yml`) is the source of truth for that state; the *why* behind each
 choice lives in its task comments (see also
 `raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`). Run it from the
@@ -101,6 +102,39 @@ just raspi-provision-lint     # --syntax-check + ansible-lint, hardware-free
 Re-running is idempotent: a converged Pi reports `changed=0` and does not reboot. The
 one piece the playbook deliberately leaves unset is the AP password -- that is a
 one-time manual step in section 6, so the secret never enters the repo.
+
+Two of these -- persistent journald and the hardware watchdog -- are the freeze-
+recovery layer from
+[`raspi/docs/design/12-2026-06-30-watchdog-and-persistent-journal.md`](raspi/docs/design/12-2026-06-30-watchdog-and-persistent-journal.md).
+The watchdog drop-in reboots on first apply (arming needs a boot), so verify **after**
+the converge reboot. The *effective* value of a journald key is its **last**
+uncommented assignment across all drop-ins, so assert that with `tail -n1` rather than
+mere presence -- a later-sorting drop-in could otherwise override ours (the `60-`
+filename prefix is what stops it; this check confirms it held):
+
+```sh
+ssh dancam.local "systemd-analyze cat-config systemd/journald.conf | grep -E '^Storage *=' | tail -n1"          # Storage=persistent
+ssh dancam.local "systemd-analyze cat-config systemd/journald.conf | grep -E '^SystemMaxUse *=' | tail -n1"     # SystemMaxUse=200M
+ssh dancam.local "systemd-analyze cat-config systemd/journald.conf | grep -E '^SyncIntervalSec *=' | tail -n1"  # SyncIntervalSec=60s
+ssh dancam.local journalctl --list-boots                        # >= 2 boots after a reboot: previous boot retained
+```
+
+Confirm the watchdog is actually armed. `journalctl -b _PID=1` carries systemd's
+arming line only after the `/dev/watchdog0` ioctl succeeds, and the `1min` value (a
+clamp would read ~16s) shows the 60s logical timeout was accepted; `systemctl show`
+reports only the *configured* value, so it is a landed-config check, not arming proof:
+
+```sh
+ssh dancam.local 'journalctl -b _PID=1 | grep -i watchdog'   # "Watchdog running with a hardware timeout of 1min." (the arming proof)
+ssh dancam.local 'journalctl -b -k | grep -i watchdog'       # the bcm2835-wdt driver line (module present)
+ssh dancam.local systemctl show -p RuntimeWatchdogUSec       # RuntimeWatchdogUSec=1min (config landed)
+```
+
+A watchdog reboot recovers the *service*, not the recording: the recorder comes back
+`idle` and records again only when the app re-issues `/v1/recording/start`
+(auto-record-on-boot does not yet exist), so a post-boot
+`curl -s http://dancam.local:8080/v1/status` showing `recorder.phase` `idle` is
+expected, not a failure.
 
 ## 4. Enable the camera (IMX708)
 
