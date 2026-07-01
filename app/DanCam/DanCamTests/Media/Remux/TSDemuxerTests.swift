@@ -181,7 +181,6 @@ struct TSDemuxerTests {
         let actual = try demuxBothPaths(corrupted)
         assertDropsExactlyOnePESPreservingOthers(clean: clean, corrupted: actual)
         assertStrictlyIncreasing(actual.map(\.dtsTicks))
-        try assertStreamingStaysMonotonic(clean: clean, corrupted: actual)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -204,7 +203,6 @@ struct TSDemuxerTests {
         let clip = try TSDemuxer.demuxH264(from: corrupted)
         #expect(clip.sps.isEmpty == false)
         #expect(clip.pps.isEmpty == false)
-        try assertStreamingStaysMonotonic(clean: clean, corrupted: actual)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -290,14 +288,6 @@ struct TSDemuxerTests {
         // recovers a contiguous suffix from PES#3. These constants are measured.
         let actual = try demuxBothPaths(corrupted)
         #expect(actual == Array(clean.dropFirst(3)))
-
-        // Cross-path: the streaming assembler needs an in-band SPS/PPS carrier, so
-        // it cannot latch until PES#250 -- its first access unit is PES#250's, ~250
-        // PES later than the batch path's suffix.
-        let accessUnits = try streamingAccessUnits(actual)
-        try #require(accessUnits.isEmpty == false)
-        #expect(accessUnits.first?.dtsTicks == TSFixtureLayout.pes250DTS)
-        assertStrictlyIncreasing(accessUnits.map(\.dtsTicks))
     }
 
     // MARK: - Helpers
@@ -350,28 +340,6 @@ struct TSDemuxerTests {
         for index in values.indices.dropFirst() {
             #expect(values[index] > values[index - 1], "must be strictly increasing at \(index)", sourceLocation: sourceLocation)
         }
-    }
-
-    /// Feeds both the clean and corrupted PES streams through a fresh streaming
-    /// assembler and asserts the corrupted stream keeps its DTS monotonic and emits
-    /// exactly one fewer access unit. The assembler drops any non-increasing-DTS unit
-    /// rather than throwing, so a corrupt PES never aborts the stream.
-    private func assertStreamingStaysMonotonic(
-        clean: [H264PESPacket],
-        corrupted: [H264PESPacket],
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) throws {
-        let cleanUnits = try streamingAccessUnits(clean)
-        let corruptedUnits = try streamingAccessUnits(corrupted)
-        #expect(corruptedUnits.count == cleanUnits.count - 1, sourceLocation: sourceLocation)
-        assertStrictlyIncreasing(corruptedUnits.map(\.dtsTicks), sourceLocation: sourceLocation)
-    }
-
-    private func streamingAccessUnits(_ packets: [H264PESPacket]) throws -> [H264AccessUnit] {
-        var assembler = StreamingH264AccessUnitAssembler()
-        var accessUnits = assembler.append(packets).accessUnits
-        accessUnits.append(contentsOf: assembler.finish().accessUnits)
-        return accessUnits
     }
 
     /// Overwrites the 33-bit value of a 5-byte PTS/DTS field while preserving the

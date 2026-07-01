@@ -157,8 +157,8 @@ mock first.
             the `dancam-dev` AP feel acceptable, including desk and in-car checks with
             and without live preview running concurrently (spike 2); pulled `.ts` files
             remux to playable, seekable `.mp4` files on a physical iPhone (spike 5a).
-            The app also starts progressive local fMP4 playback while the pull is still
-            running, then swaps to the finalized MP4 for scrubbing.
+            ADR 13 later removed the progressive local fMP4 path after remux measured
+            cheap; cached fast-start MP4 is now the sole playback artifact.
       - [x] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
             `.ts` as a plain `200` (`application/mp2t`); never serves the open segment
             (matches the list). The dumbest end-to-end that proves tap -> pull -> play; no
@@ -179,18 +179,18 @@ mock first.
             resumes from the last byte across drops (verify `ETag` before resuming). At
             ~38 MB over a congested 2.4 GHz link a pull is ~6-26 s, so a mid-pull drop
             must resume, never restart.
-      - [ ] **App:** on-device clip store -- pulled bytes named by id+etag, reused on
-            replay (never re-pull 38 MB), with a simple size cap (bytes reused later by
-            `tide` export).
+      - [x] **App:** durable clip cache -- fast-start MP4s named by clip id + resolved
+            etag, reused on replay (never re-pull 38 MB), with an mtime-LRU size cap.
+            The cached MP4 is reused later by `tide` export.
       - [x] **App:** download-then-play -- remux the pulled `.ts` to a local
-            passthrough `.mp4` and play it directly with AVPlayer; keeps AVPlayer on a
-            local file (no-internet AP + future-TLS) and gives the player an MP4 sample
-            table for scrubbing.
+            passthrough `.mp4`, commit it to the clip cache, and play it directly with
+            AVPlayer; keeps AVPlayer on a local file (no-internet AP + future-TLS) and
+            gives the player an MP4 sample table for scrubbing.
       - [x] **App:** tapping a clip pushes a viewer screen (AVPlayer + transport
             controls) into the existing nav, showing pull **progress** (a 6-26 s silent
-            spinner reads as a hang), starting progressive local fMP4 playback when
-            the first fragment is ready, then swapping to the finalized MP4 for
-            scrubbing; handles pull failure / resume and progressive fallback.
+            spinner reads as a hang), a short preparing phase, and then the cached MP4;
+            handles pull failure / resume, cache-insert failure, playback failure, and
+            manual Retry.
       - [ ] **App:** clip rows show duration + best-effort created time + a placeholder
             poster; generate and cache a real poster from any clip already pulled (free
             -- the phone has the bytes; no Pi work, no extra wire).

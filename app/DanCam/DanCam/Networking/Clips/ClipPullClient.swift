@@ -6,6 +6,7 @@ nonisolated struct ClipPullResult: Equatable, Sendable {
     var bytes: UInt64
     var elapsed: Duration
     var throughputMbps: Double
+    var resolvedETag: String
 }
 
 nonisolated enum ClipPullEvent: Equatable, Sendable {
@@ -216,7 +217,8 @@ nonisolated struct ClipPullClient {
                 fileURL: outputURL,
                 bytes: bytesWritten,
                 elapsed: elapsed,
-                throughputMbps: throughput
+                throughputMbps: throughput,
+                resolvedETag: resumeETag
             )))
             continuation.finish()
         } catch is CancellationError {

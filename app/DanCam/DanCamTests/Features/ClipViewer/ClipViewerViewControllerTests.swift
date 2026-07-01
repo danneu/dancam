@@ -1,4 +1,3 @@
-import AVFoundation
 import Foundation
 import Testing
 import UIKit
@@ -6,555 +5,241 @@ import UIKit
 
 @MainActor
 struct ClipViewerViewControllerTests {
-    @Test
-    func progressiveAvailabilityTerminatesOnExplicitRestart() {
-        var lastForwarded: UInt64 = 0
-
-        #expect(ProgressiveAvailability.decide(
-            .progress(bytesWritten: 4, expected: 100),
-            lastForwarded: &lastForwarded
-        ) == .advance(4))
-        #expect(ProgressiveAvailability.decide(
-            .progress(bytesWritten: 7, expected: 100),
-            lastForwarded: &lastForwarded
-        ) == .advance(7))
-        #expect(ProgressiveAvailability.decide(
-            .progress(bytesWritten: 12, expected: 100),
-            lastForwarded: &lastForwarded
-        ) == .advance(12))
-        #expect(ProgressiveAvailability.decide(
-            .restarted,
-            lastForwarded: &lastForwarded
-        ) == .terminateProgressive)
-        #expect(ProgressiveAvailability.decide(
-            .progress(bytesWritten: 64, expected: 100),
-            lastForwarded: &lastForwarded
-        ) == .advance(64))
-    }
-
-    @Test
-    func progressiveAvailabilityDefensivelyTerminatesOnNonMonotonicProgress() {
-        var lastForwarded: UInt64 = 0
-
-        #expect(ProgressiveAvailability.decide(
-            .progress(bytesWritten: 12, expected: 100),
-            lastForwarded: &lastForwarded
-        ) == .advance(12))
-        #expect(ProgressiveAvailability.decide(
-            .progress(bytesWritten: 2, expected: 100),
-            lastForwarded: &lastForwarded
-        ) == .terminateProgressive)
-    }
-
     @Test(.timeLimit(.minutes(1)))
-    func successfulRemuxDeletesPulledTSAndDeletesMP4OnDisappear() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        let didRemux = AsyncSignal()
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-        }
-
+    func cacheHitPlaysLookedUpURLWithoutPulling() throws {
+        let cacheURL = URL(filePath: "/tmp/dancam-cache-hit-\(UUID().uuidString).mp4")
+        let pullCalls = CallLog<Int>()
         let controller = makeController(
-            sourceURL: sourceURL,
-            remuxer: ClipRemuxer { _, _ in
-                await didRemux.signal()
-                return ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        await didRemux.wait()
-        try await waitUntil { FileManager.default.fileExists(atPath: sourceURL.path) == false }
-        #expect(FileManager.default.fileExists(atPath: mp4URL.path))
-        #expect(controller.statusText == "Ready")
-        #expect(controller.currentPlayerItemURL == mp4URL)
-
-        controller.viewWillDisappear(false)
-
-        #expect(FileManager.default.fileExists(atPath: mp4URL.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func cancellationAfterRemuxReturnsDeletesPulledTSAndCompletedMP4() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        let mp4Written = AsyncSignal()
-        let allowReturn = AsyncSignal()
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-        }
-
-        let controller = makeController(
-            sourceURL: sourceURL,
-            remuxer: ClipRemuxer { _, _ in
-                await mp4Written.signal()
-                await allowReturn.wait()
-                return ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        await mp4Written.wait()
-        controller.viewWillDisappear(false)
-        await allowReturn.signal()
-
-        try await waitUntil {
-            FileManager.default.fileExists(atPath: sourceURL.path) == false
-                && FileManager.default.fileExists(atPath: mp4URL.path) == false
-        }
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func remuxFailureDeletesPulledTS() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-        }
-
-        let controller = makeController(
-            sourceURL: sourceURL,
-            remuxer: ClipRemuxer { _, _ in
-                throw ClipRemuxError.invalidH264("boom")
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil {
-            FileManager.default.fileExists(atPath: sourceURL.path) == false
-                && controller.statusText == "Clip failed"
-        }
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func failedPullRendersLocalizedErrorDescription() async throws {
-        let pullError = ClipPullError.transport("Link dropped during pull.")
-        let expectedMessage = try #require(pullError.errorDescription)
-        let controller = makeController(
-            clipPull: ClipPullClient { _, _ in
-                AsyncThrowingStream { continuation in
-                    continuation.finish(throwing: pullError)
+            clipPull: ClipPullClient { clipID, _ in
+                pullCalls.append(clipID)
+                return AsyncThrowingStream { continuation in
+                    continuation.finish(throwing: TestError.unexpectedPull)
                 }
             },
-            progressiveSegmenter: .noop,
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            ),
+            remuxer: ClipRemuxer { source, _ in
+                ClipRemuxResult(fileURL: source, duration: .zero, bytes: 0)
+            }
+        )
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.currentPlayerItemURL == cacheURL)
+        #expect(controller.statusText == "Ready")
+        #expect(pullCalls.values().isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func missPullsRemuxesInsertsByResolvedETagAndPlaysCachedURL() async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        let cachedURL = FileManager.default.temporaryDirectory
+            .appending(path: "dancam-viewer-cached-\(UUID().uuidString).mp4")
+        let insertCalls = CallLog<InsertCall>()
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: mp4URL)
+            try? FileManager.default.removeItem(at: cachedURL)
+        }
+
+        let controller = makeController(
+            pullEvents: completedPullEvents(sourceURL: sourceURL, resolvedETag: "\"resolved-etag\""),
+            clipCache: movingCache(cachedURL: cachedURL, insertCalls: insertCalls),
             remuxer: ClipRemuxer { _, _ in
-                Issue.record("Failed pull should not start remuxing.")
-                return ClipRemuxResult(fileURL: URL(filePath: "/dev/null"), duration: .zero, bytes: 0)
+                ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
+            }
+        )
+
+        controller.loadViewIfNeeded()
+
+        try await waitUntil { controller.currentPlayerItemURL == cachedURL }
+        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: mp4URL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: cachedURL.path))
+
+        let insert = try #require(insertCalls.values().first)
+        #expect(insert.clipID == 1)
+        #expect(insert.etag == "\"resolved-etag\"")
+        #expect(insert.source == mp4URL)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func remuxFailureShowsErrorAndRetryStartsANewPull() async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let pullCalls = CallLog<Int>()
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let controller = makeController(
+            clipPull: pullClient(events: completedPullEvents(sourceURL: sourceURL), calls: pullCalls),
+            remuxer: ClipRemuxer { _, _ in
+                throw ClipRemuxError.invalidH264("boom")
             }
         )
 
         controller.loadViewIfNeeded()
 
         try await waitUntil { controller.statusText == "Clip failed" }
-        #expect(controller.resultText == expectedMessage)
+        #expect(controller.isRetryButtonHidden == false)
+
+        controller.retryForTesting()
+
+        try await waitUntil { pullCalls.values().count == 2 }
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func segmenterFailureFallsBackToFinalizedMP4() async throws {
+    func insertFailureShowsErrorCleansTempsAndRetryStartsANewPull() async throws {
         let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        let mp4URL = FileManager.default.temporaryDirectory
+            .appending(path: "dancam-viewer-remux-\(UUID().uuidString).mp4")
+        let pullCalls = CallLog<Int>()
         defer {
             try? FileManager.default.removeItem(at: sourceURL)
             try? FileManager.default.removeItem(at: mp4URL)
         }
 
         let controller = makeController(
-            pullEvents: completedPullEvents(sourceURL: sourceURL),
-            progressiveSegmenter: failingSegmenter(),
-            remuxer: ClipRemuxer { _, _ in
-                ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == mp4URL }
-        #expect(controller.statusText == "Ready")
-        #expect(controller.hasEmbeddedPlayer)
-        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func noopSegmenterNeverProducingFirstFrameFallsBackToFinalizedMP4() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-        }
-
-        let controller = makeController(
-            pullEvents: completedPullEvents(sourceURL: sourceURL),
-            progressiveSegmenter: .noop,
-            remuxer: ClipRemuxer { _, _ in
-                ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == mp4URL }
-        #expect(controller.statusText == "Ready")
-        #expect(controller.hasEmbeddedPlayer)
-        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func restartedPullTerminatesProgressiveAttemptButStillReadiesMP4() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-        }
-
-        let controller = makeController(
-            pullEvents: [
-                .opened(fileURL: sourceURL),
-                .progress(bytesWritten: 4, expected: 100),
-                .restarted,
-                .progress(bytesWritten: 64, expected: 100),
-                .completed(ClipPullResult(
-                    fileURL: sourceURL,
-                    bytes: 100,
-                    elapsed: .milliseconds(10),
-                    throughputMbps: 80
-                )),
-            ],
-            progressiveSegmenter: .noop,
-            remuxer: ClipRemuxer { _, _ in
-                ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == mp4URL }
-        #expect(controller.statusText == "Ready")
-        #expect(controller.resultText == "100 bytes pulled - 1 byte playable - 0.0 s - 80 Mbps")
-        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func restartedPullAfterFirstPlayableDetachesProgressiveAndStillReadiesMP4() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dancam-progressive-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-        let playlistURL = try #require(URL(string: "http://localhost:49152/p.m3u8"))
-        let allowRestart = AsyncSignal()
-        let allowCompletion = AsyncSignal()
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-            try? FileManager.default.removeItem(at: workDirectory)
-        }
-
-        let controller = makeController(
-            clipPull: restartingPullClient(
-                sourceURL: sourceURL,
-                allowRestart: allowRestart,
-                allowCompletion: allowCompletion
+            clipPull: pullClient(events: completedPullEvents(sourceURL: sourceURL), calls: pullCalls),
+            clipCache: ClipCache(
+                lookup: { _, _ in nil },
+                insert: { _, _, _ in throw TestError.insertFailed }
             ),
-            progressiveSegmenter: playingSegmenter(playlistURL: playlistURL, workDirectory: workDirectory),
+            remuxer: ClipRemuxer { _, _ in
+                try Data([0x02]).write(to: mp4URL)
+                return ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
+            }
+        )
+
+        controller.loadViewIfNeeded()
+
+        try await waitUntil {
+            controller.statusText == "Clip failed"
+                && FileManager.default.fileExists(atPath: sourceURL.path) == false
+                && FileManager.default.fileExists(atPath: mp4URL.path) == false
+        }
+        #expect(controller.currentPlayerItemURL == nil)
+        #expect(controller.isRetryButtonHidden == false)
+
+        controller.retryForTesting()
+
+        try await waitUntil { pullCalls.values().count == 2 }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cacheHitPlaybackFailureSelfHealsByPullingOnce() async throws {
+        let cacheURL = URL(filePath: "/tmp/dancam-missing-cache-\(UUID().uuidString).mp4")
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let pullCalls = CallLog<Int>()
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let controller = makeController(
+            clipPull: ClipPullClient { clipID, _ in
+                pullCalls.append(clipID)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield(.opened(fileURL: sourceURL))
+                    continuation.yield(.progress(bytesWritten: 1, expected: 1))
+                }
+            },
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+        controller.loadViewIfNeeded()
+
+        #expect(controller.currentPlayerItemURL == cacheURL)
+
+        controller.failCurrentPlayerForTesting()
+
+        try await waitUntil { pullCalls.values().count == 1 }
+        #expect(controller.statusText != "Clip failed")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func postRemuxPlaybackFailureSurfacesAndDoesNotAutoRepull() async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        let cachedURL = FileManager.default.temporaryDirectory
+            .appending(path: "dancam-viewer-cached-\(UUID().uuidString).mp4")
+        let pullCalls = CallLog<Int>()
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: mp4URL)
+            try? FileManager.default.removeItem(at: cachedURL)
+        }
+
+        let controller = makeController(
+            clipPull: pullClient(events: completedPullEvents(sourceURL: sourceURL), calls: pullCalls),
+            clipCache: movingCache(cachedURL: cachedURL),
             remuxer: ClipRemuxer { _, _ in
                 ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
             }
         )
         controller.loadViewIfNeeded()
 
-        try await waitUntil { controller.currentPlayerItemURL == playlistURL }
-        await allowRestart.signal()
-        try await waitUntil {
-            controller.currentPlayerItemURL == nil
-                && FileManager.default.fileExists(atPath: workDirectory.path) == false
-        }
+        try await waitUntil { controller.currentPlayerItemURL == cachedURL }
+        controller.failCurrentPlayerForTesting()
 
+        try await waitUntil { controller.statusText == "Clip failed" }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(pullCalls.values().count == 1)
+        #expect(controller.isRetryButtonHidden == false)
+
+        controller.retryForTesting()
+
+        try await waitUntil { pullCalls.values().count == 2 }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func navAwayDuringPullCancelsAndCleansTempFile() async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let allowCompletion = AsyncSignal()
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let controller = makeController(
+            clipPull: gatedPullClient(sourceURL: sourceURL, allowCompletion: allowCompletion),
+            remuxer: ClipRemuxer { _, _ in
+                Issue.record("The remuxer should not run while the pull is gated.")
+                return ClipRemuxResult(fileURL: sourceURL, duration: .zero, bytes: 0)
+            }
+        )
+
+        controller.loadViewIfNeeded()
+        try await waitUntil { controller.progressFraction == 1 }
+
+        controller.viewWillDisappear(false)
         await allowCompletion.signal()
 
-        try await waitUntil { controller.currentPlayerItemURL == mp4URL }
-        #expect(controller.statusText == "Ready")
-        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func progressivePlayerErrorBeforeCompletionFallsBackToFinalizedMP4() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dancam-progressive-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-        let playlistURL = try #require(URL(string: "http://localhost:49152/p.m3u8"))
-        let allowPullToFinish = AsyncSignal()
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-            try? FileManager.default.removeItem(at: workDirectory)
-        }
-
-        let controller = makeController(
-            clipPull: gatedPullClient(sourceURL: sourceURL, allowCompletion: allowPullToFinish),
-            progressiveSegmenter: playingSegmenter(playlistURL: playlistURL, workDirectory: workDirectory),
-            remuxer: ClipRemuxer { _, _ in
-                ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == playlistURL }
-        controller.failCurrentProgressivePlayerForTesting()
         try await waitUntil {
-            controller.currentPlayerItemURL == nil
-                && FileManager.default.fileExists(atPath: workDirectory.path) == false
+            FileManager.default.fileExists(atPath: sourceURL.path) == false
         }
-
-        await allowPullToFinish.signal()
-
-        try await waitUntil { controller.currentPlayerItemURL == mp4URL }
-        #expect(controller.statusText == "Ready")
-        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func progressiveSegmenterFailureAfterFirstPlayableFallsBackToFinalizedMP4() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dancam-progressive-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-        let playlistURL = try #require(URL(string: "http://localhost:49152/p.m3u8"))
-        let failAfterFirstPlayable = AsyncSignal()
-        let allowPullToFinish = AsyncSignal()
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-            try? FileManager.default.removeItem(at: workDirectory)
-        }
-
-        let controller = makeController(
-            clipPull: gatedPullClient(sourceURL: sourceURL, allowCompletion: allowPullToFinish),
-            progressiveSegmenter: playingThenFailingSegmenter(
-                playlistURL: playlistURL,
-                workDirectory: workDirectory,
-                failAfterFirstPlayable: failAfterFirstPlayable
-            ),
-            remuxer: ClipRemuxer { _, _ in
-                ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == playlistURL }
-        await failAfterFirstPlayable.signal()
-        try await waitUntil {
-            controller.currentPlayerItemURL == nil
-                && FileManager.default.fileExists(atPath: workDirectory.path) == false
-        }
-
-        await allowPullToFinish.signal()
-
-        try await waitUntil { controller.currentPlayerItemURL == mp4URL }
-        #expect(controller.statusText == "Ready")
-        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func progressiveSegmenterReachesPlayingWhilePulling() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dancam-progressive-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-        let playlistURL = try #require(URL(string: "http://localhost:49152/p.m3u8"))
-        let allowPullToFinish = AsyncSignal()
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: workDirectory)
-        }
-
-        let controller = makeController(
-            clipPull: gatedPullClient(sourceURL: sourceURL, allowCompletion: allowPullToFinish),
-            progressiveSegmenter: playingSegmenter(playlistURL: playlistURL, workDirectory: workDirectory),
-            remuxer: ClipRemuxer { _, _ in
-                Issue.record("Progressive test should not reach the finalizer before assertion.")
-                return ClipRemuxResult(fileURL: sourceURL, duration: .seconds(0), bytes: 0)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == playlistURL }
-        #expect(controller.hasEmbeddedPlayer)
-        #expect(controller.statusText == "Playing - 1 byte of 1 byte")
-
-        controller.viewWillDisappear(false)
-        await allowPullToFinish.signal()
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func completedProgressivePullSwapsToDurableMP4PreservingPlaybackPosition() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dancam-progressive-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-        let playlistURL = try #require(URL(string: "http://localhost:49152/p.m3u8"))
-        let allowPullToFinish = AsyncSignal()
-        let resumeTime = CMTime(seconds: 0.75, preferredTimescale: 600)
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-            try? FileManager.default.removeItem(at: workDirectory)
-        }
-
-        let controller = makeController(
-            clipPull: gatedPullClient(sourceURL: sourceURL, allowCompletion: allowPullToFinish),
-            progressiveSegmenter: playingSegmenter(playlistURL: playlistURL, workDirectory: workDirectory),
-            remuxer: ClipRemuxer { _, _ in
-                ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == playlistURL }
-        await controller.seekCurrentPlayerForTesting(to: resumeTime)
-        try await waitUntil { isTime(controller.currentPlayerTime, near: resumeTime) }
-        controller.pauseCurrentPlayerForTesting()
-
-        await allowPullToFinish.signal()
-
-        try await waitUntil { controller.currentPlayerItemURL == mp4URL }
-        try await waitUntil { isTime(controller.currentPlayerTime, near: resumeTime) }
-        #expect(controller.statusText == "Ready")
-        #expect(controller.resultText == "1 byte pulled - 1 byte playable - 0.0 s - 1 Mbps")
-        #expect(controller.isCurrentPlayerPlaying == false)
-        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
-        #expect(FileManager.default.fileExists(atPath: workDirectory.path) == false)
-        #expect(FileManager.default.fileExists(atPath: mp4URL.path))
-
-        controller.viewWillDisappear(false)
-
-        #expect(FileManager.default.fileExists(atPath: mp4URL.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func finalizerFailureWhileProgressiveHealthyKeepsPlayerAndDeletesTS() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dancam-progressive-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-        let playlistURL = try #require(URL(string: "http://localhost:49152/p.m3u8"))
-        let allowPullToFinish = AsyncSignal()
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: workDirectory)
-        }
-
-        let controller = makeController(
-            clipPull: gatedPullClient(sourceURL: sourceURL, allowCompletion: allowPullToFinish),
-            progressiveSegmenter: playingSegmenter(playlistURL: playlistURL, workDirectory: workDirectory),
-            remuxer: ClipRemuxer { _, _ in
-                throw ClipRemuxError.invalidH264("boom")
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == playlistURL }
-        await allowPullToFinish.signal()
-
-        try await waitUntil { controller.statusText == "Scrubbing unavailable" }
-        #expect(controller.currentPlayerItemURL == playlistURL)
-        #expect(controller.hasEmbeddedPlayer)
-        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
-        #expect(FileManager.default.fileExists(atPath: workDirectory.path))
-
-        controller.viewWillDisappear(false)
-
-        #expect(FileManager.default.fileExists(atPath: workDirectory.path) == false)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func postSwapFirstPlayableReadyDoesNotReplaceDurableMP4() async throws {
-        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dancam-progressive-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-        let playlistURL = try #require(URL(string: "http://localhost:49153/p.m3u8"))
-        let allowLateFirstPlayable = AsyncSignal()
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: mp4URL)
-            try? FileManager.default.removeItem(at: workDirectory)
-        }
-
-        let controller = makeController(
-            pullEvents: completedPullEvents(sourceURL: sourceURL),
-            progressiveSegmenter: postSwapFirstPlayableSegmenter(
-                playlistURL: playlistURL,
-                workDirectory: workDirectory,
-                allowLateFirstPlayable: allowLateFirstPlayable
-            ),
-            remuxer: ClipRemuxer { _, _ in
-                ClipRemuxResult(fileURL: mp4URL, duration: .seconds(30), bytes: 1)
-            }
-        )
-        controller.loadViewIfNeeded()
-
-        try await waitUntil { controller.currentPlayerItemURL == mp4URL }
-        await allowLateFirstPlayable.signal()
-        try await Task.sleep(for: .milliseconds(50))
-
-        #expect(controller.currentPlayerItemURL == mp4URL)
-        #expect(controller.statusText == "Ready")
-    }
-
-    private func makeController(
-        sourceURL: URL,
-        remuxer: ClipRemuxer
-    ) -> ClipViewerViewController {
-        makeController(
-            pullEvents: [
-                .completed(ClipPullResult(
-                    fileURL: sourceURL,
-                    bytes: 1,
-                    elapsed: .milliseconds(1),
-                    throughputMbps: 1
-                )),
-            ],
-            progressiveSegmenter: .noop,
-            remuxer: remuxer
-        )
     }
 
     private func makeController(
         pullEvents: [ClipPullEvent],
-        progressiveSegmenter: ProgressiveSegmenter,
+        clipCache: ClipCache = .noop,
         remuxer: ClipRemuxer
     ) -> ClipViewerViewController {
         makeController(
-            clipPull: ClipPullClient { _, _ in
-                AsyncThrowingStream { continuation in
-                    for event in pullEvents {
-                        continuation.yield(event)
-                    }
-                    continuation.finish()
-                }
-            },
-            progressiveSegmenter: progressiveSegmenter,
+            clipPull: pullClient(events: pullEvents),
+            clipCache: clipCache,
             remuxer: remuxer
         )
     }
 
     private func makeController(
-        clipPull: ClipPullClient,
-        progressiveSegmenter: ProgressiveSegmenter,
-        remuxer: ClipRemuxer
+        clipPull: ClipPullClient = .noop,
+        clipCache: ClipCache = .noop,
+        remuxer: ClipRemuxer = .noop
     ) -> ClipViewerViewController {
         ClipViewerViewController(
             dependencies: AppDependencies(
                 health: HealthClient(fetch: { fatalError("Health is not used by ClipViewerViewControllerTests.") }),
                 clipPull: clipPull,
                 clipRemuxer: remuxer,
-                progressiveSegmenter: progressiveSegmenter
+                clipCache: clipCache
             ),
             clip: Clip(
                 id: 1,
@@ -562,140 +247,38 @@ struct ClipViewerViewControllerTests {
                 durMs: 30_000,
                 bytes: 1,
                 locked: false,
-                etag: "etag",
+                etag: "list-etag",
                 timeApproximate: false
             )
         )
     }
 
-    private func completedPullEvents(sourceURL: URL) -> [ClipPullEvent] {
-        [
-            .opened(fileURL: sourceURL),
-            .progress(bytesWritten: 1, expected: 1),
-            .completed(ClipPullResult(
-                fileURL: sourceURL,
-                bytes: 1,
-                elapsed: .milliseconds(1),
-                throughputMbps: 1
-            )),
-        ]
-    }
-
-    private func failingSegmenter() -> ProgressiveSegmenter {
-        ProgressiveSegmenter { _, _, _ in
-            AsyncThrowingStream { continuation in
-                continuation.finish(throwing: ClipRemuxError.invalidH264("boom"))
+    private func movingCache(
+        cachedURL: URL,
+        insertCalls: CallLog<InsertCall> = CallLog<InsertCall>()
+    ) -> ClipCache {
+        ClipCache(
+            lookup: { _, _ in nil },
+            insert: { clipID, etag, source in
+                insertCalls.append(InsertCall(clipID: clipID, etag: etag, source: source))
+                try? FileManager.default.removeItem(at: cachedURL)
+                try FileManager.default.moveItem(at: source, to: cachedURL)
+                return cachedURL
             }
-        }
+        )
     }
 
-    private func playingSegmenter(
-        playlistURL: URL,
-        workDirectory: URL
-    ) -> ProgressiveSegmenter {
-        ProgressiveSegmenter { _, _, availability in
-            AsyncThrowingStream { continuation in
-                let task = Task {
-                    continuation.yield(.opened(workDirectory: workDirectory))
-
-                    var didEmitFirstPlayable = false
-                    for await bytesAvailable in availability {
-                        guard didEmitFirstPlayable == false, bytesAvailable > 0 else {
-                            continue
-                        }
-                        didEmitFirstPlayable = true
-                        continuation.yield(.firstPlayableReady(url: playlistURL))
-                    }
-                    continuation.finish()
-                }
-
-                continuation.onTermination = { @Sendable _ in
-                    task.cancel()
-                }
-            }
-        }
-    }
-
-    private func playingThenFailingSegmenter(
-        playlistURL: URL,
-        workDirectory: URL,
-        failAfterFirstPlayable: AsyncSignal
-    ) -> ProgressiveSegmenter {
-        ProgressiveSegmenter { _, _, availability in
-            AsyncThrowingStream { continuation in
-                let task = Task {
-                    continuation.yield(.opened(workDirectory: workDirectory))
-
-                    var didEmitFirstPlayable = false
-                    for await bytesAvailable in availability {
-                        guard didEmitFirstPlayable == false, bytesAvailable > 0 else {
-                            continue
-                        }
-                        didEmitFirstPlayable = true
-                        continuation.yield(.firstPlayableReady(url: playlistURL))
-                        break
-                    }
-
-                    await failAfterFirstPlayable.wait()
-                    continuation.finish(throwing: ClipRemuxError.invalidH264("boom"))
-                }
-
-                continuation.onTermination = { @Sendable _ in
-                    task.cancel()
-                }
-            }
-        }
-    }
-
-    private func postSwapFirstPlayableSegmenter(
-        playlistURL: URL,
-        workDirectory: URL,
-        allowLateFirstPlayable: AsyncSignal
-    ) -> ProgressiveSegmenter {
-        ProgressiveSegmenter { _, _, availability in
-            AsyncThrowingStream { continuation in
-                let task = Task {
-                    continuation.yield(.opened(workDirectory: workDirectory))
-                    for await _ in availability {
-                    }
-                    await allowLateFirstPlayable.wait()
-                    continuation.yield(.firstPlayableReady(url: playlistURL))
-                    continuation.finish()
-                }
-
-                continuation.onTermination = { @Sendable _ in
-                    task.cancel()
-                }
-            }
-        }
-    }
-
-    private func restartingPullClient(
-        sourceURL: URL,
-        allowRestart: AsyncSignal,
-        allowCompletion: AsyncSignal
+    private func pullClient(
+        events: [ClipPullEvent],
+        calls: CallLog<Int> = CallLog<Int>()
     ) -> ClipPullClient {
-        ClipPullClient { _, _ in
-            AsyncThrowingStream { continuation in
-                let task = Task {
-                    continuation.yield(.opened(fileURL: sourceURL))
-                    continuation.yield(.progress(bytesWritten: 1, expected: 100))
-                    await allowRestart.wait()
-                    continuation.yield(.restarted)
-                    continuation.yield(.progress(bytesWritten: 64, expected: 100))
-                    await allowCompletion.wait()
-                    continuation.yield(.completed(ClipPullResult(
-                        fileURL: sourceURL,
-                        bytes: 100,
-                        elapsed: .milliseconds(10),
-                        throughputMbps: 80
-                    )))
-                    continuation.finish()
+        ClipPullClient { clipID, _ in
+            calls.append(clipID)
+            return AsyncThrowingStream { continuation in
+                for event in events {
+                    continuation.yield(event)
                 }
-
-                continuation.onTermination = { @Sendable _ in
-                    task.cancel()
-                }
+                continuation.finish()
             }
         }
     }
@@ -714,7 +297,8 @@ struct ClipViewerViewControllerTests {
                         fileURL: sourceURL,
                         bytes: 1,
                         elapsed: .milliseconds(1),
-                        throughputMbps: 1
+                        throughputMbps: 1,
+                        resolvedETag: "\"list-etag\""
                     )))
                     continuation.finish()
                 }
@@ -726,27 +310,31 @@ struct ClipViewerViewControllerTests {
         }
     }
 
+    private func completedPullEvents(
+        sourceURL: URL,
+        resolvedETag: String = "\"list-etag\""
+    ) -> [ClipPullEvent] {
+        [
+            .opened(fileURL: sourceURL),
+            .progress(bytesWritten: 1, expected: 1),
+            .completed(ClipPullResult(
+                fileURL: sourceURL,
+                bytes: 1,
+                elapsed: .milliseconds(1),
+                throughputMbps: 1,
+                resolvedETag: resolvedETag
+            )),
+        ]
+    }
+
     private func temporaryFile(
         extension pathExtension: String,
         contents: Data
     ) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "\(UUID().uuidString).\(pathExtension)")
-        guard FileManager.default.createFile(atPath: url.path, contents: contents) else {
-            throw ClipRemuxError.file("Could not create test file.")
-        }
+        try contents.write(to: url)
         return url
-    }
-
-    private func isTime(
-        _ actual: CMTime,
-        near expected: CMTime,
-        tolerance: Double = 1.0 / 30.0
-    ) -> Bool {
-        guard actual.isNumeric, expected.isNumeric else {
-            return false
-        }
-        return abs(actual.seconds - expected.seconds) < tolerance
     }
 
     private func waitUntil(_ condition: @escaping () -> Bool) async throws {
@@ -757,5 +345,34 @@ struct ClipViewerViewControllerTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         Issue.record("Timed out waiting for condition.")
+    }
+}
+
+private enum TestError: Error {
+    case insertFailed
+    case unexpectedPull
+}
+
+private struct InsertCall: Equatable, Sendable {
+    var clipID: Int
+    var etag: String
+    var source: URL
+}
+
+private final class CallLog<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [Value] = []
+
+    func append(_ value: Value) {
+        lock.lock()
+        stored.append(value)
+        lock.unlock()
+    }
+
+    func values() -> [Value] {
+        lock.lock()
+        let values = stored
+        lock.unlock()
+        return values
     }
 }

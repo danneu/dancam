@@ -17,6 +17,13 @@
 > remuxing completes. The rejected path here was single-segment TS HLS, not
 > localhost HLS itself.
 
+> **Note (2026-07-01):** ADR 13 supersedes ADR 08 and its 2026-06-27 caveat. Remux
+> to MP4 is again the sole viewer playback path: pull the raw `.ts`, remux to a
+> fast-start MP4, store it in the durable `Library/Caches/clips` cache, and play that
+> local file directly with `AVPlayer(url:)`. The cache also supersedes this ADR's
+> "remux is currently temporary per viewer" consequence; committed cache files survive
+> viewer dismissal and become the future export artifact.
+
 ## Context
 
 The app originally played a pulled clip by wrapping the finished `.ts` file in a

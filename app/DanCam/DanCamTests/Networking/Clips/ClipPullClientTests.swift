@@ -53,6 +53,7 @@ struct ClipPullClientTests {
         #expect(openedURL == result.fileURL)
         #expect(try Data(contentsOf: result.fileURL) == body)
         #expect(result.bytes == UInt64(body.count))
+        #expect(result.resolvedETag == "\"1-12\"")
         #expect(result.throughputMbps >= 0)
     }
 
@@ -92,6 +93,7 @@ struct ClipPullClientTests {
         #expect(openedURL == result.fileURL)
         #expect(try Data(contentsOf: result.fileURL) == full)
         #expect(result.bytes == UInt64(full.count))
+        #expect(result.resolvedETag == "\"1-12\"")
     }
 
     @Test(.tags(.networking))
@@ -436,6 +438,7 @@ struct ClipPullClientTests {
         // Truncated and rewritten -- no stale tail from the 10-byte old representation.
         #expect(try Data(contentsOf: result.fileURL) == newBytes)
         #expect(result.bytes == UInt64(newBytes.count))
+        #expect(result.resolvedETag == "\"new\"")
     }
 
     @Test(.tags(.networking))

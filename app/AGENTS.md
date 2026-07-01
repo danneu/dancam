@@ -94,7 +94,8 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `01-2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
 - `02-2026-06-22-app-pi-transport-and-api.md` -- the app-side obligations for talking to
   the Pi (NEHotspotConfiguration join, NWConnection Wi-Fi pinning, the hand-rolled
-  per-plane HTTP/1.1 client, loopback-HLS playback, App Intents incident-lock). The
+  per-plane HTTP/1.1 client, raw clip pull feeding local cached MP4 playback, App
+  Intents incident-lock). The
   wire contract itself is delegated to the raspi-side ADR of the same name.
 - `03-2026-06-24-app-ui-architecture.md` -- UIKit programmatic UI and the bespoke
   minimal TEA core used by the app.
@@ -109,7 +110,7 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `07-2026-06-26-on-device-clip-remux-playback.md` -- remux pulled TS clips into
   on-device MP4 for durable playback.
 - `08-2026-06-27-progressive-fmp4-clip-playback.md` -- progressively serve fMP4
-  fragments over loopback while a clip pull is still running.
+  fragments over loopback while a clip pull is still running; superseded by ADR 13.
 - `09-2026-06-29-connection-liveness-timeouts.md` -- bound transport connect and
   monitor status-fetch liveness so stale "Connected" cannot hang indefinitely.
 - `10-2026-06-29-event-folded-state-machines.md` -- fold the ordered Pi event stream
@@ -118,3 +119,5 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   the shared `NWByteStream` transport.
 - `12-2026-06-30-bounded-resilient-clip-pull.md` -- make clip pull retry by byte
   progress, bound no-progress and runaway reconnects, and surface typed failures.
+- `13-2026-07-01-durable-clip-cache.md` -- delete the progressive loopback player and
+  make cached fast-start MP4 the sole clip playback and future export artifact.

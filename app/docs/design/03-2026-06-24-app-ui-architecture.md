@@ -153,6 +153,11 @@ Follow-ups outside this ADR:
 - MJPEG preview decode and ranged clip pull are the first likely places to add
   deliberate off-main work.
 
+2026-07-01 note: ADR 13 deletes the loopback-HLS playback surface named in the
+context above. The architecture choice is unchanged: clip playback still uses
+UIKit-hosted `AVPlayer`, now against a local cached MP4 instead of a loopback HLS
+playlist.
+
 ## Alternatives considered
 
 - **SwiftUI.** Rejected: its implicit observation and state model duplicates TEA's

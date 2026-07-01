@@ -26,6 +26,14 @@
 > adding a configured connect deadline to `NWByteStream`. The wire contract, Wi-Fi
 > pinning, and raw clip transport stay unchanged.
 
+> **Note (2026-07-01):** ADR 13 supersedes the 2026-06-27 progressive-playback note
+> and this ADR's loopback playback mechanism. App-side playback is again a local
+> passthrough MP4 played with `AVPlayer(url:)`, now committed to a durable
+> `Library/Caches/clips` cache before playback. The viewer-scoped loopback HLS server
+> and progressive fMP4 path are deleted. The Pi wire contract still stands unchanged:
+> raw `.ts` clip bytes with `Range`, Wi-Fi pinning, pull, time sync, and incident
+> content are unaffected.
+
 ## Context
 
 The iPhone app is the client of the camera unit's local API. The **wire contract** --
