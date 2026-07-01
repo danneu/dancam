@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         };
+    let state = state.with_service_port(local_addr.port());
 
     dancam::events::spawn_heartbeat(state.backend.clone(), Duration::from_secs(2));
     dancam::events::spawn_telemetry(

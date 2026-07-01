@@ -71,6 +71,11 @@ impl AppState {
         self.rec_dir = Arc::from(rec_dir.into_boxed_path());
         self
     }
+
+    pub fn with_service_port(mut self, port: u16) -> Self {
+        self.host_policy = Arc::new(HostPolicy::new(port));
+        self
+    }
 }
 
 pub fn app(state: AppState) -> Router {
@@ -136,16 +141,7 @@ struct HostPolicy {
 
 impl Default for HostPolicy {
     fn default() -> Self {
-        Self {
-            allowed_hosts: HashSet::from([
-                "10.42.0.1",
-                "dancam.local",
-                "localhost",
-                "127.0.0.1",
-                "::1",
-            ]),
-            service_port: 8080,
-        }
+        Self::new(8080)
     }
 }
 
@@ -170,6 +166,19 @@ async fn host_allowlist(
 }
 
 impl HostPolicy {
+    fn new(service_port: u16) -> Self {
+        Self {
+            allowed_hosts: HashSet::from([
+                "10.42.0.1",
+                "dancam.local",
+                "localhost",
+                "127.0.0.1",
+                "::1",
+            ]),
+            service_port,
+        }
+    }
+
     fn allows(&self, raw_host: &str) -> bool {
         let Some((host, port)) = parse_host_header(raw_host) else {
             return false;
@@ -239,6 +248,15 @@ mod tests {
         assert!(!policy.allows("evil.example:8080"));
         assert!(!policy.allows("10.42.0.1:9999"));
         assert!(!policy.allows(""));
+    }
+
+    #[test]
+    fn host_policy_uses_configured_service_port() {
+        let policy = HostPolicy::new(9000);
+
+        assert!(policy.allows("127.0.0.1:9000"));
+        assert!(policy.allows("dancam.local:9000"));
+        assert!(!policy.allows("127.0.0.1:8080"));
     }
 
     #[test]
