@@ -24,11 +24,12 @@ nonisolated enum TSDemuxer {
 
     static func demuxH264PESPackets(from data: Data) throws -> [H264PESPacket] {
         // The finalizer shares the tolerant incremental path: it resyncs after
-        // garbage, drops any sub-188-byte residual tail, and emits the final
-        // truncated PES as-is so the MP4 can play up to the cut. Appending the
-        // whole file creates one transient copy into the demuxer's residual.
+        // garbage, skips per-packet anomalies (dropping at most one PES each),
+        // drops any sub-188-byte residual tail, and emits the final truncated PES
+        // as-is so the MP4 can play up to the cut. Appending the whole file creates
+        // one transient copy into the demuxer's residual.
         var demuxer = IncrementalTSDemuxer()
-        var packets = try demuxer.append(data)
+        var packets = demuxer.append(data)
         packets.append(contentsOf: demuxer.finish())
 
         guard packets.isEmpty == false else {
@@ -44,14 +45,18 @@ nonisolated struct IncrementalTSDemuxer {
 
     private var residual = Data()
     private var parserState = TransportStreamH264Parser.State()
-    private var packetIndex = 0
     private var isSynced = true
     private var didLogResync = false
+    private var droppedPacketCount = 0
+    private var didLogDroppedPacket = false
 
     init(clockTimescale _: Int32 = TransportStreamH264Parser.clockTimescale) {
     }
 
-    mutating func append(_ chunk: Data) throws -> [H264PESPacket] {
+    // Never throws: a per-packet anomaly can only skip that packet (dropping at
+    // most one PES), never abort the clip. The only failure surfaced to callers is
+    // the terminal "no packets at all" case in `demuxH264PESPackets`.
+    mutating func append(_ chunk: Data) -> [H264PESPacket] {
         residual.append(chunk)
 
         var consumed = 0
@@ -68,14 +73,20 @@ nonisolated struct IncrementalTSDemuxer {
                 isSynced = true
             }
 
-            try TransportStreamH264Parser.processPacket(
+            switch TransportStreamH264Parser.processPacket(
                 from: residual,
                 packetOffset: consumed,
-                packetIndex: packetIndex,
                 state: &parserState
-            )
+            ) {
+            case .parsed:
+                break
+            case .skipped(let reason):
+                droppedPacketCount += 1
+                logDroppedPacketIfNeeded(reason)
+            }
+            // Advance unconditionally so forward progress never depends on the
+            // packet parsing cleanly (the infinite-loop defense).
             consumed += TransportStreamH264Parser.packetSize
-            packetIndex += 1
         }
 
         if consumed > 0 {
@@ -117,21 +128,115 @@ nonisolated struct IncrementalTSDemuxer {
         didLogResync = true
         Self.logger.notice("Resynchronized TS parser after dropping \(skippedByteCount) bytes.")
     }
+
+    private mutating func logDroppedPacketIfNeeded(_ reason: TransportStreamH264Parser.SkipReason) {
+        guard didLogDroppedPacket == false else { return }
+
+        didLogDroppedPacket = true
+        Self.logger.notice("Skipped a corrupt TS packet (\(String(describing: reason))) and continued.")
+    }
 }
 
 nonisolated enum TransportStreamH264Parser {
     static let packetSize = 188
     static let clockTimescale: Int32 = 90_000
 
+    /// Why a single packet was skipped. Every case drops at most one PES; none
+    /// aborts the clip. Kept as a total-function outcome so "a per-packet anomaly
+    /// can never abort a clip" is compiler-enforced.
+    enum SkipReason: Error, Equatable, Sendable {
+        case reservedAdaptationControl
+        case missingAdaptationLength
+        case adaptationOverrun
+        case psiPointerMissing
+        case psiPointerOverrun
+        case psiSectionSpansPackets
+        case pmtTooShort
+        case pesHeaderTooShort
+        case pesStartCodeMissing
+        case pesHeaderOverrun
+        case pesMissingPTS
+        case pesTruncatedPTS
+        case pesTruncatedDTS
+        case pesTimestampMarkerInvalid
+        case pesNonMonotonicDTS
+    }
+
+    enum PacketOutcome: Equatable, Sendable {
+        case parsed
+        case skipped(SkipReason)
+    }
+
     struct State {
         fileprivate var pmtPID: UInt16?
         fileprivate var videoPID: UInt16?
         private var currentPES: PartialPES?
+        /// The last trusted, already-emitted DTS. The ordering check demotes any
+        /// later PES whose DTS falls at or below this baseline.
+        private var lastFinishedDTS: Int64?
         fileprivate(set) var packets: [H264PESPacket] = []
 
-        fileprivate mutating func startPES(from payload: Data) throws {
+        fileprivate mutating func startPES(from payload: Data) throws(SkipReason) {
+            let candidate: PartialPES
+            do {
+                candidate = try TransportStreamH264Parser.parsePESStart(payload)
+            } catch {
+                // PES-header corruption: flush the previous good frame and drop the
+                // corrupt start. The flush persists even though we then rethrow.
+                finishCurrentPES()
+                throw error
+            }
+
+            try admitCandidate(candidate)
+        }
+
+        // Vets a freshly-parsed PES against the one-frame lookahead (`currentPES`)
+        // and the trusted baseline (`lastFinishedDTS`) so the emitted DTS stream
+        // stays monotonic. A throw signals a drop; the state mutations made before
+        // it (flush/discard/install) persist.
+        private mutating func admitCandidate(_ candidate: PartialPES) throws(SkipReason) {
+            guard let cur = currentPES else {
+                // Nothing held. Install unless the candidate dips at/below the
+                // trusted baseline. With no baseline yet, always install.
+                if let lastFinishedDTS, candidate.dtsTicks <= lastFinishedDTS {
+                    throw .pesNonMonotonicDTS
+                }
+                currentPES = candidate
+                return
+            }
+
+            guard let lastFinishedDTS else {
+                // Held frame but no baseline yet (start-of-stream window): the held
+                // frame is the sole anchor, so it must never be discarded here.
+                if candidate.dtsTicks > cur.dtsTicks {
+                    finishCurrentPES()
+                    currentPES = candidate
+                    return
+                }
+                // Non-monotonic with no baseline: keep the held frame, drop the
+                // candidate. Never discard the held frame (the F1 total-loss path).
+                finishCurrentPES()
+                throw .pesNonMonotonicDTS
+            }
+
+            // Steady state: the invariant `lastFinishedDTS < cur.dtsTicks` holds.
+            if candidate.dtsTicks > cur.dtsTicks {
+                // Monotonic: emit the held frame, install the candidate.
+                finishCurrentPES()
+                currentPES = candidate
+                return
+            }
+            if candidate.dtsTicks > lastFinishedDTS {
+                // The held frame is the spike: drop it unemitted, install the
+                // candidate. Baseline is unchanged.
+                discardCurrentPES()
+                currentPES = candidate
+                throw .pesNonMonotonicDTS
+            }
+            // The candidate is the dip: the held previous frame is good, so emit it
+            // and drop the candidate.
             finishCurrentPES()
-            currentPES = try TransportStreamH264Parser.parsePESStart(payload)
+            throw .pesNonMonotonicDTS
         }
 
         fileprivate mutating func appendToCurrentPES(_ payload: Data) {
@@ -139,7 +244,35 @@ nonisolated enum TransportStreamH264Parser {
         }
 
         fileprivate mutating func finishCurrentPES() {
-            TransportStreamH264Parser.finishCurrentPES(&currentPES, into: &packets)
+            guard let completed = currentPES, completed.payload.isEmpty == false else {
+                currentPES = nil
+                return
+            }
+
+            packets.append(H264PESPacket(
+                payload: completed.payload,
+                ptsTicks: completed.ptsTicks,
+                dtsTicks: completed.dtsTicks
+            ))
+            lastFinishedDTS = completed.dtsTicks
+            currentPES = nil
+        }
+
+        fileprivate mutating func discardCurrentPES() {
+            currentPES = nil
+        }
+
+        // Recovery-granularity policy for an adaptation-level anomaly on the video
+        // PID: at a PES boundary the previous frame is complete (flush it); on a
+        // continuation the in-flight frame is gap-corrupted (drop it). Anomalies on
+        // PSI or other PIDs leave the in-flight video PES intact.
+        fileprivate mutating func applyAdaptationRecovery(pid: UInt16, payloadUnitStart: Bool) {
+            guard let videoPID, pid == videoPID else { return }
+            if payloadUnitStart {
+                finishCurrentPES()
+            } else {
+                discardCurrentPES()
+            }
         }
 
         fileprivate mutating func drainPackets() -> [H264PESPacket] {
@@ -151,36 +284,46 @@ nonisolated enum TransportStreamH264Parser {
     static func processPacket(
         from data: Data,
         packetOffset: Int,
-        packetIndex: Int,
         state: inout State
-    ) throws {
-        guard data[packetOffset] == 0x47 else {
-            throw ClipRemuxError.invalidTransportStream("Missing sync byte at TS packet \(packetIndex).")
+    ) -> PacketOutcome {
+        do {
+            try parse(from: data, packetOffset: packetOffset, state: &state)
+            return .parsed
+        } catch {
+            return .skipped(error)
         }
+    }
+
+    private static func parse(
+        from data: Data,
+        packetOffset: Int,
+        state: inout State
+    ) throws(SkipReason) {
+        // `append`'s resync logic owns alignment; by the time a packet reaches the
+        // parser it always starts on a sync byte.
+        assert(data[packetOffset] == 0x47)
 
         let payloadUnitStart = (data[packetOffset + 1] & 0x40) != 0
         let pid = UInt16(data[packetOffset + 1] & 0x1f) << 8
             | UInt16(data[packetOffset + 2])
         let adaptationControl = (data[packetOffset + 3] & 0x30) >> 4
 
-        guard adaptationControl != 0 else {
-            throw ClipRemuxError.invalidTransportStream("Reserved adaptation-control value.")
-        }
-
-        var payloadOffset = packetOffset + 4
-        if adaptationControl == 2 || adaptationControl == 3 {
-            guard payloadOffset < packetOffset + packetSize else {
-                throw ClipRemuxError.invalidTransportStream("Missing adaptation-field length.")
-            }
-            let adaptationLength = Int(data[payloadOffset])
-            payloadOffset += 1 + adaptationLength
+        let payloadOffset: Int
+        do {
+            payloadOffset = try adaptationPayloadOffset(
+                data,
+                packetOffset: packetOffset,
+                adaptationControl: adaptationControl
+            )
+        } catch {
+            // pid and PUSI are known before any anomaly, so route recovery
+            // precisely, then surface the skip.
+            state.applyAdaptationRecovery(pid: pid, payloadUnitStart: payloadUnitStart)
+            throw error
         }
 
         guard adaptationControl == 1 || adaptationControl == 3 else {
             return
-        }
-        guard payloadOffset <= packetOffset + packetSize else {
-            throw ClipRemuxError.invalidTransportStream("Adaptation field overruns TS packet.")
         }
 
         let payload = Data(data[payloadOffset..<(packetOffset + packetSize)])
@@ -215,10 +358,37 @@ nonisolated enum TransportStreamH264Parser {
         state.finishCurrentPES()
     }
 
+    private static func adaptationPayloadOffset(
+        _ data: Data,
+        packetOffset: Int,
+        adaptationControl: UInt8
+    ) throws(SkipReason) -> Int {
+        guard adaptationControl != 0 else {
+            throw .reservedAdaptationControl
+        }
+
+        var payloadOffset = packetOffset + 4
+        if adaptationControl == 2 || adaptationControl == 3 {
+            guard payloadOffset < packetOffset + packetSize else {
+                throw .missingAdaptationLength
+            }
+            let adaptationLength = Int(data[payloadOffset])
+            payloadOffset += 1 + adaptationLength
+        }
+
+        if adaptationControl == 1 || adaptationControl == 3 {
+            guard payloadOffset <= packetOffset + packetSize else {
+                throw .adaptationOverrun
+            }
+        }
+
+        return payloadOffset
+    }
+
     private static func parsePAT(
         _ payload: Data,
         payloadUnitStart: Bool
-    ) throws -> UInt16? {
+    ) throws(SkipReason) -> UInt16? {
         guard payloadUnitStart else { return nil }
         let section = try psiSection(in: payload, expectedTableID: 0x00)
         let end = section.count - 4
@@ -239,11 +409,11 @@ nonisolated enum TransportStreamH264Parser {
     private static func parsePMT(
         _ payload: Data,
         payloadUnitStart: Bool
-    ) throws -> UInt16? {
+    ) throws(SkipReason) -> UInt16? {
         guard payloadUnitStart else { return nil }
         let section = try psiSection(in: payload, expectedTableID: 0x02)
         guard section.count >= 16 else {
-            throw ClipRemuxError.invalidTransportStream("PMT section is too short.")
+            throw .pmtTooShort
         }
 
         let sectionEnd = section.count - 4
@@ -268,13 +438,13 @@ nonisolated enum TransportStreamH264Parser {
     private static func psiSection(
         in payload: Data,
         expectedTableID: UInt8
-    ) throws -> Data {
+    ) throws(SkipReason) -> Data {
         guard let pointer = payload.first else {
-            throw ClipRemuxError.invalidTransportStream("Missing PSI pointer field.")
+            throw .psiPointerMissing
         }
         let sectionOffset = 1 + Int(pointer)
         guard sectionOffset + 3 <= payload.count else {
-            throw ClipRemuxError.invalidTransportStream("PSI pointer overruns payload.")
+            throw .psiPointerOverrun
         }
 
         let section = Data(payload[sectionOffset...])
@@ -285,33 +455,42 @@ nonisolated enum TransportStreamH264Parser {
         let sectionLength = Int(section[1] & 0x0f) << 8 | Int(section[2])
         let totalLength = 3 + sectionLength
         guard totalLength <= section.count else {
-            throw ClipRemuxError.invalidTransportStream("PSI section spans multiple packets.")
+            throw .psiSectionSpansPackets
         }
 
         return Data(section[..<totalLength])
     }
 
-    private static func parsePESStart(_ payload: Data) throws -> PartialPES {
+    private static func parsePESStart(_ payload: Data) throws(SkipReason) -> PartialPES {
         guard payload.count >= 9 else {
-            throw ClipRemuxError.invalidTransportStream("PES header is too short.")
+            throw .pesHeaderTooShort
         }
         guard payload[0] == 0, payload[1] == 0, payload[2] == 1 else {
-            throw ClipRemuxError.invalidTransportStream("Missing PES start code.")
+            throw .pesStartCodeMissing
         }
 
         let timestampFlags = (payload[7] & 0xc0) >> 6
         let headerLength = Int(payload[8])
         let payloadOffset = 9 + headerLength
         guard payloadOffset <= payload.count else {
-            throw ClipRemuxError.invalidTransportStream("PES header overruns payload.")
+            throw .pesHeaderOverrun
         }
         guard timestampFlags == 0b10 || timestampFlags == 0b11 else {
-            throw ClipRemuxError.invalidTransportStream("PES packet is missing PTS.")
+            throw .pesMissingPTS
         }
 
         let ptsOffset = 9
         guard ptsOffset + 5 <= payload.count else {
-            throw ClipRemuxError.invalidTransportStream("PES packet has truncated PTS.")
+            throw .pesTruncatedPTS
+        }
+        // Cheap syntax gate: the prefix nibble and interleaved marker bits are
+        // mandated and invariant in well-formed output, so this never fires on a
+        // clean stream but rejects a structurally broken timestamp header early.
+        // It catches only the ~7/40 timestamp-bit flips that land on a prefix or
+        // marker bit; the value-bit majority is left to the ordering check.
+        let ptsPrefix: UInt8 = timestampFlags == 0b11 ? 0b0011 : 0b0010
+        guard timestampMarkersValid(payload, offset: ptsOffset, expectedPrefix: ptsPrefix) else {
+            throw .pesTimestampMarkerInvalid
         }
         let pts = decodeTimestamp(payload, offset: ptsOffset)
 
@@ -319,7 +498,10 @@ nonisolated enum TransportStreamH264Parser {
         if timestampFlags == 0b11 {
             let dtsOffset = ptsOffset + 5
             guard dtsOffset + 5 <= payload.count else {
-                throw ClipRemuxError.invalidTransportStream("PES packet has truncated DTS.")
+                throw .pesTruncatedDTS
+            }
+            guard timestampMarkersValid(payload, offset: dtsOffset, expectedPrefix: 0b0001) else {
+                throw .pesTimestampMarkerInvalid
             }
             dts = decodeTimestamp(payload, offset: dtsOffset)
         } else {
@@ -333,28 +515,22 @@ nonisolated enum TransportStreamH264Parser {
         )
     }
 
+    private static func timestampMarkersValid(
+        _ data: Data,
+        offset: Int,
+        expectedPrefix: UInt8
+    ) -> Bool {
+        (data[offset] >> 4) == expectedPrefix
+            && (data[offset] & 0x01) == 1
+            && (data[offset + 2] & 0x01) == 1
+            && (data[offset + 4] & 0x01) == 1
+    }
+
     private static func decodeTimestamp(_ data: Data, offset: Int) -> Int64 {
         let high = Int64((data[offset] >> 1) & 0x07) << 30
         let middle = (Int64(data[offset + 1]) << 7 | Int64(data[offset + 2] >> 1)) << 15
         let low = Int64(data[offset + 3]) << 7 | Int64(data[offset + 4] >> 1)
         return high | middle | low
-    }
-
-    private static func finishCurrentPES(
-        _ partial: inout PartialPES?,
-        into packets: inout [H264PESPacket]
-    ) {
-        guard let completed = partial, completed.payload.isEmpty == false else {
-            partial = nil
-            return
-        }
-
-        packets.append(H264PESPacket(
-            payload: completed.payload,
-            ptsTicks: completed.ptsTicks,
-            dtsTicks: completed.dtsTicks
-        ))
-        partial = nil
     }
 
     private struct PartialPES {

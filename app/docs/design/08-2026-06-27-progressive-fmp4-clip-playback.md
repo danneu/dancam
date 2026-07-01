@@ -132,6 +132,37 @@ Hard or risky:
   good frame of every clean clip. The deferred "single parse feeding both"
   alternative remains deferred; only the demux stage is unified, while the
   assemble/write passes stay independent.
+- 2026-06-30 update: the shared `IncrementalTSDemuxer` is now fully fail-soft
+  per packet, not just on alignment breaks and tail truncation. The parser is a
+  total function (`processPacket -> PacketOutcome`); any sync-aligned per-packet
+  anomaly is skipped rather than thrown, and `append` no longer throws.
+  Recovery is PES-localized: exactly one PES is dropped per corruption event --
+  normally the damaged frame, with complete neighbors (including the SPS/PPS
+  carrier) preserved. **PES DTS ordering is the trust check** that closes the
+  timestamp-value-corruption abort path: a marker-valid value flip leaves the
+  header well-formed, so a one-frame-lookahead ordering check at the PES
+  boundary is the only thing that can catch it. PES marker/prefix validation is
+  kept only as a cheap syntax gate, and both assembler DTS guards
+  (`StreamingH264AccessUnitAssembler` and the batch `assemble`) are left
+  unchanged as defense-in-depth, since the demuxer now guarantees a monotonic
+  PES DTS stream. One documented residual: a spike-up on the very first PES
+  (before any baseline exists) may only ever keep the held frame, so it degrades
+  toward first-frame-only, but it never aborts and still emits PES#0's SPS/PPS;
+  relocating the trust check into the streaming assembler (where
+  `latchParameterSets` precedes the DTS guard) is the recorded escape hatch that
+  would make parameter-set survival unconditional. A small in-band downward DTS
+  flip is the one case where lookahead-of-one may drop a good neighbor instead
+  of the corrupt frame -- still exactly one PES, still monotonic, never an abort.
+  Minimal dropped-packet telemetry was added (count + one-shot `.notice`).
+  Pre-latch PAT/PMT corruption drops video only until the next good table: the
+  table self-heals, the gap's video does not. Measured on the fixture, a corrupt
+  initial PMT @376 re-latches at the next PMT @6392, the finalizer recovers a
+  suffix from PES#3, and the streaming path recovers only at the next in-band
+  SPS/PPS carrier (PES#250) -- bounded, not total loss, because this stream
+  repeats SPS/PPS every 250 PES. Multi-packet-PSI reassembly and
+  continuity-counter tracking stay deferred; the new `discardCurrentPES()` and
+  `lastFinishedDTS` PES-lifecycle seams are what a continuity-counter check will
+  reuse.
 
 Mitigations:
 

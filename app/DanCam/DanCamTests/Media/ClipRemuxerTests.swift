@@ -111,6 +111,47 @@ struct ClipRemuxerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func liveRemuxesTransportStreamWithSyncAlignedBitFlipToPlayableMP4() async throws {
+        let data = try Data(contentsOf: MediaFixtureURLs.seg00000TS())
+        let offset = TSFixtureLayout.pes1ContinuationOffset
+        try #require(data[offset] == 0x47)
+        try #require((data[offset + 3] & 0x30) >> 4 == 1)
+
+        // A single alignment-preserving bit flip in a TS header: clear the
+        // adaptation-control bits so the packet reads as reserved (AFC=0). The
+        // demuxer must skip that packet, drop just its PES, and still remux.
+        var corrupted = data
+        corrupted[offset + 3] &= ~UInt8(0x30)
+
+        let clipID = 91_004
+        let sourceURL = temporaryURL(extension: "ts")
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            for url in remuxOutputs(clipID: clipID) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        try corrupted.write(to: sourceURL)
+
+        let result = try await ClipRemuxer.live.remux(sourceURL, clipID)
+
+        #expect(result.fileURL.pathExtension == "mp4")
+        #expect(result.bytes > 0)
+        try assertFastStartLayout(result.fileURL)
+
+        let asset = AVURLAsset(url: result.fileURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try #require(videoTracks.first)
+        #expect(videoTracks.count == 1)
+        assertSyncSamples(on: track)
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        _ = try await generator.image(at: .zero).image
+        _ = try await generator.image(at: CMTime(seconds: 10, preferredTimescale: 600)).image
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func liveRemuxFailureRemovesStaleAndPartialOutputs() async throws {
         let clipID = 91_001
         let invalidSourceURL = temporaryURL(extension: "ts")
