@@ -12,6 +12,7 @@ final class ClipViewerViewController: UIViewController {
     private let statusLabel = UILabel()
     private let resultLabel = UILabel()
     private let retryButton = UIButton(type: .system)
+    private let shareButton = UIBarButtonItem()
     private let playerContainerView = UIView()
     private let captionLabel = UILabel()
 
@@ -49,6 +50,7 @@ final class ClipViewerViewController: UIViewController {
         title = String(format: "seg_%05d.ts", clip.id)
         view.backgroundColor = .systemBackground
         configureViews()
+        configureShareButton()
 
         if let cachedURL = dependencies.clipCache.lookup(clip.id, clip.etag) {
             play(cachedURL, source: .cacheHit)
@@ -94,8 +96,20 @@ final class ClipViewerViewController: UIViewController {
         retryButton.isHidden
     }
 
+    var isShareButtonEnabled: Bool {
+        shareButton.isEnabled
+    }
+
     func retryForTesting() {
         retry()
+    }
+
+    func makeShareItemProviderForTesting() -> NSItemProvider? {
+        makeShareItemProvider()
+    }
+
+    func shareTappedForTesting() {
+        shareTapped(shareButton)
     }
 
     func failCurrentPlayerForTesting() {
@@ -163,8 +177,46 @@ final class ClipViewerViewController: UIViewController {
         ])
     }
 
+    private func configureShareButton() {
+        shareButton.image = UIImage(systemName: "square.and.arrow.up")
+        shareButton.style = .plain
+        shareButton.target = self
+        shareButton.action = #selector(shareTapped(_:))
+        shareButton.accessibilityLabel = "Share clip"
+        shareButton.isEnabled = false
+        navigationItem.rightBarButtonItem = shareButton
+    }
+
     @objc private func retryButtonTapped() {
         retry()
+    }
+
+    @objc private func shareTapped(_ sender: UIBarButtonItem) {
+        guard let provider = makeShareItemProvider() else {
+            if currentItemURL != nil {
+                startPull()
+            }
+            return
+        }
+
+        let configuration = UIActivityItemsConfiguration(itemProviders: [provider])
+        let activityViewController = UIActivityViewController(activityItemsConfiguration: configuration)
+        activityViewController.popoverPresentationController?.sourceItem = sender
+        present(activityViewController, animated: true)
+    }
+
+    private func makeShareItemProvider() -> NSItemProvider? {
+        guard let url = currentItemURL else { return nil }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue == false else {
+            return nil
+        }
+
+        guard let provider = NSItemProvider(contentsOf: url) else { return nil }
+        provider.suggestedName = Formatters.clipExportFilename(clip)
+        return provider
     }
 
     private func retry() {
@@ -322,18 +374,22 @@ final class ClipViewerViewController: UIViewController {
     private func render(_ state: ViewerState) {
         switch state {
         case .pulling(let progress):
+            shareButton.isEnabled = false
             renderProgress(progress)
         case .preparing:
+            shareButton.isEnabled = false
             progressView.setProgress(1, animated: true)
             statusLabel.text = "Preparing"
             resultLabel.text = nil
             retryButton.isHidden = true
         case .playing:
+            shareButton.isEnabled = true
             progressView.setProgress(1, animated: false)
             statusLabel.text = "Ready"
             resultLabel.text = nil
             retryButton.isHidden = true
         case .failed(let message):
+            shareButton.isEnabled = false
             progressView.setProgress(0, animated: false)
             statusLabel.text = "Clip failed"
             resultLabel.text = message

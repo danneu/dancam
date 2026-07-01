@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import UIKit
+import UniformTypeIdentifiers
 @testable import DanCam
 
 @MainActor
@@ -38,6 +39,124 @@ struct ClipViewerViewControllerTests {
         #expect(controller.currentPlayerItemURL == cacheURL)
         #expect(controller.statusText == "Ready")
         #expect(pullCalls.values().isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func shareButtonIsDisabledWhilePulling() async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let allowCompletion = AsyncSignal()
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let controller = makeController(
+            clipPull: gatedPullClient(sourceURL: sourceURL, allowCompletion: allowCompletion),
+            remuxer: ClipRemuxer { _, _ in
+                Issue.record("The remuxer should not run while the pull is gated.")
+                return ClipRemuxResult(fileURL: sourceURL, duration: .zero, bytes: 0)
+            }
+        )
+
+        controller.loadViewIfNeeded()
+        try await waitUntil { controller.progressFraction == 1 }
+
+        #expect(controller.isShareButtonEnabled == false)
+
+        controller.viewWillDisappear(false)
+        await allowCompletion.signal()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cacheHitEnablesShareButton() throws {
+        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.statusText == "Ready")
+        #expect(controller.isShareButtonEnabled == true)
+    }
+
+    @Test func shareItemProviderIsNilBeforePlaying() {
+        let controller = makeController()
+
+        #expect(controller.makeShareItemProviderForTesting() == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cacheHitShareProviderUsesCachedMP4SuggestedNameAndMovieType() throws {
+        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+
+        controller.loadViewIfNeeded()
+
+        let provider = try #require(controller.makeShareItemProviderForTesting())
+        let clip = Clip(
+            id: 1,
+            startMs: nil,
+            durMs: 30_000,
+            bytes: 1,
+            locked: false,
+            etag: "list-etag",
+            timeApproximate: false
+        )
+        let hasMovieType = provider.registeredTypeIdentifiers.contains { identifier in
+            UTType(identifier)?.conforms(to: .movie) == true
+        }
+        #expect(provider.suggestedName == Formatters.clipExportFilename(clip))
+        #expect(hasMovieType)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func purgedCacheShareTapSelfHealsByPulling() async throws {
+        let missingCacheURL = FileManager.default.temporaryDirectory
+            .appending(path: "dancam-missing-cache-\(UUID().uuidString).mp4")
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let allowCompletion = AsyncSignal()
+        let pullCalls = CallLog<Int>()
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: missingCacheURL)
+        }
+
+        let controller = makeController(
+            clipPull: gatedPullClient(
+                sourceURL: sourceURL,
+                allowCompletion: allowCompletion,
+                calls: pullCalls
+            ),
+            clipCache: ClipCache(
+                lookup: { _, _ in missingCacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.statusText == "Ready")
+        #expect(controller.currentPlayerItemURL == missingCacheURL)
+        #expect(controller.makeShareItemProviderForTesting() == nil)
+
+        controller.shareTappedForTesting()
+
+        #expect(controller.statusText == "\(Formatters.byteSize(0)) of \(Formatters.byteSize(1))")
+        #expect(controller.currentPlayerItemURL == nil)
+        #expect(controller.isShareButtonEnabled == false)
+        try await waitUntil { pullCalls.values().count == 1 }
+
+        controller.viewWillDisappear(false)
+        await allowCompletion.signal()
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -91,6 +210,7 @@ struct ClipViewerViewControllerTests {
 
         try await waitUntil { controller.statusText == "Clip failed" }
         #expect(controller.isRetryButtonHidden == false)
+        #expect(controller.isShareButtonEnabled == false)
 
         controller.retryForTesting()
 
@@ -293,10 +413,12 @@ struct ClipViewerViewControllerTests {
 
     private func gatedPullClient(
         sourceURL: URL,
-        allowCompletion: AsyncSignal
+        allowCompletion: AsyncSignal,
+        calls: CallLog<Int> = CallLog<Int>()
     ) -> ClipPullClient {
-        ClipPullClient { _, _ in
-            AsyncThrowingStream { continuation in
+        ClipPullClient { clipID, _ in
+            calls.append(clipID)
+            return AsyncThrowingStream { continuation in
                 let task = Task {
                     continuation.yield(.opened(fileURL: sourceURL))
                     continuation.yield(.progress(bytesWritten: 1, expected: 1))

@@ -140,3 +140,4 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   make cached fast-start MP4 the sole clip playback and future export artifact.
 - `14-2026-07-01-structured-logging-and-export.md` -- use Apple unified logging as the
   app's diagnostic stream and expose current-process log export from the Debug screen.
+- `15-2026-07-01-clip-export-share.md` -- system share sheet over the cached MP4.

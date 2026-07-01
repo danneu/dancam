@@ -38,6 +38,19 @@ nonisolated enum Formatters {
         minutesSeconds(totalSeconds: durMs / 1_000)
     }
 
+    static func clipExportFilename(_ clip: Clip, timeZone: TimeZone = .current) -> String {
+        if let startMs = clip.startMs, clip.timeApproximate == false {
+            let date = Date(timeIntervalSince1970: Double(startMs) / 1_000)
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = timeZone
+            formatter.dateFormat = "yyyy-MM-dd HH-mm-ss"
+            return "Dashcam \(formatter.string(from: date)).mp4"
+        }
+
+        return String(format: "Dashcam seg_%05d.mp4", clip.id)
+    }
+
     private static func minutesSeconds(totalSeconds: UInt64) -> String {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60

@@ -75,6 +75,32 @@ struct FormattersTests {
         #expect(Formatters.clipMetadata(durMs: nil, bytes: 1_000) == "1 KB")
     }
 
+    @Test func clipExportFilenameUsesTrustedTimesOnly() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let cases: [(clip: Clip, filename: String)] = [
+            (
+                clip(id: 1, startMs: 0, timeApproximate: false),
+                "Dashcam 1970-01-01 00-00-00.mp4"
+            ),
+            (
+                clip(id: 7, startMs: 0, timeApproximate: true),
+                "Dashcam seg_00007.mp4"
+            ),
+            (
+                clip(id: 8, startMs: nil, timeApproximate: false),
+                "Dashcam seg_00008.mp4"
+            ),
+            (
+                clip(id: 123_456, startMs: nil, timeApproximate: false),
+                "Dashcam seg_123456.mp4"
+            ),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.clipExportFilename(testCase.clip, timeZone: utc) == testCase.filename)
+        }
+    }
+
     @Test func countUpDurationFloorsSeconds() {
         let cases: [(durMs: UInt64, text: String)] = [
             (0, "00:00"),
@@ -88,5 +114,21 @@ struct FormattersTests {
         for testCase in cases {
             #expect(Formatters.countUpDuration(testCase.durMs) == testCase.text)
         }
+    }
+
+    private func clip(
+        id: Int,
+        startMs: UInt64?,
+        timeApproximate: Bool
+    ) -> Clip {
+        Clip(
+            id: id,
+            startMs: startMs,
+            durMs: 30_000,
+            bytes: 1,
+            locked: false,
+            etag: "etag",
+            timeApproximate: timeApproximate
+        )
     }
 }

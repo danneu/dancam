@@ -214,9 +214,9 @@ mock first.
 - [ ] **Swoop `reef` -- CarPlay auto start/stop** on CarPlay connect/disconnect.
 - [ ] **Swoop `sage` -- CarPlay status panel** (Driving Task template). _Gated on the
       Apple entitlement; the product must be useful without it._
-- [ ] **Swoop `tide` -- Export / share.** Save-to-Photos and AirDrop UI over the
-      `.mp4` that `lime` already produces; TS -> MP4 passthrough remux moved forward
-      into playback instead of staying export-only.
+- [x] **Swoop `tide` -- Export / share.** Save-to-Photos, AirDrop, and Save to Files
+      through the system share sheet over the cached `.mp4`; auto-save incidents is
+      deferred to `nova`.
 - [ ] **Swoop `vine` -- Power-loss hardening for real.** Power-good GPIO + clean
       shutdown; supercap go/no-go; validate crash recovery in the actual car.
 - [ ] **Later / deepening passes.** Thermal-behavior policy (what recording does at
