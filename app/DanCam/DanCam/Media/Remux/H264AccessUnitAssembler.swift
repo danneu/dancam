@@ -77,14 +77,23 @@ nonisolated enum H264AccessUnitAssembler {
         guard pendingUnits.isEmpty == false else {
             throw ClipRemuxError.invalidH264("No H.264 access units found.")
         }
+        guard let firstKeyFrameIndex = pendingUnits.firstIndex(where: \.isKeyFrame) else {
+            throw ClipRemuxError.invalidH264("No H.264 keyframe found.")
+        }
+        if firstKeyFrameIndex > 0 {
+            logger.notice(
+                "Dropped \(firstKeyFrameIndex) leading access unit(s) before the first keyframe (head-truncated clip)."
+            )
+        }
+        let decodableUnits = Array(pendingUnits[firstKeyFrameIndex...])
 
-        let frameDuration = inferredFrameDuration(from: pendingUnits)
+        let frameDuration = inferredFrameDuration(from: decodableUnits)
         var accessUnits: [H264AccessUnit] = []
-        accessUnits.reserveCapacity(pendingUnits.count)
+        accessUnits.reserveCapacity(decodableUnits.count)
         var held: PendingAccessUnit?
         var didLogDiscontinuity = false
 
-        for pending in pendingUnits {
+        for pending in decodableUnits {
             if let heldUnit = held {
                 guard let duration = strictlyIncreasingGap(
                     after: heldUnit.dtsTicks,

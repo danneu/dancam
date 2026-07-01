@@ -152,6 +152,41 @@ struct ClipRemuxerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func remuxedMP4FromHeadTruncatedClipStartsAtSyncSample() async throws {
+        let data = try Data(contentsOf: MediaFixtureURLs.seg00000TS())
+        let allPES = try TSDemuxer.demuxH264PESPackets(from: data)
+        try #require(allPES.count > 253)
+
+        let headNALs = H264AccessUnitAssembler.splitAnnexB(allPES[248].payload)
+        let headGroups = H264AccessUnitAssembler.splitAccessUnitGroups(headNALs)
+        let firstHeadSlice = try #require(
+            headGroups.joined().first(where: H264AccessUnitAssembler.isSliceNAL)
+        )
+        try #require(firstHeadSlice.type == 1)
+
+        let containsKeyFrame = allPES[249...253].contains { pes in
+            H264AccessUnitAssembler.splitAnnexB(pes.payload).contains { $0.type == 5 }
+        }
+        try #require(containsKeyFrame)
+
+        let clip = try H264AccessUnitAssembler.assemble(
+            packets: Array(allPES[248...253]),
+            timescale: TransportStreamH264Parser.clockTimescale
+        )
+        let outputURL = temporaryURL(extension: "mp4")
+        defer {
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        _ = try ClipRemuxerEngine.write(clip: clip, to: outputURL)
+
+        let asset = AVURLAsset(url: outputURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try #require(videoTracks.first)
+        assertFirstSampleIsSyncSample(on: track)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func liveRemuxFailureRemovesStaleAndPartialOutputs() async throws {
         let clipID = 91_001
         let invalidSourceURL = temporaryURL(extension: "ts")
@@ -192,9 +227,30 @@ struct ClipRemuxerTests {
             + Double(components.attoseconds) / 1_000_000_000_000_000_000.0
     }
 
-    private func assertSyncSamples(on track: AVAssetTrack) {
+    @discardableResult
+    private func assertFirstSampleIsSyncSample(
+        on track: AVAssetTrack,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> Bool {
         guard let cursor = track.makeSampleCursorAtFirstSampleInDecodeOrder() else {
-            Issue.record("Expected the remuxed MP4 to vend sample cursors.")
+            Issue.record(
+                "Expected the remuxed MP4 to vend sample cursors.",
+                sourceLocation: sourceLocation
+            )
+            return false
+        }
+
+        let syncInfo = cursor.currentSampleSyncInfo
+        #expect(syncInfo.sampleIsFullSync.boolValue, sourceLocation: sourceLocation)
+        return true
+    }
+
+    private func assertSyncSamples(
+        on track: AVAssetTrack,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        guard assertFirstSampleIsSyncSample(on: track, sourceLocation: sourceLocation),
+              let cursor = track.makeSampleCursorAtFirstSampleInDecodeOrder() else {
             return
         }
 
@@ -206,9 +262,6 @@ struct ClipRemuxerTests {
             sampleCount += 1
 
             let syncInfo = cursor.currentSampleSyncInfo
-            if sampleCount == 1 {
-                #expect(syncInfo.sampleIsFullSync.boolValue)
-            }
             if syncInfo.sampleIsFullSync.boolValue {
                 fullSyncCount += 1
             }
@@ -224,9 +277,9 @@ struct ClipRemuxerTests {
             }
         }
 
-        #expect(sampleCount > 800)
-        #expect(fullSyncCount > 1)
-        #expect(dependentCount > 0)
+        #expect(sampleCount > 800, sourceLocation: sourceLocation)
+        #expect(fullSyncCount > 1, sourceLocation: sourceLocation)
+        #expect(dependentCount > 0, sourceLocation: sourceLocation)
     }
 
     private func assertFastStartLayout(_ url: URL) throws {

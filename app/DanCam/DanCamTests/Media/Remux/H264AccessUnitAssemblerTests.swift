@@ -106,6 +106,107 @@ struct H264AccessUnitAssemblerTests {
     }
 
     @Test
+    func dropsLeadingNonKeyframeWhenParameterSetsArriveLate() throws {
+        let first = H264PESPacket(
+            payload: annexB([
+                nal(9, [0xf0]),
+                nal(1, [0x11]),
+            ]),
+            ptsTicks: 0,
+            dtsTicks: 0
+        )
+        let second = H264PESPacket(
+            payload: annexB([
+                nal(9, [0xf0]),
+                nal(7, [0x64, 0x00, 0x15]),
+                nal(8, [0xee, 0x3c]),
+                nal(5, [0x88]),
+            ]),
+            ptsTicks: 3_000,
+            dtsTicks: 3_000
+        )
+
+        let clip = try H264AccessUnitAssembler.assemble(
+            packets: [first, second],
+            timescale: 90_000
+        )
+
+        #expect(clip.accessUnits.count == 1)
+        #expect(clip.accessUnits[0].isKeyFrame)
+        #expect(clip.accessUnits[0].nalTypes == [9, 7, 8, 5])
+    }
+
+    @Test
+    func dropsLeadingNonKeyframeEvenWhenParameterSetsAlreadyLatched() throws {
+        let sps = nal(7, [0x64, 0x00, 0x15])
+        let pps = nal(8, [0xee, 0x3c])
+        let first = H264PESPacket(
+            payload: annexB([
+                nal(9, [0xf0]),
+                sps,
+                pps,
+                nal(1, [0x11]),
+            ]),
+            ptsTicks: 0,
+            dtsTicks: 0
+        )
+        let second = H264PESPacket(
+            payload: annexB([
+                nal(9, [0xf0]),
+                nal(5, [0x88]),
+            ]),
+            ptsTicks: 3_000,
+            dtsTicks: 3_000
+        )
+
+        let clip = try H264AccessUnitAssembler.assemble(
+            packets: [first, second],
+            timescale: 90_000
+        )
+
+        #expect(clip.accessUnits.count == 1)
+        #expect(clip.accessUnits[0].isKeyFrame)
+        #expect(clip.accessUnits[0].nalTypes == [9, 5])
+        #expect(clip.sps == sps)
+        #expect(clip.pps == pps)
+    }
+
+    @Test
+    func throwsWhenClipHasNoKeyframe() throws {
+        let packets = [
+            H264PESPacket(
+                payload: annexB([
+                    nal(9, [0xf0]),
+                    nal(7, [0x64, 0x00, 0x15]),
+                    nal(8, [0xee, 0x3c]),
+                    nal(1, [0x11]),
+                ]),
+                ptsTicks: 0,
+                dtsTicks: 0
+            ),
+            H264PESPacket(
+                payload: annexB([
+                    nal(9, [0xf0]),
+                    nal(1, [0x22]),
+                ]),
+                ptsTicks: 3_000,
+                dtsTicks: 3_000
+            ),
+        ]
+
+        do {
+            _ = try H264AccessUnitAssembler.assemble(
+                packets: packets,
+                timescale: 90_000
+            )
+            Issue.record("Expected keyframe-less H.264 to throw.")
+        } catch ClipRemuxError.invalidH264(_) {
+        } catch {
+            Issue.record("Expected ClipRemuxError.invalidH264, got \(error).")
+        }
+    }
+
+    @Test
     func batchAssemblerDropsOutOfOrderDTS() throws {
         let clip = try H264AccessUnitAssembler.assemble(
             packets: outOfOrderDTSPackets(),

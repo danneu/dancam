@@ -26,6 +26,16 @@ nonisolated enum ClipRemuxerEngine {
         try? fileManager.removeItem(at: outputURL)
 
         let clip = try TSDemuxer.demuxH264(from: sourceURL)
+        return try write(clip: clip, to: outputURL)
+    }
+
+    static func write(
+        clip: DemuxedH264Clip,
+        to outputURL: URL
+    ) throws -> ClipRemuxResult {
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(at: outputURL)
+
         let formatDescription = try H264CoreMediaSamples.makeFormatDescription(
             sps: clip.sps,
             pps: clip.pps
