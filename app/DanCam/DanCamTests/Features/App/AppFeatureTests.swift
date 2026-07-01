@@ -58,7 +58,9 @@ struct AppFeatureTests {
         let queue = ClipsFetchQueue([.success(response)])
         let store = TestStore(
             initialState: AppFeature.State(),
-            dependencies: dependencies(clips: ClipsClient(fetch: { try await queue.fetch() })),
+            dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
+                try await queue.fetch(cursor: cursor)
+            })),
             reduce: AppFeature.reduce
         )
 
@@ -70,6 +72,7 @@ struct AppFeatureTests {
         await store.receive(.clips(.clipsResponse(.success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
+            $0.clips.loadEpoch = 1
         }
         await store.send(.streamStopped)
         await store.finishEffects()
@@ -106,6 +109,7 @@ struct AppFeatureTests {
         await store.send(.clips(.clipsResponse(.success(stale)))) {
             $0.clips.clips = [folded] + stale.clips
             $0.clips.status = .idle
+            $0.clips.loadEpoch = 1
         }
         await store.finishEffects()
     }
@@ -158,7 +162,7 @@ struct AppFeatureTests {
         let store = TestStore(
             initialState: state(link: .online(world), recording: .starting),
             dependencies: dependencies(
-                clips: ClipsClient(fetch: { fatalError("Segment open should not fetch clips.") })
+                clips: ClipsClient(fetch: { _ in fatalError("Segment open should not fetch clips.") })
             ),
             reduce: AppFeature.reduce
         )
@@ -171,6 +175,35 @@ struct AppFeatureTests {
             $0.recording = .recording
         }
         await store.finishEffects()
+    }
+
+    @Test func loadMoreRoutesThroughClipsFeature() async {
+        let page = CameraSamples.clipsResponse(ids: [41, 40], nextCursor: nil)
+        let queue = ClipsFetchQueue([.success(page)])
+        let store = TestStore(
+            initialState: state(
+                clips: ClipsFeature.State(
+                    clips: CameraSamples.clipsResponse(ids: [42], nextCursor: "42").clips,
+                    nextCursor: "42"
+                )
+            ),
+            dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
+                try await queue.fetch(cursor: cursor)
+            })),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.clips(.loadMore)) {
+            $0.clips.isPaging = true
+        }
+        await store.receive(.clips(.pageResponse(epoch: 0, .success(page)))) {
+            $0.clips.clips = CameraSamples.clipsResponse(ids: [42]).clips + page.clips
+            $0.clips.nextCursor = nil
+            $0.clips.isPaging = false
+        }
+
+        let cursors = await queue.requestedCursors()
+        #expect(cursors == [Optional("42")])
     }
 
     @Test func telemetryEventsFoldWorldSlices() async throws {
@@ -293,17 +326,23 @@ struct AppFeatureTests {
 
 private actor ClipsFetchQueue {
     private var results: [Result<ClipsResponse, ClipsError>]
+    private var cursors: [String?] = []
 
     init(_ results: [Result<ClipsResponse, ClipsError>]) {
         self.results = results
     }
 
-    func fetch() throws -> ClipsResponse {
+    func fetch(cursor: String?) throws -> ClipsResponse {
+        cursors.append(cursor)
         switch results.removeFirst() {
         case .success(let response):
             return response
         case .failure(let error):
             throw error
         }
+    }
+
+    func requestedCursors() -> [String?] {
+        cursors
     }
 }

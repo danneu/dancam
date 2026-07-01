@@ -20,7 +20,7 @@ nonisolated enum ClipsError: Error, Equatable {
 nonisolated struct ClipsClient {
     typealias OpenByteStream = @Sendable (URL, Data) async throws -> AsyncThrowingStream<Data, Error>
 
-    var fetch: @Sendable () async throws -> ClipsResponse
+    var fetch: @Sendable (_ cursor: String?) async throws -> ClipsResponse
 
     static func live(
         baseURL: URL,
@@ -44,8 +44,14 @@ nonisolated struct ClipsClient {
         pinning: InterfacePinning = .disabled,
         openByteStream: @escaping OpenByteStream
     ) -> ClipsClient {
-        ClipsClient {
-            let requestURL = baseURL.appending(path: "v1/clips")
+        ClipsClient { cursor in
+            let requestURL = if let cursor {
+                baseURL
+                    .appending(path: "v1/clips")
+                    .appending(queryItems: [URLQueryItem(name: "cursor", value: cursor)])
+            } else {
+                baseURL.appending(path: "v1/clips")
+            }
 
             let head: HTTPResponseHead
             let data: Data
@@ -77,7 +83,7 @@ nonisolated struct ClipsClient {
         }
     }
 
-    static let noop = ClipsClient {
+    static let noop = ClipsClient { _ in
         ClipsResponse(clips: [], serverTimeMs: 0, nextCursor: nil)
     }
 }

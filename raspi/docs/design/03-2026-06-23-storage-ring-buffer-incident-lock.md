@@ -366,6 +366,11 @@ On boot, the coordinator rebuilds state by:
    > layout because no GC exists yet and the planned oldest-first eviction preserves
    > the highest seq on the common path; the durable witness is the GC-edge
    > robustness layer that prevents aliasing after deleted high segments.
+   > **Note (2026-07-01):** The `seq` cursor portion of `listClips` is realized early
+   > for the interim flat layout. The Rust service pages newest-first with `cursor`
+   > as a strict lower-`seq` boundary and returns `next_cursor` while older finished
+   > segments remain. It still scans and sorts the whole recording directory per
+   > page; the in-memory sorted index above remains coordinator work.
 3. Scanning `incidents/*/` and `state/seen-keys.log` to rebuild incidents,
    idempotency state, and eviction floors. Hardlinks are the lock truth.
 4. Reconciling torn state: drop index entries with no file; discard a torn final

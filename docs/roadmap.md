@@ -171,6 +171,9 @@ mock first.
             (`(maxPTS - minPTS) + frame_interval`) for each finished segment, pivoting
             from the earlier cadence-constant/ffprobe sketch; `start_ms` and real
             provenance stay deferred to `moss`.
+      - [x] **Pi/App:** Pi paginates `/v1/clips` by descending `seq`; the app pages
+            older clips in on scroll so the home "Recent clips" list can reach beyond
+            the first server page.
       - [x] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`,
             tracking the Pi in the same two pulses -- plain `200` first, then `Range`/`ETag`
             -- so the app pull + playback path runs against the mock first at each step.

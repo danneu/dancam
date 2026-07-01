@@ -4,7 +4,7 @@ import Testing
 
 struct ClipsClientTests {
     @Test(.tags(.networking))
-    func liveClientBuildsRequestAndDecodesClipsResponse() async throws {
+    func liveClientBuildsBareRequestAndDecodesClipsResponse() async throws {
         let payload = Data("""
         {
           "clips": [
@@ -12,7 +12,7 @@ struct ClipsClientTests {
               "locked": false, "etag": "7-39123456", "time_approximate": true }
           ],
           "server_time_ms": 1719338400000,
-          "next_cursor": null
+          "next_cursor": "7"
         }
         """.utf8)
         let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
@@ -29,7 +29,7 @@ struct ClipsClientTests {
             return AsyncStreamHelpers.byteStream([wire])
         }
 
-        let response = try await client.fetch()
+        let response = try await client.fetch(nil)
         let request = try #require(await capture.values().first)
 
         #expect(String(decoding: request, as: UTF8.self) == """
@@ -52,7 +52,42 @@ struct ClipsClientTests {
                 ),
             ],
             serverTimeMs: 1719338400000,
-            nextCursor: nil
+            nextCursor: "7"
         ))
+    }
+
+    @Test(.tags(.networking))
+    func liveClientAddsCursorQueryItem() async throws {
+        let payload = Data("""
+        {
+          "clips": [],
+          "server_time_ms": 1719338400000,
+          "next_cursor": null
+        }
+        """.utf8)
+        let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
+        let capture = RequestCapture()
+        let wire = MJPEGWireBuilder.response(
+            headers: [
+                ("Content-Type", "application/json"),
+                ("Content-Length", "\(payload.count)"),
+            ],
+            body: payload
+        )
+        let client = ClipsClient.live(baseURL: baseURL) { _, request in
+            await capture.append(request)
+            return AsyncStreamHelpers.byteStream([wire])
+        }
+
+        _ = try await client.fetch("42")
+        let request = try #require(await capture.values().first)
+
+        #expect(String(decoding: request, as: UTF8.self) == """
+        GET /v1/clips?cursor=42 HTTP/1.1\r
+        Host: 127.0.0.1:8080\r
+        Connection: close\r
+        \r
+
+        """)
     }
 }

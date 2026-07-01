@@ -145,6 +145,94 @@ async fn clips_route_reports_duration_for_real_transport_stream() {
 }
 
 #[tokio::test]
+async fn clips_route_pages_with_limit_and_cursor() {
+    let rec_dir = TempRecDir::new();
+    for seq in 0..5 {
+        rec_dir.write(&format!("seg_{seq:05}.ts"), b"segment");
+    }
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+
+    let first = response_json(
+        app.clone()
+            .oneshot(clips_request("/v1/clips?limit=2"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        clip_ids(&first),
+        [4, 3],
+        "first page should contain the newest two clips"
+    );
+    assert_eq!(first["next_cursor"], "3");
+
+    let second = response_json(
+        app.clone()
+            .oneshot(clips_request("/v1/clips?cursor=3&limit=2"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        clip_ids(&second),
+        [2, 1],
+        "second page should continue strictly below the cursor"
+    );
+    assert_eq!(second["next_cursor"], "1");
+
+    let terminal = response_json(
+        app.oneshot(clips_request("/v1/clips?cursor=1&limit=2"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(clip_ids(&terminal), [0]);
+    assert_eq!(terminal["next_cursor"], Value::Null);
+}
+
+#[tokio::test]
+async fn clips_route_clamps_zero_limit_to_one() {
+    let rec_dir = TempRecDir::new();
+    for seq in 0..3 {
+        rec_dir.write(&format!("seg_{seq:05}.ts"), b"segment");
+    }
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(clips_request("/v1/clips?limit=0"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = response_json(response).await;
+    assert_eq!(clip_ids(&json), [2]);
+    assert_eq!(json["next_cursor"], "2");
+}
+
+#[tokio::test]
+async fn clips_route_rejects_unimplemented_or_invalid_query_params() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00000.ts", b"zero");
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+
+    for uri in [
+        "/v1/clips?cursor=abc",
+        "/v1/clips?limit=abc",
+        "/v1/clips?from=0",
+        "/v1/clips?to=0",
+        "/v1/clips?order=asc",
+    ] {
+        let response = app.clone().oneshot(clips_request(uri)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "uri {uri}");
+    }
+
+    let accepted = app
+        .oneshot(clips_request("/v1/clips?order=desc"))
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn clips_route_returns_empty_for_missing_dir() {
     let rec_dir = TempRecDir::new();
     let missing = rec_dir.path.join("missing");
@@ -377,7 +465,11 @@ async fn clips_exclude_reserved_start_segment_before_open_ack() {
     rec_dir.write("seg_00043.ts", b"partial");
     let app = dancam::app(state(rec_dir.path.clone(), StubBackend::starting_at(43)));
 
-    let clips_response = app.clone().oneshot(clips_request()).await.unwrap();
+    let clips_response = app
+        .clone()
+        .oneshot(clips_request("/v1/clips"))
+        .await
+        .unwrap();
     assert_eq!(clips_response.status(), StatusCode::OK);
     let clips_json = response_json(clips_response).await;
     let clips = clips_json["clips"].as_array().unwrap();
@@ -403,7 +495,11 @@ async fn clips_keep_finalized_rollover_visible_after_failure() {
         StubBackend::failed_after_roll(43, 44),
     ));
 
-    let clips_response = app.clone().oneshot(clips_request()).await.unwrap();
+    let clips_response = app
+        .clone()
+        .oneshot(clips_request("/v1/clips"))
+        .await
+        .unwrap();
     assert_eq!(clips_response.status(), StatusCode::OK);
     let clips_json = response_json(clips_response).await;
     let clips = clips_json["clips"].as_array().unwrap();
@@ -508,9 +604,9 @@ fn clip_request(uri: &str) -> Request<Body> {
     clip_request_with_headers(uri, &[])
 }
 
-fn clips_request() -> Request<Body> {
+fn clips_request(uri: &str) -> Request<Body> {
     Request::builder()
-        .uri("/v1/clips")
+        .uri(uri)
         .header("Host", "localhost:8080")
         .body(Body::empty())
         .unwrap()
@@ -519,6 +615,15 @@ fn clips_request() -> Request<Body> {
 async fn response_json(response: axum::http::Response<Body>) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&body).unwrap()
+}
+
+fn clip_ids(json: &Value) -> Vec<u64> {
+    json["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|clip| clip["id"].as_u64().unwrap())
+        .collect()
 }
 
 fn clip_request_with_headers(uri: &str, headers: &[(&str, &str)]) -> Request<Body> {

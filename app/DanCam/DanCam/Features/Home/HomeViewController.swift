@@ -92,6 +92,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     private let emptyClipsImageView = UIImageView(image: UIImage(systemName: "film"))
     private let emptyClipsLabel = UILabel()
     private let clock = ContinuousClock()
+    private let paginationThreshold = 4
 
     private var recordingState: RecordingFeature.State = .unknown
     private var world: World?
@@ -452,6 +453,20 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
                 animated: true
             )
         }
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        willDisplay cell: UITableViewCell,
+        forRowAt indexPath: IndexPath
+    ) {
+        guard rows.indices.contains(indexPath.row),
+              indexPath.row >= max(rows.count - paginationThreshold, 0),
+              case .finished = rows[indexPath.row] else {
+            return
+        }
+
+        store.send(.clips(.loadMore))
     }
 }
 

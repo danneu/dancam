@@ -322,6 +322,13 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > TS-PTS-derived duration cached per finished segment. `start_ms`, `locked`, and
   > non-approximate time provenance remain deferred. This realizes ADR 03's TS-PTS
   > rebuild primitive early for the current flat-layout listing.
+  > **Note (2026-07-01):** Swoop `lime` now realizes descending-`seq` cursor
+  > pagination for the current flat-layout listing: `limit` is clamped server-side,
+  > `cursor` means "return clips with `seq` lower than this boundary", and
+  > `next_cursor` is populated while older clips remain. The deferred `from`/`to`
+  > wall-clock filters and non-descending `order` values are modeled but rejected
+  > with `400` until `moss` provides resolved timestamps, so lookup clients cannot
+  > receive a silent unfiltered page.
 - `GET /v1/clips/{id}` -- resumable pull; `Range`/`If-Range`, `Accept-Ranges`, `ETag`,
   `Content-Range`; `application/mp2t` (the `.ts` segment bytes).
 - `GET /v1/clips/{id}/thumb?w=` -- keyframe JPEG (the Pi caches one per segment).

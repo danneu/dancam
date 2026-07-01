@@ -41,11 +41,11 @@ enum CameraSamples {
         )
     }
 
-    static func clipsResponse(ids: [Int]) -> ClipsResponse {
+    static func clipsResponse(ids: [Int], nextCursor: String? = nil) -> ClipsResponse {
         ClipsResponse(
             clips: ids.map { clip(id: $0) },
             serverTimeMs: 123456789,
-            nextCursor: nil
+            nextCursor: nextCursor
         )
     }
 }

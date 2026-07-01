@@ -6,7 +6,7 @@ use std::{
 
 use axum::{
     body::Body,
-    extract::{Path as PathParam, State},
+    extract::{Path as PathParam, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -23,7 +23,8 @@ use crate::{
     AppState,
 };
 
-const MAX_CLIPS: usize = 500;
+const DEFAULT_LIMIT: usize = 100;
+const MAX_LIMIT: usize = DEFAULT_LIMIT;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ClipMeta {
@@ -43,27 +44,60 @@ pub struct ClipsResponse {
     pub next_cursor: Option<String>,
 }
 
-pub async fn list_clips(State(state): State<AppState>) -> Json<ClipsResponse> {
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct ClipsQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+    #[serde(rename = "from")]
+    from_ms: Option<String>,
+    to: Option<String>,
+    order: Option<String>,
+}
+
+pub(crate) async fn list_clips(
+    State(state): State<AppState>,
+    Query(query): Query<ClipsQuery>,
+) -> Result<Json<ClipsResponse>, StatusCode> {
+    if query.from_ms.is_some() || query.to.is_some() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if query.order.as_deref().is_some_and(|order| order != "desc") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let cursor = query
+        .cursor
+        .as_deref()
+        .map(str::parse::<SegmentId>)
+        .transpose()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let limit = resolve_limit(query.limit);
     let unpullable_from = state.backend.unpullable_from();
     let rec_dir = state.rec_dir.clone();
     let duration_cache = state.clip_durations.clone();
-    let clips = match tokio::task::spawn_blocking(move || {
-        read_finished_clips(rec_dir.as_ref(), unpullable_from, duration_cache.as_ref())
+    let (clips, next_cursor) = match tokio::task::spawn_blocking(move || {
+        read_finished_clips(
+            rec_dir.as_ref(),
+            unpullable_from,
+            cursor,
+            limit,
+            duration_cache.as_ref(),
+        )
     })
     .await
     {
-        Ok(clips) => clips,
+        Ok(page) => page,
         Err(error) => {
             tracing::error!(%error, "clip listing task failed");
-            Vec::new()
+            (Vec::new(), None)
         }
     };
 
-    Json(ClipsResponse {
+    Ok(Json(ClipsResponse {
         clips,
         server_time_ms: server_time_ms(),
-        next_cursor: None,
-    })
+        next_cursor: next_cursor.map(|seq| seq.to_string()),
+    }))
 }
 
 pub async fn serve_clip(
@@ -229,25 +263,25 @@ enum RangeResolution {
 pub(crate) fn read_finished_clips(
     rec_dir: &Path,
     unpullable_from: Option<SegmentId>,
+    cursor: Option<SegmentId>,
+    limit: usize,
     duration_cache: &DurationCache,
-) -> Vec<ClipMeta> {
+) -> (Vec<ClipMeta>, Option<SegmentId>) {
     let candidates = segment_candidates(rec_dir);
     let mut candidates: Vec<_> = candidates
         .into_iter()
         .filter(|(seq, _, _)| unpullable_from.is_none_or(|floor| *seq < floor))
+        .filter(|(seq, _, _)| cursor.is_none_or(|cursor| *seq < cursor))
         .collect();
 
     candidates.sort_by(|(left_seq, _, _), (right_seq, _, _)| right_seq.cmp(left_seq));
-    if candidates.len() > MAX_CLIPS {
-        tracing::warn!(
-            total = candidates.len(),
-            returned = MAX_CLIPS,
-            "truncating clips list"
-        );
-        candidates.truncate(MAX_CLIPS);
-    }
+    let has_more = candidates.len() > limit;
+    candidates.truncate(limit);
+    let next_cursor = has_more
+        .then(|| candidates.last().map(|(seq, _, _)| *seq))
+        .flatten();
 
-    candidates
+    let clips = candidates
         .into_iter()
         .map(|(seq, bytes, path)| ClipMeta {
             id: seq,
@@ -258,7 +292,13 @@ pub(crate) fn read_finished_clips(
             etag: format!("{seq}-{bytes}"),
             time_approximate: true,
         })
-        .collect()
+        .collect();
+
+    (clips, next_cursor)
+}
+
+pub(crate) fn resolve_limit(limit: Option<usize>) -> usize {
+    limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
 }
 
 pub(crate) fn open_segment(rec_dir: &Path) -> Option<(u32, PathBuf, u64)> {
@@ -349,7 +389,10 @@ impl IntoResponse for ClipError {
 
 #[cfg(test)]
 mod tests {
-    use super::{http_etag, max_clip_seq, read_finished_clips, resolve_range, RangeResolution};
+    use super::{
+        http_etag, max_clip_seq, read_finished_clips, resolve_limit, resolve_range,
+        RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
+    };
     use crate::ts_duration::DurationCache;
     use std::{fs, path::Path};
 
@@ -443,12 +486,13 @@ mod tests {
         write_file(&rec_dir.path, "seg_00002.ts", b"two");
         write_file(&rec_dir.path, "notes.txt", b"ignored");
 
-        let clips = read_finished_clips_for_test(&rec_dir.path, None);
+        let (clips, next_cursor) = read_finished_clips_for_test(&rec_dir.path, None, None, 10);
 
         assert_eq!(
             clips.iter().map(|clip| clip.id).collect::<Vec<_>>(),
             [2, 1, 0]
         );
+        assert_eq!(next_cursor, None);
         assert_eq!(clips[0].bytes, 3);
         assert_eq!(clips[0].etag, "2-3");
     }
@@ -460,9 +504,10 @@ mod tests {
         write_file(&rec_dir.path, "seg_00001.ts", b"one");
         write_file(&rec_dir.path, "seg_00002.ts", b"two");
 
-        let clips = read_finished_clips_for_test(&rec_dir.path, Some(2));
+        let (clips, next_cursor) = read_finished_clips_for_test(&rec_dir.path, Some(2), None, 10);
 
         assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [1, 0]);
+        assert_eq!(next_cursor, None);
     }
 
     #[test]
@@ -470,7 +515,10 @@ mod tests {
         let rec_dir = temp_rec_dir();
         write_file(&rec_dir.path, "seg_00000.ts", b"zero");
 
-        assert!(read_finished_clips_for_test(&rec_dir.path, Some(0)).is_empty());
+        let (clips, next_cursor) = read_finished_clips_for_test(&rec_dir.path, Some(0), None, 10);
+
+        assert!(clips.is_empty());
+        assert_eq!(next_cursor, None);
     }
 
     #[test]
@@ -478,7 +526,10 @@ mod tests {
         let rec_dir = temp_rec_dir();
         let missing = rec_dir.path.join("missing");
 
-        assert!(read_finished_clips_for_test(&missing, None).is_empty());
+        let (clips, next_cursor) = read_finished_clips_for_test(&missing, None, None, 10);
+
+        assert!(clips.is_empty());
+        assert_eq!(next_cursor, None);
     }
 
     #[test]
@@ -507,12 +558,88 @@ mod tests {
         write_file(&rec_dir.path, "seg_100000.ts", b"crossed");
         write_file(&rec_dir.path, "seg_999.ts", b"ignored");
 
-        let clips = read_finished_clips_for_test(&rec_dir.path, None);
+        let (clips, next_cursor) = read_finished_clips_for_test(&rec_dir.path, None, None, 10);
 
         assert_eq!(
             clips.iter().map(|clip| clip.id).collect::<Vec<_>>(),
             [100000, 99999]
         );
+        assert_eq!(next_cursor, None);
+    }
+
+    #[test]
+    fn read_finished_clips_pages_newest_first_with_boundaries() {
+        let rec_dir = temp_rec_dir();
+        for seq in 0..5 {
+            write_file(&rec_dir.path, &format!("seg_{seq:05}.ts"), b"segment");
+        }
+
+        let (first, first_cursor) = read_finished_clips_for_test(&rec_dir.path, None, None, 2);
+        let (second, second_cursor) =
+            read_finished_clips_for_test(&rec_dir.path, None, first_cursor, 2);
+        let (third, third_cursor) =
+            read_finished_clips_for_test(&rec_dir.path, None, second_cursor, 2);
+
+        assert_eq!(first.iter().map(|clip| clip.id).collect::<Vec<_>>(), [4, 3]);
+        assert_eq!(first_cursor, Some(3));
+        assert_eq!(
+            second.iter().map(|clip| clip.id).collect::<Vec<_>>(),
+            [2, 1]
+        );
+        assert_eq!(second_cursor, Some(1));
+        assert_eq!(third.iter().map(|clip| clip.id).collect::<Vec<_>>(), [0]);
+        assert_eq!(third_cursor, None);
+
+        let all_ids = first
+            .iter()
+            .chain(second.iter())
+            .chain(third.iter())
+            .map(|clip| clip.id)
+            .collect::<Vec<_>>();
+        assert_eq!(all_ids, [4, 3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn read_finished_clips_cursor_is_stable_when_newer_segments_arrive() {
+        let rec_dir = temp_rec_dir();
+        for seq in 0..5 {
+            write_file(&rec_dir.path, &format!("seg_{seq:05}.ts"), b"segment");
+        }
+        let (_, cursor) = read_finished_clips_for_test(&rec_dir.path, None, None, 2);
+
+        write_file(&rec_dir.path, "seg_00005.ts", b"newer");
+        let (page, next_cursor) = read_finished_clips_for_test(&rec_dir.path, None, cursor, 2);
+
+        assert_eq!(page.iter().map(|clip| clip.id).collect::<Vec<_>>(), [2, 1]);
+        assert_eq!(next_cursor, Some(1));
+    }
+
+    #[test]
+    fn read_finished_clips_applies_floor_on_every_page() {
+        let rec_dir = temp_rec_dir();
+        for seq in 0..5 {
+            write_file(&rec_dir.path, &format!("seg_{seq:05}.ts"), b"segment");
+        }
+
+        let (first, first_cursor) = read_finished_clips_for_test(&rec_dir.path, Some(4), None, 2);
+        let (second, second_cursor) =
+            read_finished_clips_for_test(&rec_dir.path, Some(4), first_cursor, 2);
+
+        assert_eq!(first.iter().map(|clip| clip.id).collect::<Vec<_>>(), [3, 2]);
+        assert_eq!(first_cursor, Some(2));
+        assert_eq!(
+            second.iter().map(|clip| clip.id).collect::<Vec<_>>(),
+            [1, 0]
+        );
+        assert_eq!(second_cursor, None);
+    }
+
+    #[test]
+    fn resolve_limit_uses_default_and_clamps_bounds() {
+        assert_eq!(resolve_limit(None), DEFAULT_LIMIT);
+        assert_eq!(resolve_limit(Some(0)), 1);
+        assert_eq!(resolve_limit(Some(MAX_LIMIT + 1)), MAX_LIMIT);
+        assert_eq!(resolve_limit(Some(50)), 50);
     }
 
     fn write_file(dir: &Path, name: &str, bytes: &[u8]) {
@@ -522,9 +649,11 @@ mod tests {
     fn read_finished_clips_for_test(
         rec_dir: &Path,
         unpullable_from: Option<u32>,
-    ) -> Vec<super::ClipMeta> {
+        cursor: Option<u32>,
+        limit: usize,
+    ) -> (Vec<super::ClipMeta>, Option<u32>) {
         let duration_cache = DurationCache::new();
-        read_finished_clips(rec_dir, unpullable_from, &duration_cache)
+        read_finished_clips(rec_dir, unpullable_from, cursor, limit, &duration_cache)
     }
 
     struct TempRecDir {
