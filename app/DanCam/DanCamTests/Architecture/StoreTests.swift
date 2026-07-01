@@ -74,6 +74,62 @@ struct StoreTests {
         #expect(observedStates == [0, 1])
     }
 
+    @Test func logClosureReceivesActionOldStateAndNewStateOnSend() {
+        enum Action: Equatable {
+            case increment
+        }
+
+        struct LogEntry: Equatable {
+            var action: Action
+            var oldState: Int
+            var newState: Int
+        }
+
+        var logEntries: [LogEntry] = []
+        let store = Store<Int, Action, Void>(
+            initialState: 0,
+            dependencies: (),
+            reduce: { state, action, _ in
+                switch action {
+                case .increment:
+                    state += 1
+                    return .none
+                }
+            },
+            log: { action, oldState, newState in
+                logEntries.append(LogEntry(
+                    action: action,
+                    oldState: oldState,
+                    newState: newState
+                ))
+            }
+        )
+
+        store.send(.increment)
+
+        #expect(logEntries == [
+            LogEntry(action: .increment, oldState: 0, newState: 1),
+        ])
+    }
+
+    @Test func defaultNilLogClosureLeavesSendBehaviorUnchanged() {
+        enum Action {
+            case increment
+        }
+
+        let store = Store<Int, Action, Void>(initialState: 0, dependencies: ()) { state, action, _ in
+            switch action {
+            case .increment:
+                state += 1
+                return .none
+            }
+        }
+
+        store.send(.increment)
+
+        #expect(store.state == 1)
+    }
+
     @Test func unchangedStateDoesNotNotifyButStillExecutesEffect() async {
         enum Action {
             case start
@@ -210,6 +266,57 @@ struct StoreTests {
         await finished.wait()
 
         #expect(store.state == 2)
+    }
+
+    @Test func effectFedActionIsLoggedOnReentry() async {
+        enum Action: Equatable {
+            case start
+            case finish
+        }
+
+        struct LogEntry: Equatable {
+            var action: Action
+            var oldState: Int
+            var newState: Int
+        }
+
+        let finished = Signal()
+        var logEntries: [LogEntry] = []
+        let store = Store<Int, Action, Void>(
+            initialState: 0,
+            dependencies: (),
+            reduce: { state, action, _ in
+                switch action {
+                case .start:
+                    state = 1
+                    return .run { send in
+                        await send(.finish)
+                    }
+                case .finish:
+                    state = 2
+                    return .none
+                }
+            },
+            log: { action, oldState, newState in
+                logEntries.append(LogEntry(
+                    action: action,
+                    oldState: oldState,
+                    newState: newState
+                ))
+
+                if action == .finish {
+                    finished.signal()
+                }
+            }
+        )
+
+        store.send(.start)
+        await finished.wait()
+
+        #expect(logEntries == [
+            LogEntry(action: .start, oldState: 0, newState: 1),
+            LogEntry(action: .finish, oldState: 1, newState: 2),
+        ])
     }
 
     @Test func mergeRunsBothMappedChildEffects() async {

@@ -383,7 +383,19 @@ point is `assemble(packets:timescale:)` (no init). So:
 ## Commit progress
 
 - [x] 1. Log namespace and convention
-- [ ] 2. Reducer transition hook
+- [x] 2. Reducer transition hook
 - [ ] 3. Pipeline coverage
 - [ ] 4. In-app export
 - [ ] 5. Docs
+
+## Implementation notes
+
+- Reducer summaries include `clip_count`, `paging`, and cursor presence so clips state
+  transitions produce useful lines without logging full clip payloads or cursor values.
+
+## Follow Up
+
+- Investigate the intermittent full-suite failure in
+  `app/DanCam/DanCamTests/Networking/Preview/PreviewClientTests.swift#realHyperChunkedFixtureDecodesMockFrameSequence`;
+  it failed twice under `just app-test` on July 1, 2026, but passed when run in
+  isolation.

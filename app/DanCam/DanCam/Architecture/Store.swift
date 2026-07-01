@@ -21,16 +21,23 @@ final class Store<State: Equatable, Action, Dependencies> {
 
     private let dependencies: Dependencies
     private let reduce: Reducer
+    private let log: ((Action, State, State) -> Void)?
     private var observers: [UInt64: (State) -> Void] = [:]
     private var nextObserverToken: UInt64 = 0
     private var nextTaskToken: UInt64 = 0
     private var tasks: [UInt64: Task<Void, Never>] = [:]
     private var taskIDs: [AnyHashable: UInt64] = [:]
 
-    init(initialState: State, dependencies: Dependencies, reduce: @escaping Reducer) {
+    init(
+        initialState: State,
+        dependencies: Dependencies,
+        reduce: @escaping Reducer,
+        log: ((Action, State, State) -> Void)? = nil
+    ) {
         state = initialState
         self.dependencies = dependencies
         self.reduce = reduce
+        self.log = log
     }
 
     @discardableResult
@@ -72,6 +79,7 @@ final class Store<State: Equatable, Action, Dependencies> {
     func send(_ action: Action) {
         let old = state
         let effect = reduce(&state, action, dependencies)
+        log?(action, old, state)
 
         if state != old {
             notifyObservers()

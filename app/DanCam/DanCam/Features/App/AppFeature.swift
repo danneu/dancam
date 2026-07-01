@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 enum AppFeature {
     struct State: Equatable {
@@ -236,6 +237,206 @@ enum AppFeature {
             .seconds(2)
         default:
             .seconds(4)
+        }
+    }
+}
+
+extension AppFeature.Action {
+    var logLabel: String {
+        switch self {
+        case .streamStarted:
+            "streamStarted"
+        case .streamStopped:
+            "streamStopped"
+        case .event(let event):
+            "event.\(event.logLabel)"
+        case .streamFailed:
+            "streamFailed"
+        case .streamReconnect:
+            "streamReconnect"
+        case .heartbeatTimedOut:
+            "heartbeatTimedOut"
+        case .recording(let action):
+            "recording.\(action.logLabel)"
+        case .clips(let action):
+            "clips.\(action.logLabel)"
+        case .recordTapped:
+            "recordTapped"
+        case .manualRefresh:
+            "manualRefresh"
+        }
+    }
+}
+
+extension AppFeature.State {
+    var logSummary: String {
+        [
+            "link=\(link.logPhase)",
+            "recording=\(recording.logPhase)",
+            "clips=\(clips.logPhase)",
+            "clip_count=\(clips.clips.count)",
+            "paging=\(clips.isPaging)",
+            "cursor=\(clips.nextCursor == nil ? "none" : "present")",
+            "recon=\(streamReconnectAttempt)",
+        ].joined(separator: " ")
+    }
+
+    var logSnapshot: String {
+        var fields = [logSummary]
+
+        if let world = link.onlineWorld {
+            fields.append("camera=\(world.cameraState.rawValue)")
+            fields.append("recorder=\(world.recorder.phase.rawValue)")
+            fields.append("session=\(world.recorder.session)")
+            if let segment = world.recorder.currentSegment {
+                fields.append("segment=\(segment.id)")
+            }
+            fields.append("uptime_s=\(world.uptimeS)")
+            if let storage = world.storage {
+                fields.append("storage_used=\(storage.used)")
+                fields.append("storage_total=\(storage.total)")
+            }
+            fields.append("temp_soc_c=\(world.tempC.soc.map(String.init(describing:)) ?? "nil")")
+            fields.append("temp_sensor_c=\(world.tempC.sensor.map(String.init(describing:)) ?? "nil")")
+        }
+
+        return fields.joined(separator: " ")
+    }
+}
+
+extension AppFeature {
+    static func logTransition(_ action: Action, _ old: State, _ new: State) {
+        let oldSummary = old.logSummary
+        let newSummary = new.logSummary
+
+        if oldSummary == newSummary {
+            Log.reducer.debug("action=\(action.logLabel, privacy: .public) (no change)")
+        } else {
+            Log.reducer.notice(
+                "action=\(action.logLabel, privacy: .public) \(oldSummary, privacy: .public) -> \(newSummary, privacy: .public)"
+            )
+        }
+    }
+}
+
+private extension Link {
+    var logPhase: String {
+        switch self {
+        case .connecting:
+            "connecting"
+        case .online:
+            "online"
+        case .offline:
+            "offline"
+        }
+    }
+}
+
+private extension RecordingFeature.State {
+    var logPhase: String {
+        switch self {
+        case .unknown:
+            "unknown"
+        case .idle:
+            "idle"
+        case .starting:
+            "starting"
+        case .recording:
+            "recording"
+        case .stopping:
+            "stopping"
+        case .failed:
+            "failed"
+        }
+    }
+}
+
+private extension ClipsFeature.State {
+    var logPhase: String {
+        switch status {
+        case .idle:
+            "loaded"
+        case .loading:
+            "loading"
+        case .failed:
+            "failed"
+        }
+    }
+}
+
+private extension CameraEvent {
+    var logLabel: String {
+        switch self {
+        case .snapshot:
+            "snapshot"
+        case .recordingStarting:
+            "recordingStarting"
+        case .recordingStarted:
+            "recordingStarted"
+        case .segmentOpened:
+            "segmentOpened"
+        case .clipFinalized:
+            "clipFinalized"
+        case .recordingStopping:
+            "recordingStopping"
+        case .recordingStopped:
+            "recordingStopped"
+        case .recorderFailed:
+            "recorderFailed"
+        case .cameraStateChanged:
+            "cameraStateChanged"
+        case .storageChanged:
+            "storageChanged"
+        case .tempChanged:
+            "tempChanged"
+        case .memChanged:
+            "memChanged"
+        case .heartbeat:
+            "heartbeat"
+        case .unknown(let type):
+            "unknown.\(type)"
+        }
+    }
+}
+
+private extension RecordingFeature.Action {
+    var logLabel: String {
+        switch self {
+        case .startTapped:
+            "startTapped"
+        case .stopTapped:
+            "stopTapped"
+        case .recordingResponse(.success):
+            "recordingResponse.success"
+        case .recordingResponse(.failure):
+            "recordingResponse.failure"
+        case .recorderPhaseObserved:
+            "recorderPhaseObserved"
+        }
+    }
+}
+
+private extension ClipsFeature.Action {
+    var logLabel: String {
+        switch self {
+        case .load:
+            "load"
+        case .refresh:
+            "refresh"
+        case .onDisappear:
+            "onDisappear"
+        case .clipFinalized:
+            "clipFinalized"
+        case .loadMore:
+            "loadMore"
+        case .clipsResponse(.success):
+            "clipsResponse.success"
+        case .clipsResponse(.failure):
+            "clipsResponse.failure"
+        case .pageResponse(_, .success):
+            "pageResponse.success"
+        case .pageResponse(_, .failure):
+            "pageResponse.failure"
         }
     }
 }

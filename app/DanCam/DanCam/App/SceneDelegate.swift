@@ -1,3 +1,4 @@
+import OSLog
 import UIKit
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
@@ -12,8 +13,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let appStore = AppStore(
             initialState: AppFeature.State(),
             dependencies: dependencies,
-            reduce: AppFeature.reduce
+            reduce: AppFeature.reduce,
+            log: AppFeature.logTransition
         )
+        Log.reducer.notice("snapshot \(appStore.state.logSnapshot, privacy: .public)")
+
         let window = UIWindow(windowScene: windowScene)
         let rootViewController = HomeViewController(dependencies: dependencies, store: appStore)
         let navigationController = UINavigationController(rootViewController: rootViewController)
@@ -32,7 +36,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
-        appStore?.send(.streamStarted)
+        if let appStore {
+            appStore.send(.streamStarted)
+            Log.reducer.notice("snapshot \(appStore.state.logSnapshot, privacy: .public)")
+        }
         (shell?.topViewController as? ConnectionResumable)?.resumeLiveWork()
     }
 
