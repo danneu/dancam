@@ -42,7 +42,7 @@ nonisolated enum Formatters {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
 
-        return String(format: "%llu:%02llu", minutes, seconds)
+        return String(format: "%02llu:%02llu", minutes, seconds)
     }
 
     static func clipMetadata(durMs: UInt64?, bytes: UInt64) -> String {

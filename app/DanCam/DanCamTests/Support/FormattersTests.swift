@@ -53,12 +53,12 @@ struct FormattersTests {
     @Test func clipDurationFormatsMillisecondsAsMinutesAndSeconds() {
         let cases: [(durMs: UInt64?, text: String?)] = [
             (nil, nil),
-            (0, "0:00"),
-            (5_000, "0:05"),
-            (34_000, "0:34"),
-            (34_700, "0:35"),
-            (34_400, "0:34"),
-            (94_000, "1:34"),
+            (0, "00:00"),
+            (5_000, "00:05"),
+            (34_000, "00:34"),
+            (34_700, "00:35"),
+            (34_400, "00:34"),
+            (94_000, "01:34"),
             (600_000, "10:00"),
             (6_000_000, "100:00"),
             (128_849_018_880_000, "2147483648:00"),
@@ -71,17 +71,17 @@ struct FormattersTests {
     }
 
     @Test func clipMetadataCombinesDurationAndByteSize() {
-        #expect(Formatters.clipMetadata(durMs: 34_000, bytes: 1_000) == "0:34 · 1 KB")
+        #expect(Formatters.clipMetadata(durMs: 34_000, bytes: 1_000) == "00:34 · 1 KB")
         #expect(Formatters.clipMetadata(durMs: nil, bytes: 1_000) == "1 KB")
     }
 
     @Test func countUpDurationFloorsSeconds() {
         let cases: [(durMs: UInt64, text: String)] = [
-            (0, "0:00"),
-            (999, "0:00"),
-            (1_000, "0:01"),
-            (59_999, "0:59"),
-            (60_000, "1:00"),
+            (0, "00:00"),
+            (999, "00:00"),
+            (1_000, "00:01"),
+            (59_999, "00:59"),
+            (60_000, "01:00"),
             (600_000, "10:00"),
         ]
 
