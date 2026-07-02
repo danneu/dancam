@@ -9,6 +9,13 @@
   `docs/roadmap.md` (swoop `lime` -- Watch recorded clips; swoop `tide` -- Export /
   share)
 
+> **Note (2026-07-02):** `ClipCache.lookup` and `ClipCache.insert` are async. The
+> cache's FileManager work -- directory enumeration, stale-etag sweep, moves,
+> mtime-LRU eviction, and version-sentinel wipe -- runs off the main thread on a
+> serial actor because the clip viewer is `@MainActor`. The same actor also removes
+> the interleaving hazard between thumbnail lookups and clip-viewer insert or
+> version-wipe operations.
+
 ## Context
 
 ADR 08 added a progressive fMP4/HLS path so the viewer could paint a first frame

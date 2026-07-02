@@ -61,10 +61,9 @@ final class ClipViewerViewController: UIViewController {
         configureViews()
         configureShareButton()
 
-        if let cachedURL = dependencies.clipCache.lookup(clip.id, clip.etag) {
-            play(cachedURL, source: .cacheHit)
-        } else {
-            startPull()
+        state = .preparing
+        pullTask = Task { [weak self] in
+            await self?.loadFromCacheThenPlayOrPull()
         }
     }
 
@@ -271,6 +270,17 @@ final class ClipViewerViewController: UIViewController {
         startPull()
     }
 
+    private func loadFromCacheThenPlayOrPull() async {
+        if let cachedURL = await dependencies.clipCache.lookup(clip.id, clip.etag) {
+            guard Task.isCancelled == false else { return }
+            play(cachedURL, source: .cacheHit)
+            return
+        }
+
+        guard Task.isCancelled == false else { return }
+        startPull()
+    }
+
     private func startPull() {
         pullTask?.cancel()
         pullTask = nil
@@ -316,7 +326,7 @@ final class ClipViewerViewController: UIViewController {
         try Task.checkCancellation()
         temporaryFiles.insert(remuxedResult.fileURL)
 
-        let cachedURL = try dependencies.clipCache.insert(
+        let cachedURL = try await dependencies.clipCache.insert(
             clip.id,
             result.resolvedETag,
             remuxedResult.fileURL

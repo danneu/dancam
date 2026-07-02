@@ -52,7 +52,7 @@ nonisolated struct ThumbnailLoader: Sendable {
     init(
         prefixClient: ClipPrefixClient,
         thumbnailCache: ThumbnailCache,
-        clipCacheLookup: @escaping @Sendable (_ clipID: Int, _ etag: String) -> URL?,
+        clipCacheLookup: @escaping @Sendable (_ clipID: Int, _ etag: String) async -> URL?,
         decodeTSPrefix: @escaping @Sendable (_ data: Data, _ clipID: Int, _ maxPixelSize: CGSize) async throws -> sending UIImage,
         decodeMP4: @escaping @Sendable (_ url: URL, _ maxPixelSize: CGSize) async throws -> sending UIImage,
         maxConcurrent: Int,
@@ -158,7 +158,7 @@ private nonisolated struct ThumbnailKey: Hashable, Sendable {
 private actor Loader {
     private let prefixClient: ClipPrefixClient
     private let thumbnailCache: ThumbnailCache
-    private let clipCacheLookup: @Sendable (Int, String) -> URL?
+    private let clipCacheLookup: @Sendable (Int, String) async -> URL?
     private let decodeTSPrefix: @Sendable (Data, Int, CGSize) async throws -> sending UIImage
     private let decodeMP4: @Sendable (URL, CGSize) async throws -> sending UIImage
     private let maxConcurrent: Int
@@ -176,7 +176,7 @@ private actor Loader {
     init(
         prefixClient: ClipPrefixClient,
         thumbnailCache: ThumbnailCache,
-        clipCacheLookup: @escaping @Sendable (Int, String) -> URL?,
+        clipCacheLookup: @escaping @Sendable (Int, String) async -> URL?,
         decodeTSPrefix: @escaping @Sendable (Data, Int, CGSize) async throws -> sending UIImage,
         decodeMP4: @escaping @Sendable (URL, CGSize) async throws -> sending UIImage,
         maxConcurrent: Int,
@@ -314,7 +314,7 @@ private actor Loader {
     private static func generate(
         clip: Clip,
         prefixClient: ClipPrefixClient,
-        clipCacheLookup: @Sendable (Int, String) -> URL?,
+        clipCacheLookup: @Sendable (Int, String) async -> URL?,
         thumbnailCache: ThumbnailCache,
         decodeTSPrefix: @Sendable (Data, Int, CGSize) async throws -> sending UIImage,
         decodeMP4: @Sendable (URL, CGSize) async throws -> sending UIImage,
@@ -323,7 +323,7 @@ private actor Loader {
     ) async -> ThumbnailImage? {
         do {
             let image: UIImage
-            if let mp4URL = clipCacheLookup(clip.id, clip.etag) {
+            if let mp4URL = await clipCacheLookup(clip.id, clip.etag) {
                 image = try await decodeMP4(mp4URL, maxPixelSize)
             } else {
                 image = try await generateFromPrefix(

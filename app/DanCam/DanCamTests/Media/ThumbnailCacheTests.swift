@@ -119,7 +119,7 @@ struct ThumbnailCacheTests {
     }
 
     @Test
-    func usesItsOwnRootAndLeavesTheClipCacheUntouched() throws {
+    func usesItsOwnRootAndLeavesTheClipCacheUntouched() async throws {
         let clipRoot = try temporaryDirectory()
         let thumbRoot = try temporaryDirectory()
         defer {
@@ -131,14 +131,14 @@ struct ThumbnailCacheTests {
         let clipSource = FileManager.default.temporaryDirectory
             .appending(path: "dancam-thumb-cache-clip-\(UUID().uuidString).mp4")
         try Data([0xAA]).write(to: clipSource)
-        let cachedClip = try clipCache.insert(9, "9-9", clipSource)
+        let cachedClip = try await clipCache.insert(9, "9-9", clipSource)
 
         let thumbnailCache = ThumbnailCache.live(rootDirectory: thumbRoot, now: { Date(timeIntervalSince1970: 2) })
         let cachedThumb = try thumbnailCache.insert(9, "9-9", Data([0xBB]))
 
         #expect(cachedThumb.deletingLastPathComponent() == thumbRoot)
         #expect(FileManager.default.fileExists(atPath: cachedClip.path))
-        #expect(clipCache.lookup(9, "9-9") == cachedClip)
+        #expect(await clipCache.lookup(9, "9-9") == cachedClip)
     }
 
     private func temporaryDirectory() throws -> URL {

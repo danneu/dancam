@@ -1,53 +1,21 @@
 import Foundation
 
 nonisolated struct ClipCache: Sendable {
-    var lookup: @Sendable (_ clipID: Int, _ etag: String) -> URL?
-    var insert: @Sendable (_ clipID: Int, _ etag: String, _ source: URL) throws -> URL
+    var lookup: @Sendable (_ clipID: Int, _ etag: String) async -> URL?
+    var insert: @Sendable (_ clipID: Int, _ etag: String, _ source: URL) async throws -> URL
 
     static func live(
         rootDirectory: URL,
         now: @escaping @Sendable () -> Date,
         maxBytes: Int = 500 * 1024 * 1024
     ) -> ClipCache {
-        ClipCache(
+        let store = Store(rootDirectory: rootDirectory, now: now, maxBytes: maxBytes)
+        return ClipCache(
             lookup: { clipID, etag in
-                do {
-                    let fileManager = FileManager.default
-                    try ensureCurrentVersion(rootDirectory: rootDirectory, fileManager: fileManager)
-                    let url = cacheURL(rootDirectory: rootDirectory, clipID: clipID, etag: etag)
-                    guard fileManager.fileExists(atPath: url.path) else { return nil }
-                    try stamp(url, date: now(), fileManager: fileManager)
-                    return url
-                } catch {
-                    return nil
-                }
+                await store.lookup(clipID, etag)
             },
             insert: { clipID, etag, source in
-                let fileManager = FileManager.default
-                try ensureCurrentVersion(rootDirectory: rootDirectory, fileManager: fileManager)
-                let destination = cacheURL(rootDirectory: rootDirectory, clipID: clipID, etag: etag)
-
-                if source != destination {
-                    try sweepClipVersions(
-                        rootDirectory: rootDirectory,
-                        clipID: clipID,
-                        preserving: source,
-                        fileManager: fileManager
-                    )
-                    if fileManager.fileExists(atPath: destination.path) {
-                        try fileManager.removeItem(at: destination)
-                    }
-                    try fileManager.moveItem(at: source, to: destination)
-                }
-
-                try stamp(destination, date: now(), fileManager: fileManager)
-                try evictIfNeeded(
-                    rootDirectory: rootDirectory,
-                    maxBytes: max(0, maxBytes),
-                    preserving: destination,
-                    fileManager: fileManager
-                )
-                return destination
+                try await store.insert(clipID, etag, source)
             }
         )
     }
@@ -58,6 +26,59 @@ nonisolated struct ClipCache: Sendable {
     )
 
     private static let version = 1
+
+    private actor Store {
+        private let rootDirectory: URL
+        private let now: @Sendable () -> Date
+        private let maxBytes: Int
+
+        init(rootDirectory: URL, now: @escaping @Sendable () -> Date, maxBytes: Int) {
+            self.rootDirectory = rootDirectory
+            self.now = now
+            self.maxBytes = maxBytes
+        }
+
+        func lookup(_ clipID: Int, _ etag: String) -> URL? {
+            do {
+                let fileManager = FileManager.default
+                try ClipCache.ensureCurrentVersion(rootDirectory: rootDirectory, fileManager: fileManager)
+                let url = ClipCache.cacheURL(rootDirectory: rootDirectory, clipID: clipID, etag: etag)
+                guard fileManager.fileExists(atPath: url.path) else { return nil }
+                try ClipCache.stamp(url, date: now(), fileManager: fileManager)
+                return url
+            } catch {
+                return nil
+            }
+        }
+
+        func insert(_ clipID: Int, _ etag: String, _ source: URL) throws -> URL {
+            let fileManager = FileManager.default
+            try ClipCache.ensureCurrentVersion(rootDirectory: rootDirectory, fileManager: fileManager)
+            let destination = ClipCache.cacheURL(rootDirectory: rootDirectory, clipID: clipID, etag: etag)
+
+            if source != destination {
+                try ClipCache.sweepClipVersions(
+                    rootDirectory: rootDirectory,
+                    clipID: clipID,
+                    preserving: source,
+                    fileManager: fileManager
+                )
+                if fileManager.fileExists(atPath: destination.path) {
+                    try fileManager.removeItem(at: destination)
+                }
+                try fileManager.moveItem(at: source, to: destination)
+            }
+
+            try ClipCache.stamp(destination, date: now(), fileManager: fileManager)
+            try ClipCache.evictIfNeeded(
+                rootDirectory: rootDirectory,
+                maxBytes: max(0, maxBytes),
+                preserving: destination,
+                fileManager: fileManager
+            )
+            return destination
+        }
+    }
 
     private static func cacheURL(rootDirectory: URL, clipID: Int, etag: String) -> URL {
         rootDirectory.appending(path: "clip-\(clipID)-\(CacheKey.etagToken(etag)).mp4")

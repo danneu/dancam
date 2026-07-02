@@ -15,7 +15,7 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func cacheHitPlaysLookedUpURLWithoutPulling() throws {
+    func cacheHitPlaysLookedUpURLWithoutPulling() async throws {
         let cacheURL = URL(filePath: "/tmp/dancam-cache-hit-\(UUID().uuidString).mp4")
         let pullCalls = CallLog<Int>()
         let controller = makeController(
@@ -36,6 +36,7 @@ struct ClipViewerViewControllerTests {
 
         controller.loadViewIfNeeded()
 
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
         #expect(controller.currentPlayerItemURL == cacheURL)
         #expect(controller.statusText == "Ready")
         #expect(pullCalls.values().isEmpty)
@@ -56,7 +57,7 @@ struct ClipViewerViewControllerTests {
         )
 
         controller.loadViewIfNeeded()
-        try await waitUntil { controller.progressFraction == 1 }
+        try await waitUntil { controller.statusText == "\(Formatters.byteSize(1)) of \(Formatters.byteSize(1))" }
 
         #expect(controller.isShareButtonEnabled == false)
 
@@ -65,7 +66,7 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func cacheHitEnablesShareButton() throws {
+    func cacheHitEnablesShareButton() async throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
 
@@ -78,12 +79,13 @@ struct ClipViewerViewControllerTests {
 
         controller.loadViewIfNeeded()
 
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
         #expect(controller.statusText == "Ready")
         #expect(controller.isShareButtonEnabled == true)
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func disappearanceWithoutRemovalKeepsPlayer() throws {
+    func disappearanceWithoutRemovalKeepsPlayer() async throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
@@ -95,6 +97,7 @@ struct ClipViewerViewControllerTests {
         defer { controller.didMove(toParent: nil) }
 
         controller.loadViewIfNeeded()
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
 
         let artifact = try #require(controller.makeShareArtifactForTesting())
         let directory = try #require(artifact.temporaryDirectory)
@@ -108,7 +111,7 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func fullscreenRoundTripKeepsPlayer() throws {
+    func fullscreenRoundTripKeepsPlayer() async throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
@@ -120,6 +123,7 @@ struct ClipViewerViewControllerTests {
         defer { controller.didMove(toParent: nil) }
 
         controller.loadViewIfNeeded()
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
 
         #expect(controller.hasEmbeddedPlayer == true)
         #expect(controller.isPresentingFullScreenForTesting == false)
@@ -138,7 +142,7 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func removalTearsDownPlayer() throws {
+    func removalTearsDownPlayer() async throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
@@ -149,6 +153,7 @@ struct ClipViewerViewControllerTests {
         )
 
         controller.loadViewIfNeeded()
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
 
         #expect(controller.hasEmbeddedPlayer == true)
         #expect(controller.currentPlayerItemURL == cacheURL)
@@ -166,7 +171,7 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func cacheHitShareArtifactClonesCacheWithFriendlyMovieName() throws {
+    func cacheHitShareArtifactClonesCacheWithFriendlyMovieName() async throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
@@ -177,6 +182,7 @@ struct ClipViewerViewControllerTests {
         )
 
         controller.loadViewIfNeeded()
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
 
         let clip = Clip(
             id: 1,
@@ -211,7 +217,7 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func cloneFailureFallsBackToCacheURL() throws {
+    func cloneFailureFallsBackToCacheURL() async throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
@@ -222,6 +228,7 @@ struct ClipViewerViewControllerTests {
         )
 
         controller.loadViewIfNeeded()
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
 
         let blocker = try temporaryFile(extension: "blocker", contents: Data())  // a file, not a dir
         defer { try? FileManager.default.removeItem(at: blocker) }
@@ -232,7 +239,7 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func removalCleansUpShareArtifacts() throws {
+    func removalCleansUpShareArtifacts() async throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
@@ -243,6 +250,7 @@ struct ClipViewerViewControllerTests {
         )
 
         controller.loadViewIfNeeded()
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
 
         let artifact = try #require(controller.makeShareArtifactForTesting())
         let directory = try #require(artifact.temporaryDirectory)
@@ -280,6 +288,7 @@ struct ClipViewerViewControllerTests {
 
         controller.loadViewIfNeeded()
 
+        try await waitUntil { controller.currentPlayerItemURL == missingCacheURL }
         #expect(controller.statusText == "Ready")
         #expect(controller.currentPlayerItemURL == missingCacheURL)
         #expect(controller.makeShareArtifactForTesting() == nil)
@@ -413,6 +422,7 @@ struct ClipViewerViewControllerTests {
         )
         controller.loadViewIfNeeded()
 
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
         #expect(controller.currentPlayerItemURL == cacheURL)
 
         controller.failCurrentPlayerForTesting()
@@ -471,7 +481,7 @@ struct ClipViewerViewControllerTests {
         )
 
         controller.loadViewIfNeeded()
-        try await waitUntil { controller.progressFraction == 1 }
+        try await waitUntil { controller.statusText == "\(Formatters.byteSize(1)) of \(Formatters.byteSize(1))" }
 
         controller.didMove(toParent: nil)
         await allowCompletion.signal()

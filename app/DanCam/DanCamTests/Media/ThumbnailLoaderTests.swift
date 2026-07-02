@@ -403,7 +403,7 @@ struct ThumbnailLoaderTests {
         maxConcurrent: Int = 3,
         prefixByteLimit: Int? = nil,
         diskLookup: @escaping @Sendable (Int, String) -> URL? = { _, _ in nil },
-        clipCacheLookup: @escaping @Sendable (Int, String) -> URL? = { _, _ in nil },
+        clipCacheLookup: @escaping @Sendable (Int, String) async -> URL? = { _, _ in nil },
         thumbnailInsert: @escaping @Sendable (Int, String, Data) throws -> URL = { id, etag, _ in
             URL(filePath: "/tmp/thumb-\(id)-\(etag).jpg")
         },
