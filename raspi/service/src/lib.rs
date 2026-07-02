@@ -184,6 +184,7 @@ async fn request_trace(
     let span = tracing::info_span!("request", %request_id, %method, %path);
 
     let mut response = async move {
+        tracing::info!("received");
         let response = next.run(request).await;
         tracing::info!(
             status = response.status().as_u16(),
