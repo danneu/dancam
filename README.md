@@ -22,8 +22,9 @@ dumb: capture, encode, store safely, and serve footage.
 ## Status
 
 There are no users or shipped releases. The repo is still design-doc-heavy, with
-early buildable code in `raspi/service/` and several thin end-to-end slices already
-working. The current build order lives in [`docs/roadmap.md`](docs/roadmap.md).
+early buildable code in `raspi/service/` and several end-to-end features -- live
+preview, recording control, clip playback -- already working. The current build
+order lives in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Hardware
 

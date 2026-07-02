@@ -1,14 +1,20 @@
-# dancam roadmap -- breadth-first swoops
+# dancam roadmap
 
 > Linked from the root `AGENTS.md`. Kept here rather than inline so AGENTS.md stays
 > lean -- AGENTS.md is loaded into every agent context, the roadmap is not.
 
-We build this like sculpting clay, not stacking bricks: **breadth-first swoops**.
-Each swoop is a thin slice across the whole pipeline (Pi -> Wi-Fi -> app) that
-ends in something we can actually see or use. Later swoops deepen earlier ones
-rather than bolting on isolated parts. The deep ADRs (storage ring buffer,
-crash-safe recording) are the _north star_ for the deepening passes -- not the
-spec for the early swoops. Start dumb, get footage moving, harden later.
+Each **swoop** below is a feature we build to last -- a codenamed unit of work across
+the pipeline (Pi -> Wi-Fi -> app). When we build one, we build it forward-thinking,
+durable, and robust: the real version, not a transient stub we plan to harden later.
+A swoop is "done" only when it is the design we'd defend, so the next swoop builds
+*on* it rather than *around* a shortcut. The deep ADRs (storage ring buffer,
+crash-safe recording) are the spec we build toward, not a someday-deepening pass.
+
+When we genuinely don't yet know whether an approach works -- a Wi-Fi pinning trick, a
+remux path, thermal headroom -- we answer that with a **throwaway spike**: code written
+to be deleted, run just far enough to learn the thing. The committed swoop is then
+built properly on what the spike taught us. Spikes de-risk; they never ship as the
+feature.
 
 This list is **loose and reorderable.** Order is a default, not a contract; near-
 term swoops are detailed, later ones are one-liners we'll flesh out when we reach
@@ -210,9 +216,8 @@ mock first.
 - [ ] **Swoop `moss` -- Time provenance.** `POST /v1/time` at handshake (the Pi has no
       RTC); "time unverified" UI until sync; timestamps on clips.
 - [ ] **Swoop `nova` -- Incident lock (manual).** A "save this moment" button: Pi
-      force-finalizes the open segment and protects the window. Start with a dumb
-      hardlink lock; _deepen toward the storage ADR (idempotency, pre-sync holds)
-      later._
+      force-finalizes the open segment and protects the window, built to the storage
+      ADR (idempotency, pre-sync holds) rather than a throwaway lock we'd redo later.
 - [ ] **Swoop `reef` -- CarPlay auto start/stop** on CarPlay connect/disconnect.
 - [ ] **Swoop `sage` -- CarPlay status panel** (Driving Task template). _Gated on the
       Apple entitlement; the product must be useful without it._
@@ -221,7 +226,7 @@ mock first.
       deferred to `nova`.
 - [ ] **Swoop `vine` -- Power-loss hardening for real.** Power-good GPIO + clean
       shutdown; supercap go/no-go; validate crash recovery in the actual car.
-- [ ] **Later / deepening passes.** Thermal-behavior policy (what recording does at
+- [ ] **Later / follow-on passes.** Thermal-behavior policy (what recording does at
       the sensor's 50 C limit); replace the Python Picamera2 camera owner with an
       all-Rust camera binary before or during the read-only car-image pass; HDR tuning;
       auth hardening (token, then pinned-cert TLS); GPS
@@ -232,7 +237,7 @@ mock first.
 ## Icebox (someday-maybe -- parked, not on the near path)
 
 Whole swoops we've deliberately set aside; we won't think about them until something
-changes. Distinct from the deepening passes above (those go deeper on swoops we _will_
+changes. Distinct from the follow-on passes above (further work on swoops we _will_
 build) -- these may or may not ever happen. They keep their codenames so a parked
 swoop can drop into the list above unchanged. Unordered.
 

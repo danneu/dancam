@@ -33,13 +33,23 @@ restructure, and rewrite freely whenever it gets us to the cleaner end state. If
 change is the right one, the size of the diff or the number of touched files is never
 a reason to hold back. The only bar is: is this the best design we can see right now?
 
+**Build each feature durable, not transient.** When you build a swoop, build the
+version you'd defend -- forward-thinking and robust -- not a deliberately dumb stub you
+plan to "harden in a later pass." Suboptimal-on-purpose code compounds: the next
+feature builds around the shortcut and inherits it, so the whole system ratchets toward
+mediocre. If you genuinely need to prove an approach works first, do it with a
+**throwaway spike** (code written to be deleted) and then build the committed version
+properly -- never promote the spike into the feature. The one honest exception is
+sequencing that hardware reality forces (e.g. the writable dev image before the
+read-only car image), which the owning docs call out explicitly.
+
 ## Roadmap
 
-The build plan lives in **[`docs/roadmap.md`](docs/roadmap.md)**: the **breadth-first
-swoops** (thin end-to-end Pi -> Wi-Fi -> app slices, deepened on later passes;
-codenamed `oak`, `fox`, ... so they reorder without renumbering), the default order
-and mock-Pi / real-Pi tracks, and an **Icebox** of parked someday-maybe swoops. Read
-it before deciding what to build next.
+The build plan lives in **[`docs/roadmap.md`](docs/roadmap.md)**: the **swoops**
+(codenamed units of work across Pi -> Wi-Fi -> app -- `oak`, `fox`, ... -- each built
+as a durable, forward-thinking feature rather than a transient stub; codenamed so they
+reorder without renumbering), the default order and mock-Pi / real-Pi tracks, and an
+**Icebox** of parked someday-maybe swoops. Read it before deciding what to build next.
 
 ## Hardware (tentative)
 
@@ -63,7 +73,7 @@ workstation.
 dancam/
   AGENTS.md              <- you are here (whole-system overview + conventions)
   Justfile               <- common build/test/run tasks; prefer these over raw commands
-  docs/roadmap.md        <- build plan: breadth-first swoops + Icebox
+  docs/roadmap.md        <- build plan: swoops + Icebox
   app/                   <- iPhone app (Swift / UIKit). Has its own AGENTS.md.
     docs/design/         <- app-side ADRs ({seq}-YYYY-MM-DD-{slug}.md)
   raspi/                 <- camera-unit software (Raspberry Pi). Has its own AGENTS.md.

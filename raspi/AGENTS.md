@@ -148,9 +148,12 @@ Same Raspberry Pi OS base, two configurations:
 | Access | `ssh <your-username>@dancam.local` over the LAN; if AP is up, use a separate client, not the Mac's only Wi-Fi interface | phone joins the Pi's AP |
 | Recordings | a folder on root is fine early | dedicated journaled `/data` partition |
 
-The early swoops live in the dev image. Read-only root, AP mode, and the partition
-layout are a hardening pass (the crash-safe ADR is the north star, not the spec for
-early swoops) -- not something to fight while iterating.
+The dev image is where we build: writable root, manual AP toggle, recordings in a
+folder on root, so we can edit and restart freely. The car image (read-only overlayfs
+root, always-on AP, journaled `/data`) is how that same durably-built software gets
+packaged for deployment; the crash-safe ADR is the spec both build toward. This is a
+forced difference in how the software is *run*, not a license to build the software
+itself dumb first and harden later -- you just don't fight read-only root on the desk.
 
 ### OS and first flash (once)
 
