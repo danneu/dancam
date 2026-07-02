@@ -82,6 +82,28 @@ raspi-ap minutes="5":
 app-build:
     xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'generic/platform=iOS Simulator' build
 
+# Clean-build the app and report just the compiler warnings/errors (clean so every
+# file recompiles and all warnings surface, not only the ones an incremental build touches).
+app-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    log="$(mktemp)"
+    trap 'rm -f "$log"' EXIT
+    echo "==> clean-building DanCam (this recompiles everything so all warnings surface)"
+    if ! xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam \
+        -destination 'generic/platform=iOS Simulator' clean build > "$log" 2>&1; then
+      echo "BUILD FAILED:"
+      grep -E '^/.*: error:' "$log" | sort -u
+      exit 1
+    fi
+    warnings="$(grep -E '^/.*: warning:' "$log" | sort -u || true)"
+    if [[ -n "$warnings" ]]; then
+      printf '%s\n' "$warnings"
+      echo "==> $(printf '%s\n' "$warnings" | wc -l | tr -d ' ') warning(s)"
+    else
+      echo "==> no warnings"
+    fi
+
 # Run the iPhone app's Swift Testing unit suite.
 app-test:
     xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' -only-testing:DanCamTests test
