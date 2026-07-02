@@ -380,7 +380,8 @@ one systemd invocation with
 `journalctl _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value dancam)`.
 `journalctl -b` narrows to one boot but not to one service run inside that boot. To
 raise service verbosity without rebuilding, add `Environment=RUST_LOG=dancam=debug`
-with `sudo systemctl edit dancam`, then restart `dancam`.
+with `sudo systemctl edit dancam`, then restart `dancam`; DEBUG includes emitted SSE
+events with `seq` and body, and TRACE adds heartbeats.
 
 ## 8. Smoke-test the AP path
 

@@ -79,6 +79,13 @@ impl EventHub {
                 seq: inner.seq,
                 event,
             };
+            // Heartbeat is pure liveness and fires every tick; state changes are
+            // the useful debug trail for what the server emitted.
+            if matches!(seq_event.event, Event::Heartbeat { .. }) {
+                tracing::trace!(seq = seq_event.seq, event = ?seq_event.event, "emit");
+            } else {
+                tracing::debug!(seq = seq_event.seq, event = ?seq_event.event, "emit");
+            }
             let _ = self.events_tx.send(seq_event.clone());
             seq_events.push(seq_event);
         }

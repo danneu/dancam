@@ -88,7 +88,9 @@ pub async fn events(
 ) -> Sse<impl Stream<Item = Result<SseEvent, axum::Error>>> {
     let connection = state.backend.connect();
     let snapshot = enrich_current_segment(connection.snapshot, &state).await;
-    let first = tokio_stream::once(sse_frame(connection.seq, Event::Snapshot(snapshot)));
+    let first_event = Event::Snapshot(snapshot);
+    tracing::debug!(seq = connection.seq, event = ?first_event, "emit");
+    let first = tokio_stream::once(sse_frame(connection.seq, first_event));
     let updates = BroadcastStream::new(connection.rx).map(|event| match event {
         Ok(event) => sse_frame(event.seq, event.event),
         Err(error) => {

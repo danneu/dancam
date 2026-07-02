@@ -243,7 +243,8 @@ shell, not `rustup target add`.
   `journalctl -u dancam` for the response id. Pi-generated ids are a per-process
   incrementing counter that resets on service start; safe inbound ids are still echoed.
   Raise runtime verbosity without a rebuild with `RUST_LOG=dancam=debug` (the current
-  `Targets` filter supports `target=level`, not span/field directives).
+  `Targets` filter supports `target=level`, not span/field directives) to include
+  emitted SSE events with `seq` and body; `RUST_LOG=dancam=trace` adds heartbeats.
 - The dev image auto-reboots on a hard freeze via the on-board BCM2835 hardware
   watchdog (systemd `RuntimeWatchdogSec`), recovering the service unattended; paired
   persistent journald keeps the previous boot's logs for the post-mortem. See
