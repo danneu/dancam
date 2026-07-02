@@ -7,7 +7,7 @@ nonisolated struct AppConfiguration: Equatable {
     static let cameraAPIPinWiFiInfoKey = "DANCAMPinWiFi"
     static let cameraAPIConnectTimeoutEnvironmentKey = "DANCAM_CONNECT_TIMEOUT_MS"
     static let cameraAPIReceiveIdleTimeoutEnvironmentKey = "DANCAM_RECEIVE_IDLE_TIMEOUT_MS"
-    static let defaultCameraAPIBaseURL = URL(string: "http://10.42.0.1:8080")!
+    static let defaultCameraAPIBaseURL = URL(string: "http://dancam.local:8080")!
     static let defaultCameraAPIConnectTimeout = Duration.seconds(2)
     static let defaultCameraAPIReceiveIdleTimeout = Duration.seconds(8)
     static let defaultHeartbeatTimeout = Duration.seconds(6)

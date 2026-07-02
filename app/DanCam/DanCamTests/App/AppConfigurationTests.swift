@@ -3,8 +3,8 @@ import Testing
 @testable import DanCam
 
 struct AppConfigurationTests {
-    @Test func defaultConfigurationUsesAPGatewayFallback() throws {
-        let expected = try #require(URL(string: "http://10.42.0.1:8080"))
+    @Test func defaultConfigurationUsesDancamLocalFallback() throws {
+        let expected = try #require(URL(string: "http://dancam.local:8080"))
         let configuration = AppConfiguration.live(
             environment: [:],
             infoDictionary: [:]
@@ -43,8 +43,8 @@ struct AppConfigurationTests {
         #expect(url == expected)
     }
 
-    @Test func invalidOverridesFallBackToAPGateway() throws {
-        let expected = try #require(URL(string: "http://10.42.0.1:8080"))
+    @Test func invalidOverridesFallBackToDancamLocal() throws {
+        let expected = try #require(URL(string: "http://dancam.local:8080"))
         let url = AppConfiguration.configuredCameraAPIBaseURL(
             environment: [
                 AppConfiguration.cameraAPIBaseURLEnvironmentKey: "not a url",
