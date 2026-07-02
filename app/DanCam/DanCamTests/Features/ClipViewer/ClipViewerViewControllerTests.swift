@@ -14,6 +14,23 @@ struct ClipViewerViewControllerTests {
         #expect(controller.captionText == Formatters.clipMetadata(durMs: 30_000, bytes: 1))
     }
 
+    @Test func captionPrefixesTrustedCreatedTime() {
+        let clip = Clip(
+            id: 1,
+            startMs: 1_767_225_600_000,
+            durMs: 30_000,
+            bytes: 1,
+            locked: false,
+            etag: "list-etag",
+            timeApproximate: false
+        )
+        let controller = makeController(clip: clip)
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.captionText == Formatters.clipDetailLine(clip))
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func cacheHitPlaysLookedUpURLWithoutPulling() async throws {
         let cacheURL = URL(filePath: "/tmp/dancam-cache-hit-\(UUID().uuidString).mp4")
@@ -587,7 +604,16 @@ struct ClipViewerViewControllerTests {
     private func makeController(
         clipPull: ClipPullClient = .noop,
         clipCache: ClipCache = .noop,
-        remuxer: ClipRemuxer = .noop
+        remuxer: ClipRemuxer = .noop,
+        clip: Clip = Clip(
+            id: 1,
+            startMs: nil,
+            durMs: 30_000,
+            bytes: 1,
+            locked: false,
+            etag: "list-etag",
+            timeApproximate: false
+        )
     ) -> ClipViewerViewController {
         ClipViewerViewController(
             dependencies: AppDependencies(
@@ -596,15 +622,7 @@ struct ClipViewerViewControllerTests {
                 clipRemuxer: remuxer,
                 clipCache: clipCache
             ),
-            clip: Clip(
-                id: 1,
-                startMs: nil,
-                durMs: 30_000,
-                bytes: 1,
-                locked: false,
-                etag: "list-etag",
-                timeApproximate: false
-            )
+            clip: clip
         )
     }
 

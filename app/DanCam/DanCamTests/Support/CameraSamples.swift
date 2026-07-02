@@ -11,7 +11,8 @@ enum CameraSamples {
         storage: Storage? = Storage(used: 100, total: 1_000),
         tempC: TempC = TempC(soc: nil, sensor: nil),
         mem: Mem? = nil,
-        uptimeS: UInt64 = 1
+        uptimeS: UInt64 = 1,
+        time: TimeStatus? = TimeStatus(synced: true)
     ) -> World {
         World(
             recorder: RecorderSnapshot(
@@ -25,19 +26,25 @@ enum CameraSamples {
             uptimeS: uptimeS,
             storage: storage,
             tempC: tempC,
-            mem: mem
+            mem: mem,
+            time: time
         )
     }
 
-    static func clip(id: Int, durMs: UInt64? = nil) -> Clip {
+    static func clip(
+        id: Int,
+        startMs: UInt64? = nil,
+        durMs: UInt64? = nil,
+        timeApproximate: Bool = true
+    ) -> Clip {
         Clip(
             id: id,
-            startMs: nil,
+            startMs: startMs,
             durMs: durMs,
             bytes: UInt64(id * 100),
             locked: false,
             etag: "\(id)-\(id * 100)",
-            timeApproximate: true
+            timeApproximate: timeApproximate
         )
     }
 

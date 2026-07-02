@@ -61,4 +61,11 @@ struct HomeStatusPillsTests {
         #expect(HomeStatusPills.from(CameraSamples.world(cameraState: .offline)).cameraOffline == true)
         #expect(HomeStatusPills.from(nil) == HomeStatusPills(tempWarning: nil, cameraOffline: false))
     }
+
+    @Test func timeUnverifiedTracksConnectedWorldTimeState() {
+        #expect(HomeStatusPills.from(nil).timeUnverified == false)
+        #expect(HomeStatusPills.from(CameraSamples.world(time: nil)).timeUnverified == true)
+        #expect(HomeStatusPills.from(CameraSamples.world(time: TimeStatus(synced: false))).timeUnverified == true)
+        #expect(HomeStatusPills.from(CameraSamples.world(time: TimeStatus(synced: true))).timeUnverified == false)
+    }
 }

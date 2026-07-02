@@ -51,6 +51,17 @@ nonisolated enum Formatters {
         return String(format: "Dashcam seg_%05d.mp4", clip.id)
     }
 
+    static func clipCreatedTime(_ clip: Clip, timeZone: TimeZone = .current) -> String? {
+        guard let startMs = clip.startMs, clip.timeApproximate == false else { return nil }
+
+        let date = Date(timeIntervalSince1970: Double(startMs) / 1_000)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
     private static func minutesSeconds(totalSeconds: UInt64) -> String {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
@@ -63,6 +74,15 @@ nonisolated enum Formatters {
         guard let durationText = clipDuration(durMs) else { return byteText }
 
         return "\(durationText) · \(byteText)"
+    }
+
+    static func clipDetailLine(_ clip: Clip, timeZone: TimeZone = .current) -> String {
+        let metadata = clipMetadata(durMs: clip.durMs, bytes: clip.bytes)
+        guard let created = clipCreatedTime(clip, timeZone: timeZone) else {
+            return metadata
+        }
+
+        return "\(created) · \(metadata)"
     }
 
     static func temperature(_ celsius: Double, precise: Bool = false) -> String {

@@ -180,14 +180,97 @@ struct HomeViewControllerTests {
         #expect(survivorCellB.isLoadingForTesting == false)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func trustedTimestampUpdateReconfiguresRowWithoutReloadingThumbnail() async throws {
+        let loader = GatedThumbnailLoader()
+        let initialClip = Clip(
+            id: clipA.id,
+            startMs: nil,
+            durMs: clipA.durMs,
+            bytes: clipA.bytes,
+            locked: clipA.locked,
+            etag: clipA.etag,
+            timeApproximate: true
+        )
+        let (controller, store) = makeControllerAndStore(clips: [initialClip], loader: loader.loader())
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: self.clipA.id)?.displayedImageForTesting != nil
+        }
+
+        let cell = try #require(controller.clipThumbnailCellForTesting(clipID: clipA.id))
+        let originalImage = try #require(cell.displayedImageForTesting)
+        let originalSubtitle = try #require(cell.subtitleTextForTesting)
+        let trustedClip = Clip(
+            id: initialClip.id,
+            startMs: 1_767_225_600_000,
+            durMs: initialClip.durMs,
+            bytes: initialClip.bytes,
+            locked: initialClip.locked,
+            etag: initialClip.etag,
+            timeApproximate: false
+        )
+
+        store.send(.clips(.clipsResponse(.success(ClipsResponse(
+            clips: [trustedClip],
+            serverTimeMs: 1_767_225_601_000,
+            nextCursor: nil
+        )))))
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: self.clipA.id)?.subtitleTextForTesting != originalSubtitle
+        }
+
+        let updatedCell = try #require(controller.clipThumbnailCellForTesting(clipID: clipA.id))
+        let updatedImage = try #require(updatedCell.displayedImageForTesting)
+        let updatedSubtitle = try #require(updatedCell.subtitleTextForTesting)
+
+        #expect(updatedImage === originalImage)
+        #expect(updatedCell.isLoadingForTesting == false)
+        #expect(loader.requestCount(ClipThumbnailIdentity(trustedClip)) == 1)
+        #expect(updatedSubtitle.contains("00:30"))
+    }
+
+    @Test func timeUnverifiedPillVisibilityFollowsProjection() {
+        let disconnected = makeController(clips: [], loader: .noop)
+        disconnected.loadViewIfNeeded()
+        #expect(disconnected.isTimeUnverifiedPillVisibleForTesting == false)
+
+        let nilTime = makeController(clips: [], loader: .noop, world: CameraSamples.world(time: nil))
+        nilTime.loadViewIfNeeded()
+        #expect(nilTime.isTimeUnverifiedPillVisibleForTesting == true)
+
+        let unsynced = makeController(
+            clips: [],
+            loader: .noop,
+            world: CameraSamples.world(time: TimeStatus(synced: false))
+        )
+        unsynced.loadViewIfNeeded()
+        #expect(unsynced.isTimeUnverifiedPillVisibleForTesting == true)
+
+        let synced = makeController(
+            clips: [],
+            loader: .noop,
+            world: CameraSamples.world(time: TimeStatus(synced: true))
+        )
+        synced.loadViewIfNeeded()
+        #expect(synced.isTimeUnverifiedPillVisibleForTesting == false)
+    }
+
     // MARK: - Helpers
 
     private let clipA = Clip(id: 1, startMs: nil, durMs: 30_000, bytes: 1, locked: false, etag: "1-1", timeApproximate: false)
     private let clipB = Clip(id: 2, startMs: nil, durMs: 30_000, bytes: 2, locked: false, etag: "2-2", timeApproximate: false)
     private let clipC = Clip(id: 3, startMs: nil, durMs: 30_000, bytes: 3, locked: false, etag: "3-3", timeApproximate: false)
 
-    private func makeController(clips: [Clip], loader: ThumbnailLoader) -> HomeViewController {
-        makeControllerAndStore(clips: clips, loader: loader).0
+    private func makeController(
+        clips: [Clip],
+        loader: ThumbnailLoader,
+        world: World? = nil
+    ) -> HomeViewController {
+        makeControllerAndStore(clips: clips, loader: loader, world: world).0
     }
 
     private func makeControllerAndStore(
@@ -310,6 +393,11 @@ private final class GatedThumbnailLoader: @unchecked Sendable {
             },
             prefetch: { _ in .inert }
         )
+    }
+
+    func requestCount(_ identity: ClipThumbnailIdentity) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return requestCounts[identity] ?? 0
     }
 
     private func firstImageOrNil(for identity: ClipThumbnailIdentity) -> UIImage? {

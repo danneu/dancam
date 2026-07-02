@@ -506,7 +506,7 @@ Files: new `Networking/TimeClient.swift`, `App/AppDependencies.swift`,
 
 - [x] 1. feat(raspi): stamp segment facts into filenames
 - [x] 2. feat(raspi): per-boot time offset store and POST /v1/time
-- [ ] 3. feat(app): time-sync handshake and trusted clip times
+- [x] 3. feat(app): time-sync handshake and trusted clip times
 
 ## Implementation notes
 
@@ -514,3 +514,6 @@ Files: new `Networking/TimeClient.swift`, `App/AppDependencies.swift`,
   stamped segment still resolves approximate through the in-memory store, so
   finalize-time `clip_finalized` events derive the same trusted time that
   `/v1/clips` derives after `POST /v1/time`.
+- Commit 3 formats trusted created times as fixed POSIX local wall time
+  (`yyyy-MM-dd HH:mm:ss`) before the existing duration/size detail, keeping
+  clip titles filename-shaped while making timestamps sortable and test-stable.

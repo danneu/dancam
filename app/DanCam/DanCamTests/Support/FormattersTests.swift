@@ -101,6 +101,37 @@ struct FormattersTests {
         }
     }
 
+    @Test func clipCreatedTimeUsesTrustedTimesOnly() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let cases: [(clip: Clip, text: String?)] = [
+            (
+                clip(id: 1, startMs: 1_767_225_600_000, timeApproximate: false),
+                "2026-01-01 00:00:00"
+            ),
+            (
+                clip(id: 7, startMs: 1_767_225_600_000, timeApproximate: true),
+                nil
+            ),
+            (
+                clip(id: 8, startMs: nil, timeApproximate: false),
+                nil
+            ),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.clipCreatedTime(testCase.clip, timeZone: utc) == testCase.text)
+        }
+    }
+
+    @Test func clipDetailLinePrefixesTrustedCreatedTime() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let trusted = clip(id: 1, startMs: 1_767_225_600_000, timeApproximate: false)
+        let approximate = clip(id: 2, startMs: 1_767_225_600_000, timeApproximate: true)
+
+        #expect(Formatters.clipDetailLine(trusted, timeZone: utc) == "2026-01-01 00:00:00 · 00:30 · 1 byte")
+        #expect(Formatters.clipDetailLine(approximate, timeZone: utc) == "00:30 · 1 byte")
+    }
+
     @Test func countUpDurationFloorsSeconds() {
         let cases: [(durMs: UInt64, text: String)] = [
             (0, "00:00"),

@@ -82,7 +82,7 @@ final class ClipThumbnailCell: UITableViewCell {
 
     func configure(clip: Clip, loader: ThumbnailLoader) {
         titleLabel.text = String(format: "seg_%05d.ts", clip.id)
-        subtitleLabel.text = Formatters.clipMetadata(durMs: clip.durMs, bytes: clip.bytes)
+        subtitleLabel.text = Formatters.clipDetailLine(clip)
         accessibilityLabel = "\(titleLabel.text ?? ""), \(subtitleLabel.text ?? "")"
 
         if displayState.show(ClipThumbnailIdentity(clip)) {
@@ -122,6 +122,10 @@ final class ClipThumbnailCell: UITableViewCell {
 
     var isLoadingForTesting: Bool {
         loadTask != nil
+    }
+
+    var subtitleTextForTesting: String? {
+        subtitleLabel.text
     }
 
     private func startLoad(clip: Clip, loader: ThumbnailLoader) {

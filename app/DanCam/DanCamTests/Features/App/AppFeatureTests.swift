@@ -78,6 +78,189 @@ struct AppFeatureTests {
         await store.finishEffects()
     }
 
+    @Test func unsyncedSnapshotFiresTimeSync() async {
+        let time = TimeSyncScript([.succeed])
+        let world = CameraSamples.world(time: TimeStatus(synced: false))
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(
+                clips: cancellingClipsClient(),
+                time: time.client()
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+        }
+        await store.receive(.timeSyncResponded(success: true))
+        await store.finishEffects()
+
+        #expect(await time.callCount() == 1)
+    }
+
+    @Test func syncedSnapshotSkipsTimeSync() async {
+        let time = TimeSyncScript([.fail])
+        let world = CameraSamples.world(time: TimeStatus(synced: true))
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(
+                clips: cancellingClipsClient(),
+                time: time.client()
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+        }
+        await store.finishEffects()
+
+        #expect(await time.callCount() == 0)
+    }
+
+    @Test func nilTimeSnapshotFiresTimeSync() async {
+        let time = TimeSyncScript([.succeed])
+        let world = CameraSamples.world(time: nil)
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(
+                clips: cancellingClipsClient(),
+                time: time.client()
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+        }
+        await store.receive(.timeSyncResponded(success: true))
+        await store.finishEffects()
+
+        #expect(await time.callCount() == 1)
+    }
+
+    @Test func failedTimeSyncRetriesAndEventuallySucceeds() async {
+        let time = TimeSyncScript([.fail, .succeed])
+        let world = CameraSamples.world(time: TimeStatus(synced: false))
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(
+                clips: cancellingClipsClient(),
+                time: time.client(),
+                sleep: { _ in }
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+        }
+        await store.receive(.timeSyncResponded(success: false))
+        await store.receive(.timeSyncRetry)
+        await store.receive(.timeSyncResponded(success: true))
+        await store.finishEffects()
+
+        #expect(await time.callCount() == 2)
+    }
+
+    @Test func timeSyncedCancelsRetryAndReloadsClips() async {
+        let time = TimeSyncScript([.fail])
+        let sleepGate = SleepGate()
+        let response = CameraSamples.clipsResponse(ids: [9])
+        let clips = ClipsFetchScript([.cancelled, .success(response)])
+        let unsynced = CameraSamples.world(time: TimeStatus(synced: false))
+        var synced = unsynced
+        synced.time = TimeStatus(synced: true)
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(
+                clips: clips.client(),
+                time: time.client(),
+                sleep: { duration in await sleepGate.sleep(duration) }
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(unsynced))) {
+            $0.link = .online(unsynced)
+            $0.recording = .idle
+            $0.clips.status = .loading
+        }
+        await store.receive(.timeSyncResponded(success: false))
+        await sleepGate.waitForSleep(.seconds(2))
+
+        await store.send(.event(.timeSynced(atMs: 1_000))) {
+            $0.link = .online(synced)
+        }
+        await store.receive(.clips(.clipsResponse(.success(response)))) {
+            $0.clips.clips = response.clips
+            $0.clips.status = .idle
+            $0.clips.loadEpoch = 1
+        }
+
+        await sleepGate.release(.seconds(2))
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+
+        #expect(await time.callCount() == 1)
+        #expect(await clips.callCount() == 2)
+    }
+
+    @Test(arguments: TimeSyncDisconnect.allCases)
+    func disconnectCancelsPendingTimeSyncRetryAndReconnectStartsOneFreshAttempt(
+        disconnect: TimeSyncDisconnect
+    ) async {
+        let time = TimeSyncScript([.fail, .succeed])
+        let sleepGate = SleepGate()
+        let world = CameraSamples.world(time: TimeStatus(synced: false))
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(
+                clips: cancellingClipsClient(),
+                time: time.client(),
+                sleep: { duration in await sleepGate.sleep(duration) }
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+        }
+        await store.receive(.timeSyncResponded(success: false))
+        await sleepGate.waitForSleep(.seconds(2))
+
+        await store.send(disconnect.action) { state in
+            disconnect.applyExpectedState(to: &state, lastWorld: world)
+        }
+
+        await sleepGate.release(.seconds(2))
+        try? await Task.sleep(for: .milliseconds(20))
+        store.expectNoReceivedActions()
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.streamReconnectAttempt = 0
+            $0.clips.status = .loading
+        }
+        await store.receive(.timeSyncResponded(success: true))
+        await store.send(.streamStopped)
+        await sleepGate.releaseAll()
+        await store.finishEffects()
+
+        #expect(await time.callCount() == 2)
+    }
+
     @Test func heartbeatDoesNotBounceOptimisticStarting() async {
         let world = CameraSamples.world(phase: .idle)
         let store = TestStore(
@@ -306,6 +489,7 @@ struct AppFeatureTests {
         events: EventsClient = .noop,
         clips: ClipsClient = .noop,
         recording: RecordingClient = .noop,
+        time: TimeClient = .noop,
         sleep: @escaping @Sendable (Duration) async -> Void = { _ in },
         heartbeatTimeout: @escaping @Sendable () async throws -> Void = { throw CancellationError() }
     ) -> AppDependencies {
@@ -314,14 +498,190 @@ struct AppFeatureTests {
             events: events,
             clips: clips,
             recording: recording,
+            time: time,
             sleep: sleep,
             heartbeatTimeout: heartbeatTimeout
         )
     }
 
+    private func cancellingClipsClient() -> ClipsClient {
+        ClipsClient { _ in throw CancellationError() }
+    }
+
     private func longSleep(_ duration: Duration) async {
         try? await Task.sleep(for: .seconds(60))
     }
+}
+
+enum TimeSyncDisconnect: CaseIterable, CustomStringConvertible {
+    case streamStopped
+    case streamFailed
+    case heartbeatTimedOut
+
+    var description: String {
+        switch self {
+        case .streamStopped:
+            "streamStopped"
+        case .streamFailed:
+            "streamFailed"
+        case .heartbeatTimedOut:
+            "heartbeatTimedOut"
+        }
+    }
+
+    var action: AppFeature.Action {
+        switch self {
+        case .streamStopped:
+            .streamStopped
+        case .streamFailed:
+            .streamFailed
+        case .heartbeatTimedOut:
+            .heartbeatTimedOut
+        }
+    }
+
+    @MainActor
+    func applyExpectedState(to state: inout AppFeature.State, lastWorld: World) {
+        switch self {
+        case .streamStopped:
+            state.streamReconnectAttempt = 0
+        case .streamFailed, .heartbeatTimedOut:
+            state.link = .offline(last: lastWorld)
+            state.streamReconnectAttempt = 1
+        }
+    }
+}
+
+private actor TimeSyncScript {
+    enum Step {
+        case succeed
+        case fail
+    }
+
+    private var steps: [Step]
+    private var calls = 0
+
+    init(_ steps: [Step]) {
+        self.steps = steps
+    }
+
+    nonisolated func client() -> TimeClient {
+        TimeClient {
+            try await self.sync()
+        }
+    }
+
+    func callCount() -> Int {
+        calls
+    }
+
+    private func sync() throws {
+        calls += 1
+        switch steps.isEmpty ? .succeed : steps.removeFirst() {
+        case .succeed:
+            return
+        case .fail:
+            throw AppFeatureTestError.timeSyncFailed
+        }
+    }
+}
+
+private actor ClipsFetchScript {
+    enum Step {
+        case success(ClipsResponse)
+        case cancelled
+    }
+
+    private var steps: [Step]
+    private var calls = 0
+
+    init(_ steps: [Step]) {
+        self.steps = steps
+    }
+
+    nonisolated func client() -> ClipsClient {
+        ClipsClient { cursor in
+            try await self.fetch(cursor: cursor)
+        }
+    }
+
+    func callCount() -> Int {
+        calls
+    }
+
+    private func fetch(cursor: String?) throws -> ClipsResponse {
+        calls += 1
+        switch steps.removeFirst() {
+        case .success(let response):
+            return response
+        case .cancelled:
+            throw CancellationError()
+        }
+    }
+}
+
+private actor SleepGate {
+    private typealias Waiter = (Duration, CheckedContinuation<Void, Never>)
+
+    private var sleepers: [Waiter] = []
+    private var startedDurations: [Duration] = []
+    private var startWaiters: [Waiter] = []
+
+    func sleep(_ duration: Duration) async {
+        startedDurations.append(duration)
+        resumeStartWaiters(for: duration)
+
+        await withCheckedContinuation { continuation in
+            sleepers.append((duration, continuation))
+        }
+    }
+
+    func waitForSleep(_ duration: Duration) async {
+        if startedDurations.contains(where: { sameDuration($0, duration) }) {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            startWaiters.append((duration, continuation))
+        }
+    }
+
+    func release(_ duration: Duration) {
+        let matching = sleepers.filter { sameDuration($0.0, duration) }
+        sleepers.removeAll { sameDuration($0.0, duration) }
+
+        for waiter in matching {
+            waiter.1.resume()
+        }
+    }
+
+    func releaseAll() {
+        let current = sleepers
+        sleepers.removeAll()
+
+        for waiter in current {
+            waiter.1.resume()
+        }
+    }
+
+    private func resumeStartWaiters(for duration: Duration) {
+        let matching = startWaiters.filter { sameDuration($0.0, duration) }
+        startWaiters.removeAll { sameDuration($0.0, duration) }
+
+        for waiter in matching {
+            waiter.1.resume()
+        }
+    }
+
+    private func sameDuration(_ lhs: Duration, _ rhs: Duration) -> Bool {
+        let left = lhs.components
+        let right = rhs.components
+        return left.seconds == right.seconds && left.attoseconds == right.attoseconds
+    }
+}
+
+private enum AppFeatureTestError: Error {
+    case timeSyncFailed
 }
 
 private actor ClipsFetchQueue {

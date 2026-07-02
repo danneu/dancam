@@ -99,6 +99,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let statusPillsStack = UIStackView()
     private let tempWarningPill = StatusPillView()
     private let errorPill = StatusPillView()
+    private let timeUnverifiedPill = StatusPillView()
     private let recordButton = RecordButton(frame: .zero)
     private let recPill = StatusPillView(caption: "REC", dotColor: .systemRed)
     private let clipsHeaderLabel = UILabel()
@@ -263,9 +264,11 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         statusPillsStack.isHidden = true
         statusPillsStack.addArrangedSubview(tempWarningPill)
         statusPillsStack.addArrangedSubview(errorPill)
+        statusPillsStack.addArrangedSubview(timeUnverifiedPill)
 
         tempWarningPill.isHidden = true
         errorPill.isHidden = true
+        timeUnverifiedPill.isHidden = true
     }
 
     private func configureClipsTable() {
@@ -362,7 +365,20 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             errorPill.isHidden = true
         }
 
-        statusPillsStack.isHidden = tempWarningPill.isHidden && errorPill.isHidden
+        if pills.timeUnverified {
+            timeUnverifiedPill.configure(
+                caption: "Time unverified",
+                dotColor: .systemOrange,
+                backgroundStyle: .tinted(UIColor.systemOrange.withAlphaComponent(0.16))
+            )
+            timeUnverifiedPill.isHidden = false
+        } else {
+            timeUnverifiedPill.isHidden = true
+        }
+
+        statusPillsStack.isHidden = tempWarningPill.isHidden
+            && errorPill.isHidden
+            && timeUnverifiedPill.isHidden
     }
 
     private func renderRecording(_ state: RecordingFeature.State) {
@@ -561,6 +577,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     func clipThumbnailCellForTesting(clipID: Int) -> ClipThumbnailCell? {
         guard let indexPath = dataSource.indexPath(for: .finished(clipID)) else { return nil }
         return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell
+    }
+
+    var isTimeUnverifiedPillVisibleForTesting: Bool {
+        timeUnverifiedPill.isHidden == false
     }
 }
 

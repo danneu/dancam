@@ -18,7 +18,7 @@ struct EventsClientTests {
         let events = try await collect(client.connect(), count: 2)
 
         #expect(events == [
-            .snapshot(CameraSamples.world(storage: nil)),
+            .snapshot(CameraSamples.world(storage: nil, time: nil)),
             .heartbeat(tMs: 12_000),
         ])
     }

@@ -20,11 +20,14 @@ enum AppFeature {
         case clips(ClipsFeature.Action)
         case recordTapped
         case manualRefresh
+        case timeSyncResponded(success: Bool)
+        case timeSyncRetry
     }
 
     private static let streamID = "events-stream"
     private static let heartbeatID = "events-heartbeat"
     private static let reconnectID = "events-reconnect"
+    private static let timeSyncID = "time-sync"
 
     static func reduce(
         state: inout State,
@@ -51,6 +54,7 @@ enum AppFeature {
                 .cancel(id: streamID),
                 .cancel(id: heartbeatID),
                 .cancel(id: reconnectID),
+                .cancel(id: timeSyncID),
             ])
 
         case .event(let event):
@@ -69,6 +73,7 @@ enum AppFeature {
                     )
                     .map(Action.clips)
                 )
+                effects.append(timeSyncEffectIfNeeded(state: state, dependencies: dependencies))
             }
 
             if case .clipFinalized(let clip) = event {
@@ -76,6 +81,18 @@ enum AppFeature {
                     ClipsFeature.reduce(
                         state: &state.clips,
                         action: .clipFinalized(clip),
+                        dependencies: dependencies
+                    )
+                    .map(Action.clips)
+                )
+            }
+
+            if case .timeSynced = event {
+                effects.append(.cancel(id: timeSyncID))
+                effects.append(
+                    ClipsFeature.reduce(
+                        state: &state.clips,
+                        action: .load,
                         dependencies: dependencies
                     )
                     .map(Action.clips)
@@ -100,6 +117,7 @@ enum AppFeature {
             state.streamReconnectAttempt += 1
             return .merge([
                 .cancel(id: heartbeatID),
+                .cancel(id: timeSyncID),
                 scheduleReconnect(
                     attempt: state.streamReconnectAttempt,
                     dependencies: dependencies
@@ -112,6 +130,7 @@ enum AppFeature {
             return .merge([
                 .cancel(id: streamID),
                 .cancel(id: heartbeatID),
+                .cancel(id: timeSyncID),
                 scheduleReconnect(
                     attempt: state.streamReconnectAttempt,
                     dependencies: dependencies
@@ -164,6 +183,16 @@ enum AppFeature {
                 dependencies: dependencies
             )
             .map(Action.clips)
+
+        case .timeSyncResponded(success: true):
+            return .none
+
+        case .timeSyncResponded(success: false):
+            guard shouldSyncTime(state) else { return .none }
+            return scheduleTimeSyncRetry(dependencies: dependencies)
+
+        case .timeSyncRetry:
+            return timeSyncEffectIfNeeded(state: state, dependencies: dependencies)
         }
     }
 
@@ -229,6 +258,44 @@ enum AppFeature {
         }
     }
 
+    private static func timeSyncEffectIfNeeded(
+        state: State,
+        dependencies: AppDependencies
+    ) -> Effect<Action> {
+        guard shouldSyncTime(state) else { return .none }
+        return syncTimeEffect(dependencies: dependencies)
+    }
+
+    private static func shouldSyncTime(_ state: State) -> Bool {
+        guard let world = state.link.onlineWorld else { return false }
+        return world.time?.synced != true
+    }
+
+    private static func syncTimeEffect(dependencies: AppDependencies) -> Effect<Action> {
+        .run(id: timeSyncID, cancelInFlight: true) { send in
+            do {
+                try await dependencies.time.sync()
+                guard Task.isCancelled == false else { return }
+                await send(.timeSyncResponded(success: true))
+            } catch is CancellationError {
+                return
+            } catch let error as URLError where error.code == .cancelled {
+                return
+            } catch {
+                guard Task.isCancelled == false else { return }
+                await send(.timeSyncResponded(success: false))
+            }
+        }
+    }
+
+    private static func scheduleTimeSyncRetry(dependencies: AppDependencies) -> Effect<Action> {
+        .run(id: timeSyncID, cancelInFlight: true) { send in
+            await dependencies.sleep(.seconds(2))
+            guard Task.isCancelled == false else { return }
+            await send(.timeSyncRetry)
+        }
+    }
+
     private static func reconnectDelay(for attempt: Int) -> Duration {
         switch attempt {
         case 0, 1:
@@ -264,6 +331,12 @@ extension AppFeature.Action {
             "recordTapped"
         case .manualRefresh:
             "manualRefresh"
+        case .timeSyncResponded(true):
+            "timeSyncResponded.success"
+        case .timeSyncResponded(false):
+            "timeSyncResponded.failure"
+        case .timeSyncRetry:
+            "timeSyncRetry"
         }
     }
 }

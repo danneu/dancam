@@ -3,6 +3,7 @@ import Foundation
 nonisolated struct HomeStatusPills: Equatable {
     var tempWarning: Warning?
     var cameraOffline: Bool
+    var timeUnverified = false
 
     nonisolated struct Warning: Equatable {
         var caption: String
@@ -25,7 +26,8 @@ nonisolated struct HomeStatusPills: Equatable {
 
         return HomeStatusPills(
             tempWarning: warning,
-            cameraOffline: world.cameraState == .offline
+            cameraOffline: world.cameraState == .offline,
+            timeUnverified: world.time?.synced != true
         )
     }
 }

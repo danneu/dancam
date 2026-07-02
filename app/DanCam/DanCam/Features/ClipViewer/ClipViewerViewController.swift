@@ -184,7 +184,7 @@ final class ClipViewerViewController: UIViewController {
         playerContainerView.backgroundColor = .black
         playerContainerView.translatesAutoresizingMaskIntoConstraints = false
 
-        captionLabel.text = Formatters.clipMetadata(durMs: clip.durMs, bytes: clip.bytes)
+        captionLabel.text = Formatters.clipDetailLine(clip)
         captionLabel.font = .preferredFont(forTextStyle: .footnote)
         captionLabel.adjustsFontForContentSizeCategory = true
         captionLabel.textColor = .secondaryLabel
