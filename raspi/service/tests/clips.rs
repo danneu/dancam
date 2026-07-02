@@ -17,7 +17,7 @@ use dancam::{
     backend::{Backend, BackendError, FrameStream},
     event_hub::{EventConnection, EventHub},
     events::Snapshot,
-    recorder::{RecorderEvent, SegmentId},
+    recorder::{stamped_segment_filename, RecorderEvent, SegmentFacts, SegmentId},
     world::{CameraState, Input},
     AppState, DurationCache,
 };
@@ -193,6 +193,28 @@ async fn clips_route_pages_with_limit_and_cursor() {
 }
 
 #[tokio::test]
+async fn clips_route_lists_mixed_bare_and_stamped_segments_by_seq() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00001.ts", b"one");
+    rec_dir.write(&stamped_name(2), b"two");
+    rec_dir.write("seg_00003.ts", b"stale");
+    rec_dir.write(&stamped_name(3), b"three");
+
+    let json = response_json(
+        dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+            .oneshot(clips_request("/v1/clips"))
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(clip_ids(&json), [3, 2, 1]);
+    let clips = json["clips"].as_array().unwrap();
+    assert_eq!(clips[0]["bytes"], 5);
+    assert_eq!(clips[0]["etag"], "3-5");
+}
+
+#[tokio::test]
 async fn clips_route_clamps_zero_limit_to_one() {
     let rec_dir = TempRecDir::new();
     for seq in 0..3 {
@@ -292,6 +314,23 @@ async fn serve_clip_returns_exact_bytes_and_headers() {
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(body, Bytes::from_static(b"clip-bytes"));
+}
+
+#[tokio::test]
+async fn serve_clip_resolves_stamped_segment_by_id() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write(&stamped_name(7), b"stamped-bytes");
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(clip_request("/v1/clips/7"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header_value(&response, header::CONTENT_LENGTH), Some("13"));
+    assert_eq!(header_value(&response, header::ETAG), Some("\"7-13\""));
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body, Bytes::from_static(b"stamped-bytes"));
 }
 
 #[tokio::test]
@@ -676,6 +715,16 @@ fn header_value(response: &axum::http::Response<Body>, name: header::HeaderName)
         .headers()
         .get(name)
         .and_then(|value| value.to_str().ok())
+}
+
+fn stamped_name(seq: u32) -> String {
+    stamped_segment_filename(
+        seq,
+        &SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            mono_ms: 123456789,
+        },
+    )
 }
 
 struct TempRecDir {

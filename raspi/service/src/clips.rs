@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io::{self, SeekFrom},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -18,7 +19,7 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 
 use crate::{
-    recorder::{parse_segment_filename, segment_filename, SegmentId},
+    recorder::{parse_segment_filename, SegmentFacts, SegmentId},
     ts_duration::DurationCache,
     AppState,
 };
@@ -42,6 +43,14 @@ pub struct ClipsResponse {
     pub clips: Vec<ClipMeta>,
     pub server_time_ms: u64,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SegmentCandidate {
+    pub(crate) seq: SegmentId,
+    pub(crate) bytes: u64,
+    pub(crate) path: PathBuf,
+    pub(crate) facts: Option<SegmentFacts>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -113,8 +122,17 @@ pub async fn serve_clip(
         return Err(ClipError::NotFound);
     }
 
-    let path = state.rec_dir.join(segment_filename(id));
-    let mut file = File::open(path).await.map_err(io_error_to_clip_error)?;
+    let rec_dir = state.rec_dir.clone();
+    let segment = tokio::task::spawn_blocking(move || resolve_segment(rec_dir.as_ref(), id))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "clip resolve task failed");
+            ClipError::Unavailable
+        })?
+        .ok_or(ClipError::NotFound)?;
+    let mut file = File::open(segment.path)
+        .await
+        .map_err(io_error_to_clip_error)?;
     let metadata = file.metadata().await.map_err(io_error_to_clip_error)?;
     if !metadata.is_file() {
         return Err(ClipError::NotFound);
@@ -270,26 +288,26 @@ pub(crate) fn read_finished_clips(
     let candidates = segment_candidates(rec_dir);
     let mut candidates: Vec<_> = candidates
         .into_iter()
-        .filter(|(seq, _, _)| unpullable_from.is_none_or(|floor| *seq < floor))
-        .filter(|(seq, _, _)| cursor.is_none_or(|cursor| *seq < cursor))
+        .filter(|candidate| unpullable_from.is_none_or(|floor| candidate.seq < floor))
+        .filter(|candidate| cursor.is_none_or(|cursor| candidate.seq < cursor))
         .collect();
 
-    candidates.sort_by(|(left_seq, _, _), (right_seq, _, _)| right_seq.cmp(left_seq));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.seq));
     let has_more = candidates.len() > limit;
     candidates.truncate(limit);
     let next_cursor = has_more
-        .then(|| candidates.last().map(|(seq, _, _)| *seq))
+        .then(|| candidates.last().map(|candidate| candidate.seq))
         .flatten();
 
     let clips = candidates
         .into_iter()
-        .map(|(seq, bytes, path)| ClipMeta {
-            id: seq,
+        .map(|candidate| ClipMeta {
+            id: candidate.seq,
             start_ms: None,
-            dur_ms: duration_cache.duration_ms(seq, &path, bytes),
-            bytes,
+            dur_ms: duration_cache.duration_ms(candidate.seq, &candidate.path, candidate.bytes),
+            bytes: candidate.bytes,
             locked: false,
-            etag: format!("{seq}-{bytes}"),
+            etag: format!("{}-{}", candidate.seq, candidate.bytes),
             time_approximate: true,
         })
         .collect();
@@ -307,8 +325,8 @@ pub(crate) fn open_segment(rec_dir: &Path) -> Option<(u32, PathBuf, u64)> {
 
     candidates
         .into_iter()
-        .find(|(seq, _, _)| *seq == max_seq)
-        .map(|(seq, bytes, path)| (seq, path, bytes))
+        .find(|candidate| candidate.seq == max_seq)
+        .map(|candidate| (candidate.seq, candidate.path, candidate.bytes))
 }
 
 pub(crate) fn max_clip_seq(rec_dir: &Path) -> Option<u32> {
@@ -320,45 +338,66 @@ pub(crate) fn clip_meta(
     seq: SegmentId,
     duration_cache: Option<&DurationCache>,
 ) -> Option<ClipMeta> {
-    let path = rec_dir.join(segment_filename(seq));
-    let metadata = std::fs::metadata(&path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    let bytes = metadata.len();
+    let segment = resolve_segment(rec_dir, seq)?;
     Some(ClipMeta {
         id: seq,
         start_ms: None,
-        dur_ms: duration_cache.and_then(|cache| cache.duration_ms(seq, &path, bytes)),
-        bytes,
+        dur_ms: duration_cache
+            .and_then(|cache| cache.duration_ms(seq, &segment.path, segment.bytes)),
+        bytes: segment.bytes,
         locked: false,
-        etag: format!("{seq}-{bytes}"),
+        etag: format!("{}-{}", seq, segment.bytes),
         time_approximate: true,
     })
 }
 
-fn segment_candidates(rec_dir: &Path) -> Vec<(u32, u64, PathBuf)> {
+pub(crate) fn resolve_segment(rec_dir: &Path, seq: SegmentId) -> Option<SegmentCandidate> {
+    segment_candidates(rec_dir)
+        .into_iter()
+        .find(|candidate| candidate.seq == seq)
+}
+
+fn segment_candidates(rec_dir: &Path) -> Vec<SegmentCandidate> {
     let Ok(entries) = std::fs::read_dir(rec_dir) else {
         return Vec::new();
     };
 
-    entries
+    let parsed = entries
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
-            let seq = clip_seq(&path)?;
+            let parsed = parse_segment_filename(path.file_name()?.to_str()?)?;
             let metadata = entry.metadata().ok()?;
-            metadata.is_file().then_some((seq, metadata.len(), path))
+            metadata.is_file().then_some(SegmentCandidate {
+                seq: parsed.seq,
+                bytes: metadata.len(),
+                path,
+                facts: parsed.facts,
+            })
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    dedupe_candidates(parsed)
 }
 
-fn max_segment_seq(candidates: &[(u32, u64, PathBuf)]) -> Option<u32> {
-    candidates.iter().map(|(seq, _, _)| *seq).max()
+fn dedupe_candidates(candidates: Vec<SegmentCandidate>) -> Vec<SegmentCandidate> {
+    let mut by_seq = BTreeMap::<SegmentId, SegmentCandidate>::new();
+    for candidate in candidates {
+        match by_seq.get_mut(&candidate.seq) {
+            Some(current) if current.facts.is_none() && candidate.facts.is_some() => {
+                *current = candidate;
+            }
+            Some(_) => {}
+            None => {
+                by_seq.insert(candidate.seq, candidate);
+            }
+        }
+    }
+    by_seq.into_values().collect()
 }
 
-fn clip_seq(path: &Path) -> Option<u32> {
-    parse_segment_filename(path.file_name()?.to_str()?)
+fn max_segment_seq(candidates: &[SegmentCandidate]) -> Option<u32> {
+    candidates.iter().map(|candidate| candidate.seq).max()
 }
 
 fn server_time_ms() -> u64 {
@@ -400,8 +439,9 @@ impl IntoResponse for ClipError {
 mod tests {
     use super::{
         http_etag, io_error_to_clip_error, max_clip_seq, read_finished_clips, resolve_limit,
-        resolve_range, ClipError, RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
+        resolve_range, resolve_segment, ClipError, RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
     };
+    use crate::recorder::{stamped_segment_filename, SegmentFacts};
     use crate::ts_duration::DurationCache;
     use std::{fs, io, path::Path};
 
@@ -573,6 +613,48 @@ mod tests {
     }
 
     #[test]
+    fn max_clip_seq_parses_stamped_segments() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00099.ts", b"bare");
+        write_file(&rec_dir.path, &stamped_name(100), b"stamped");
+
+        assert_eq!(max_clip_seq(&rec_dir.path), Some(100));
+    }
+
+    #[test]
+    fn resolve_segment_prefers_stamped_over_bare_duplicate() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"bare");
+        write_file(&rec_dir.path, &stamped_name(7), b"stamped");
+
+        let segment = resolve_segment(&rec_dir.path, 7).unwrap();
+
+        assert_eq!(segment.seq, 7);
+        assert_eq!(segment.bytes, 7);
+        assert!(segment.facts.is_some());
+        let expected = stamped_name(7);
+        assert_eq!(
+            segment.path.file_name().and_then(|name| name.to_str()),
+            Some(expected.as_str())
+        );
+    }
+
+    #[test]
+    fn read_finished_clips_dedupes_same_seq_segments() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"bare");
+        write_file(&rec_dir.path, &stamped_name(7), b"stamped");
+        write_file(&rec_dir.path, "seg_00008.ts", b"newer");
+
+        let (clips, next_cursor) = read_finished_clips_for_test(&rec_dir.path, None, None, 10);
+
+        assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [8, 7]);
+        assert_eq!(clips[1].bytes, 7);
+        assert_eq!(clips[1].etag, "7-7");
+        assert_eq!(next_cursor, None);
+    }
+
+    #[test]
     fn read_finished_clips_lists_six_digit_segments_in_numeric_order() {
         let rec_dir = temp_rec_dir();
         write_file(&rec_dir.path, "seg_99999.ts", b"almost");
@@ -665,6 +747,16 @@ mod tests {
 
     fn write_file(dir: &Path, name: &str, bytes: &[u8]) {
         fs::write(dir.join(name), bytes).unwrap();
+    }
+
+    fn stamped_name(seq: u32) -> String {
+        stamped_segment_filename(
+            seq,
+            &SegmentFacts {
+                boot_tag: "abc123def456".to_string(),
+                mono_ms: 123456789,
+            },
+        )
     }
 
     fn read_finished_clips_for_test(

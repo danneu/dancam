@@ -15,7 +15,7 @@ use dancam::{
     backend::{Backend, BackendError, FrameStream},
     event_hub::{EventConnection, EventHub},
     events::Snapshot,
-    recorder::{RecorderEvent, SegmentId},
+    recorder::{stamped_segment_filename, RecorderEvent, SegmentFacts, SegmentId},
     world::{CameraState, Input},
     AppState, DurationCache,
 };
@@ -127,7 +127,7 @@ async fn status_reports_null_current_segment_while_starting() {
 async fn status_reports_fsm_owned_open_segment_metadata_while_recording() {
     let rec_dir = TempRecDir::new();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/clips/seg_00000.ts");
-    fs::copy(fixture, rec_dir.path.join("seg_00000.ts")).unwrap();
+    fs::copy(fixture, rec_dir.path.join(stamped_name(0))).unwrap();
 
     let response = dancam::app(state(
         rec_dir.path.clone(),
@@ -150,6 +150,16 @@ async fn status_reports_fsm_owned_open_segment_metadata_while_recording() {
         (dur_ms as i64 - 30_000).abs() <= 100,
         "duration was {dur_ms} ms"
     );
+}
+
+fn stamped_name(seq: u32) -> String {
+    stamped_segment_filename(
+        seq,
+        &SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            mono_ms: 123456789,
+        },
+    )
 }
 
 impl StubBackend {

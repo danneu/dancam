@@ -1,7 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
 
@@ -20,10 +20,14 @@ use tokio::{
 use tokio_stream::{wrappers::WatchStream, Stream, StreamExt};
 
 use crate::{
-    clips::{clip_meta, max_clip_seq},
+    clips::{clip_meta, max_clip_seq, ClipMeta},
+    clock,
     event_hub::{EventConnection, EventHub, SeqEvent},
     events::Snapshot,
-    recorder::{segment_filename, RecorderEvent, SegmentId},
+    recorder::{
+        boot_tag, segment_filename, stamped_segment_filename, RecorderEvent, SegmentFacts,
+        SegmentId,
+    },
     sysfacts::{DiskUsage, MemInfo},
     ts_duration::{ts_pts_packet, DurationCache},
     world::{CameraState, Input, TempC},
@@ -98,6 +102,7 @@ pub struct MockBackend {
     hub: Arc<EventHub>,
     recorder: Option<MockRecorder>,
     clip_durations: Arc<DurationCache>,
+    boot_tag: Arc<StdMutex<Option<String>>>,
 }
 
 impl MockBackend {
@@ -117,8 +122,15 @@ impl MockBackend {
         let (frames_tx, _) = watch::channel::<Option<Bytes>>(None);
         let hub = Arc::new(EventHub::new(CameraState::Running));
         let clip_durations = Arc::new(DurationCache::new());
+        let boot_tag = Arc::new(StdMutex::new(None));
         let recorder = recorder.map(|(rec_dir, roll_interval)| {
-            MockRecorder::new(rec_dir, roll_interval, hub.clone(), clip_durations.clone())
+            MockRecorder::new(
+                rec_dir,
+                roll_interval,
+                hub.clone(),
+                clip_durations.clone(),
+                boot_tag.clone(),
+            )
         });
 
         spawn_mock_frames(frames_tx.clone());
@@ -128,6 +140,7 @@ impl MockBackend {
             hub,
             recorder,
             clip_durations,
+            boot_tag,
         }
     }
 
@@ -203,6 +216,8 @@ impl Backend for MockBackend {
 
     fn set_context(&self, boot_id: Arc<str>, started: Instant) {
         self.hub.set_context(boot_id, started);
+        *self.boot_tag.lock().expect("mock boot_tag mutex poisoned") =
+            boot_tag(self.hub.snapshot().boot_id.as_str());
     }
 
     fn tick(&self) {
@@ -220,6 +235,7 @@ struct MockRecorder {
     roll_interval: Duration,
     hub: Arc<EventHub>,
     clip_durations: Arc<DurationCache>,
+    boot_tag: Arc<StdMutex<Option<String>>>,
     task: Arc<Mutex<Option<MockRecordingTask>>>,
 }
 
@@ -228,12 +244,23 @@ struct MockRecordingTask {
     handle: JoinHandle<()>,
 }
 
+struct MockRecordingContext {
+    rec_dir: Arc<Path>,
+    roll_interval: Duration,
+    hub: Arc<EventHub>,
+    clip_durations: Arc<DurationCache>,
+    boot_tag: Arc<StdMutex<Option<String>>>,
+    session: u64,
+    start_segment: SegmentId,
+}
+
 impl MockRecorder {
     fn new(
         rec_dir: PathBuf,
         roll_interval: Duration,
         hub: Arc<EventHub>,
         clip_durations: Arc<DurationCache>,
+        boot_tag: Arc<StdMutex<Option<String>>>,
     ) -> Self {
         let roll_interval = if roll_interval.is_zero() {
             Duration::from_millis(1)
@@ -246,6 +273,7 @@ impl MockRecorder {
             roll_interval,
             hub,
             clip_durations,
+            boot_tag,
             task: Arc::new(Mutex::new(None)),
         }
     }
@@ -278,17 +306,18 @@ impl MockRecorder {
         let roll_interval = self.roll_interval;
         let hub = self.hub.clone();
         let clip_durations = self.clip_durations.clone();
+        let boot_tag = self.boot_tag.clone();
+        let context = MockRecordingContext {
+            rec_dir,
+            roll_interval,
+            hub,
+            clip_durations,
+            boot_tag,
+            session,
+            start_segment,
+        };
         let handle = tokio::spawn(async move {
-            run_mock_recording_writer(
-                rec_dir,
-                roll_interval,
-                hub,
-                clip_durations,
-                session,
-                start_segment,
-                stop_rx,
-            )
-            .await;
+            run_mock_recording_writer(context, stop_rx).await;
         });
         *guard = Some(MockRecordingTask { stop_tx, handle });
 
@@ -319,15 +348,20 @@ impl MockRecorder {
 }
 
 async fn run_mock_recording_writer(
-    rec_dir: Arc<Path>,
-    roll_interval: Duration,
-    hub: Arc<EventHub>,
-    clip_durations: Arc<DurationCache>,
-    session: u64,
-    mut seq: SegmentId,
+    context: MockRecordingContext,
     mut stop_rx: oneshot::Receiver<()>,
 ) {
-    let mut file = match open_mock_segment(rec_dir.as_ref(), seq).await {
+    let MockRecordingContext {
+        rec_dir,
+        roll_interval,
+        hub,
+        clip_durations,
+        boot_tag,
+        session,
+        start_segment,
+    } = context;
+    let mut seq = start_segment;
+    let mut file = match open_mock_segment(rec_dir.as_ref(), seq, boot_tag.as_ref()).await {
         Ok(file) => file,
         Err(error) => {
             tracing::error!(%error, seq, "failed to open mock recording segment");
@@ -364,7 +398,7 @@ async fn run_mock_recording_writer(
                 if let Err(error) = file.flush().await {
                     tracing::error!(%error, seq, "failed to flush final mock recording segment");
                 }
-                let finalized = clip_meta(rec_dir.as_ref(), seq, Some(clip_durations.as_ref()));
+                let finalized = finalized_clip_meta(rec_dir.clone(), seq, clip_durations.clone()).await;
                 hub.drive_now(Input::RecordingStopped { session, finalized });
                 return;
             }
@@ -377,7 +411,7 @@ async fn run_mock_recording_writer(
                         });
                         return;
                     }
-                    let finalized = match clip_meta(rec_dir.as_ref(), seq, Some(clip_durations.as_ref())) {
+                    let finalized = match finalized_clip_meta(rec_dir.clone(), seq, clip_durations.clone()).await {
                         Some(meta) => meta,
                         None => {
                             tracing::error!(seq, "failed to stat finalized mock recording segment");
@@ -388,7 +422,7 @@ async fn run_mock_recording_writer(
                         }
                     };
                     seq = seq.saturating_add(1);
-                    file = match open_mock_segment(rec_dir.as_ref(), seq).await {
+                    file = match open_mock_segment(rec_dir.as_ref(), seq, boot_tag.as_ref()).await {
                         Ok(file) => file,
                         Err(error) => {
                             tracing::error!(%error, seq, "failed to roll mock recording segment");
@@ -437,11 +471,48 @@ async fn write_mock_packet(
     Ok(())
 }
 
-async fn open_mock_segment(rec_dir: &Path, seq: u32) -> std::io::Result<tokio::fs::File> {
+async fn finalized_clip_meta(
+    rec_dir: Arc<Path>,
+    seq: SegmentId,
+    clip_durations: Arc<DurationCache>,
+) -> Option<ClipMeta> {
+    match tokio::task::spawn_blocking(move || {
+        clip_meta(rec_dir.as_ref(), seq, Some(clip_durations.as_ref()))
+    })
+    .await
+    {
+        Ok(meta) => meta,
+        Err(error) => {
+            tracing::error!(%error, seq, "mock clip metadata task failed");
+            None
+        }
+    }
+}
+
+async fn open_mock_segment(
+    rec_dir: &Path,
+    seq: u32,
+    boot_tag: &StdMutex<Option<String>>,
+) -> std::io::Result<tokio::fs::File> {
+    let filename = boot_tag
+        .lock()
+        .expect("mock boot_tag mutex poisoned")
+        .clone()
+        .map(|boot_tag| {
+            stamped_segment_filename(
+                seq,
+                &SegmentFacts {
+                    boot_tag,
+                    mono_ms: clock::boottime_ms(),
+                },
+            )
+        })
+        .unwrap_or_else(|| segment_filename(seq));
+
     OpenOptions::new()
         .create(true)
         .append(true)
-        .open(rec_dir.join(segment_filename(seq)))
+        .open(rec_dir.join(filename))
         .await
 }
 

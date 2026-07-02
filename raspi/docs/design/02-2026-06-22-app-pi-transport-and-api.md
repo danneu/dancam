@@ -108,6 +108,14 @@
 > resumable-EOF meaning. The app rides exactly `503` as a resumable no-progress retry
 > and treats every other HTTP status, including every other 5xx, as terminal.
 
+> **Note (2026-07-02): Time sync simplification.** Swoop `moss` is refined by
+> `15-2026-07-02-segment-fact-stamping-and-boot-offset.md`. `POST /v1/time` now
+> accepts only `{epoch_ms}` and writes a per-boot offset from `CLOCK_BOOTTIME`; the
+> earlier RTT-refined `{epoch_ms, tz, send_ts}` body is dropped. Segment wall times are
+> derived at read time from filename-stamped monotonic facts plus that offset. The
+> `time_synced` event remains the additive events-plane signal, and snapshots gain
+> `time: {synced}` when the route lands.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --

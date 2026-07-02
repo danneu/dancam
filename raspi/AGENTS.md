@@ -331,3 +331,6 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `14-2026-07-02-request-id-format.md` (Accepted) -- Pi-generated request ids are a
   per-process incrementing counter, keeping access logs short while safe inbound
   `x-request-id` values remain honored.
+- `15-2026-07-02-segment-fact-stamping-and-boot-offset.md` (Accepted) -- segment
+  filenames carry immutable `(seq, boottag, monoMs)` facts while wall time is derived
+  from write-once per-boot offset files.

@@ -12,7 +12,7 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
-use dancam::{backend::MockBackend, AppState};
+use dancam::{backend::MockBackend, recorder::parse_segment_filename, AppState};
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 
@@ -77,6 +77,7 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
     assert_eq!(stopped_status["recorder"]["current_segment"], Value::Null);
 
     let snapshot = segment_snapshot(&rec_dir.path);
+    assert_new_segments_are_stamped(&rec_dir.path, &[first_segment, rolled_segment]);
     tokio::time::sleep(roll_interval * 2).await;
     assert_eq!(segment_snapshot(&rec_dir.path), snapshot);
 }
@@ -104,6 +105,7 @@ async fn writer_mock_starts_after_six_digit_existing_segment_without_mutating_it
 
     let first_segment = poll_status_for_segment(app.clone(), None, Duration::from_secs(2)).await;
     assert_eq!(first_segment, 100001);
+    assert_new_segments_are_stamped(&rec_dir.path, &[100001]);
     assert_eq!(
         fs::read(rec_dir.path.join("seg_100000.ts"))
             .unwrap()
@@ -185,6 +187,24 @@ fn segment_snapshot(rec_dir: &Path) -> Vec<(String, u64)> {
         .collect();
     snapshot.sort();
     snapshot
+}
+
+fn assert_new_segments_are_stamped(rec_dir: &Path, expected_ids: &[u32]) {
+    let stamped = fs::read_dir(rec_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let parsed = parse_segment_filename(&name)?;
+            parsed.facts.map(|_| parsed.seq)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for expected in expected_ids {
+        assert!(
+            stamped.contains(expected),
+            "segment {expected} was not stamped in {stamped:?}"
+        );
+    }
 }
 
 struct TempRecDir {

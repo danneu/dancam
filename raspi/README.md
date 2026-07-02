@@ -317,17 +317,18 @@ python3 /usr/local/lib/dancam/camera.py \
   2> /tmp/dancam-camera-events.log &
 CAMERA_PID=$!
 exec 3> /tmp/dancam-camera-commands
-printf '{"cmd":"start_recording"}\n' >&3
+printf '{"cmd":"start_recording","session_id":1,"start_segment_index":0}\n' >&3
 sleep 35
 printf '{"cmd":"stop_recording"}\n' >&3
-printf '{"cmd":"start_recording"}\n' >&3
+printf '{"cmd":"start_recording","session_id":2,"start_segment_index":2}\n' >&3
 sleep 5
 printf '{"cmd":"stop_recording"}\n{"cmd":"shutdown"}\n' >&3
 exec 3>&-
 wait "$CAMERA_PID"
 grep -E '"ready"|"recording_started"|"recording_stopped"' /tmp/dancam-camera-events.log
 ls -lh ~/rec-smoke/seg_*.ts
-ffmpeg -v error -i ~/rec-smoke/seg_00000.ts -f null -
+FIRST_SEGMENT="$(find ~/rec-smoke -maxdepth 1 -type f -name 'seg_*.ts' | sort | head -n1)"
+ffmpeg -v error -i "$FIRST_SEGMENT" -f null -
 rm -f /tmp/dancam-camera-commands
 ```
 

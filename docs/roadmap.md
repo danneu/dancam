@@ -213,8 +213,26 @@ mock first.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
       (missing / unformatted / wrong filesystem); auto-format on first insert;
       format-from-app with a double-confirm (`POST /v1/storage/format`).
-- [ ] **Swoop `moss` -- Time provenance.** `POST /v1/time` at handshake (the Pi has no
-      RTC); "time unverified" UI until sync; timestamps on clips.
+- [ ] **Swoop `moss` -- Time provenance.** The Pi has no RTC, so clip timestamps are
+      derived from immutable segment facts plus a per-boot phone-clock offset rather
+      than stored as wall-clock conclusions. This makes pre-sync and power-cut
+      segments resolve once the boot offset is known.
+      - [x] **Pi:** stamp segment filenames with `(seq, boottag, monoMs)` facts at
+            segment open, parse bare and stamped names everywhere, and keep next-seq /
+            list / pull / status resolution scan-based so stamped footage is never
+            overwritten or hidden.
+      - [ ] **Pi:** add the write-once per-boot offset store and `POST /v1/time`; derive
+            clip `start_ms`, `time_approximate`, `server_time_ms`, snapshot
+            `time.synced`, and `time_synced` events from the offset.
+      - [ ] **App:** POST the phone's current epoch on unsynced snapshots, retry while
+            connected and unsynced, reload clips on `time_synced`, and show "Time
+            unverified" until the world reports synced.
+      - [x] **Mock parity:** both the Rust mock backend and Python fake camera exercise
+            stamped segment names so Mac-only tests cover the production path before
+            real-Pi validation.
+      - Scope fence: no GPS source, no correction/rebind after the first accepted
+        per-boot offset, no multi-segment timeline, and no incident pre-sync holds
+        until `nova`.
 - [ ] **Swoop `nova` -- Incident lock (manual).** A "save this moment" button: Pi
       force-finalizes the open segment and protects the window, built to the storage
       ADR (idempotency, pre-sync holds) rather than a throwaway lock we'd redo later.

@@ -8,8 +8,8 @@ use axum::{
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::{
-    clips::ClipMeta,
-    recorder::{segment_filename, CurrentSegment, RecorderSnapshot},
+    clips::{resolve_segment, ClipMeta},
+    recorder::{CurrentSegment, RecorderSnapshot},
     sysfacts::{DiskUsage, MemInfo},
     world::{CameraState, TempC},
     AppState,
@@ -146,12 +146,8 @@ async fn enrich_current_segment(mut snapshot: Snapshot, state: &AppState) -> Sna
     let duration_cache = state.clip_durations.clone();
     let id = current.id;
     let dur_ms = match tokio::task::spawn_blocking(move || {
-        let path = rec_dir.join(segment_filename(id));
-        let metadata = std::fs::metadata(&path).ok()?;
-        if !metadata.is_file() {
-            return None;
-        }
-        duration_cache.duration_ms(id, &path, metadata.len())
+        let segment = resolve_segment(rec_dir.as_ref(), id)?;
+        duration_cache.duration_ms(id, &segment.path, segment.bytes)
     })
     .await
     {

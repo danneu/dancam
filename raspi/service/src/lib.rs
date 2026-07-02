@@ -26,6 +26,7 @@ use crate::backend::Backend;
 pub mod backend;
 pub mod camera;
 mod clips;
+mod clock;
 pub mod event_hub;
 pub mod events;
 mod health;

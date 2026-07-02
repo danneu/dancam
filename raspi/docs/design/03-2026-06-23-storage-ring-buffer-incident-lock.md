@@ -15,6 +15,15 @@
   storage service); `app/docs/design/01-2026-06-22-carplay-integration-surface.md`
   (voice/status/control surface that needs a low-latency lock call)
 
+> **Note (2026-07-02): Segment time facts.**
+> `15-2026-07-02-segment-fact-stamping-and-boot-offset.md` refines this ADR's segment
+> time storage. Segment facts move from rebuildable `index.log` records into the `.ts`
+> filename itself as `(seq, boottag, monoMs)`. Boot wall-time anchors move from
+> `state/state.json` to one write-once `<rec_dir>/time/<boot-uuid>.json` file per boot.
+> The earlier provisional-then-frozen app offset model is replaced by first accepted
+> offset wins. GPS rebinding after freeze is no longer implicit; a future GPS source
+> must add an explicit source-priority rule.
+
 ## Context
 
 The camera unit records continuously to its own microSD card. That card is the

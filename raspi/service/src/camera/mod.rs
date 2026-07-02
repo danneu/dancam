@@ -17,7 +17,7 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 use crate::{
     backend::{Backend, BackendError, FrameStream},
-    clips::{clip_meta, max_clip_seq},
+    clips::{clip_meta, max_clip_seq, ClipMeta},
     event_hub::{EventConnection, EventHub},
     events::Event,
     events::Snapshot,
@@ -530,7 +530,12 @@ async fn parse_stderr(
             Ok(ChildEvent::SegmentOpened { session, id }) => {
                 if let Some((closed_session, closed_id)) = pending_closed.take() {
                     if closed_session == session {
-                        match clip_meta(rec_dir.as_ref(), closed_id, Some(clip_durations.as_ref()))
+                        match finalized_clip_meta(
+                            rec_dir.clone(),
+                            closed_id,
+                            clip_durations.clone(),
+                        )
+                        .await
                         {
                             Some(finalized) => {
                                 hub.drive_now(Input::SegmentRollover {
@@ -573,7 +578,8 @@ async fn parse_stderr(
                 let mut final_stat_failed = false;
                 let finalized = match last_opened {
                     Some((opened_session, id)) if opened_session == session => {
-                        match clip_meta(rec_dir.as_ref(), id, Some(clip_durations.as_ref())) {
+                        match finalized_clip_meta(rec_dir.clone(), id, clip_durations.clone()).await
+                        {
                             Some(finalized) => Some(finalized),
                             None => {
                                 final_stat_failed = true;
@@ -621,6 +627,24 @@ fn command_failed(status: &LiveStatus) -> bool {
         status.camera_state,
         CameraState::Restarting | CameraState::Offline
     ) || status.phase == RecorderPhase::Error
+}
+
+async fn finalized_clip_meta(
+    rec_dir: Arc<Path>,
+    seq: SegmentId,
+    clip_durations: Arc<DurationCache>,
+) -> Option<ClipMeta> {
+    match tokio::task::spawn_blocking(move || {
+        clip_meta(rec_dir.as_ref(), seq, Some(clip_durations.as_ref()))
+    })
+    .await
+    {
+        Ok(meta) => meta,
+        Err(error) => {
+            tracing::error!(%error, seq, "camera clip metadata task failed");
+            None
+        }
+    }
 }
 
 #[cfg(test)]

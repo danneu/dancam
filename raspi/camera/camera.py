@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import secrets
 import sys
 import threading
 import time
@@ -22,7 +23,8 @@ from typing import Any
 
 SEGMENT_WIDTH = 5
 U32_MAX = 0xFFFF_FFFF
-SEGMENT_RE = re.compile(r"^seg_([0-9]+)\.ts$")
+BOOT_TAG_WIDTH = 12
+SEGMENT_RE = re.compile(r"^seg_([0-9]+)(?:_([0-9a-f]{12})_([0-9]+))?\.ts$")
 FAKE_JPEG = (
     b"\xff\xd8"
     b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
@@ -85,6 +87,10 @@ def segment_filename(seq: int) -> str:
     return f"seg_{seq:0{SEGMENT_WIDTH}d}.ts"
 
 
+def stamped_segment_filename(seq: int, boot_tag: str, mono_ms_value: int) -> str:
+    return f"seg_{seq:0{SEGMENT_WIDTH}d}_{boot_tag}_{mono_ms_value}.ts"
+
+
 def segment_ffmpeg_pattern() -> str:
     return f"seg_%0{SEGMENT_WIDTH}d.ts"
 
@@ -95,9 +101,42 @@ def parse_segment_filename(name: str) -> int | None:
         return None
 
     seq = int(match.group(1))
-    if seq > U32_MAX or segment_filename(seq) != name:
+    boot_tag = match.group(2)
+    mono_ms_value = match.group(3)
+    if seq > U32_MAX:
+        return None
+    if boot_tag is None and mono_ms_value is None:
+        rendered = segment_filename(seq)
+    elif boot_tag is not None and mono_ms_value is not None:
+        rendered = stamped_segment_filename(seq, boot_tag, int(mono_ms_value))
+    else:
+        return None
+    if rendered != name:
         return None
     return seq
+
+
+def boot_tag_from_boot_id(boot_id: str) -> str | None:
+    stripped = boot_id.strip().replace("-", "").lower()
+    tag = stripped[:BOOT_TAG_WIDTH]
+    if len(tag) != BOOT_TAG_WIDTH or not re.fullmatch(r"[0-9a-f]{12}", tag):
+        return None
+    return tag
+
+
+def read_boot_tag() -> str:
+    try:
+        raw = Path("/proc/sys/kernel/random/boot_id").read_text()
+    except OSError:
+        return secrets.token_hex(6)
+    return boot_tag_from_boot_id(raw) or secrets.token_hex(6)
+
+
+def mono_ms() -> int:
+    clock_id = getattr(time, "CLOCK_BOOTTIME", None)
+    if clock_id is not None:
+        return int(time.clock_gettime(clock_id) * 1000)
+    return int(time.monotonic() * 1000)
 
 
 def recording_ffmpeg_output(rec_dir: Path, segment_start_number: int) -> str:
@@ -137,6 +176,50 @@ def detect_segment_events(baseline: int, prev_max: int | None, names: list[str])
     return events
 
 
+def stamp_segment(rec_dir: Path, seq: int, boot_tag: str, mono_ms_value: int) -> None:
+    bare = rec_dir / segment_filename(seq)
+    if not bare.exists():
+        return
+
+    stamped = rec_dir / stamped_segment_filename(seq, boot_tag, mono_ms_value)
+    try:
+        os.rename(bare, stamped)
+    except OSError as error:
+        print(
+            f"failed to stamp segment {bare.name} -> {stamped.name}: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def watch_segment_events(
+    rec_dir: Path,
+    session_id: int,
+    baseline: int,
+    watcher_shutdown: threading.Event,
+    boot_tag: str,
+) -> None:
+    prev_max: int | None = None
+
+    def scan_once() -> None:
+        nonlocal prev_max
+        try:
+            names = [path.name for path in rec_dir.iterdir()]
+        except FileNotFoundError:
+            names = []
+        for event in detect_segment_events(baseline, prev_max, names):
+            if event["event"] == "segment_opened":
+                opened_mono_ms = mono_ms()
+                stamp_segment(rec_dir, event["id"], boot_tag, opened_mono_ms)
+            emit_event(event["event"], session_id=session_id, id=event["id"])
+            if event["event"] == "segment_opened":
+                prev_max = event["id"]
+
+    while not watcher_shutdown.wait(0.25):
+        scan_once()
+    scan_once()
+
+
 def run_self_test() -> int:
     assert compute_skip(30, 12) == 3
     assert compute_skip(30, 10) == 3
@@ -164,6 +247,18 @@ def run_self_test() -> int:
     assert segment_filename(0) == "seg_00000.ts"
     assert segment_filename(100000) == "seg_100000.ts"
     assert segment_filename(U32_MAX) == "seg_4294967295.ts"
+    assert (
+        stamped_segment_filename(5, "abc123def456", 987654321)
+        == "seg_00005_abc123def456_987654321.ts"
+    )
+    assert (
+        parse_segment_filename("seg_00005_abc123def456_987654321.ts")
+        == 5
+    )
+    assert (
+        parse_segment_filename("seg_100000_abc123def456_987654321.ts")
+        == 100000
+    )
     for name in [
         "seg_999.ts",
         "seg_000005.ts",
@@ -172,8 +267,20 @@ def run_self_test() -> int:
         "seg_abc.ts",
         "seg_00005.mp4",
         "seg_4294967296.ts",
+        "seg_00005_ABC123DEF456_7.ts",
+        "seg_00005_abc123def45_7.ts",
+        "seg_00005_abc123def4567_7.ts",
+        "seg_00005_abc123def456_007.ts",
+        "seg_00005_abc123def456_+7.ts",
+        "seg_00005_abc123xyz456_7.ts",
     ]:
         assert parse_segment_filename(name) is None
+    assert (
+        boot_tag_from_boot_id("3f1c0e7a-8f3b-4e15-b196-20e0416af749")
+        == "3f1c0e7a8f3b"
+    )
+    assert boot_tag_from_boot_id("ABCDEF12-3456-7890-abcd-ef1234567890") == "abcdef123456"
+    assert boot_tag_from_boot_id("unknown") is None
     assert detect_segment_events(43, None, ["seg_00042.ts"]) == []
     assert detect_segment_events(43, None, ["seg_00042.ts", "seg_00043.ts"]) == [
         {"event": "segment_opened", "id": 43}
@@ -187,6 +294,18 @@ def run_self_test() -> int:
     assert detect_segment_events(99999, 99999, ["seg_99999.ts", "seg_100000.ts"]) == [
         {"event": "segment_closed", "id": 99999},
         {"event": "segment_opened", "id": 100000},
+    ]
+    assert detect_segment_events(
+        43,
+        43,
+        [
+            "seg_00043_abc123def456_1000.ts",
+            "seg_00044.ts",
+            "seg_00044_abc123def456_2000.ts",
+        ],
+    ) == [
+        {"event": "segment_closed", "id": 43},
+        {"event": "segment_opened", "id": 44},
     ]
     return 0
 
@@ -260,11 +379,15 @@ class FakeCameraDriver:
         self.frames = frames
         self.shutdown = shutdown
         self.skip = compute_skip(fake_sensor_fps, preview_fps)
+        self.boot_tag = read_boot_tag()
         self.preview_thread: threading.Thread | None = None
         self.recording_thread: threading.Thread | None = None
+        self.segment_watcher_shutdown: threading.Event | None = None
+        self.segment_watcher_thread: threading.Thread | None = None
         self.recording = threading.Event()
         self.lock = threading.Lock()
         self.current_segment: Path | None = None
+        self.current_segment_file: Any | None = None
         self.current_segment_index: int | None = None
         self.current_session_id: int | None = None
         self.segment_started_at: float | None = None
@@ -283,8 +406,7 @@ class FakeCameraDriver:
 
             self.current_session_id = session_id
             self.current_segment_index = start_segment_index
-            self.current_segment = self.rec_dir / segment_filename(start_segment_index)
-            self.current_segment.write_bytes(FAKE_SEGMENT)
+            self._open_segment_locked(start_segment_index)
             self.segment_started_at = time.monotonic()
             self.recording.set()
             self.recording_thread = threading.Thread(
@@ -295,7 +417,17 @@ class FakeCameraDriver:
             self.recording_thread.start()
 
         emit_event("recording_started", session_id=session_id)
-        emit_event("segment_opened", session_id=session_id, id=start_segment_index)
+
+        watcher_shutdown = threading.Event()
+        watcher_thread = threading.Thread(
+            target=watch_segment_events,
+            args=(self.rec_dir, session_id, start_segment_index, watcher_shutdown, self.boot_tag),
+            name="segment-watcher",
+            daemon=True,
+        )
+        watcher_thread.start()
+        self.segment_watcher_shutdown = watcher_shutdown
+        self.segment_watcher_thread = watcher_thread
 
     def stop_recording(self) -> None:
         with self.lock:
@@ -309,10 +441,18 @@ class FakeCameraDriver:
             thread.join(timeout=1)
 
         with self.lock:
+            self._finish_segment_locked()
             self.current_segment = None
             self.current_segment_index = None
             self.current_session_id = None
             self.segment_started_at = None
+
+        if self.segment_watcher_shutdown is not None:
+            self.segment_watcher_shutdown.set()
+        if self.segment_watcher_thread is not None:
+            self.segment_watcher_thread.join(timeout=1)
+        self.segment_watcher_shutdown = None
+        self.segment_watcher_thread = None
 
         if was_recording and session_id is not None:
             emit_event("recording_stopped", session_id=session_id)
@@ -340,31 +480,36 @@ class FakeCameraDriver:
             time.sleep(interval)
 
     def _recording_loop(self) -> None:
-        while self.recording.is_set():
-            events: list[dict[str, int]] = []
+        while True:
             with self.lock:
+                if not self.recording.is_set():
+                    return
                 if (
                     self.segment_started_at is not None
                     and self.current_segment_index is not None
                     and time.monotonic() - self.segment_started_at >= self.fake_segment_secs
                 ):
-                    old = self.current_segment_index
-                    new = old + 1
+                    new = self.current_segment_index + 1
+                    self._finish_segment_locked()
                     self.current_segment_index = new
-                    self.current_segment = self.rec_dir / segment_filename(new)
-                    self.current_segment.write_bytes(FAKE_SEGMENT)
+                    self._open_segment_locked(new)
                     self.segment_started_at = time.monotonic()
-                    events = [
-                        {"event": "segment_closed", "id": old},
-                        {"event": "segment_opened", "id": new},
-                    ]
-                session_id = self.current_session_id
-
-            if session_id is not None:
-                for event in events:
-                    emit_event(event["event"], session_id=session_id, id=event["id"])
 
             time.sleep(0.1)
+
+    def _open_segment_locked(self, seq: int) -> None:
+        self.current_segment = self.rec_dir / segment_filename(seq)
+        self.current_segment_file = self.current_segment.open("wb")
+        self.current_segment_file.write(FAKE_SEGMENT[:188])
+        self.current_segment_file.flush()
+
+    def _finish_segment_locked(self) -> None:
+        if self.current_segment_file is None:
+            return
+        self.current_segment_file.write(FAKE_SEGMENT[188:])
+        self.current_segment_file.flush()
+        self.current_segment_file.close()
+        self.current_segment_file = None
 
 
 class RealCameraDriver:
@@ -379,6 +524,7 @@ class RealCameraDriver:
         self.preview_fps = preview_fps
         self.frames = frames
         self.shutdown = shutdown
+        self.boot_tag = read_boot_tag()
         self.picam2 = None
         self.preview_encoder = None
         self.h264_encoder = None
@@ -440,8 +586,8 @@ class RealCameraDriver:
 
         watcher_shutdown = threading.Event()
         watcher_thread = threading.Thread(
-            target=self._watch_segment_events,
-            args=(session_id, start_segment_index, watcher_shutdown),
+            target=watch_segment_events,
+            args=(self.rec_dir, session_id, start_segment_index, watcher_shutdown, self.boot_tag),
             name="segment-watcher",
             daemon=True,
         )
@@ -490,29 +636,6 @@ class RealCameraDriver:
                 self.picam2.stop()
         finally:
             self.shutdown.set()
-
-    def _watch_segment_events(
-        self,
-        session_id: int,
-        baseline: int,
-        watcher_shutdown: threading.Event,
-    ) -> None:
-        prev_max: int | None = None
-
-        def scan_once() -> None:
-            nonlocal prev_max
-            try:
-                names = [path.name for path in self.rec_dir.iterdir()]
-            except FileNotFoundError:
-                names = []
-            for event in detect_segment_events(baseline, prev_max, names):
-                emit_event(event["event"], session_id=session_id, id=event["id"])
-                if event["event"] == "segment_opened":
-                    prev_max = event["id"]
-
-        while not watcher_shutdown.wait(0.25):
-            scan_once()
-        scan_once()
 
 
 def run(args: argparse.Namespace) -> int:

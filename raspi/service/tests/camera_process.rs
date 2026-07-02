@@ -25,7 +25,7 @@ use dancam::{
     camera::{CameraConfig, CameraProcess},
     event_hub::EventConnection,
     events::Event,
-    recorder::RecorderPhase,
+    recorder::{parse_segment_filename, RecorderPhase},
     world::CameraState,
     AppState,
 };
@@ -225,14 +225,11 @@ async fn python_fake_contract_honors_start_segment_and_emits_lifecycle() {
         .unwrap();
     assert!(status.success());
 
-    let mut segments = fs::read_dir(&rec_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-        .collect::<Vec<_>>();
-    segments.sort();
-    assert!(segments.contains(&"seg_00005.ts".to_string()));
-    assert!(segments.contains(&"seg_00006.ts".to_string()));
-    assert!(!segments.contains(&"seg_00004.ts".to_string()));
+    let segments = segment_ids(&rec_dir);
+    assert!(segments.contains(&5));
+    assert!(segments.contains(&6));
+    assert!(!segments.contains(&4));
+    assert_new_segments_are_stamped(&rec_dir, &[5, 6]);
 
     let _ = fs::remove_dir_all(rec_dir);
 }
@@ -266,12 +263,8 @@ async fn supervisor_confirms_start_stop_and_records_with_idle_preview_subscriber
     backend.start_recording().await.unwrap();
     backend.stop_recording().await.unwrap();
 
-    let mut segments = fs::read_dir(&rec_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-        .collect::<Vec<_>>();
-    segments.sort();
-    assert_eq!(segments, ["seg_00000.ts", "seg_00001.ts"]);
+    assert_eq!(segment_ids(&rec_dir), [0, 1]);
+    assert_new_segments_are_stamped(&rec_dir, &[0, 1]);
 
     control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
@@ -296,7 +289,7 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
             "--preview-fps".to_string(),
             "10".to_string(),
             "--fake-segment-secs".to_string(),
-            "0.2".to_string(),
+            "0.6".to_string(),
         ],
     );
     let (backend, control) = CameraProcess::spawn(config);
@@ -412,6 +405,7 @@ async fn supervisor_starts_after_six_digit_existing_segment_without_overwrite() 
 
     backend.start_recording().await.unwrap();
     wait_for_current_segment(&backend, 100001).await;
+    assert_new_segments_are_stamped(&rec_dir, &[100001]);
     assert_eq!(
         fs::read(rec_dir.join("seg_100000.ts")).unwrap().as_slice(),
         sentinel
@@ -630,6 +624,36 @@ async fn wait_for_clip_finalized(connection: &mut EventConnection) -> (u32, Opti
     })
     .await
     .expect("timed out waiting for clip_finalized")
+}
+
+fn segment_ids(rec_dir: &Path) -> Vec<u32> {
+    let mut ids = fs::read_dir(rec_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            parse_segment_filename(&name).map(|parsed| parsed.seq)
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids
+}
+
+fn assert_new_segments_are_stamped(rec_dir: &Path, expected_ids: &[u32]) {
+    let stamped = fs::read_dir(rec_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let parsed = parse_segment_filename(&name)?;
+            parsed.facts.map(|_| parsed.seq)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for expected in expected_ids {
+        assert!(
+            stamped.contains(expected),
+            "segment {expected} was not stamped in {stamped:?}"
+        );
+    }
 }
 
 async fn response_json(response: axum::http::Response<Body>) -> Value {

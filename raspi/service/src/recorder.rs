@@ -2,6 +2,7 @@ pub type SessionId = u64;
 pub type SegmentId = u32;
 
 const SEGMENT_FILENAME_WIDTH: usize = 5;
+const BOOT_TAG_LEN: usize = 12;
 
 /// Render the flat recording segment filename. The width is a minimum: after
 /// `99999`, names grow wider and remain valid.
@@ -9,11 +10,70 @@ pub fn segment_filename(seq: SegmentId) -> String {
     format!("seg_{seq:0width$}.ts", width = SEGMENT_FILENAME_WIDTH)
 }
 
-/// Parse exactly the names `segment_filename` can render, with no aliases.
-pub fn parse_segment_filename(name: &str) -> Option<SegmentId> {
-    let digits = name.strip_prefix("seg_")?.strip_suffix(".ts")?;
-    let seq = digits.parse::<SegmentId>().ok()?;
-    (segment_filename(seq) == name).then_some(seq)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SegmentFacts {
+    pub boot_tag: String,
+    pub mono_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParsedSegment {
+    pub seq: SegmentId,
+    pub facts: Option<SegmentFacts>,
+}
+
+pub fn stamped_segment_filename(seq: SegmentId, facts: &SegmentFacts) -> String {
+    format!(
+        "{}_{}_{}.ts",
+        segment_stem(seq),
+        facts.boot_tag,
+        facts.mono_ms
+    )
+}
+
+/// Parse exactly the names this module can render, with no aliases.
+pub fn parse_segment_filename(name: &str) -> Option<ParsedSegment> {
+    let body = name.strip_prefix("seg_")?.strip_suffix(".ts")?;
+    let parts = body.split('_').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [seq_digits] => {
+            let seq = seq_digits.parse::<SegmentId>().ok()?;
+            (segment_filename(seq) == name).then_some(ParsedSegment { seq, facts: None })
+        }
+        [seq_digits, boot_tag, mono_digits] => {
+            let seq = seq_digits.parse::<SegmentId>().ok()?;
+            if !valid_boot_tag(boot_tag) {
+                return None;
+            }
+            let mono_ms = mono_digits.parse::<u64>().ok()?;
+            let facts = SegmentFacts {
+                boot_tag: (*boot_tag).to_string(),
+                mono_ms,
+            };
+            (stamped_segment_filename(seq, &facts) == name).then_some(ParsedSegment {
+                seq,
+                facts: Some(facts),
+            })
+        }
+        _ => None,
+    }
+}
+
+pub fn boot_tag(boot_id: &str) -> Option<String> {
+    let stripped = boot_id.replace('-', "").to_ascii_lowercase();
+    let tag = stripped.get(..BOOT_TAG_LEN)?;
+    valid_boot_tag(tag).then(|| tag.to_string())
+}
+
+fn segment_stem(seq: SegmentId) -> String {
+    format!("seg_{seq:0width$}", width = SEGMENT_FILENAME_WIDTH)
+}
+
+fn valid_boot_tag(tag: &str) -> bool {
+    tag.len() == BOOT_TAG_LEN
+        && tag
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -244,14 +304,18 @@ impl RecorderEvent {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_segment_filename, segment_filename, RecorderEvent, RecorderPhase, RecorderState,
+        boot_tag, parse_segment_filename, segment_filename, stamped_segment_filename,
+        ParsedSegment, RecorderEvent, RecorderPhase, RecorderState, SegmentFacts,
     };
 
     #[test]
     fn segment_filename_round_trips_past_the_five_digit_boundary() {
         for seq in [0, 5, 99999, 100000, u32::MAX] {
             let name = segment_filename(seq);
-            assert_eq!(parse_segment_filename(&name), Some(seq));
+            assert_eq!(
+                parse_segment_filename(&name),
+                Some(ParsedSegment { seq, facts: None })
+            );
         }
 
         assert_eq!(segment_filename(0), "seg_00000.ts");
@@ -269,9 +333,71 @@ mod tests {
             "seg_abc.ts",
             "seg_00005.mp4",
             "seg_4294967296.ts",
+            "seg_00005_abc123abc123.ts",
+            "seg_00005_abc123abc123_.ts",
         ] {
             assert_eq!(parse_segment_filename(name), None, "{name}");
         }
+    }
+
+    #[test]
+    fn stamped_segment_filename_round_trips_past_the_five_digit_boundary() {
+        let facts = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            mono_ms: 987654321,
+        };
+
+        for seq in [0, 5, 99999, 100000, u32::MAX] {
+            let name = stamped_segment_filename(seq, &facts);
+            assert_eq!(
+                parse_segment_filename(&name),
+                Some(ParsedSegment {
+                    seq,
+                    facts: Some(facts.clone())
+                })
+            );
+        }
+
+        assert_eq!(
+            stamped_segment_filename(0, &facts),
+            "seg_00000_abc123def456_987654321.ts"
+        );
+        assert_eq!(
+            stamped_segment_filename(100000, &facts),
+            "seg_100000_abc123def456_987654321.ts"
+        );
+    }
+
+    #[test]
+    fn stamped_segment_filename_rejects_non_rendered_aliases() {
+        for name in [
+            "seg_999_abc123def456_7.ts",
+            "seg_000005_abc123def456_7.ts",
+            "seg_00005_ABC123DEF456_7.ts",
+            "seg_00005_abc123def45_7.ts",
+            "seg_00005_abc123def4567_7.ts",
+            "seg_00005_abc123def456_007.ts",
+            "seg_00005_abc123def456_+7.ts",
+            "seg_00005_abc123def456_7.mp4",
+            "seg_00005_abc123xyz456_7.ts",
+        ] {
+            assert_eq!(parse_segment_filename(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn boot_tag_uses_the_first_twelve_hex_chars_after_dash_stripping() {
+        assert_eq!(
+            boot_tag("3f1c0e7a-8f3b-4e15-b196-20e0416af749").as_deref(),
+            Some("3f1c0e7a8f3b")
+        );
+        assert_eq!(
+            boot_tag("ABCDEF12-3456-7890-abcd-ef1234567890").as_deref(),
+            Some("abcdef123456")
+        );
+        assert_eq!(boot_tag("unknown"), None);
+        assert_eq!(boot_tag("abc123"), None);
+        assert_eq!(boot_tag("abc123def45z"), None);
     }
 
     #[test]
