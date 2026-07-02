@@ -1,6 +1,7 @@
 import AVKit
 import OSLog
 import UIKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class ClipViewerViewController: UIViewController {
@@ -208,7 +209,7 @@ final class ClipViewerViewController: UIViewController {
         }
 
         let activityViewController = UIActivityViewController(
-            activityItems: [artifact.url],
+            activityItems: [ClipShareItemSource(url: artifact.url)],
             applicationActivities: nil
         )
         activityViewController.popoverPresentationController?.sourceItem = sender
@@ -528,5 +529,39 @@ final class ClipViewerViewController: UIViewController {
                 "failed"
             }
         }
+    }
+}
+
+/// Wraps a clip's file URL for the share sheet so the movie UTType is declared
+/// explicitly rather than inferred from the `.mp4` extension alone. Intentionally
+/// omits `activityViewControllerLinkMetadata`: the sheet keeps its auto-generated
+/// QuickLook preview header (no `LPLinkMetadata`).
+@MainActor
+final class ClipShareItemSource: NSObject, UIActivityItemSource {
+    private let url: URL
+    private let typeIdentifier: String
+
+    init(url: URL) {
+        self.url = url
+        self.typeIdentifier = UTType(filenameExtension: url.pathExtension)?.identifier
+            ?? UTType.mpeg4Movie.identifier
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        url
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?
+    ) -> Any? {
+        url
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?
+    ) -> String {
+        typeIdentifier
     }
 }

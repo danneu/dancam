@@ -434,7 +434,9 @@ the cached MP4 -- still stands.)
 ## Out of scope (deferred)
 
 - `UIActivityItemSource` with explicit type / `LPLinkMetadata` -- only if device
-  verification demands it (recovery escalation above).
+  verification demands it (recovery escalation above). Update: the explicit-type
+  half was adopted proactively as hardening in a follow-up (see ADR 15 "Corrected
+  mechanism"); `LPLinkMetadata` remains out of scope.
 - Share from the clip list (pull-then-share for uncached clips) -- later deepening pass.
 - Date-stamped export names arrive automatically when swoop `moss` sets trustworthy
   `startMs` (no code change here; `clipExportFilename` already branches on it).

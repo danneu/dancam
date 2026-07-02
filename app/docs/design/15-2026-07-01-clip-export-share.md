@@ -35,9 +35,12 @@ evidence of the failure.
 `HealthViewController.swift#exportLogs`. Because the classic file path has no
 `suggestedName` hook, materialize a friendly-named copy of the cache MP4 (an APFS
 copy-on-write clone via `FileManager.copyItem`, instant and with an independent inode) at
-`tmp/clip-share/<UUID>/<friendlyName>.mp4` and share that. The `.mp4` extension gives the
-system the `public.movie`-conforming UTType, so Save Video, AirDrop, and Save to Files are
-all offered without a `UIActivityItemSource`. Clean the per-share subdirectory up in
+`tmp/clip-share/<UUID>/<friendlyName>.mp4` and share that. Wrap that file URL in a minimal
+`UIActivityItemSource` (`ClipShareItemSource`) that declares the movie UTType explicitly via
+`dataTypeIdentifierForActivityType` -- belt-and-suspenders over the system inferring the type
+from the `.mp4` extension alone -- so Save Video, AirDrop, and Save to Files are all offered.
+It intentionally omits `activityViewControllerLinkMetadata` (no `LPLinkMetadata`), so the sheet
+retains its auto-generated QuickLook preview header. Clean the per-share subdirectory up in
 `completionWithItemsHandler`, with a `tearDown()` sweep as a safety net for the
 killed-app / missed-handler case. If the clone fails, fall back to sharing the real cache
 URL (ugly name) when it still exists, else return nil so the caller self-heals via a

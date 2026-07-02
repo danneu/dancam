@@ -267,4 +267,4 @@ record honest without rewriting what `af5d612` actually shipped.
 
 ## Commit progress
 - [x] 1. docs(app): correct the benign clip-share log-line claim
-- [ ] 2. refactor(app): declare clip-share movie UTType via UIActivityItemSource
+- [x] 2. refactor(app): declare clip-share movie UTType via UIActivityItemSource
