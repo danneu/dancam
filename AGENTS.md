@@ -55,7 +55,7 @@ workstation.
   is required for current iOS toolchains and the simulator).
 - **Raspberry Pi:** flash the microSD from the laptop with Raspberry Pi Imager 2.0.10+
   (headless OS-customization sets Wi-Fi/SSH/hostname for first-boot without a monitor,
-  then iterate over SSH); see [`README.md`](README.md) for the full runbook.
+  then iterate over SSH); see [`raspi/README.md`](raspi/README.md) for the full runbook.
 
 ## Repository layout
 
@@ -153,11 +153,14 @@ files under each side's `docs/design/` directory. This is the project's ADR
   `just --list` to discover tasks, and prefer those tasks over spelling out raw
   `cargo`/Xcode/etc. commands unless you are deliberately testing the lower-level
   command.
-- **Raspberry Pi setup runbook:** [`README.md`](README.md) is the reproducible
-  fresh-Pi setup guide. Any change that affects real Pi provisioning or onboard
-  state -- packages, `/boot/firmware/config.txt`, Avahi, NetworkManager profiles,
-  systemd units, deploy paths, AP/mDNS behavior, or other config files -- must
-  update the README in the same change with exact commands and verification steps.
+- **Raspberry Pi setup runbook:** [`raspi/README.md`](raspi/README.md) is the
+  reproducible fresh-Pi bootstrap, verification, and operations guide. Changes to
+  human-facing setup/verify/ops steps must update it in the same change. Changes to
+  onboard system state -- packages, `/boot/firmware/config.txt`, Avahi,
+  NetworkManager profiles, systemd units, deploy paths, AP/mDNS behavior, or other
+  config files -- belong in the owning playbook/unit/deploy artifact and its comments;
+  see [`raspi/AGENTS.md`](raspi/AGENTS.md) and
+  [`raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`](raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md).
 - **Commits:** small and logical; one coherent change per commit. Follow
   [Conventional Commits](https://www.conventionalcommits.org/) -- a `type(scope):
   summary` subject (types: `feat`, `fix`, `docs`, `refactor`, `chore`; scope optional,

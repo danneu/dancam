@@ -121,10 +121,10 @@ state** -- apt packages, `/boot/firmware/config.txt`, NetworkManager profiles, A
 scoping, locale, and group membership. When a raspi change touches any of that, update
 `site.yml` and its task comment in the same change (the comment is the single home of
 the *why*); see `docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`. The
-systemd unit and deploy paths stay `deploy.sh`'s. The root [`README.md`](../README.md)
-is the bootstrap/verify/ops runbook -- flash, SSH, smoke-tests, the one-time manual AP
-PSK, the AP safe-flip procedure -- and is kept in sync in the same change whenever the
-human-facing steps move.
+systemd unit and deploy paths stay `deploy.sh`'s. This directory's
+[`README.md`](README.md) is the bootstrap/verify/ops runbook -- flash, SSH,
+smoke-tests, the one-time manual AP PSK, the AP safe-flip procedure -- and is kept in
+sync in the same change whenever the human-facing steps move.
 
 ### Local Mac service loop
 

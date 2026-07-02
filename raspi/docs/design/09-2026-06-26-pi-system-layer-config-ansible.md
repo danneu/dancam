@@ -14,15 +14,17 @@
   the `dancam` user), the unit owns how the service runs (fixed user + state dir),
   and `deploy.sh` ships the binary + unit and its de-personalized connection
   defaults.
+- **Amended:** 2026-07-02 -- runbook relocated to `raspi/README.md` (docs-only; the
+  three-way ownership split is unchanged).
 - **Date:** 2026-06-26
 - **Owner:** raspi
-- **Related:** root `AGENTS.md` (the README-is-the-runbook convention this revises);
+- **Related:** root `AGENTS.md` (the runbook convention this revises);
   `06-2026-06-25-ap-networking-bring-up.md` (the AP profile this task automates, **as
   amended 2026-06-25 for the WPA2-AES cipher pin**); `07-2026-06-25-picamera2-camera-owner.md`
   (the camera owner whose apt deps task 3 installs and whose `video` group task 9
   guarantees); `05-2026-06-23-service-language-rust.md` and
   `01-2026-06-22-crash-safe-recording.md` (the read-only-root deploy model this layer
-  must respect); `README.md` (the bootstrap/verify/ops runbook)
+  must respect); `raspi/README.md` (the bootstrap/verify/ops runbook)
 
 ## Context
 
@@ -70,7 +72,7 @@ Ownership splits three ways with no overlap:
   (deploy.sh-owned) concern; Ansible deliberately does not manage them. No
   `StateDirectory`/mkdir task owns the rec dir either -- `camera.py` self-creates it
   at startup.
-- **The README becomes a thin bootstrap/verify/ops runbook.** It owns what Ansible
+- **`raspi/README.md` is a thin bootstrap/verify/ops runbook.** It owns what Ansible
   structurally cannot: GUI flash + Imager version traps, first boot, SSH bootstrap,
   the camera smoke-test, the `from picamera2` import-verify (a runtime check under
   `User=<login user>`, which Ansible cannot make), the AP safe-flip timer procedure, the AP
