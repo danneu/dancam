@@ -34,6 +34,7 @@ mod jpeg;
 pub mod preview;
 pub mod recorder;
 mod recording;
+pub mod storage;
 mod sysfacts;
 pub mod time_sync;
 mod ts_duration;
