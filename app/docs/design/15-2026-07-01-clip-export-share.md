@@ -18,14 +18,16 @@ swallowed interaction, so the app looked unresponsive.
 
 **Load-bearing root cause.** The shipped path built the sheet via
 `UIActivityViewController(activityItemsConfiguration:)` over a lazy
-`NSItemProvider(contentsOf:)`. On device that combination fails to vend the local cache
-file to the sheet -- the signal is `error fetching item for URL:...clip-....mp4 : (null)`
-in the device log -- so the sheet never finishes preparing. The run loop stayed alive
-throughout (`event.heartbeat` / `event.tempChanged` reducer log lines kept flowing after
-the share errors), so this was a stalled modal share UI, not a frozen main thread. The
-`Only support loading options for CKShare and SWY types.` and
-`error fetching file provider domain for URL:... : (null)` log lines are benign -- they
-print for ordinary local file/text shares that work, and are not evidence of the failure.
+`NSItemProvider(contentsOf:)`. On device that combination produces a sheet that never
+finishes preparing -- it hangs on "Preparing" and swallows interaction. There is no clean
+distinguishing log signal for the failure. The run loop stayed alive throughout
+(`event.heartbeat` / `event.tempChanged` reducer log lines kept flowing after the share
+errors), so this was a stalled modal share UI, not a frozen main thread. The
+`error fetching item for URL:...clip-....mp4 : (null)`,
+`Only support loading options for CKShare and SWY types.`, and
+`error fetching file provider domain for URL:... : (null)` log lines are all benign -- they
+print for ordinary local file/text shares that work, including the fixed build, and are not
+evidence of the failure.
 
 **Corrected mechanism.** Share the cached MP4 through the classic
 `UIActivityViewController(activityItems:applicationActivities:)` initializer over a real

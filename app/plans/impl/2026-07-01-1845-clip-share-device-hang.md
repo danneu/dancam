@@ -27,16 +27,20 @@ unresponsive (the share sheet comes up but never becomes usable). Device log exc
 classified:
 
 - **Load-bearing (the actual failure):**
-  - `error fetching item for URL:file:///.../Library/Caches/clips/clip-26-....mp4 : (null)`
-    -- appears twice. This is the sharing framework asking the item provider to produce
-    its file representation and getting nil back.
-  - The share sheet is presented but stuck on "Preparing" and swallows interaction.
+  - The share sheet is presented but stuck on "Preparing" and swallows interaction. This
+    behavior is the only reliable signal -- there is no distinguishing log line (see the
+    benign-noise bucket below).
 - **Evidence it is a stuck sheet, not a hard deadlock:** `action=event.heartbeat` /
   `action=event.tempChanged` reducer log lines keep appearing *after* the share errors.
   Those are main-actor-dispatched SSE events; their continued flow proves the main
-  thread is alive. So "unresponsive" == a modally presented share UI stalled on an
-  unfulfilled item load, not a frozen run loop.
+  thread is alive. So "unresponsive" == a modally presented share UI that never finished
+  preparing, not a frozen run loop.
 - **Benign noise (do NOT cite as evidence -- these print for working local shares too):**
+  - `error fetching item for URL:...clip-....mp4 : (null)` -- appears twice per share.
+    Despite the wording, this is benign: the *fixed* build (which shares end to end --
+    friendly name, thumbnail, real AirDrop / Files / Photos transfers) prints the same
+    line on device. So it does not distinguish the failure. (An earlier read of this bug
+    treated it as the load-bearing signal; device verification of the fix disproved that.)
   - `Only support loading options for CKShare and SWY types.` -- the sheet's
     collaboration / "Shared With You" type probe; emitted for ordinary file/text shares
     that work. (An earlier read of this bug leaned on this line via an Apple forum
@@ -63,9 +67,11 @@ where `provider` comes from `ClipViewerViewController.swift#makeShareItemProvide
 `NSItemProvider(contentsOf: url)` with `suggestedName` set. `NSItemProvider(contentsOf:)`
 registers a *lazy* file representation (the bytes are vended on demand via
 `loadFileRepresentation` / file coordination). On device, the
-`UIActivityViewController(activityItemsConfiguration:)` + lazy-provider path fails to
-vend the local file to the sheet -- that is exactly the `error fetching item for URL ...
-(null)` signal -- so the sheet never finishes preparing.
+`UIActivityViewController(activityItemsConfiguration:)` + lazy-provider path produces a
+sheet that never finishes preparing. The failure has no clean distinguishing log line
+(the `error fetching item for URL ... (null)` line prints on the working build too, so it
+is benign); the diagnosis rests on the differential control below plus device behavior,
+which the acceptance gate confirms.
 
 Differential control in this repo: `HealthViewController.swift#exportLogs` shares via
 the classic `UIActivityViewController(activityItems:applicationActivities:)` initializer
@@ -332,9 +338,10 @@ existing body -- add a prominent correction and re-point the Status line.
   metadata block and before `## Context`, recording: the symptom (share tap hangs the
   sheet on device); the load-bearing root cause (the
   `UIActivityViewController(activityItemsConfiguration:)` + lazy `NSItemProvider(contentsOf:)`
-  path fails to vend the local file -- `error fetching item for URL ... (null)` -- while
-  the app run loop stays alive, and the `CKShare/SWY` and file-provider-domain log lines
-  are benign for local shares); the corrected mechanism (classic
+  path produces a sheet that never finishes preparing, while the app run loop stays alive,
+  and the `error fetching item ... (null)`, `CKShare/SWY`, and file-provider-domain log
+  lines are all benign for local shares -- they print on the fixed build too); the
+  corrected mechanism (classic
   `UIActivityViewController(activityItems:)` over a friendly-named APFS-clone of the cache
   MP4 in `tmp/clip-share/<UUID>/`, cleaned up in `completionWithItemsHandler` plus a
   `tearDown` safety net); and an explicit note that this promotes the "friendly-named
@@ -416,10 +423,11 @@ the cached MP4 -- still stands.)
   confounded (the fix's file-URL path is the acceptance-gated part).
 - Confirm no unit test reaches `present` (the documented test invariant), so `just
   app-test` could not have caught this -- only device step 4 could.
-- Confirm the log classification above: `error fetching item ... (null)` is the real
-  signal; `Only support loading options for CKShare and SWY types`,
-  `error fetching file provider domain ... (null)`, and the LaunchServices `-10814` /
-  `canmaplsdatabase` `-54` lines are benign for local shares.
+- Confirm the log classification above: there is no clean distinguishing log signal for
+  the failure -- `error fetching item ... (null)`, `Only support loading options for
+  CKShare and SWY types`, `error fetching file provider domain ... (null)`, and the
+  LaunchServices `-10814` / `canmaplsdatabase` `-54` lines are all benign for local shares
+  (they print on the fixed build too); the stuck-sheet behavior is the signal.
 - Confirm the app was not hard-deadlocked: `action=event.heartbeat` lines continue after
   the share errors in the provided log.
 
