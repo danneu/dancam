@@ -20,6 +20,7 @@ enum AppFeature {
         case clips(ClipsFeature.Action)
         case recordTapped
         case manualRefresh
+        case reconnectStreamIfOffline
         case timeSyncResponded(success: Bool)
         case timeSyncRetry
     }
@@ -177,12 +178,25 @@ enum AppFeature {
             }
 
         case .manualRefresh:
-            return ClipsFeature.reduce(
-                state: &state.clips,
-                action: .refresh,
-                dependencies: dependencies
-            )
-            .map(Action.clips)
+            return .merge([
+                ClipsFeature.reduce(
+                    state: &state.clips,
+                    action: .refresh,
+                    dependencies: dependencies
+                )
+                .map(Action.clips),
+                reduce(
+                    state: &state,
+                    action: .reconnectStreamIfOffline,
+                    dependencies: dependencies
+                ),
+            ])
+
+        case .reconnectStreamIfOffline:
+            if case .offline = state.link {
+                return reduce(state: &state, action: .streamStarted, dependencies: dependencies)
+            }
+            return .none
 
         case .timeSyncResponded(success: true):
             return .none
@@ -331,6 +345,8 @@ extension AppFeature.Action {
             "recordTapped"
         case .manualRefresh:
             "manualRefresh"
+        case .reconnectStreamIfOffline:
+            "reconnectStreamIfOffline"
         case .timeSyncResponded(true):
             "timeSyncResponded.success"
         case .timeSyncResponded(false):

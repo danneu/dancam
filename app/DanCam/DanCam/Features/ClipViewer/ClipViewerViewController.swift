@@ -74,6 +74,11 @@ final class ClipViewerViewController: UIViewController {
         hasCompletedFirstLayout = true
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setToolbarHidden(true, animated: animated)
+    }
+
     override func didMove(toParent parent: UIViewController?) {
         super.didMove(toParent: parent)
         if parent == nil {

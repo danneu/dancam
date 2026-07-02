@@ -21,6 +21,7 @@ enum PreviewFeature {
         case onDisappear
         case stopTapped
         case reconnectNow
+        case reconnectIfNeeded
         case reconnect
         case frameReceived(PreviewFrame)
         case streamFinished
@@ -40,6 +41,17 @@ enum PreviewFeature {
             state.reconnectAttempt = 0
             state.streamGeneration += 1
             return connectEffect(dependencies: dependencies)
+
+        case .reconnectIfNeeded:
+            switch state.phase {
+            case .streaming, .connecting:
+                return .none
+            case .idle, .stopped, .failed:
+                state.phase = .connecting
+                state.reconnectAttempt = 0
+                state.streamGeneration += 1
+                return connectEffect(dependencies: dependencies)
+            }
 
         case .reconnect:
             state.phase = .connecting

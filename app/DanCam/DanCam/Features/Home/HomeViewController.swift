@@ -95,7 +95,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var statusPillsObservation: StoreObservation?
     private var recorderObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
+    private var clipsStatusObservation: StoreObservation?
 
+    private let headerContainer = UIView()
+    private let headerStack = UIStackView()
     private let statusPillsStack = UIStackView()
     private let tempWarningPill = StatusPillView()
     private let errorPill = StatusPillView()
@@ -105,6 +108,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let clipsHeaderLabel = UILabel()
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
     private let refreshControl = UIRefreshControl()
+    private let clipsFailureBanner = StatusPillView()
     private let emptyClipsBackgroundView = UIView()
     private let emptyClipsView = UIStackView()
     private let emptyClipsImageView = UIImageView(image: UIImage(systemName: "film"))
@@ -116,10 +120,14 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var recordingState: RecordingFeature.State = .unknown
     private var recorder: RecorderSnapshot?
     private var finishedClips: [Clip] = []
+    private var clipsStatus: ClipsFeature.State.Status = .idle
     private var rows: [HomeRow] = []
     private var rowsByID: [HomeRowID: HomeRow] = [:]
     private var liveTickTimer: Timer?
     private var isVisible = false
+    private var isManualRefreshing = false
+    private var lastFittedHeaderWidth: CGFloat?
+    private var needsHeaderRefit = true
     private var prefetchHandles: [ClipThumbnailIdentity: ThumbnailLoader.PrefetchHandle] = [:]
 
     init(
@@ -155,6 +163,11 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         configureViews()
         previewViewController.didMove(toParent: self)
 
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (viewController: HomeViewController, _) in
+            viewController.needsHeaderRefit = true
+            viewController.view.setNeedsLayout()
+        }
+
         recordingObservation = store.observe(\.recording) { [weak self] state in
             self?.recordingState = state
             self?.renderRecording(state)
@@ -169,10 +182,14 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         clipsObservation = store.observe(\.clips.clips) { [weak self] clips in
             self?.renderClips(clips)
         }
+        clipsStatusObservation = store.observe(\.clips.status) { [weak self] status in
+            self?.handleClipsStatus(status)
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        navigationController?.setToolbarHidden(false, animated: animated)
         isVisible = true
         updateLiveTickTimer()
         reconfigureVisibleThumbnails()
@@ -182,9 +199,17 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         super.viewWillDisappear(animated)
         isVisible = false
         store.send(.clips(.onDisappear))
+        refreshControl.endRefreshing()
+        isManualRefreshing = false
         stopLiveTickTimer()
         cancelAllPrefetches()
         quietVisibleThumbnailLoads()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        sizeHeaderToFit()
+        updateClipsBottomInset()
     }
 
     isolated deinit {
@@ -200,47 +225,116 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         configurePreview()
         configureStatusPills()
         configureClipsTable()
+        configureFailureBanner()
 
         recordButton.addTarget(self, action: #selector(recordTapped), for: .touchUpInside)
         recordButton.apply(.unknown)
         recordButton.translatesAutoresizingMaskIntoConstraints = false
+        recordButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
 
-        let recordButtonRow = UIView()
-        recordButtonRow.translatesAutoresizingMaskIntoConstraints = false
-        recordButtonRow.addSubview(recordButton)
+        toolbarItems = [
+            UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
+            UIBarButtonItem(customView: recordButton),
+            UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
+        ]
 
-        let stack = UIStackView(arrangedSubviews: [
-            previewViewController.view,
-            statusPillsStack,
-            recordButtonRow,
-            clipsHeaderLabel,
-            clipsTableView,
-        ])
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        headerContainer.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: 12,
+            leading: 16,
+            bottom: 0,
+            trailing: 16
+        )
+        headerStack.axis = .vertical
+        headerStack.spacing = 12
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        headerStack.addArrangedSubview(previewViewController.view)
+        headerStack.addArrangedSubview(statusPillsStack)
+        headerStack.addArrangedSubview(clipsHeaderLabel)
 
-        view.addSubview(stack)
+        headerContainer.addSubview(headerStack)
+        clipsTableView.tableHeaderView = headerContainer
+
+        view.addSubview(clipsTableView)
+        view.addSubview(clipsFailureBanner)
 
         NSLayoutConstraint.activate([
             recPill.topAnchor.constraint(equalTo: previewViewController.view.topAnchor, constant: 10),
             recPill.trailingAnchor.constraint(equalTo: previewViewController.view.trailingAnchor, constant: -10),
 
-            recordButton.topAnchor.constraint(equalTo: recordButtonRow.topAnchor),
-            recordButton.bottomAnchor.constraint(equalTo: recordButtonRow.bottomAnchor),
-            recordButton.centerXAnchor.constraint(equalTo: recordButtonRow.centerXAnchor),
+            headerStack.leadingAnchor.constraint(equalTo: headerContainer.layoutMarginsGuide.leadingAnchor),
+            headerStack.trailingAnchor.constraint(equalTo: headerContainer.layoutMarginsGuide.trailingAnchor),
+            headerStack.topAnchor.constraint(equalTo: headerContainer.layoutMarginsGuide.topAnchor),
+            headerStack.bottomAnchor.constraint(equalTo: headerContainer.layoutMarginsGuide.bottomAnchor),
 
-            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            clipsTableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            clipsTableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            clipsTableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            clipsTableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            clipsFailureBanner.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            clipsFailureBanner.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            clipsFailureBanner.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
 
             previewViewController.view.heightAnchor.constraint(
                 equalTo: previewViewController.view.widthAnchor,
                 multiplier: 0.75
             ),
-            clipsTableView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160),
         ])
+    }
+
+    private func configureFailureBanner() {
+        clipsFailureBanner.configure(
+            caption: "",
+            dotColor: .systemRed,
+            backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
+        )
+        clipsFailureBanner.isHidden = true
+        clipsFailureBanner.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    private func sizeHeaderToFit() {
+        guard let header = clipsTableView.tableHeaderView else { return }
+
+        let fittingWidth = clipsTableView.bounds.width
+        guard fittingWidth > 0 else { return }
+
+        if let lastFittedHeaderWidth,
+           abs(lastFittedHeaderWidth - fittingWidth) <= 0.5,
+           needsHeaderRefit == false {
+            return
+        }
+
+        header.frame.size.width = fittingWidth
+        let fittingSize = header.systemLayoutSizeFitting(
+            CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        lastFittedHeaderWidth = fittingWidth
+        needsHeaderRefit = false
+
+        guard abs(header.frame.height - fittingSize.height) > 0.5 else { return }
+
+        var frame = header.frame
+        frame.size.height = fittingSize.height
+        header.frame = frame
+        clipsTableView.tableHeaderView = header
+    }
+
+    private func updateClipsBottomInset() {
+        let bottomInset = clipsFailureBanner.isHidden ? 0 : clipsFailureBanner.bounds.height
+
+        if abs(clipsTableView.contentInset.bottom - bottomInset) > 0.5 {
+            var contentInset = clipsTableView.contentInset
+            contentInset.bottom = bottomInset
+            clipsTableView.contentInset = contentInset
+        }
+
+        if abs(clipsTableView.verticalScrollIndicatorInsets.bottom - bottomInset) > 0.5 {
+            var indicatorInsets = clipsTableView.verticalScrollIndicatorInsets
+            indicatorInsets.bottom = bottomInset
+            clipsTableView.verticalScrollIndicatorInsets = indicatorInsets
+        }
     }
 
     private func configurePreview() {
@@ -331,6 +425,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         clipsTableView.rowHeight = UITableView.automaticDimension
         clipsTableView.estimatedRowHeight = 72
         clipsTableView.tableFooterView = UIView()
+        clipsTableView.alwaysBounceVertical = true
         refreshControl.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
         clipsTableView.refreshControl = refreshControl
         clipsTableView.translatesAutoresizingMaskIntoConstraints = false
@@ -379,6 +474,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         statusPillsStack.isHidden = tempWarningPill.isHidden
             && errorPill.isHidden
             && timeUnverifiedPill.isHidden
+        needsHeaderRefit = true
+        view.setNeedsLayout()
     }
 
     private func renderRecording(_ state: RecordingFeature.State) {
@@ -418,8 +515,41 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         snapshot.reconfigureItems(reconfigure)
         dataSource.apply(snapshot, animatingDifferences: true)
 
-        clipsTableView.backgroundView = newRows.isEmpty ? emptyClipsBackgroundView : nil
+        updateClipsPresentation()
         updateLiveTickTimer()
+    }
+
+    private func handleClipsStatus(_ status: ClipsFeature.State.Status) {
+        switch status {
+        case .loading:
+            break
+        case .idle, .failed:
+            if isManualRefreshing {
+                refreshControl.endRefreshing()
+                isManualRefreshing = false
+            }
+        }
+
+        clipsStatus = status
+        updateClipsPresentation()
+    }
+
+    private func updateClipsPresentation() {
+        switch clipsStatus {
+        case .failed(let message):
+            clipsFailureBanner.configure(
+                caption: message,
+                dotColor: .systemRed,
+                backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
+            )
+            clipsFailureBanner.isHidden = false
+            clipsTableView.backgroundView = nil
+        case .idle, .loading:
+            clipsFailureBanner.isHidden = true
+            clipsTableView.backgroundView = rows.isEmpty ? emptyClipsBackgroundView : nil
+        }
+
+        view.setNeedsLayout()
     }
 
     private func updateLiveTickTimer() {
@@ -464,9 +594,9 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     @objc private func refreshPulled() {
+        isManualRefreshing = true
         store.send(.manualRefresh)
-        previewViewController.reconnect()
-        refreshControl.endRefreshing()
+        previewViewController.reconnectIfNeeded()
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -581,6 +711,27 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     var isTimeUnverifiedPillVisibleForTesting: Bool {
         timeUnverifiedPill.isHidden == false
+    }
+
+    var isRefreshingForTesting: Bool {
+        refreshControl.isRefreshing
+    }
+
+    var isManualRefreshingForTesting: Bool {
+        isManualRefreshing
+    }
+
+    var clipsFailureMessageForTesting: String? {
+        clipsFailureBanner.isHidden ? nil : clipsFailureBanner.accessibilityLabel
+    }
+
+    var isShowingEmptyStateForTesting: Bool {
+        clipsTableView.backgroundView != nil
+    }
+
+    func pullToRefreshForTesting() {
+        refreshControl.beginRefreshing()
+        refreshPulled()
     }
 }
 

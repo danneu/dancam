@@ -53,6 +53,10 @@ final class PreviewViewController: UIViewController {
         store.send(.reconnectNow)
     }
 
+    func reconnectIfNeeded() {
+        store.send(.reconnectIfNeeded)
+    }
+
     private func configureViews() {
         imageView.backgroundColor = .black
         imageView.contentMode = .scaleAspectFit

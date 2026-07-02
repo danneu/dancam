@@ -389,6 +389,164 @@ struct AppFeatureTests {
         #expect(cursors == [Optional("42")])
     }
 
+    @Test func manualRefreshWhileOnlineReloadsClipsWithoutRestartingStream() async {
+        let world = CameraSamples.world()
+        let response = CameraSamples.clipsResponse(ids: [42])
+        let queue = ClipsFetchQueue([.success(response)])
+        let store = TestStore(
+            initialState: state(link: .online(world)),
+            dependencies: dependencies(
+                events: EventsClient {
+                    fatalError("Online manual refresh should not restart the event stream.")
+                },
+                clips: ClipsClient(fetch: { cursor in
+                    try await queue.fetch(cursor: cursor)
+                })
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.manualRefresh) {
+            $0.clips.status = .loading
+        }
+        await store.receive(.clips(.clipsResponse(.success(response)))) {
+            $0.clips.clips = response.clips
+            $0.clips.status = .idle
+            $0.clips.loadEpoch = 1
+        }
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+
+        #expect(await queue.requestedCursors() == [nil])
+    }
+
+    @Test func manualRefreshWhileOfflineReloadsClipsAndReconnectsStream() async {
+        let world = CameraSamples.world()
+        let allowSnapshot = AsyncSignal()
+        let response = CameraSamples.clipsResponse(ids: [42])
+        let clips = ClipsFetchScript([.success(response), .cancelled])
+        let store = TestStore(
+            initialState: state(link: .offline(last: nil)),
+            dependencies: dependencies(
+                events: EventsClient {
+                    AsyncThrowingStream { continuation in
+                        Task {
+                            await allowSnapshot.wait()
+                            continuation.yield(.snapshot(world))
+                        }
+                    }
+                },
+                clips: clips.client()
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.manualRefresh) {
+            $0.clips.status = .loading
+        }
+        await store.receive(.clips(.clipsResponse(.success(response)))) {
+            $0.clips.clips = response.clips
+            $0.clips.status = .idle
+            $0.clips.loadEpoch = 1
+        }
+
+        await allowSnapshot.signal()
+        await store.receive(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.streamReconnectAttempt = 0
+            $0.clips.status = .loading
+        }
+        await store.send(.streamStopped)
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+
+        #expect(await clips.callCount() == 2)
+    }
+
+    @Test func reconnectStreamIfOfflineIsNoopUnlessOffline() async {
+        let world = CameraSamples.world()
+        let onlineStore = TestStore(
+            initialState: state(link: .online(world)),
+            dependencies: dependencies(
+                events: EventsClient {
+                    fatalError("Online reconnectStreamIfOffline should not open events.")
+                }
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await onlineStore.send(.reconnectStreamIfOffline)
+        await onlineStore.finishEffects()
+        onlineStore.expectNoReceivedActions()
+
+        let connectingStore = TestStore(
+            initialState: state(link: .connecting),
+            dependencies: dependencies(
+                events: EventsClient {
+                    fatalError("Connecting reconnectStreamIfOffline should not open events.")
+                }
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await connectingStore.send(.reconnectStreamIfOffline)
+        await connectingStore.finishEffects()
+        connectingStore.expectNoReceivedActions()
+
+        let offlineStore = TestStore(
+            initialState: state(link: .offline(last: nil)),
+            dependencies: dependencies(
+                events: EventsClient {
+                    AsyncThrowingStream { continuation in
+                        continuation.yield(.snapshot(world))
+                    }
+                },
+                clips: cancellingClipsClient()
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await offlineStore.send(.reconnectStreamIfOffline)
+        await offlineStore.receive(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+        }
+        await offlineStore.send(.streamStopped)
+        await offlineStore.finishEffects()
+        offlineStore.expectNoReceivedActions()
+    }
+
+    @Test func reconnectStreamIfOfflineCancelsPendingBackoff() async {
+        let world = CameraSamples.world(phase: .recording)
+        let sleepGate = SleepGate()
+        let store = TestStore(
+            initialState: state(link: .online(world)),
+            dependencies: dependencies(
+                events: EventsClient {
+                    AsyncThrowingStream { _ in }
+                },
+                sleep: { duration in await sleepGate.sleep(duration) }
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.streamFailed) {
+            $0.link = .offline(last: world)
+            $0.streamReconnectAttempt = 1
+        }
+        await sleepGate.waitForSleep(.seconds(1))
+
+        await store.send(.reconnectStreamIfOffline)
+        await sleepGate.release(.seconds(1))
+        await store.send(.streamStopped) {
+            $0.streamReconnectAttempt = 0
+        }
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+    }
+
     @Test func telemetryEventsFoldWorldSlices() async throws {
         let world = CameraSamples.world(storage: nil, tempC: TempC(soc: nil, sensor: nil), mem: nil)
         let store = TestStore(

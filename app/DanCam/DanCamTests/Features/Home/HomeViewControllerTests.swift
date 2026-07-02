@@ -259,6 +259,71 @@ struct HomeViewControllerTests {
         #expect(synced.isTimeUnverifiedPillVisibleForTesting == false)
     }
 
+    @Test func manualRefreshSpinnerStaysUntilClipsReachTerminalStatus() throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            clipsClient: parkedClipsClient()
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        controller.pullToRefreshForTesting()
+
+        #expect(controller.isRefreshingForTesting)
+        #expect(controller.isManualRefreshingForTesting)
+
+        store.send(.clips(.clipsResponse(.failure(.transport("No route")))))
+
+        #expect(controller.isRefreshingForTesting == false)
+        #expect(controller.isManualRefreshingForTesting == false)
+
+        controller.viewWillDisappear(false)
+    }
+
+    @Test func manualRefreshSpinnerEndsWhenHomeDisappears() throws {
+        let controller = makeController(
+            clips: [],
+            loader: .noop,
+            clipsClient: parkedClipsClient()
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        controller.pullToRefreshForTesting()
+        controller.viewWillDisappear(false)
+
+        #expect(controller.isRefreshingForTesting == false)
+        #expect(controller.isManualRefreshingForTesting == false)
+    }
+
+    @Test func clipsFailurePresentationIsVisibleAndSuppressesEmptyState() {
+        let (staleController, staleStore) = makeControllerAndStore(clips: [clipA], loader: .noop)
+        staleController.loadViewIfNeeded()
+
+        staleStore.send(.clips(.clipsResponse(.failure(.transport("No route")))))
+
+        #expect(staleController.clipsFailureMessageForTesting == "Transport error: No route")
+        #expect(staleController.isShowingEmptyStateForTesting == false)
+
+        staleStore.send(.clips(.clipsResponse(.success(ClipsResponse(
+            clips: [],
+            serverTimeMs: 0,
+            nextCursor: nil
+        )))))
+
+        #expect(staleController.clipsFailureMessageForTesting == nil)
+
+        let (emptyController, emptyStore) = makeControllerAndStore(clips: [], loader: .noop)
+        emptyController.loadViewIfNeeded()
+        #expect(emptyController.isShowingEmptyStateForTesting)
+
+        emptyStore.send(.clips(.clipsResponse(.failure(.transport("No route")))))
+
+        #expect(emptyController.clipsFailureMessageForTesting == "Transport error: No route")
+        #expect(emptyController.isShowingEmptyStateForTesting == false)
+    }
+
     // MARK: - Helpers
 
     private let clipA = Clip(id: 1, startMs: nil, durMs: 30_000, bytes: 1, locked: false, etag: "1-1", timeApproximate: false)
@@ -268,15 +333,25 @@ struct HomeViewControllerTests {
     private func makeController(
         clips: [Clip],
         loader: ThumbnailLoader,
-        world: World? = nil
+        world: World? = nil,
+        clipsClient: ClipsClient = .noop,
+        preview: PreviewClient = .noop
     ) -> HomeViewController {
-        makeControllerAndStore(clips: clips, loader: loader, world: world).0
+        makeControllerAndStore(
+            clips: clips,
+            loader: loader,
+            world: world,
+            clipsClient: clipsClient,
+            preview: preview
+        ).0
     }
 
     private func makeControllerAndStore(
         clips: [Clip],
         loader: ThumbnailLoader,
-        world: World? = nil
+        world: World? = nil,
+        clipsClient: ClipsClient = .noop,
+        preview: PreviewClient = .noop
     ) -> (HomeViewController, AppStore) {
         var state = AppFeature.State()
         state.clips.clips = clips
@@ -285,11 +360,20 @@ struct HomeViewControllerTests {
         }
         let dependencies = AppDependencies(
             health: HealthClient(fetch: { fatalError("Health is not used by HomeViewControllerTests.") }),
+            clips: clipsClient,
             thumbnailLoader: loader,
+            preview: preview,
             heartbeatTimeout: { throw CancellationError() }
         )
         let store = AppStore(initialState: state, dependencies: dependencies, reduce: AppFeature.reduce)
         return (HomeViewController(dependencies: dependencies, store: store), store)
+    }
+
+    private func parkedClipsClient() -> ClipsClient {
+        ClipsClient { _ in
+            try await Task.sleep(for: .seconds(60))
+            throw CancellationError()
+        }
     }
 
     private func embed(_ controller: UIViewController) throws -> UIWindow {

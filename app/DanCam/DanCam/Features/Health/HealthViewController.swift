@@ -7,8 +7,10 @@ final class HealthViewController: UIViewController {
     private var observation: StoreObservation?
     private var connectionObservation: StoreObservation?
     private(set) var lastExportOutcome: Result<String, Error>?
+    private var isManualRefreshing = false
 
     private let scrollView = UIScrollView()
+    private let refreshControl = UIRefreshControl()
     private let statusLabel = UILabel()
     private let bootIdLabel = UILabel()
     private let uptimeLabel = UILabel()
@@ -17,7 +19,6 @@ final class HealthViewController: UIViewController {
     private let telemetryHeaderLabel = UILabel()
     private let telemetryStack = UIStackView()
     private let errorLabel = UILabel()
-    private let reloadButton = UIButton(type: .system)
     private let exportLogsButton = UIButton(type: .system)
 
     init(
@@ -55,6 +56,11 @@ final class HealthViewController: UIViewController {
         store.send(.onAppear)
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setToolbarHidden(true, animated: animated)
+    }
+
     private func configureViews() {
         statusLabel.font = .preferredFont(forTextStyle: .title2)
         statusLabel.adjustsFontForContentSizeCategory = true
@@ -76,21 +82,12 @@ final class HealthViewController: UIViewController {
 
         errorLabel.textColor = .systemRed
 
-        reloadButton.setTitle("Reload", for: .normal)
-        reloadButton.addTarget(self, action: #selector(reloadTapped), for: .touchUpInside)
-
         exportLogsButton.setTitle("Export logs", for: .normal)
         exportLogsButton.addTarget(self, action: #selector(exportLogsTapped), for: .touchUpInside)
 
-        let buttonStack = UIStackView(arrangedSubviews: [
-            reloadButton,
-            exportLogsButton,
-        ])
-        buttonStack.axis = .horizontal
-        buttonStack.spacing = 12
-        buttonStack.alignment = .fill
-        buttonStack.distribution = .fillEqually
-
+        refreshControl.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
+        scrollView.refreshControl = refreshControl
+        scrollView.alwaysBounceVertical = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = UIStackView(arrangedSubviews: [
@@ -102,7 +99,7 @@ final class HealthViewController: UIViewController {
             telemetryHeaderLabel,
             telemetryStack,
             errorLabel,
-            buttonStack,
+            exportLogsButton,
         ])
         stack.axis = .vertical
         stack.spacing = 12
@@ -127,7 +124,11 @@ final class HealthViewController: UIViewController {
     }
 
     private func render(_ state: HealthFeature.State) {
-        reloadButton.isEnabled = state != .loading
+        if isManualRefreshing, state != .loading {
+            refreshControl.endRefreshing()
+            isManualRefreshing = false
+        }
+
         errorLabel.isHidden = true
         errorLabel.text = nil
 
@@ -172,8 +173,10 @@ final class HealthViewController: UIViewController {
         }
     }
 
-    @objc private func reloadTapped() {
+    @objc private func refreshPulled() {
+        isManualRefreshing = true
         store.send(.reload)
+        appStore.send(.reconnectStreamIfOffline)
     }
 
     @objc private func exportLogsTapped() {
@@ -212,6 +215,23 @@ final class HealthViewController: UIViewController {
 
     var isErrorVisible: Bool {
         errorLabel.isHidden == false
+    }
+
+    var isRefreshingForTesting: Bool {
+        refreshControl.isRefreshing
+    }
+
+    var isManualRefreshingForTesting: Bool {
+        isManualRefreshing
+    }
+
+    var statusTextForTesting: String? {
+        statusLabel.text
+    }
+
+    func pullToRefreshForTesting() {
+        refreshControl.beginRefreshing()
+        refreshPulled()
     }
 
     private func exportLogs() async {
