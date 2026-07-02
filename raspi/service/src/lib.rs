@@ -16,6 +16,7 @@ use axum::{
     Router,
 };
 use socket2::{Domain, Protocol, Socket, Type};
+use tracing::Instrument;
 
 use crate::backend::Backend;
 
@@ -95,6 +96,7 @@ pub fn app(state: AppState) -> Router {
             host_allowlist,
         ))
         .layer(middleware::from_fn_with_state(state.clone(), proto_headers))
+        .layer(middleware::from_fn(request_trace))
         .with_state(state)
 }
 
@@ -158,6 +160,51 @@ async fn proto_headers(
     );
 
     response
+}
+
+async fn request_trace(request: Request<Body>, next: Next) -> Response {
+    let request_id =
+        inbound_request_id(&request).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let started = Instant::now();
+    let span = tracing::info_span!("request", %request_id, %method, %path);
+
+    let mut response = async move {
+        let response = next.run(request).await;
+        tracing::info!(
+            status = response.status().as_u16(),
+            latency_ms = started.elapsed().as_millis() as u64,
+            "response",
+        );
+        response
+    }
+    .instrument(span)
+    .await;
+
+    response.headers_mut().insert(
+        HeaderName::from_static("x-request-id"),
+        HeaderValue::from_str(&request_id).expect("request_id must be a valid header"),
+    );
+
+    response
+}
+
+fn inbound_request_id(request: &Request<Body>) -> Option<String> {
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())?;
+
+    is_safe_request_id(request_id).then(|| request_id.to_string())
+}
+
+fn is_safe_request_id(request_id: &str) -> bool {
+    !request_id.is_empty()
+        && request_id.len() <= 128
+        && request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 #[derive(Debug)]

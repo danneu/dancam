@@ -236,6 +236,10 @@ shell, not `rustup target add`.
   backend.
 - Logs: `journalctl -u dancam -f`. Under the read-only car image, point logs at
   `/data` or keep them in RAM -- root is not writable.
+- Request/response access logs include `x-request-id` for app/Pi correlation; grep
+  `journalctl -u dancam` for the response id. Raise runtime verbosity without a
+  rebuild with `RUST_LOG=dancam=debug` (the current `Targets` filter supports
+  `target=level`, not span/field directives).
 - The dev image auto-reboots on a hard freeze via the on-board BCM2835 hardware
   watchdog (systemd `RuntimeWatchdogSec`), recovering the service unattended; paired
   persistent journald keeps the previous boot's logs for the post-mortem. See
@@ -315,3 +319,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   the on-board BCM2835 hardware watchdog (`RuntimeWatchdogSec`) auto-reboots a wedged
   host, and persistent, size-capped journald keeps previous-boot logs for the
   post-mortem (dev image).
+- `13-2026-07-01-request-logging-and-log-access.md` (Accepted) -- HTTP
+  request/response access logs carry a request id through the existing `tracing` ->
+  stdout -> journald path; `x-request-id` is honored and echoed for app/Pi
+  correlation, while `/v1/logs` stays deferred until a non-SSH consumer needs it.

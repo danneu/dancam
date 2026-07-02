@@ -220,6 +220,10 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   settings + `requires_restart`.
 - `POST /v1/system/reboot` / `POST /v1/system/shutdown` (clean).
 - `GET /v1/logs?since=&level=` -- tail from the writable partition (ASCII).
+  > **Note (2026-07-01):** `/v1/logs` is deferred. Request/response logs with
+  > request ids now go to journald, and journald-over-SSH is the current log-access
+  > path until a non-SSH consumer exists. See
+  > `13-2026-07-01-request-logging-and-log-access.md`.
 - `POST /v1/storage/format` -- dangerous; double-confirm (`confirm:"FORMAT"`).
 
 **Incident lock (CarPlay-critical, low latency)**

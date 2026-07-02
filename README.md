@@ -358,6 +358,11 @@ systemctl status dancam        # running? enabled for boot?
 journalctl -u dancam -f        # live logs
 ```
 
+Request/response access lines appear in `journalctl -u dancam -f` with an
+`x-request-id`; grep the journal for that id to correlate a Pi request. To raise
+service verbosity without rebuilding, add `Environment=RUST_LOG=dancam=debug` with
+`sudo systemctl edit dancam`, then restart `dancam`.
+
 ## 8. Smoke-test the AP path
 
 With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, join
