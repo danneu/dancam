@@ -1,11 +1,9 @@
 # dancam
 
-dancam is a do-it-yourself dashcam system built around an iPhone. The camera unit
-records locally, the iPhone app owns the product experience, and CarPlay exposes a
-small voice, status, and control surface for use in the car.
+dancam is my DIY dashcam built around an Raspberry Pi 2 W ($15) and an iPhone (live camera preview, clip viewing/pulling, and CarPlay).
 
-The full system overview, working stance, and ADR conventions live in
-[`AGENTS.md`](AGENTS.md).
+- The full system overview, working stance, and ADR conventions live in [`AGENTS.md`](AGENTS.md).
+- Planned roadmap: [`docs/roadmap.md`](docs/roadmap.md).
 
 ## The three parts
 
@@ -19,16 +17,9 @@ The full system overview, working stance, and ADR conventions live in
 The project is iPhone-only. The app owns the experience; the Pi stays deliberately
 dumb: capture, encode, store safely, and serve footage.
 
-## Status
-
-There are no users or shipped releases. The repo is still design-doc-heavy, with
-early buildable code in `raspi/service/` and several end-to-end features -- live
-preview, recording control, clip playback -- already working. The current build
-order lives in [`docs/roadmap.md`](docs/roadmap.md).
-
 ## Hardware
 
-The tentative v1 camera unit is a Raspberry Pi Zero 2 W with an Arducam IMX708
+The v1 camera unit is a Raspberry Pi Zero 2 W with an Arducam IMX708
 Autofocus Wide camera. See [`raspi/AGENTS.md`](raspi/AGENTS.md) for the full spec,
 constraints, and part links.
 
