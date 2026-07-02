@@ -236,6 +236,115 @@ struct StoreTests {
         #expect(observedCounts == [0, 1])
     }
 
+    @Test func selectorObserveFiresOnceInitially() {
+        struct State: Equatable {
+            var count = 0
+        }
+
+        enum Action {
+            case increment
+        }
+
+        var observedCounts: [Int] = []
+        let store = Store<State, Action, Void>(initialState: State(), dependencies: ()) { state, action, _ in
+            switch action {
+            case .increment:
+                state.count += 1
+            }
+
+            return .none
+        }
+
+        store.observe(select: { $0.count }) { count in
+            observedCounts.append(count)
+        }
+
+        #expect(observedCounts == [0])
+    }
+
+    @Test func selectorObserveDeduplicatesDerivedValues() {
+        struct State: Equatable {
+            var temp = 40
+            var offline = false
+        }
+
+        struct Pills: Equatable {
+            var warning: Bool
+            var offline: Bool
+        }
+
+        enum Action {
+            case setTemp(Int)
+            case setOffline(Bool)
+        }
+
+        var observedPills: [Pills] = []
+        let store = Store<State, Action, Void>(initialState: State(), dependencies: ()) { state, action, _ in
+            switch action {
+            case .setTemp(let temp):
+                state.temp = temp
+            case .setOffline(let offline):
+                state.offline = offline
+            }
+
+            return .none
+        }
+
+        store.observe(select: { Pills(warning: $0.temp >= 50, offline: $0.offline) }) { pills in
+            observedPills.append(pills)
+        }
+
+        store.send(.setTemp(42))
+        store.send(.setTemp(52))
+        store.send(.setOffline(true))
+
+        #expect(observedPills == [
+            Pills(warning: false, offline: false),
+            Pills(warning: true, offline: false),
+            Pills(warning: true, offline: true),
+        ])
+    }
+
+    @Test func selectorObserveUpdatesLastBeforeInvokingObserver() {
+        struct State: Equatable {
+            var count = 0
+            var name = "initial"
+        }
+
+        enum Action {
+            case increment
+            case rename(String)
+        }
+
+        var observedCounts: [Int] = []
+        var store: Store<State, Action, Void>!
+        store = Store<State, Action, Void>(initialState: State(), dependencies: ()) { state, action, _ in
+            switch action {
+            case .increment:
+                state.count += 1
+            case .rename(let name):
+                state.name = name
+            }
+
+            return .none
+        }
+
+        store.observe(select: { $0.count }) { count in
+            observedCounts.append(count)
+
+            if count == 0 {
+                store.send(.rename("re-entered"))
+            }
+        }
+
+        #expect(observedCounts == [0])
+        #expect(store.state.name == "re-entered")
+
+        store.send(.increment)
+
+        #expect(observedCounts == [0, 1])
+    }
+
     @Test func effectFedActionIsDeliveredBackAndApplied() async {
         enum Action {
             case start

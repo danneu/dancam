@@ -32,7 +32,7 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func aClipsReloadCancelsEveryOutstandingHandle() async throws {
+    func aClipsUpdatePreservesSurvivingPrefetchHandles() async throws {
         let probe = HomeLoaderProbe()
         let (controller, store) = makeControllerAndStore(clips: [clipA, clipB], loader: probe.loader())
         controller.loadViewIfNeeded()
@@ -42,11 +42,50 @@ struct HomeViewControllerTests {
             IndexPath(row: 1, section: 0),
         ])
 
-        // A clips update drives a full renderRows() reload, which clears all handles.
         store.send(.clips(.clipFinalized(clipC)))
 
+        #expect(probe.prefetchCancelCount(clipA) == 0)
+        #expect(probe.prefetchCancelCount(clipB) == 0)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aReRepresentedClipCancelsItsStaleHandle() async throws {
+        let probe = HomeLoaderProbe()
+        let (controller, store) = makeControllerAndStore(clips: [clipA, clipB], loader: probe.loader())
+        controller.loadViewIfNeeded()
+
+        controller.tableView(UITableView(), prefetchRowsAt: [IndexPath(row: 0, section: 0)])
+        let updatedClipA = Clip(
+            id: clipA.id,
+            startMs: clipA.startMs,
+            durMs: clipA.durMs,
+            bytes: clipA.bytes,
+            locked: clipA.locked,
+            etag: "1-2",
+            timeApproximate: clipA.timeApproximate
+        )
+
+        store.send(.clips(.clipFinalized(updatedClipA)))
+
         #expect(probe.prefetchCancelCount(clipA) == 1)
-        #expect(probe.prefetchCancelCount(clipB) == 1)
+        #expect(probe.prefetchCancelCount(clipB) == 0)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func telemetryDeltaDoesNotChurnTheClipList() async throws {
+        let probe = HomeLoaderProbe()
+        let world = CameraSamples.world(tempC: TempC(soc: 39, sensor: 40))
+        let (controller, store) = makeControllerAndStore(
+            clips: [clipA, clipB],
+            loader: probe.loader(),
+            world: world
+        )
+        controller.loadViewIfNeeded()
+
+        controller.tableView(UITableView(), prefetchRowsAt: [IndexPath(row: 0, section: 0)])
+        store.send(.event(.tempChanged(soc: 40, sensor: 41)))
+
+        #expect(probe.prefetchCancelCount(clipA) == 0)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -71,7 +110,7 @@ struct HomeViewControllerTests {
     func viewWillDisappearQuietsVisibleCellLoads() async throws {
         let probe = HomeLoaderProbe()
         let controller = makeController(clips: [clipA, clipB], loader: probe.loader())
-        let window = embed(controller)
+        let window = try embed(controller)
         defer { window.isHidden = true }
 
         try await waitUntil { probe.thumbnailCallCount() >= 1 }  // a visible cell began loading
@@ -93,6 +132,54 @@ struct HomeViewControllerTests {
         try await waitUntil { probe.thumbnailCancelCount() >= 1 }
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func aClipsUpdateReconfiguresChangedRowsWithoutReloadingSurvivors() async throws {
+        let loader = GatedThumbnailLoader()
+        let (controller, store) = makeControllerAndStore(clips: [clipA, clipB], loader: loader.loader())
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: self.clipA.id)?.displayedImageForTesting != nil &&
+                controller.clipThumbnailCellForTesting(clipID: self.clipB.id)?.displayedImageForTesting != nil
+        }
+
+        let cellA = try #require(controller.clipThumbnailCellForTesting(clipID: clipA.id))
+        let cellB = try #require(controller.clipThumbnailCellForTesting(clipID: clipB.id))
+        let originalA = try #require(cellA.displayedImageForTesting)
+        let originalLabelA = try #require(cellA.accessibilityLabel)
+        let originalB = try #require(cellB.displayedImageForTesting)
+        let relabeledClipA = Clip(
+            id: clipA.id,
+            startMs: clipA.startMs,
+            durMs: 45_000,
+            bytes: clipA.bytes,
+            locked: clipA.locked,
+            etag: clipA.etag,
+            timeApproximate: clipA.timeApproximate
+        )
+
+        store.send(.clips(.clipsResponse(.success(ClipsResponse(
+            clips: [clipC, relabeledClipA],
+            serverTimeMs: 0,
+            nextCursor: nil
+        )))))
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: self.clipA.id)?.accessibilityLabel != originalLabelA
+        }
+
+        let updatedCellA = try #require(controller.clipThumbnailCellForTesting(clipID: clipA.id))
+        let updatedImageA = try #require(updatedCellA.displayedImageForTesting)
+        let survivorCellB = try #require(controller.clipThumbnailCellForTesting(clipID: clipB.id))
+        let survivorImageB = try #require(survivorCellB.displayedImageForTesting)
+
+        #expect(updatedImageA === originalA)
+        #expect(updatedCellA.isLoadingForTesting == false)
+        #expect(survivorImageB === originalB)
+        #expect(survivorCellB.isLoadingForTesting == false)
+    }
+
     // MARK: - Helpers
 
     private let clipA = Clip(id: 1, startMs: nil, durMs: 30_000, bytes: 1, locked: false, etag: "1-1", timeApproximate: false)
@@ -105,10 +192,14 @@ struct HomeViewControllerTests {
 
     private func makeControllerAndStore(
         clips: [Clip],
-        loader: ThumbnailLoader
+        loader: ThumbnailLoader,
+        world: World? = nil
     ) -> (HomeViewController, AppStore) {
         var state = AppFeature.State()
         state.clips.clips = clips
+        if let world {
+            state.link = .online(world)
+        }
         let dependencies = AppDependencies(
             health: HealthClient(fetch: { fatalError("Health is not used by HomeViewControllerTests.") }),
             thumbnailLoader: loader,
@@ -118,8 +209,10 @@ struct HomeViewControllerTests {
         return (HomeViewController(dependencies: dependencies, store: store), store)
     }
 
-    private func embed(_ controller: UIViewController) -> UIWindow {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    private func embed(_ controller: UIViewController) throws -> UIWindow {
+        let windowScene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: windowScene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         window.rootViewController = controller
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
@@ -196,5 +289,45 @@ private final class HomeLoaderProbe: @unchecked Sendable {
     private func noteThumbnailCancel() {
         lock.lock(); defer { lock.unlock() }
         thumbnailCancels += 1
+    }
+}
+
+private final class GatedThumbnailLoader: @unchecked Sendable {
+    private let lock = NSLock()
+    private let parked = AsyncSignal()
+    private var requestCounts: [ClipThumbnailIdentity: Int] = [:]
+
+    func loader() -> ThumbnailLoader {
+        ThumbnailLoader(
+            thumbnail: { [self] clip in
+                let identity = ClipThumbnailIdentity(clip)
+                if let image = firstImageOrNil(for: identity) {
+                    return ThumbnailImage(image: image)
+                }
+
+                await parked.wait()
+                return nil
+            },
+            prefetch: { _ in .inert }
+        )
+    }
+
+    private func firstImageOrNil(for identity: ClipThumbnailIdentity) -> UIImage? {
+        lock.lock(); defer { lock.unlock() }
+
+        let count = requestCounts[identity, default: 0] + 1
+        requestCounts[identity] = count
+        guard count == 1 else { return nil }
+
+        return image(for: identity)
+    }
+
+    private func image(for identity: ClipThumbnailIdentity) -> UIImage {
+        let hue = CGFloat(abs(identity.hashValue % 256)) / 255
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+        return renderer.image { context in
+            UIColor(hue: hue, saturation: 1, brightness: 1, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
     }
 }

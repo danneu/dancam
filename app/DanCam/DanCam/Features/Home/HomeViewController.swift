@@ -68,15 +68,32 @@ nonisolated enum HomeRow: Equatable, Sendable {
         }
         return nil
     }
+
+    var id: HomeRowID {
+        switch self {
+        case .live(let segment):
+            .live(session: segment.sessionId, id: segment.id)
+        case .finished(let clip):
+            .finished(clip.id)
+        }
+    }
+
+    var finishedIdentity: ClipThumbnailIdentity? {
+        if case .finished(let clip) = self {
+            return ClipThumbnailIdentity(clip)
+        }
+        return nil
+    }
 }
 
-final class HomeViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching, ConnectionResumable {
+final class HomeViewController: UIViewController, UITableViewDelegate, UITableViewDataSourcePrefetching, ConnectionResumable {
     private let dependencies: AppDependencies
     private let store: AppStore
     private let previewViewController: PreviewViewController
 
     private var recordingObservation: StoreObservation?
-    private var connectionObservation: StoreObservation?
+    private var statusPillsObservation: StoreObservation?
+    private var recorderObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
 
     private let statusPillsStack = UIStackView()
@@ -93,14 +110,16 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     private let emptyClipsLabel = UILabel()
     private let clock = ContinuousClock()
     private let paginationThreshold = 4
+    private var dataSource: UITableViewDiffableDataSource<HomeSection, HomeRowID>!
 
     private var recordingState: RecordingFeature.State = .unknown
-    private var world: World?
+    private var recorder: RecorderSnapshot?
     private var finishedClips: [Clip] = []
     private var rows: [HomeRow] = []
+    private var rowsByID: [HomeRowID: HomeRow] = [:]
     private var liveTickTimer: Timer?
     private var isVisible = false
-    private var prefetchHandles: [IndexPath: ThumbnailLoader.PrefetchHandle] = [:]
+    private var prefetchHandles: [ClipThumbnailIdentity: ThumbnailLoader.PrefetchHandle] = [:]
 
     init(
         dependencies: AppDependencies,
@@ -139,13 +158,15 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
             self?.recordingState = state
             self?.renderRecording(state)
         }
-        connectionObservation = store.observe(\.link.world) { [weak self] world in
-            self?.world = world
-            self?.renderConnectionPills(world)
+        statusPillsObservation = store.observe(select: { HomeStatusPills.from($0.link.world) }) { [weak self] pills in
+            self?.renderStatusPills(pills)
+        }
+        recorderObservation = store.observe(\.link.world?.recorder) { [weak self] recorder in
+            self?.recorder = recorder
             self?.renderRows()
         }
-        clipsObservation = store.observe(\.clips) { [weak self] state in
-            self?.renderClips(state)
+        clipsObservation = store.observe(\.clips.clips) { [weak self] clips in
+            self?.renderClips(clips)
         }
     }
 
@@ -271,11 +292,39 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
 
         emptyClipsBackgroundView.addSubview(emptyClipsView)
 
-        clipsTableView.dataSource = self
         clipsTableView.delegate = self
         clipsTableView.prefetchDataSource = self
         clipsTableView.register(ClipThumbnailCell.self, forCellReuseIdentifier: "clipThumbnail")
         clipsTableView.register(LiveClipCell.self, forCellReuseIdentifier: "liveClip")
+        dataSource = UITableViewDiffableDataSource<HomeSection, HomeRowID>(
+            tableView: clipsTableView
+        ) { [weak self] tableView, indexPath, id in
+            guard let self, let row = self.rowsByID[id] else {
+                return UITableViewCell(style: .default, reuseIdentifier: nil)
+            }
+
+            switch row {
+            case .live(let segment):
+                guard let cell = tableView.dequeueReusableCell(
+                    withIdentifier: "liveClip",
+                    for: indexPath
+                ) as? LiveClipCell else {
+                    return UITableViewCell(style: .default, reuseIdentifier: nil)
+                }
+                cell.configure(segment: segment, now: self.clock.now)
+                return cell
+
+            case .finished(let clip):
+                guard let cell = tableView.dequeueReusableCell(
+                    withIdentifier: "clipThumbnail",
+                    for: indexPath
+                ) as? ClipThumbnailCell else {
+                    return UITableViewCell(style: .default, reuseIdentifier: nil)
+                }
+                cell.configure(clip: clip, loader: self.dependencies.thumbnailLoader)
+                return cell
+            }
+        }
         clipsTableView.rowHeight = UITableView.automaticDimension
         clipsTableView.estimatedRowHeight = 72
         clipsTableView.tableFooterView = UIView()
@@ -289,45 +338,31 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         ])
     }
 
-    private func renderConnectionPills(_ world: World?) {
-        tempWarningPill.isHidden = true
-        errorPill.isHidden = true
+    private func renderStatusPills(_ pills: HomeStatusPills) {
+        if let warning = pills.tempWarning {
+            let color: UIColor = warning.isCritical ? .systemRed : .systemOrange
+            tempWarningPill.configure(
+                caption: warning.caption,
+                dotColor: color,
+                backgroundStyle: .tinted(color.withAlphaComponent(0.16))
+            )
+            tempWarningPill.isHidden = false
+        } else {
+            tempWarningPill.isHidden = true
+        }
 
-        if let world {
-            renderTempWarning(sensor: world.tempC.sensor)
-            renderCameraError(world: world)
+        if pills.cameraOffline {
+            errorPill.configure(
+                caption: "Camera offline",
+                dotColor: .systemRed,
+                backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
+            )
+            errorPill.isHidden = false
+        } else {
+            errorPill.isHidden = true
         }
 
         statusPillsStack.isHidden = tempWarningPill.isHidden && errorPill.isHidden
-    }
-
-    private func renderTempWarning(sensor: Double?) {
-        guard let sensor, let warning = Formatters.sensorWarning(for: sensor) else {
-            tempWarningPill.isHidden = true
-            return
-        }
-
-        let color: UIColor = warning == .critical ? .systemRed : .systemOrange
-        tempWarningPill.configure(
-            caption: "\(Formatters.temperature(sensor)) camera",
-            dotColor: color,
-            backgroundStyle: .tinted(color.withAlphaComponent(0.16))
-        )
-        tempWarningPill.isHidden = false
-    }
-
-    private func renderCameraError(world: World) {
-        guard world.cameraState == .offline else {
-            errorPill.isHidden = true
-            return
-        }
-
-        errorPill.configure(
-            caption: "Camera offline",
-            dotColor: .systemRed,
-            backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
-        )
-        errorPill.isHidden = false
     }
 
     private func renderRecording(_ state: RecordingFeature.State) {
@@ -341,28 +376,33 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         recordButton.apply(state)
     }
 
-    private func renderClips(_ state: ClipsFeature.State) {
-        finishedClips = state.clips
+    private func renderClips(_ clips: [Clip]) {
+        finishedClips = clips
         renderRows()
     }
 
     private func renderRows(now: ContinuousClock.Instant? = nil) {
         let now = now ?? clock.now
         let previousLive = rows.first?.liveSegment
-        rows = HomeRow.compose(
+        let newRows = HomeRow.compose(
             clips: finishedClips,
-            recorder: world?.recorder,
+            recorder: recorder,
             previousLive: previousLive,
             now: now
         )
+        let reconfigure = HomeRowDiff.reconfiguredIDs(old: rows, new: newRows)
 
-        // A full reload invalidates every index-path key in the prefetch map, so drop the
-        // outstanding handles (still-queued warms are cancelled; post-permit warms finish and
-        // cache regardless). Any still-wanted row is re-requested by the next prefetch/cellForRow.
-        cancelAllPrefetches()
+        rows = newRows
+        rowsByID = Dictionary(uniqueKeysWithValues: newRows.map { ($0.id, $0) })
+        prunePrefetches(surviving: Set(newRows.compactMap(\.finishedIdentity)))
 
-        clipsTableView.backgroundView = rows.isEmpty ? emptyClipsBackgroundView : nil
-        clipsTableView.reloadData()
+        var snapshot = NSDiffableDataSourceSnapshot<HomeSection, HomeRowID>()
+        snapshot.appendSections([.main])
+        snapshot.appendItems(newRows.map(\.id), toSection: .main)
+        snapshot.reconfigureItems(reconfigure)
+        dataSource.apply(snapshot, animatingDifferences: true)
+
+        clipsTableView.backgroundView = newRows.isEmpty ? emptyClipsBackgroundView : nil
         updateLiveTickTimer()
     }
 
@@ -387,9 +427,9 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     }
 
     private func updateVisibleLiveElapsed() {
-        guard let row = rows.firstIndex(where: { $0.liveSegment != nil }),
-              let segment = rows[row].liveSegment,
-              let cell = clipsTableView.cellForRow(at: IndexPath(row: row, section: 0)) as? LiveClipCell else {
+        guard let segment = rows.first?.liveSegment,
+              let indexPath = dataSource.indexPath(for: .live(session: segment.sessionId, id: segment.id)),
+              let cell = clipsTableView.cellForRow(at: indexPath) as? LiveClipCell else {
             return
         }
 
@@ -413,41 +453,10 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         refreshControl.endRefreshing()
     }
 
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        rows.count
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        cellForRowAt indexPath: IndexPath
-    ) -> UITableViewCell {
-        switch rows[indexPath.row] {
-        case .live(let segment):
-            guard let cell = tableView.dequeueReusableCell(
-                withIdentifier: "liveClip",
-                for: indexPath
-            ) as? LiveClipCell else {
-                return UITableViewCell(style: .default, reuseIdentifier: nil)
-            }
-            cell.configure(segment: segment, now: clock.now)
-            return cell
-
-        case .finished(let clip):
-            guard let cell = tableView.dequeueReusableCell(
-                withIdentifier: "clipThumbnail",
-                for: indexPath
-            ) as? ClipThumbnailCell else {
-                return UITableViewCell(style: .default, reuseIdentifier: nil)
-            }
-            cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
-            return cell
-        }
-    }
-
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        guard rows.indices.contains(indexPath.row) else { return }
+        guard let row = row(at: indexPath) else { return }
 
-        switch rows[indexPath.row] {
+        switch row {
         case .live:
             return
         case .finished(let clip):
@@ -464,9 +473,9 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         willDisplay cell: UITableViewCell,
         forRowAt indexPath: IndexPath
     ) {
-        guard rows.indices.contains(indexPath.row),
+        guard let row = row(at: indexPath),
               indexPath.row >= max(rows.count - paginationThreshold, 0),
-              case .finished = rows[indexPath.row] else {
+              case .finished = row else {
             return
         }
 
@@ -486,23 +495,38 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
 
     func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
         for indexPath in indexPaths {
-            guard rows.indices.contains(indexPath.row),
-                  case .finished(let clip) = rows[indexPath.row] else {
+            guard let row = row(at: indexPath),
+                  case .finished(let clip) = row else {
                 continue
             }
+            let identity = ClipThumbnailIdentity(clip)
             // Cancel-before-replace: a `PrefetchHandle` is a value type with no `deinit`, so
             // overwriting a slot without cancelling would orphan the prior handle's token and
             // keep pinning its loader entry.
-            prefetchHandles[indexPath]?.cancel()
-            prefetchHandles[indexPath] = dependencies.thumbnailLoader.prefetch(clip)
+            prefetchHandles[identity]?.cancel()
+            prefetchHandles[identity] = dependencies.thumbnailLoader.prefetch(clip)
         }
     }
 
     func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
-        // Cancel the stored handle -- never re-derive a clip id from `rows`, which a reload can
-        // shift; the handle already carries the correct `(id, etag)`.
         for indexPath in indexPaths {
-            prefetchHandles.removeValue(forKey: indexPath)?.cancel()
+            guard let row = row(at: indexPath),
+                  let identity = row.finishedIdentity else {
+                continue
+            }
+            prefetchHandles.removeValue(forKey: identity)?.cancel()
+        }
+    }
+
+    private func row(at indexPath: IndexPath) -> HomeRow? {
+        guard let id = dataSource.itemIdentifier(for: indexPath) else { return nil }
+        return rowsByID[id]
+    }
+
+    private func prunePrefetches(surviving identities: Set<ClipThumbnailIdentity>) {
+        let staleIdentities = prefetchHandles.keys.filter { identities.contains($0) == false }
+        for identity in staleIdentities {
+            prefetchHandles.removeValue(forKey: identity)?.cancel()
         }
     }
 
@@ -520,21 +544,23 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     }
 
     /// Re-request visible rows on return by reconfiguring the visible `ClipThumbnailCell`s
-    /// *in place* -- the same shape `updateVisibleLiveElapsed()` uses -- rather than a
-    /// `reloadData()`. A reload would route each cell through `prepareForReuse` (blanking it
-    /// to the placeholder) before `configure`, flashing every already-painted cell; in-place
-    /// reconfigure skips reuse, so a painted cell hits the same-identity no-op and a cell
-    /// quieted on the way out retries once, cache-first.
+    /// in place. Diffable snapshots do not reload on appear, so a painted cell hits the
+    /// same-identity no-op and a cell quieted on the way out retries once, cache-first.
     private func reconfigureVisibleThumbnails() {
         guard let visibleRows = clipsTableView.indexPathsForVisibleRows else { return }
         for indexPath in visibleRows {
-            guard rows.indices.contains(indexPath.row),
-                  case .finished(let clip) = rows[indexPath.row],
+            guard let row = row(at: indexPath),
+                  case .finished(let clip) = row,
                   let cell = clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell else {
                 continue
             }
             cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
         }
+    }
+
+    func clipThumbnailCellForTesting(clipID: Int) -> ClipThumbnailCell? {
+        guard let indexPath = dataSource.indexPath(for: .finished(clipID)) else { return nil }
+        return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell
     }
 }
 

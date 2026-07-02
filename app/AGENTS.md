@@ -144,3 +144,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `16-2026-07-01-client-side-clip-thumbnails.md` -- generate clip-list thumbnails on the
   phone (cache-first memory/disk/free-MP4/ranged-prefix pipeline); supersedes the raspi
   `/thumb` endpoint and cached `seg-<seq>.jpg` thumbnails.
+- `17-2026-07-02-selector-observation-and-view-state.md` -- selector-based observation,
+  derived rendered view-state, and diffable Home row rendering that keeps thumbnails
+  painted across row updates.

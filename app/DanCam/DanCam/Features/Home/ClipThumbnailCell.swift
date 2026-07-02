@@ -4,7 +4,7 @@ import UIKit
 /// loader, thumb cache, and prefetch handles key on, not `id` alone. Comparing the whole
 /// pair is what lets a recycled cell (different `id`) or a re-represented clip (same `id`,
 /// new `etag`) drop a stale in-flight result instead of painting the wrong clip's frame.
-nonisolated struct ClipThumbnailIdentity: Equatable, Sendable {
+nonisolated struct ClipThumbnailIdentity: Hashable, Sendable {
     let id: Int
     let etag: String
 

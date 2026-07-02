@@ -54,26 +54,24 @@ final class Store<State: Equatable, Action, Dependencies> {
 
     @discardableResult
     func observe<Value: Equatable>(
-        _ keyPath: KeyPath<State, Value>,
+        select: @escaping (State) -> Value,
         _ observer: @escaping (Value) -> Void
     ) -> StoreObservation {
-        var last = state[keyPath: keyPath]
-        var isFirst = true
-
+        var last: Value?
         return observe { state in
-            let value = state[keyPath: keyPath]
-
-            if isFirst {
-                isFirst = false
-                last = value
-                observer(value)
-                return
-            }
-
-            guard value != last else { return }
+            let value = select(state)
+            if let last, last == value { return }
             last = value
             observer(value)
         }
+    }
+
+    @discardableResult
+    func observe<Value: Equatable>(
+        _ keyPath: KeyPath<State, Value>,
+        _ observer: @escaping (Value) -> Void
+    ) -> StoreObservation {
+        observe(select: { $0[keyPath: keyPath] }, observer)
     }
 
     func send(_ action: Action) {

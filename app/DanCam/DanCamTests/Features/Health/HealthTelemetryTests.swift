@@ -51,4 +51,49 @@ struct HealthTelemetryTests {
 
         #expect(rows.map { $0.value } == Array(repeating: "--", count: 9))
     }
+
+    @Test func nonRenderedWorldChangesProduceEqualRows() {
+        let first = CameraSamples.world(
+            phase: .idle,
+            cameraState: .running,
+            storage: Storage(used: 1_000, total: 4_000),
+            tempC: TempC(soc: 51.2, sensor: 52.3),
+            mem: Mem(total: 1_000_000, available: 500_000, swapTotal: 0, swapUsed: 1_000),
+            uptimeS: 42
+        )
+        var second = first
+        second.recorder.phase = .recording
+        second.recorder.currentSegment = RecorderSegment(id: 8, durMs: 1_000)
+        second.cameraState = .offline
+        second.bootId = "boot-456"
+        second.uptimeS = 9_999
+
+        #expect(HealthTelemetry.rows(for: first) == HealthTelemetry.rows(for: second))
+    }
+
+    @Test func rawTelemetryDriftThatFormatsTheSameProducesEqualRows() {
+        let first = CameraSamples.world(
+            storage: Storage(used: 1_000, total: 4_000),
+            tempC: TempC(soc: 51.21, sensor: 52.31),
+            mem: Mem(total: 1_000_000, available: 500_000, swapTotal: 0, swapUsed: 1_000)
+        )
+        let second = CameraSamples.world(
+            storage: Storage(used: 1_001, total: 4_001),
+            tempC: TempC(soc: 51.24, sensor: 52.34),
+            mem: Mem(total: 1_000_001, available: 500_001, swapTotal: 0, swapUsed: 1_001)
+        )
+
+        #expect(HealthTelemetry.rows(for: first) == HealthTelemetry.rows(for: second))
+    }
+
+    @Test func renderedTelemetryStringChangeProducesDifferentRows() {
+        let first = CameraSamples.world(
+            mem: Mem(total: 1_000_000, available: 500_000, swapTotal: 0, swapUsed: 1_000)
+        )
+        let second = CameraSamples.world(
+            mem: Mem(total: 1_000_000, available: 1_500_000, swapTotal: 0, swapUsed: 1_000)
+        )
+
+        #expect(HealthTelemetry.rows(for: first) != HealthTelemetry.rows(for: second))
+    }
 }
