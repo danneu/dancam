@@ -7,7 +7,7 @@ struct RecordButtonStyleTests {
             (
                 state: RecordingFeature.State,
                 title: String,
-                image: String?,
+                image: String,
                 enabled: Bool,
                 treatment: RecordButtonTreatment,
                 accessibilityLabel: String

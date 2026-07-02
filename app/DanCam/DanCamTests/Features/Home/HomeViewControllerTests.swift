@@ -259,30 +259,39 @@ struct HomeViewControllerTests {
         #expect(synced.isTimeUnverifiedPillVisibleForTesting == false)
     }
 
-    @Test func recordItemPresentationFollowsRecordingState() {
+    @Test func recordButtonPresentationFollowsRecordingState() {
         let (controller, store) = makeControllerAndStore(clips: [], loader: .noop)
         controller.loadViewIfNeeded()
 
         store.send(.recording(.recorderPhaseObserved(.idle)))
 
-        #expect(controller.recordItemForTesting.title == "Record")
-        #expect(controller.recordItemForTesting.isEnabled)
-        #expect(controller.recordItemForTesting.accessibilityLabel == "Start recording")
-        #expect(controller.recordItemForTesting.image != nil)
+        #expect(controller.recordButtonForTesting.configuration?.title == "Record")
+        #expect(controller.recordButtonForTesting.isEnabled)
+        #expect(controller.recordButtonForTesting.accessibilityLabel == "Start recording")
+        #expect(controller.recordButtonForTesting.configuration?.image != nil)
 
         store.send(.recording(.recorderPhaseObserved(.starting)))
 
-        #expect(controller.recordItemForTesting.title == "Starting")
-        #expect(controller.recordItemForTesting.isEnabled == false)
-        #expect(controller.recordItemForTesting.accessibilityLabel == "Starting recording")
-        #expect(controller.recordItemForTesting.image != nil)
+        #expect(controller.recordButtonForTesting.configuration?.title == "Starting")
+        #expect(controller.recordButtonForTesting.isEnabled == false)
+        #expect(controller.recordButtonForTesting.accessibilityLabel == "Starting recording")
+        #expect(controller.recordButtonForTesting.configuration?.image != nil)
 
         store.send(.recording(.recorderPhaseObserved(.recording)))
 
-        #expect(controller.recordItemForTesting.title == "Stop")
-        #expect(controller.recordItemForTesting.isEnabled)
-        #expect(controller.recordItemForTesting.accessibilityLabel == "Stop recording")
-        #expect(controller.recordItemForTesting.image != nil)
+        #expect(controller.recordButtonForTesting.configuration?.title == "Stop")
+        #expect(controller.recordButtonForTesting.isEnabled)
+        #expect(controller.recordButtonForTesting.accessibilityLabel == "Stop recording")
+        #expect(controller.recordButtonForTesting.configuration?.image != nil)
+    }
+
+    @Test func recordButtonLivesBelowPreviewNotInToolbar() throws {
+        let controller = makeController(clips: [], loader: .noop)
+        let (window, navigationController) = try embedInNavigationController(controller)
+        defer { window.isHidden = true }
+
+        #expect(controller.recordButtonForTesting.isDescendant(of: controller.view))
+        #expect(navigationController.isToolbarHidden == true)
     }
 
     @Test func manualRefreshSpinnerStaysUntilClipsReachTerminalStatus() throws {
@@ -410,6 +419,12 @@ struct HomeViewControllerTests {
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
         return window
+    }
+
+    private func embedInNavigationController(_ controller: UIViewController) throws -> (UIWindow, UINavigationController) {
+        let navigationController = UINavigationController(rootViewController: controller)
+        let window = try embed(navigationController)
+        return (window, navigationController)
     }
 
     private func waitUntil(_ condition: @escaping () -> Bool) async throws {

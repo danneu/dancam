@@ -103,7 +103,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let tempWarningPill = StatusPillView()
     private let errorPill = StatusPillView()
     private let timeUnverifiedPill = StatusPillView()
-    private let recordItem = UIBarButtonItem()
+    private let recordButton = RecordButton(frame: .zero)
+    private let recordButtonRow = UIView()
     private let recPill = StatusPillView(caption: "REC", dotColor: .systemRed)
     private let clipsHeaderLabel = UILabel()
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
@@ -189,7 +190,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        navigationController?.setToolbarHidden(false, animated: animated)
         isVisible = true
         updateLiveTickTimer()
         reconfigureVisibleThumbnails()
@@ -227,17 +227,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         configureClipsTable()
         configureFailureBanner()
 
-        recordItem.style = .prominent
-        recordItem.target = self
-        recordItem.action = #selector(recordTapped)
-        recordItem.possibleTitles = ["Record", "Stop", "Starting", "Stopping"]
-        applyRecordItem(.unknown)
-
-        toolbarItems = [
-            UIBarButtonItem.flexibleSpace(),
-            recordItem,
-            UIBarButtonItem.flexibleSpace(),
-        ]
+        recordButton.addTarget(self, action: #selector(recordTapped), for: .touchUpInside)
+        recordButton.apply(.unknown)
+        recordButton.translatesAutoresizingMaskIntoConstraints = false
+        recordButtonRow.addSubview(recordButton)
 
         headerContainer.directionalLayoutMargins = NSDirectionalEdgeInsets(
             top: 12,
@@ -249,6 +242,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         headerStack.spacing = 12
         headerStack.translatesAutoresizingMaskIntoConstraints = false
         headerStack.addArrangedSubview(previewViewController.view)
+        headerStack.addArrangedSubview(recordButtonRow)
         headerStack.addArrangedSubview(statusPillsStack)
         headerStack.addArrangedSubview(clipsHeaderLabel)
 
@@ -261,6 +255,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         NSLayoutConstraint.activate([
             recPill.topAnchor.constraint(equalTo: previewViewController.view.topAnchor, constant: 10),
             recPill.trailingAnchor.constraint(equalTo: previewViewController.view.trailingAnchor, constant: -10),
+
+            recordButton.topAnchor.constraint(equalTo: recordButtonRow.topAnchor),
+            recordButton.bottomAnchor.constraint(equalTo: recordButtonRow.bottomAnchor),
+            recordButton.centerXAnchor.constraint(equalTo: recordButtonRow.centerXAnchor),
+            recordButton.leadingAnchor.constraint(greaterThanOrEqualTo: recordButtonRow.leadingAnchor),
+            recordButton.trailingAnchor.constraint(lessThanOrEqualTo: recordButtonRow.trailingAnchor),
 
             headerStack.leadingAnchor.constraint(equalTo: headerContainer.layoutMarginsGuide.leadingAnchor),
             headerStack.trailingAnchor.constraint(equalTo: headerContainer.layoutMarginsGuide.trailingAnchor),
@@ -487,21 +487,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             recPill.isHidden = true
         }
 
-        applyRecordItem(state)
-    }
-
-    private func applyRecordItem(_ state: RecordingFeature.State) {
-        let style = RecordButtonStyle.from(state)
-        recordItem.title = style.title
-        recordItem.image = style.systemImage.flatMap { UIImage(systemName: $0) }
-        recordItem.isEnabled = style.isEnabled
-        recordItem.accessibilityLabel = style.accessibilityLabel
-        recordItem.tintColor = switch style.treatment {
-        case .record:
-            .systemRed
-        case .neutral:
-            .systemGray5
-        }
+        recordButton.apply(state)
     }
 
     private func renderClips(_ clips: [Clip]) {
@@ -724,8 +710,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell
     }
 
-    var recordItemForTesting: UIBarButtonItem {
-        recordItem
+    var recordButtonForTesting: RecordButton {
+        recordButton
     }
 
     var isTimeUnverifiedPillVisibleForTesting: Bool {

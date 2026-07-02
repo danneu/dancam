@@ -8,7 +8,7 @@ nonisolated enum RecordButtonStyle {
         _ state: RecordingFeature.State
     ) -> (
         title: String,
-        systemImage: String?,
+        systemImage: String,
         isEnabled: Bool,
         treatment: RecordButtonTreatment,
         accessibilityLabel: String
