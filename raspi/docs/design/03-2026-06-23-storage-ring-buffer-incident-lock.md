@@ -103,6 +103,18 @@ idempotency keys, retained for the reassociation window so retries after
 
 ### Segment Identity And Time
 
+> **Note (2026-07-02): Start-segment high-water witness.**
+> `16-2026-07-02-storage-coordinator-segment-id-witness.md` realizes the first
+> coordinator slice for segment identity. Start requests now allocate through
+> `StorageCoordinator`, write `state/state.json` `high_water_seq` before returning
+> the session-start id, and fail closed on corrupt or unreadable witness state. The
+> end-state finalize/register rule below remains deferred: rollover ids are still
+> minted by the recorder or camera writer and are scan-covered while their files
+> exist, so any future delete or GC unlink must write-ahead `high_water_seq >= seq`
+> until per-segment finalize/register moves into the coordinator. The current
+> implementation keeps the flat `seg_*.ts` layout and does not yet create
+> `index.log` or `incidents/`.
+
 `seq` is a single global monotonic integer, formatted at fixed width in the
 filename. It is the stable segment ID and the total order. The transport returns
 it as `current_segment_id`, `locked_segment_ids`, and clip `id`.

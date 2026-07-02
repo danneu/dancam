@@ -334,3 +334,6 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `15-2026-07-02-segment-fact-stamping-and-boot-offset.md` (Accepted) -- segment
   filenames carry immutable `(seq, boottag, monoMs)` facts while wall time is derived
   from write-once per-boot offset files.
+- `16-2026-07-02-storage-coordinator-segment-id-witness.md` (Accepted) -- the storage
+  coordinator owns start-segment allocation and persists `state/state.json`
+  `high_water_seq` before handing out a session-start id.

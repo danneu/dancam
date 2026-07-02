@@ -321,4 +321,4 @@ so the docs never overclaim:
 
 - [x] 1. coordinator module + unit tests
 - [x] 2. wire backends, AppState, main, tests
-- [ ] 3. records
+- [x] 3. records
