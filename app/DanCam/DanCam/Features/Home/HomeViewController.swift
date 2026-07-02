@@ -165,7 +165,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         quietVisibleThumbnailLoads()
     }
 
-    deinit {
+    isolated deinit {
         stopLiveTickTimer()
         cancelAllPrefetches()
     }
