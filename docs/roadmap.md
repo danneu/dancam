@@ -148,7 +148,7 @@ mock first.
             of missed heartbeats and fresh snapshot recovery on reconnect.
       - [x] Recent clips keep a live row only when the Pi recorder snapshot reports a
             current segment; finalized clips merge from `clip_finalized` events.
-- [ ] **Swoop `lime` -- Watch recorded clips.** Browse the clip list, pull a finished
+- [x] **Swoop `lime` -- Watch recorded clips.** Browse the clip list, pull a finished
       segment with resumable `Range` requests, remux it to a local `.mp4`, and play it
       with AVPlayer. _The chunky one; the first time footage is
       watchable on the phone. A full 30 s segment is ~38 MB (10 Mbps CBR, confirmed on
@@ -194,7 +194,7 @@ mock first.
             spinner reads as a hang), a short preparing phase, and then the cached MP4;
             handles pull failure / resume, cache-insert failure, playback failure, and
             manual Retry.
-      - [ ] **App:** clip rows show duration + best-effort created time + a real first-frame
+      - [x] **App:** clip rows show duration + best-effort created time + a real first-frame
             thumbnail generated on the phone (app ADR 16): cache-first
             memory/disk/free-cached-MP4/ranged-prefix pipeline. Watched clips are free (the
             phone has the bytes); not-yet-watched clips ranged-*read* a ~2 MB prefix -- no Pi
