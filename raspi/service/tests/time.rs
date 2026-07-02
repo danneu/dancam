@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
@@ -8,7 +8,7 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
-use dancam::{backend::MockBackend, AppState};
+use dancam::{backend::MockBackend, storage::StorageCoordinator, AppState};
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
@@ -176,11 +176,12 @@ async fn torn_offset_file_is_ignored_and_boot_can_resync() {
 }
 
 fn state(rec_dir: PathBuf) -> AppState {
+    let storage = Arc::new(StorageCoordinator::new(rec_dir));
     AppState::new(
         BOOT_ID.to_string(),
-        MockBackend::recording_to(rec_dir.clone(), Duration::from_secs(60)),
+        MockBackend::recording_to(storage.clone(), Duration::from_secs(60)),
     )
-    .with_rec_dir(rec_dir)
+    .with_storage(storage)
 }
 
 fn time_request(epoch_ms: i64, idempotency_key: &str) -> Request<Body> {

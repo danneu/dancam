@@ -320,5 +320,5 @@ so the docs never overclaim:
 ## Commit progress
 
 - [x] 1. coordinator module + unit tests
-- [ ] 2. wire backends, AppState, main, tests
+- [x] 2. wire backends, AppState, main, tests
 - [ ] 3. records

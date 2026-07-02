@@ -151,7 +151,7 @@ async fn enrich_current_segment(mut snapshot: Snapshot, state: &AppState) -> Sna
         return snapshot;
     };
 
-    let rec_dir = state.rec_dir.clone();
+    let rec_dir = state.storage.rec_dir();
     let duration_cache = state.clip_durations.clone();
     let id = current.id;
     let dur_ms = match tokio::task::spawn_blocking(move || {

@@ -17,12 +17,13 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 use crate::{
     backend::{Backend, BackendError, FrameStream},
-    clips::{clip_meta, max_clip_seq, ClipMeta},
+    clips::{clip_meta, ClipMeta},
     event_hub::{EventConnection, EventHub},
     events::Event,
     events::Snapshot,
     jpeg::JpegSplitter,
     recorder::{RecorderEvent, RecorderPhase, SegmentId},
+    storage::StorageCoordinator,
     sysfacts::{DiskUsage, MemInfo},
     time_sync::TimeStore,
     ts_duration::DurationCache,
@@ -81,6 +82,10 @@ impl CameraConfig {
         config.rec_dir = PathBuf::from(rec_dir);
         config
     }
+
+    pub fn rec_dir(&self) -> &Path {
+        &self.rec_dir
+    }
 }
 
 fn rec_dir_arg(args: &[String]) -> Option<PathBuf> {
@@ -96,7 +101,7 @@ fn rec_dir_arg(args: &[String]) -> Option<PathBuf> {
 pub struct CameraBackend {
     frames_tx: watch::Sender<Option<Bytes>>,
     hub: Arc<EventHub>,
-    rec_dir: Arc<std::path::Path>,
+    storage: Arc<StorageCoordinator>,
     commands_tx: mpsc::Sender<Command>,
     clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
@@ -105,12 +110,14 @@ pub struct CameraBackend {
 pub struct CameraProcess;
 
 impl CameraProcess {
-    pub fn spawn(config: CameraConfig) -> (CameraBackend, SupervisorControl) {
+    pub fn spawn(
+        config: CameraConfig,
+        storage: Arc<StorageCoordinator>,
+    ) -> (CameraBackend, SupervisorControl) {
         let (frames_tx, _) = watch::channel::<Option<Bytes>>(None);
         let hub = Arc::new(EventHub::new(CameraState::Starting));
         let (commands_tx, commands_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let rec_dir: Arc<std::path::Path> = Arc::from(config.rec_dir.clone().into_boxed_path());
         let clip_durations = Arc::new(DurationCache::new());
         let time_store = Arc::new(TimeStore::load(config.rec_dir.join("time")));
 
@@ -127,7 +134,7 @@ impl CameraProcess {
         let backend = CameraBackend {
             frames_tx,
             hub,
-            rec_dir,
+            storage,
             commands_tx,
             clip_durations,
             time_store,
@@ -171,9 +178,10 @@ impl Backend for CameraBackend {
             return Err(BackendError::CameraOffline);
         }
 
-        let start_segment = max_clip_seq(self.rec_dir.as_ref())
-            .map(|seq| seq.saturating_add(1))
-            .unwrap_or(0);
+        let start_segment = self.storage.allocate_start_segment().map_err(|error| {
+            tracing::error!(%error, "start segment allocation failed");
+            BackendError::Storage
+        })?;
         let events = self.hub.drive_now(Input::StartCommand { start_segment });
         let Some(session) = starting_session(&events) else {
             return Ok(());

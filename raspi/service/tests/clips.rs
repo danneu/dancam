@@ -18,6 +18,7 @@ use dancam::{
     event_hub::{EventConnection, EventHub},
     events::Snapshot,
     recorder::{stamped_segment_filename, RecorderEvent, SegmentFacts, SegmentId},
+    storage::StorageCoordinator,
     world::{CameraState, Input},
     AppState, DurationCache,
 };
@@ -635,7 +636,8 @@ async fn serve_clip_returns_not_found_for_directory_named_like_clip() {
 }
 
 fn state(rec_dir: PathBuf, backend: StubBackend) -> AppState {
-    AppState::new(BOOT_ID.to_string(), backend).with_rec_dir(rec_dir)
+    AppState::new(BOOT_ID.to_string(), backend)
+        .with_storage(Arc::new(StorageCoordinator::new(rec_dir)))
 }
 
 impl StubBackend {

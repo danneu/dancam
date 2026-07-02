@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     net::{SocketAddr, TcpListener},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -21,7 +21,7 @@ use axum::{
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::Instrument;
 
-use crate::backend::Backend;
+use crate::{backend::Backend, storage::StorageCoordinator};
 
 pub mod backend;
 pub mod camera;
@@ -51,7 +51,7 @@ pub struct AppState {
     pub boot_id: Arc<str>,
     pub started: Instant,
     pub backend: Arc<dyn Backend>,
-    pub rec_dir: Arc<Path>,
+    pub storage: Arc<StorageCoordinator>,
     pub(crate) time_store: Arc<time_sync::TimeStore>,
     pub(crate) clip_durations: Arc<DurationCache>,
     request_seq: Arc<AtomicU64>,
@@ -77,7 +77,7 @@ impl AppState {
             boot_id,
             started,
             backend: Arc::new(backend),
-            rec_dir: Arc::from(PathBuf::from(DEFAULT_REC_DIR).into_boxed_path()),
+            storage: Arc::new(StorageCoordinator::new(PathBuf::from(DEFAULT_REC_DIR))),
             time_store,
             clip_durations,
             request_seq: Arc::new(AtomicU64::new(1)),
@@ -85,8 +85,8 @@ impl AppState {
         }
     }
 
-    pub fn with_rec_dir(mut self, rec_dir: PathBuf) -> Self {
-        self.rec_dir = Arc::from(rec_dir.into_boxed_path());
+    pub fn with_storage(mut self, storage: Arc<StorageCoordinator>) -> Self {
+        self.storage = storage;
         self
     }
 

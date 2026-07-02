@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -21,11 +22,12 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use dancam::{
-    backend::Backend,
+    backend::{Backend, BackendError},
     camera::{CameraConfig, CameraProcess},
     event_hub::EventConnection,
     events::Event,
     recorder::{parse_segment_filename, RecorderPhase},
+    storage::StorageCoordinator,
     world::CameraState,
     AppState,
 };
@@ -252,7 +254,8 @@ async fn supervisor_confirms_start_stop_and_records_with_idle_preview_subscriber
             "10".to_string(),
         ],
     );
-    let (backend, control) = CameraProcess::spawn(config);
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
 
     wait_for_camera_state(&backend, CameraState::Running).await;
 
@@ -292,10 +295,10 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
             "0.6".to_string(),
         ],
     );
-    let (backend, control) = CameraProcess::spawn(config);
-    let app = dancam::app(
-        AppState::new(BOOT_ID.to_string(), backend.clone()).with_rec_dir(rec_dir.clone()),
-    );
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
+    let app =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage));
 
     wait_for_camera_state(&backend, CameraState::Running).await;
 
@@ -399,7 +402,8 @@ async fn supervisor_starts_after_six_digit_existing_segment_without_overwrite() 
             "10".to_string(),
         ],
     );
-    let (backend, control) = CameraProcess::spawn(config);
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
 
     wait_for_camera_state(&backend, CameraState::Running).await;
 
@@ -436,7 +440,8 @@ async fn supervisor_marks_child_restarting_after_crash() {
             "4".to_string(),
         ],
     );
-    let (backend, control) = CameraProcess::spawn(config);
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
 
     wait_for_camera_state(&backend, CameraState::Running).await;
     backend.start_recording().await.unwrap();
@@ -468,7 +473,8 @@ async fn preview_subscriber_gets_cached_latest_frame_on_connect() {
             "0.2".to_string(),
         ],
     );
-    let (backend, control) = CameraProcess::spawn(config);
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
 
     wait_for_camera_state(&backend, CameraState::Running).await;
 
@@ -514,7 +520,8 @@ async fn preview_slot_cleared_while_child_restarting() {
             "4".to_string(),
         ],
     );
-    let (backend, control) = CameraProcess::spawn(config);
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
 
     wait_for_camera_state(&backend, CameraState::Running).await;
 
@@ -638,6 +645,10 @@ fn segment_ids(rec_dir: &Path) -> Vec<u32> {
     ids
 }
 
+fn storage_for(rec_dir: &Path) -> Arc<StorageCoordinator> {
+    Arc::new(StorageCoordinator::new(rec_dir.to_path_buf()))
+}
+
 fn assert_new_segments_are_stamped(rec_dir: &Path, expected_ids: &[u32]) {
     let stamped = fs::read_dir(rec_dir)
         .unwrap()
@@ -678,4 +689,39 @@ fn recording_request(uri: &str) -> Request<Body> {
         .header("Idempotency-Key", Uuid::new_v4().to_string())
         .body(Body::from("{}"))
         .unwrap()
+}
+
+#[tokio::test]
+async fn supervisor_start_fails_closed_when_witness_is_corrupt() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("supervisor-corrupt-witness");
+    fs::create_dir_all(rec_dir.join("state")).unwrap();
+    fs::write(rec_dir.join("state").join("state.json"), b"not json").unwrap();
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "10".to_string(),
+        ],
+    );
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    assert_eq!(backend.start_recording().await, Err(BackendError::Storage));
+    let snapshot = backend.snapshot();
+    assert_eq!(snapshot.recorder.phase, RecorderPhase::Idle);
+    assert_eq!(snapshot.recorder.current_segment, None);
+    assert!(segment_ids(&rec_dir).is_empty());
+
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
 }

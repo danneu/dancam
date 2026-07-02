@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -12,7 +13,9 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
-use dancam::{backend::MockBackend, recorder::parse_segment_filename, AppState};
+use dancam::{
+    backend::MockBackend, recorder::parse_segment_filename, storage::StorageCoordinator, AppState,
+};
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
@@ -21,12 +24,13 @@ const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
 async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
     let rec_dir = TempRecDir::new();
     let roll_interval = Duration::from_millis(500);
+    let storage = storage_for(&rec_dir.path);
     let app = dancam::app(
         AppState::new(
             BOOT_ID.to_string(),
-            MockBackend::recording_to(rec_dir.path.clone(), roll_interval),
+            MockBackend::recording_to(storage.clone(), roll_interval),
         )
-        .with_rec_dir(rec_dir.path.clone()),
+        .with_storage(storage),
     );
 
     let sync = app
@@ -102,12 +106,13 @@ async fn writer_mock_starts_after_six_digit_existing_segment_without_mutating_it
     fs::write(rec_dir.path.join("seg_99999.ts"), b"anchor").unwrap();
     let sentinel = b"existing mock segment 100000";
     fs::write(rec_dir.path.join("seg_100000.ts"), sentinel).unwrap();
+    let storage = storage_for(&rec_dir.path);
     let app = dancam::app(
         AppState::new(
             BOOT_ID.to_string(),
-            MockBackend::recording_to(rec_dir.path.clone(), Duration::from_secs(30)),
+            MockBackend::recording_to(storage.clone(), Duration::from_secs(30)),
         )
-        .with_rec_dir(rec_dir.path.clone()),
+        .with_storage(storage),
     );
 
     let start = app
@@ -120,6 +125,7 @@ async fn writer_mock_starts_after_six_digit_existing_segment_without_mutating_it
     let first_segment = poll_status_for_segment(app.clone(), None, Duration::from_secs(2)).await;
     assert_eq!(first_segment, 100001);
     assert_new_segments_are_stamped(&rec_dir.path, &[100001]);
+    assert_eq!(read_high_water_seq(&rec_dir.path), 100001);
     assert_eq!(
         fs::read(rec_dir.path.join("seg_100000.ts"))
             .unwrap()
@@ -132,6 +138,34 @@ async fn writer_mock_starts_after_six_digit_existing_segment_without_mutating_it
         .await
         .unwrap();
     assert_eq!(stop.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn writer_mock_start_fails_closed_when_witness_is_corrupt() {
+    let rec_dir = TempRecDir::new();
+    fs::create_dir(rec_dir.path.join("state")).unwrap();
+    fs::write(rec_dir.path.join("state").join("state.json"), b"not json").unwrap();
+    let storage = storage_for(&rec_dir.path);
+    let app = dancam::app(
+        AppState::new(
+            BOOT_ID.to_string(),
+            MockBackend::recording_to(storage.clone(), Duration::from_secs(30)),
+        )
+        .with_storage(storage),
+    );
+
+    let start = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/start", "start-corrupt"))
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response_text(start).await, "storage allocation failed");
+
+    let status = response_json(app.oneshot(get_request("/v1/status")).await.unwrap()).await;
+    assert_eq!(status["recorder"]["phase"], "idle");
+    assert_eq!(status["recorder"]["current_segment"], Value::Null);
+    assert!(segment_ids(&rec_dir.path).is_empty());
 }
 
 async fn poll_status_for_segment(
@@ -167,6 +201,11 @@ async fn poll_status_for_segment(
 async fn response_json(response: axum::http::Response<Body>) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&body).unwrap()
+}
+
+async fn response_text(response: axum::http::Response<Body>) -> String {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    String::from_utf8(body.to_vec()).unwrap()
 }
 
 fn get_request(uri: &str) -> Request<Body> {
@@ -212,6 +251,29 @@ fn segment_snapshot(rec_dir: &Path) -> Vec<(String, u64)> {
         .collect();
     snapshot.sort();
     snapshot
+}
+
+fn segment_ids(rec_dir: &Path) -> Vec<u32> {
+    let mut ids = fs::read_dir(rec_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            parse_segment_filename(&name).map(|parsed| parsed.seq)
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids
+}
+
+fn storage_for(rec_dir: &Path) -> Arc<StorageCoordinator> {
+    Arc::new(StorageCoordinator::new(rec_dir.to_path_buf()))
+}
+
+fn read_high_water_seq(rec_dir: &Path) -> u32 {
+    let bytes = fs::read(rec_dir.join("state").join("state.json")).unwrap();
+    serde_json::from_slice::<Value>(&bytes).unwrap()["high_water_seq"]
+        .as_u64()
+        .unwrap() as u32
 }
 
 fn assert_new_segments_are_stamped(rec_dir: &Path, expected_ids: &[u32]) {

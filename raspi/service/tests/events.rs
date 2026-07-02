@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
@@ -8,7 +8,7 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
-use dancam::{backend::MockBackend, AppState};
+use dancam::{backend::MockBackend, storage::StorageCoordinator, AppState};
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
@@ -16,8 +16,9 @@ const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
 #[tokio::test]
 async fn events_stream_starts_with_snapshot_and_proto_headers() {
     let rec_dir = TempRecDir::new();
-    let backend = MockBackend::recording_to(rec_dir.path.clone(), Duration::from_secs(60));
-    let app = dancam::app(state(rec_dir.path.clone(), backend));
+    let storage = storage_for(&rec_dir.path);
+    let backend = MockBackend::recording_to(storage.clone(), Duration::from_secs(60));
+    let app = dancam::app(state(storage, backend));
 
     let response = app.oneshot(events_request()).await.unwrap();
 
@@ -53,8 +54,9 @@ async fn events_stream_starts_with_snapshot_and_proto_headers() {
 #[tokio::test]
 async fn events_stream_emits_command_phases_before_child_confirmations() {
     let rec_dir = TempRecDir::new();
-    let backend = MockBackend::recording_to(rec_dir.path.clone(), Duration::from_secs(60));
-    let app = dancam::app(state(rec_dir.path.clone(), backend));
+    let storage = storage_for(&rec_dir.path);
+    let backend = MockBackend::recording_to(storage.clone(), Duration::from_secs(60));
+    let app = dancam::app(state(storage, backend));
 
     let response = app.clone().oneshot(events_request()).await.unwrap();
     let mut reader = SseReader::new(response.into_body());
@@ -88,8 +90,9 @@ async fn events_stream_emits_command_phases_before_child_confirmations() {
 #[tokio::test]
 async fn mock_tick_emits_heartbeat_without_a_timer() {
     let rec_dir = TempRecDir::new();
-    let backend = MockBackend::recording_to(rec_dir.path.clone(), Duration::from_secs(60));
-    let app = dancam::app(state(rec_dir.path.clone(), backend.clone()));
+    let storage = storage_for(&rec_dir.path);
+    let backend = MockBackend::recording_to(storage.clone(), Duration::from_secs(60));
+    let app = dancam::app(state(storage, backend.clone()));
 
     let response = app.oneshot(events_request()).await.unwrap();
     let mut reader = SseReader::new(response.into_body());
@@ -105,8 +108,9 @@ async fn mock_tick_emits_heartbeat_without_a_timer() {
 #[tokio::test]
 async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
     let rec_dir = TempRecDir::new();
-    let backend = MockBackend::recording_to(rec_dir.path.clone(), Duration::from_millis(250));
-    let app = dancam::app(state(rec_dir.path.clone(), backend));
+    let storage = storage_for(&rec_dir.path);
+    let backend = MockBackend::recording_to(storage.clone(), Duration::from_millis(250));
+    let app = dancam::app(state(storage, backend));
 
     let response = app.clone().oneshot(events_request()).await.unwrap();
     let mut reader = SseReader::new(response.into_body());
@@ -222,8 +226,12 @@ async fn wait_for_type(reader: &mut SseReader, event_type: &str, timeout: Durati
     .unwrap_or_else(|_| panic!("timed out waiting for {event_type}"))
 }
 
-fn state(rec_dir: PathBuf, backend: MockBackend) -> AppState {
-    AppState::new(BOOT_ID.to_string(), backend).with_rec_dir(rec_dir)
+fn state(storage: Arc<StorageCoordinator>, backend: MockBackend) -> AppState {
+    AppState::new(BOOT_ID.to_string(), backend).with_storage(storage)
+}
+
+fn storage_for(rec_dir: &std::path::Path) -> Arc<StorageCoordinator> {
+    Arc::new(StorageCoordinator::new(rec_dir.to_path_buf()))
 }
 
 fn events_request() -> Request<Body> {

@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
     sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
@@ -20,7 +20,7 @@ use tokio::{
 use tokio_stream::{wrappers::WatchStream, Stream, StreamExt};
 
 use crate::{
-    clips::{clip_meta, max_clip_seq, ClipMeta},
+    clips::{clip_meta, ClipMeta},
     clock,
     event_hub::{EventConnection, EventHub, SeqEvent},
     events::Snapshot,
@@ -28,6 +28,7 @@ use crate::{
         boot_tag, segment_filename, stamped_segment_filename, RecorderEvent, SegmentFacts,
         SegmentId,
     },
+    storage::StorageCoordinator,
     sysfacts::{DiskUsage, MemInfo},
     time_sync::TimeStore,
     ts_duration::{ts_pts_packet, DurationCache},
@@ -86,6 +87,7 @@ pub enum BackendError {
     CameraOffline,
     Timeout,
     Channel,
+    Storage,
 }
 
 impl IntoResponse for BackendError {
@@ -96,6 +98,10 @@ impl IntoResponse for BackendError {
             BackendError::Channel => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "camera command channel closed",
+            ),
+            BackendError::Storage => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage allocation failed",
             ),
         };
 
@@ -118,28 +124,28 @@ impl MockBackend {
         Self::with_recorder(None)
     }
 
-    pub fn recording_to(rec_dir: PathBuf, roll_interval: Duration) -> Self {
-        Self::with_recorder(Some((rec_dir, roll_interval)))
+    pub fn recording_to(storage: Arc<StorageCoordinator>, roll_interval: Duration) -> Self {
+        Self::with_recorder(Some((storage, roll_interval)))
     }
 
     pub fn tick(&self) {
         self.hub.tick();
     }
 
-    fn with_recorder(recorder: Option<(PathBuf, Duration)>) -> Self {
+    fn with_recorder(recorder: Option<(Arc<StorageCoordinator>, Duration)>) -> Self {
         let (frames_tx, _) = watch::channel::<Option<Bytes>>(None);
         let hub = Arc::new(EventHub::new(CameraState::Running));
         let clip_durations = Arc::new(DurationCache::new());
         let time_store = Arc::new(
             recorder
                 .as_ref()
-                .map(|(rec_dir, _)| TimeStore::load(rec_dir.join("time")))
+                .map(|(storage, _)| TimeStore::load(storage.rec_dir().join("time")))
                 .unwrap_or_else(TimeStore::in_memory),
         );
         let boot_tag = Arc::new(StdMutex::new(None));
-        let recorder = recorder.map(|(rec_dir, roll_interval)| {
+        let recorder = recorder.map(|(storage, roll_interval)| {
             MockRecorder::new(
-                rec_dir,
+                storage,
                 roll_interval,
                 hub.clone(),
                 clip_durations.clone(),
@@ -161,6 +167,7 @@ impl MockBackend {
     }
 
     fn drive_start_without_writer(&self) {
+        // Recorder-less mock state has no recording directory and performs no storage mutation.
         let events = self.hub.drive_now(Input::StartCommand { start_segment: 0 });
         let Some(session) = starting_session(&events) else {
             return;
@@ -257,6 +264,7 @@ impl Backend for MockBackend {
 
 #[derive(Clone)]
 struct MockRecorder {
+    storage: Arc<StorageCoordinator>,
     rec_dir: Arc<Path>,
     roll_interval: Duration,
     hub: Arc<EventHub>,
@@ -284,7 +292,7 @@ struct MockRecordingContext {
 
 impl MockRecorder {
     fn new(
-        rec_dir: PathBuf,
+        storage: Arc<StorageCoordinator>,
         roll_interval: Duration,
         hub: Arc<EventHub>,
         clip_durations: Arc<DurationCache>,
@@ -297,8 +305,10 @@ impl MockRecorder {
             roll_interval
         };
 
+        let rec_dir = storage.rec_dir();
         Self {
-            rec_dir: Arc::from(rec_dir.into_boxed_path()),
+            storage,
+            rec_dir,
             roll_interval,
             hub,
             clip_durations,
@@ -323,9 +333,10 @@ impl MockRecorder {
             return Ok(());
         }
 
-        let start_segment = max_clip_seq(self.rec_dir.as_ref())
-            .map(|seq| seq.saturating_add(1))
-            .unwrap_or(0);
+        let start_segment = self.storage.allocate_start_segment().map_err(|error| {
+            tracing::error!(%error, "start segment allocation failed");
+            BackendError::Storage
+        })?;
         let events = self.hub.drive_now(Input::StartCommand { start_segment });
         let Some(session) = starting_session(&events) else {
             return Ok(());

@@ -82,7 +82,7 @@ pub(crate) async fn list_clips(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let limit = resolve_limit(query.limit);
     let unpullable_from = state.backend.unpullable_from();
-    let rec_dir = state.rec_dir.clone();
+    let rec_dir = state.storage.rec_dir();
     let duration_cache = state.clip_durations.clone();
     let time_store = state.time_store.clone();
     let (clips, next_cursor) = match tokio::task::spawn_blocking(move || {
@@ -124,7 +124,7 @@ pub async fn serve_clip(
         return Err(ClipError::NotFound);
     }
 
-    let rec_dir = state.rec_dir.clone();
+    let rec_dir = state.storage.rec_dir();
     let segment = tokio::task::spawn_blocking(move || resolve_segment(rec_dir.as_ref(), id))
         .await
         .map_err(|error| {
