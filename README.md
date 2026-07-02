@@ -358,6 +358,13 @@ systemctl status dancam        # running? enabled for boot?
 journalctl -u dancam -f        # live logs
 ```
 
+From the Mac, fetch recent service logs or follow them live over SSH:
+
+```sh
+ssh dancam.local 'journalctl -u dancam -n 200 --no-pager'
+ssh dancam.local 'journalctl -u dancam -f'
+```
+
 Request/response access lines appear in `journalctl -u dancam -f` with an
 `x-request-id`; grep the journal for that id to correlate a Pi request. To raise
 service verbosity without rebuilding, add `Environment=RUST_LOG=dancam=debug` with
