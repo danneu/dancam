@@ -24,7 +24,10 @@ is when logs matter most.
 Add a Rust `from_fn` middleware that logs one structured request/response event per
 HTTP request through the existing `tracing` stdout pipeline. The middleware:
 
-- resolves a request id from a safe inbound `x-request-id` value, or generates a UUID;
+- resolves a request id from a safe inbound `x-request-id` value, or generates a UUID
+  (Superseded, for request-id format only, by
+  `14-2026-07-02-request-id-format.md`; the generated fallback is now a per-process
+  counter);
 - echoes the final request id in the response `x-request-id` header;
 - opens a tracing span carrying `request_id`, `method`, and `path`;
 - records one INFO access line with `status` and `latency_ms`; and
@@ -34,7 +37,9 @@ HTTP request through the existing `tracing` stdout pipeline. The middleware:
 Inbound request ids are accepted only when non-empty, at most 128 bytes, and limited to
 ASCII letters, digits, `.`, `_`, and `-`. Unsafe values are ignored and replaced with a
 generated UUID so clients cannot inject huge or garbage values into logs or response
-headers.
+headers. Superseded, for request-id format only, by
+`14-2026-07-02-request-id-format.md`: unsafe inbound values are still ignored, but
+the generated fallback is now a per-process counter.
 
 The request-id span covers the access line and logs emitted while the handler future is
 running. It does not cover logs emitted later by response-body streams, such as SSE or

@@ -372,9 +372,15 @@ ssh dancam.local 'journalctl -u dancam -f'
 ```
 
 Request/response access lines appear in `journalctl -u dancam -f` with an
-`x-request-id`; grep the journal for that id to correlate a Pi request. To raise
-service verbosity without rebuilding, add `Environment=RUST_LOG=dancam=debug` with
-`sudo systemctl edit dancam`, then restart `dancam`.
+`x-request-id`; grep the journal for that id to correlate a Pi request. Pi-generated
+ids are a per-process counter (`1`, `2`, `3`, ...) that resets on each service start,
+so a blind grep of a captured generated id is scoped to one service run, not the whole
+persistent journal. Use time proximity plus the neighboring reset marker, or narrow to
+one systemd invocation with
+`journalctl _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value dancam)`.
+`journalctl -b` narrows to one boot but not to one service run inside that boot. To
+raise service verbosity without rebuilding, add `Environment=RUST_LOG=dancam=debug`
+with `sudo systemctl edit dancam`, then restart `dancam`.
 
 ## 8. Smoke-test the AP path
 

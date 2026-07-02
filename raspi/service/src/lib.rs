@@ -2,7 +2,10 @@ use std::{
     collections::HashSet,
     net::{SocketAddr, TcpListener},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Instant,
 };
 
@@ -47,6 +50,7 @@ pub struct AppState {
     pub backend: Arc<dyn Backend>,
     pub rec_dir: Arc<Path>,
     pub(crate) clip_durations: Arc<DurationCache>,
+    request_seq: Arc<AtomicU64>,
     host_policy: Arc<HostPolicy>,
 }
 
@@ -66,6 +70,7 @@ impl AppState {
             backend: Arc::new(backend),
             rec_dir: Arc::from(PathBuf::from(DEFAULT_REC_DIR).into_boxed_path()),
             clip_durations,
+            request_seq: Arc::new(AtomicU64::new(1)),
             host_policy: Arc::new(HostPolicy::default()),
         }
     }
@@ -96,7 +101,7 @@ pub fn app(state: AppState) -> Router {
             host_allowlist,
         ))
         .layer(middleware::from_fn_with_state(state.clone(), proto_headers))
-        .layer(middleware::from_fn(request_trace))
+        .layer(middleware::from_fn_with_state(state.clone(), request_trace))
         .with_state(state)
 }
 
@@ -162,9 +167,17 @@ async fn proto_headers(
     response
 }
 
-async fn request_trace(request: Request<Body>, next: Next) -> Response {
-    let request_id =
-        inbound_request_id(&request).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+async fn request_trace(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let request_id = inbound_request_id(&request).unwrap_or_else(|| {
+        state
+            .request_seq
+            .fetch_add(1, Ordering::Relaxed)
+            .to_string()
+    });
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
     let started = Instant::now();

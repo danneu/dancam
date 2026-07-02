@@ -31,6 +31,7 @@ fn assert_generated_request_id(response: &Response<Body>) {
     let request_id = request_id(response);
     assert!(!request_id.is_empty());
     assert!(request_id.len() <= 128);
+    assert!(request_id.bytes().all(|byte| byte.is_ascii_digit()));
     assert!(request_id
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')));
@@ -45,6 +46,26 @@ async fn generates_request_id_when_absent() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_generated_request_id(&response);
+}
+
+#[tokio::test]
+async fn generated_request_ids_increment_from_one_per_state() {
+    let app = dancam::app(state());
+
+    let first = app
+        .clone()
+        .oneshot(get("/v1/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let second = app
+        .oneshot(get("/v1/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(second.status(), StatusCode::OK);
+    assert_eq!(request_id(&first), "1");
+    assert_eq!(request_id(&second), "2");
 }
 
 #[tokio::test]
