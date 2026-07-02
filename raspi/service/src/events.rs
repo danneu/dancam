@@ -63,6 +63,9 @@ pub enum Event {
         swap_total: u64,
         swap_used: u64,
     },
+    TimeSynced {
+        at_ms: u64,
+    },
     Heartbeat {
         t_ms: u64,
     },
@@ -77,6 +80,12 @@ pub struct Snapshot {
     pub storage: Option<DiskUsage>,
     pub temp_c: TempC,
     pub mem: Option<MemInfo>,
+    pub time: TimeStatus,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct TimeStatus {
+    pub synced: bool,
 }
 
 pub async fn status(State(state): State<AppState>) -> Json<Snapshot> {
@@ -168,7 +177,7 @@ fn sse_frame(seq: u64, event: Event) -> Result<SseEvent, axum::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Event, Snapshot};
+    use super::{Event, Snapshot, TimeStatus};
     use crate::{
         clips::ClipMeta,
         recorder::{CurrentSegment, RecorderPhase, RecorderSnapshot},
@@ -218,6 +227,7 @@ mod tests {
                     swap_total: 134_217_728,
                     swap_used: 0,
                 }),
+                time: TimeStatus { synced: true },
             }),
             Event::RecordingStarting {
                 session: 7,
@@ -271,6 +281,7 @@ mod tests {
                 swap_total: 134_217_728,
                 swap_used: 0,
             },
+            Event::TimeSynced { at_ms: 7000 },
             Event::Heartbeat { t_ms: 12000 },
         ]
     }
@@ -289,6 +300,7 @@ mod tests {
             Event::StorageChanged { .. } => "storage_changed",
             Event::TempChanged { .. } => "temp_changed",
             Event::MemChanged { .. } => "mem_changed",
+            Event::TimeSynced { .. } => "time_synced",
             Event::Heartbeat { .. } => "heartbeat",
         }
     }

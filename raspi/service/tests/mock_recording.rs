@@ -15,6 +15,7 @@ use tower::ServiceExt;
 use dancam::{backend::MockBackend, recorder::parse_segment_filename, AppState};
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
+const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
 
 #[tokio::test]
 async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
@@ -27,6 +28,13 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
         )
         .with_rec_dir(rec_dir.path.clone()),
     );
+
+    let sync = app
+        .clone()
+        .oneshot(time_request(VALID_EPOCH_MS, "time-1"))
+        .await
+        .unwrap();
+    assert_eq!(sync.status(), StatusCode::OK);
 
     let start = app
         .clone()
@@ -58,6 +66,12 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
         "rolled clip dur_ms was {}",
         first_clip["dur_ms"]
     );
+    assert!(
+        first_clip["start_ms"].as_u64().is_some(),
+        "rolled clip start_ms was {}",
+        first_clip["start_ms"]
+    );
+    assert_eq!(first_clip["time_approximate"], false);
 
     let stop = app
         .clone()
@@ -171,6 +185,17 @@ fn recording_request(uri: &str, idempotency_key: &str) -> Request<Body> {
         .header("Content-Type", "application/json")
         .header("Idempotency-Key", idempotency_key)
         .body(Body::from("{}"))
+        .unwrap()
+}
+
+fn time_request(epoch_ms: i64, idempotency_key: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/time")
+        .header("Host", "localhost:8080")
+        .header("Content-Type", "application/json")
+        .header("Idempotency-Key", idempotency_key)
+        .body(Body::from(format!(r#"{{"epoch_ms":{epoch_ms}}}"#)))
         .unwrap()
 }
 

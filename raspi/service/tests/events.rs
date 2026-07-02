@@ -11,6 +11,7 @@ use tower::ServiceExt;
 use dancam::{backend::MockBackend, AppState};
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
+const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
 
 #[tokio::test]
 async fn events_stream_starts_with_snapshot_and_proto_headers() {
@@ -46,6 +47,7 @@ async fn events_stream_starts_with_snapshot_and_proto_headers() {
     assert_eq!(frame.id, "0");
     assert_eq!(frame.json["type"], "snapshot");
     assert_eq!(frame.json["boot_id"], BOOT_ID);
+    assert_eq!(frame.json["time"]["synced"], false);
 }
 
 #[tokio::test]
@@ -110,12 +112,46 @@ async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
     let mut reader = SseReader::new(response.into_body());
     assert_eq!(reader.next().await.json["type"], "snapshot");
 
+    let sync = app
+        .clone()
+        .oneshot(time_request(VALID_EPOCH_MS, "time-1"))
+        .await
+        .unwrap();
+    assert_eq!(sync.status(), StatusCode::OK);
+    wait_for_type(&mut reader, "time_synced", Duration::from_secs(2)).await;
+    let synced_listing = response_json(
+        app.clone()
+            .oneshot(clip_request("/v1/clips"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(synced_listing["server_time_ms"].as_u64().is_some());
+    assert!(
+        rec_dir
+            .path
+            .join("time")
+            .join(format!("{BOOT_ID}.json"))
+            .exists(),
+        "time dir entries were {:?}",
+        segment_snapshot(&rec_dir.path.join("time"))
+    );
+
     let start = app
         .clone()
         .oneshot(recording_request("/v1/recording/start", "start-1"))
         .await
         .unwrap();
     assert_eq!(start.status(), StatusCode::OK);
+    assert!(
+        rec_dir
+            .path
+            .join("time")
+            .join(format!("{BOOT_ID}.json"))
+            .exists(),
+        "time dir entries after start were {:?}",
+        segment_snapshot(&rec_dir.path.join("time"))
+    );
 
     let finalized = wait_for_type(&mut reader, "clip_finalized", Duration::from_secs(3)).await;
     let finalized_id = finalized.json["id"].as_u64().unwrap();
@@ -127,6 +163,15 @@ async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
         "clip_finalized dur_ms was {}",
         finalized.json["dur_ms"]
     );
+    assert!(
+        finalized.json["start_ms"].as_u64().is_some(),
+        "clip_finalized start_ms was {}; files were {:?}; time files were {:?}; time was {}",
+        finalized.json["start_ms"],
+        segment_snapshot(&rec_dir.path),
+        segment_snapshot(&rec_dir.path.join("time")),
+        time_record(&rec_dir.path)
+    );
+    assert_eq!(finalized.json["time_approximate"], false);
 
     // /v1/clips derives dur_ms from the same segment file, so it must agree exactly --
     // a fabricated event duration would diverge here and the value would flicker on
@@ -200,12 +245,42 @@ fn recording_request(uri: &str, idempotency_key: &str) -> Request<Body> {
         .unwrap()
 }
 
+fn time_request(epoch_ms: i64, idempotency_key: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/time")
+        .header("Host", "localhost:8080")
+        .header("Content-Type", "application/json")
+        .header("Idempotency-Key", idempotency_key)
+        .body(Body::from(format!(r#"{{"epoch_ms":{epoch_ms}}}"#)))
+        .unwrap()
+}
+
 fn clip_request(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .header("Host", "localhost:8080")
         .body(Body::empty())
         .unwrap()
+}
+
+fn segment_snapshot(rec_dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(rec_dir) else {
+        return Vec::new();
+    };
+    let mut names = entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+fn time_record(rec_dir: &std::path::Path) -> Value {
+    fs::read(rec_dir.join("time").join(format!("{BOOT_ID}.json")))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or(Value::Null)
 }
 
 struct SseReader {

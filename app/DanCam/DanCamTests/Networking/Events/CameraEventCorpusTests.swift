@@ -34,6 +34,10 @@ struct CameraEventCorpusTests {
             CameraEvent.self,
             from: Data(contentsOf: corpusURL("clip_finalized.json"))
         )
+        let timeSynced = try decoder.decode(
+            CameraEvent.self,
+            from: Data(contentsOf: corpusURL("time_synced.json"))
+        )
 
         #expect(snapshot == .snapshot(World(
             recorder: RecorderSnapshot(
@@ -47,7 +51,8 @@ struct CameraEventCorpusTests {
             uptimeS: 120,
             storage: Storage(used: 1_000_000_000, total: 32_000_000_000),
             tempC: TempC(soc: 51.5, sensor: nil),
-            mem: Mem(total: 512_000_000, available: 256_000_000, swapTotal: 134_217_728, swapUsed: 0)
+            mem: Mem(total: 512_000_000, available: 256_000_000, swapTotal: 134_217_728, swapUsed: 0),
+            time: TimeStatus(synced: true)
         )))
         #expect(opened == .segmentOpened(session: 7, id: 43, atMs: 5_400))
         #expect(finalized == .clipFinalized(Clip(
@@ -59,6 +64,7 @@ struct CameraEventCorpusTests {
             etag: "42-1048576",
             timeApproximate: true
         )))
+        #expect(timeSynced == .timeSynced(atMs: 7_000))
     }
 
     @Test(.tags(.networking))

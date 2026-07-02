@@ -84,6 +84,6 @@ nonisolated struct ClipsClient {
     }
 
     static let noop = ClipsClient { _ in
-        ClipsResponse(clips: [], serverTimeMs: 0, nextCursor: nil)
+        ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)
     }
 }

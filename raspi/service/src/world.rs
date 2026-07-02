@@ -1,6 +1,6 @@
 use crate::{
     clips::ClipMeta,
-    events::{Event, Snapshot},
+    events::{Event, Snapshot, TimeStatus},
     recorder::{RecorderEvent, RecorderPhase, RecorderState, SegmentId, SessionId},
     sysfacts::{DiskUsage, MemInfo},
 };
@@ -36,6 +36,7 @@ pub struct World {
     storage: Option<DiskUsage>,
     temp_c: TempC,
     mem: Option<MemInfo>,
+    time_synced: bool,
 }
 
 impl World {
@@ -46,6 +47,7 @@ impl World {
             storage: None,
             temp_c: TempC::empty(),
             mem: None,
+            time_synced: false,
         }
     }
 
@@ -58,6 +60,9 @@ impl World {
             storage: self.storage.clone(),
             temp_c: self.temp_c.clone(),
             mem: self.mem.clone(),
+            time: TimeStatus {
+                synced: self.time_synced,
+            },
         }
     }
 
@@ -113,6 +118,14 @@ impl World {
                 temp_c,
                 mem,
             } => self.apply_telemetry(storage, temp_c, mem),
+            Input::TimeSynced => {
+                if self.time_synced {
+                    Vec::new()
+                } else {
+                    self.time_synced = true;
+                    vec![Event::TimeSynced { at_ms: now_ms }]
+                }
+            }
             Input::Tick => vec![Event::Heartbeat { t_ms: now_ms }],
         }
     }
@@ -294,6 +307,7 @@ pub enum Input {
         temp_c: TempC,
         mem: Option<MemInfo>,
     },
+    TimeSynced,
     Tick,
 }
 
@@ -514,6 +528,19 @@ mod tests {
             vec![Event::Heartbeat { t_ms: 1200 }]
         );
         assert_eq!(world, before);
+    }
+
+    #[test]
+    fn time_sync_flips_once_and_projects_into_snapshot() {
+        let mut world = World::new(CameraState::Running);
+        assert!(!world.snapshot("boot", 12).time.synced);
+
+        assert_eq!(
+            world.apply(Input::TimeSynced, 7000),
+            vec![Event::TimeSynced { at_ms: 7000 }]
+        );
+        assert!(world.snapshot("boot", 12).time.synced);
+        assert!(world.apply(Input::TimeSynced, 8000).is_empty());
     }
 
     #[test]

@@ -103,6 +103,7 @@ async fn status_returns_snapshot_wire_contract() {
     assert!(json["temp_c"]["soc"].is_number() || json["temp_c"]["soc"].is_null());
     assert!(json["temp_c"]["sensor"].is_null());
     assert!(json["mem"].is_object() || json["mem"].is_null());
+    assert_eq!(json["time"]["synced"], false);
 }
 
 #[tokio::test]

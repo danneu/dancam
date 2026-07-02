@@ -24,6 +24,7 @@ use crate::{
     jpeg::JpegSplitter,
     recorder::{RecorderEvent, RecorderPhase, SegmentId},
     sysfacts::{DiskUsage, MemInfo},
+    time_sync::TimeStore,
     ts_duration::DurationCache,
     world::{CameraState, Input, LiveStatus, TempC},
 };
@@ -98,6 +99,7 @@ pub struct CameraBackend {
     rec_dir: Arc<std::path::Path>,
     commands_tx: mpsc::Sender<Command>,
     clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
 }
 
 pub struct CameraProcess;
@@ -110,6 +112,7 @@ impl CameraProcess {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let rec_dir: Arc<std::path::Path> = Arc::from(config.rec_dir.clone().into_boxed_path());
         let clip_durations = Arc::new(DurationCache::new());
+        let time_store = Arc::new(TimeStore::load(config.rec_dir.join("time")));
 
         let supervisor = tokio::spawn(supervise(
             config,
@@ -118,6 +121,7 @@ impl CameraProcess {
             commands_rx,
             shutdown_rx,
             clip_durations.clone(),
+            time_store.clone(),
         ));
 
         let backend = CameraBackend {
@@ -126,6 +130,7 @@ impl CameraProcess {
             rec_dir,
             commands_tx,
             clip_durations,
+            time_store,
         };
         let control = SupervisorControl {
             shutdown_tx: Some(shutdown_tx),
@@ -219,8 +224,18 @@ impl Backend for CameraBackend {
         self.clip_durations.clone()
     }
 
+    fn time_store(&self) -> Arc<TimeStore> {
+        self.time_store.clone()
+    }
+
+    fn mark_time_synced(&self) {
+        self.hub.drive_now(Input::TimeSynced);
+    }
+
     fn set_context(&self, boot_id: Arc<str>, started: Instant) {
         self.hub.set_context(boot_id, started);
+        self.time_store
+            .set_boot_id(self.hub.snapshot().boot_id.as_str());
     }
 
     fn tick(&self) {
@@ -329,6 +344,7 @@ async fn supervise(
     mut commands_rx: mpsc::Receiver<Command>,
     mut shutdown_rx: oneshot::Receiver<()>,
     clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
 ) {
     let mut backoff = BACKOFF_BASE;
 
@@ -338,17 +354,14 @@ async fn supervise(
 
         match spawn_child(&config).await {
             Ok(child) => {
-                match run_child(
-                    child,
-                    frames_tx.clone(),
-                    hub.clone(),
-                    Arc::from(config.rec_dir.clone().into_boxed_path()),
-                    &mut commands_rx,
-                    &mut shutdown_rx,
-                    clip_durations.clone(),
-                )
-                .await
-                {
+                let runtime = ChildRuntime {
+                    frames_tx: frames_tx.clone(),
+                    hub: hub.clone(),
+                    rec_dir: Arc::from(config.rec_dir.clone().into_boxed_path()),
+                    clip_durations: clip_durations.clone(),
+                    time_store: time_store.clone(),
+                };
+                match run_child(child, runtime, &mut commands_rx, &mut shutdown_rx).await {
                     ChildOutcome::Shutdown => {
                         frames_tx.send_replace(None);
                         hub.drive_now(Input::CameraState(CameraState::Offline));
@@ -409,15 +422,28 @@ enum ChildOutcome {
     Shutdown,
 }
 
-async fn run_child(
-    mut child: Child,
+struct ChildRuntime {
     frames_tx: watch::Sender<Option<Bytes>>,
     hub: Arc<EventHub>,
     rec_dir: Arc<Path>,
+    clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
+}
+
+async fn run_child(
+    mut child: Child,
+    runtime: ChildRuntime,
     commands_rx: &mut mpsc::Receiver<Command>,
     shutdown_rx: &mut oneshot::Receiver<()>,
-    clip_durations: Arc<DurationCache>,
 ) -> ChildOutcome {
+    let ChildRuntime {
+        frames_tx,
+        hub,
+        rec_dir,
+        clip_durations,
+        time_store,
+    } = runtime;
+
     let Some(stdout) = child.stdout.take() else {
         tracing::error!("camera child stdout was not piped");
         let _ = child.kill().await;
@@ -438,7 +464,13 @@ async fn run_child(
     };
 
     let stdout_task = tokio::spawn(drain_stdout(stdout, frames_tx));
-    let stderr_task = tokio::spawn(parse_stderr(stderr, hub, rec_dir, clip_durations));
+    let stderr_task = tokio::spawn(parse_stderr(
+        stderr,
+        hub,
+        rec_dir,
+        clip_durations,
+        time_store,
+    ));
 
     loop {
         tokio::select! {
@@ -514,6 +546,7 @@ async fn parse_stderr(
     hub: Arc<EventHub>,
     rec_dir: Arc<Path>,
     clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
 ) {
     let mut lines = BufReader::new(stderr).lines();
     let mut last_opened: Option<(u64, SegmentId)> = None;
@@ -534,6 +567,7 @@ async fn parse_stderr(
                             rec_dir.clone(),
                             closed_id,
                             clip_durations.clone(),
+                            time_store.clone(),
                         )
                         .await
                         {
@@ -578,7 +612,13 @@ async fn parse_stderr(
                 let mut final_stat_failed = false;
                 let finalized = match last_opened {
                     Some((opened_session, id)) if opened_session == session => {
-                        match finalized_clip_meta(rec_dir.clone(), id, clip_durations.clone()).await
+                        match finalized_clip_meta(
+                            rec_dir.clone(),
+                            id,
+                            clip_durations.clone(),
+                            time_store.clone(),
+                        )
+                        .await
                         {
                             Some(finalized) => Some(finalized),
                             None => {
@@ -633,9 +673,15 @@ async fn finalized_clip_meta(
     rec_dir: Arc<Path>,
     seq: SegmentId,
     clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
 ) -> Option<ClipMeta> {
     match tokio::task::spawn_blocking(move || {
-        clip_meta(rec_dir.as_ref(), seq, Some(clip_durations.as_ref()))
+        clip_meta(
+            rec_dir.as_ref(),
+            seq,
+            Some(clip_durations.as_ref()),
+            time_store.as_ref(),
+        )
     })
     .await
     {

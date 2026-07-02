@@ -391,6 +391,8 @@ private extension CameraEvent {
             "tempChanged"
         case .memChanged:
             "memChanged"
+        case .timeSynced:
+            "timeSynced"
         case .heartbeat:
             "heartbeat"
         case .unknown(let type):

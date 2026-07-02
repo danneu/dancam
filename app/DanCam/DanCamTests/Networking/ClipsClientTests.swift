@@ -90,4 +90,30 @@ struct ClipsClientTests {
 
         """)
     }
+
+    @Test(.tags(.networking))
+    func liveClientDecodesNullServerTime() async throws {
+        let payload = Data("""
+        {
+          "clips": [],
+          "server_time_ms": null,
+          "next_cursor": null
+        }
+        """.utf8)
+        let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
+        let wire = MJPEGWireBuilder.response(
+            headers: [
+                ("Content-Type", "application/json"),
+                ("Content-Length", "\(payload.count)"),
+            ],
+            body: payload
+        )
+        let client = ClipsClient.live(baseURL: baseURL) { _, _ in
+            AsyncStreamHelpers.byteStream([wire])
+        }
+
+        let response = try await client.fetch(nil)
+
+        #expect(response.serverTimeMs == nil)
+    }
 }

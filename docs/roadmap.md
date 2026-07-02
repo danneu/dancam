@@ -221,7 +221,7 @@ mock first.
             segment open, parse bare and stamped names everywhere, and keep next-seq /
             list / pull / status resolution scan-based so stamped footage is never
             overwritten or hidden.
-      - [ ] **Pi:** add the write-once per-boot offset store and `POST /v1/time`; derive
+      - [x] **Pi:** add the write-once per-boot offset store and `POST /v1/time`; derive
             clip `start_ms`, `time_approximate`, `server_time_ms`, snapshot
             `time.synced`, and `time_synced` events from the offset.
       - [ ] **App:** POST the phone's current epoch on unsynced snapshots, retry while

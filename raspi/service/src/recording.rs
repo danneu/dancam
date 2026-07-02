@@ -57,7 +57,7 @@ impl axum::response::IntoResponse for RecordingRequestError {
     }
 }
 
-fn require_mutation_headers(headers: &HeaderMap) -> Result<(), RecordingRequestError> {
+pub(crate) fn require_mutation_headers(headers: &HeaderMap) -> Result<(), RecordingRequestError> {
     let content_type = headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())

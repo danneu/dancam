@@ -505,5 +505,12 @@ Files: new `Networking/TimeClient.swift`, `App/AppDependencies.swift`,
 ## Commit progress
 
 - [x] 1. feat(raspi): stamp segment facts into filenames
-- [ ] 2. feat(raspi): per-boot time offset store and POST /v1/time
+- [x] 2. feat(raspi): per-boot time offset store and POST /v1/time
 - [ ] 3. feat(app): time-sync handshake and trusted clip times
+
+## Implementation notes
+
+- Commit 2 makes `clip_meta` refresh the tiny on-disk `time/` directory when a
+  stamped segment still resolves approximate through the in-memory store, so
+  finalize-time `clip_finalized` events derive the same trusted time that
+  `/v1/clips` derives after `POST /v1/time`.

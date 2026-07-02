@@ -2,7 +2,6 @@ use std::{
     collections::BTreeMap,
     io::{self, SeekFrom},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -20,6 +19,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::{
     recorder::{parse_segment_filename, SegmentFacts, SegmentId},
+    time_sync::TimeStore,
     ts_duration::DurationCache,
     AppState,
 };
@@ -41,7 +41,7 @@ pub struct ClipMeta {
 #[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
 pub struct ClipsResponse {
     pub clips: Vec<ClipMeta>,
-    pub server_time_ms: u64,
+    pub server_time_ms: Option<u64>,
     pub next_cursor: Option<String>,
 }
 
@@ -84,6 +84,7 @@ pub(crate) async fn list_clips(
     let unpullable_from = state.backend.unpullable_from();
     let rec_dir = state.rec_dir.clone();
     let duration_cache = state.clip_durations.clone();
+    let time_store = state.time_store.clone();
     let (clips, next_cursor) = match tokio::task::spawn_blocking(move || {
         read_finished_clips(
             rec_dir.as_ref(),
@@ -91,6 +92,7 @@ pub(crate) async fn list_clips(
             cursor,
             limit,
             duration_cache.as_ref(),
+            time_store.as_ref(),
         )
     })
     .await
@@ -104,7 +106,7 @@ pub(crate) async fn list_clips(
 
     Ok(Json(ClipsResponse {
         clips,
-        server_time_ms: server_time_ms(),
+        server_time_ms: state.time_store.derived_wall_now_ms(),
         next_cursor: next_cursor.map(|seq| seq.to_string()),
     }))
 }
@@ -284,6 +286,7 @@ pub(crate) fn read_finished_clips(
     cursor: Option<SegmentId>,
     limit: usize,
     duration_cache: &DurationCache,
+    time_store: &TimeStore,
 ) -> (Vec<ClipMeta>, Option<SegmentId>) {
     let candidates = segment_candidates(rec_dir);
     let mut candidates: Vec<_> = candidates
@@ -301,15 +304,7 @@ pub(crate) fn read_finished_clips(
 
     let clips = candidates
         .into_iter()
-        .map(|candidate| ClipMeta {
-            id: candidate.seq,
-            start_ms: None,
-            dur_ms: duration_cache.duration_ms(candidate.seq, &candidate.path, candidate.bytes),
-            bytes: candidate.bytes,
-            locked: false,
-            etag: format!("{}-{}", candidate.seq, candidate.bytes),
-            time_approximate: true,
-        })
+        .map(|candidate| clip_meta_from_candidate(candidate, Some(duration_cache), time_store))
         .collect();
 
     (clips, next_cursor)
@@ -337,18 +332,20 @@ pub(crate) fn clip_meta(
     rec_dir: &Path,
     seq: SegmentId,
     duration_cache: Option<&DurationCache>,
+    time_store: &TimeStore,
 ) -> Option<ClipMeta> {
     let segment = resolve_segment(rec_dir, seq)?;
-    Some(ClipMeta {
-        id: seq,
-        start_ms: None,
-        dur_ms: duration_cache
-            .and_then(|cache| cache.duration_ms(seq, &segment.path, segment.bytes)),
-        bytes: segment.bytes,
-        locked: false,
-        etag: format!("{}-{}", seq, segment.bytes),
-        time_approximate: true,
-    })
+    let meta = clip_meta_from_candidate(segment.clone(), duration_cache, time_store);
+    if !meta.time_approximate || segment.facts.is_none() {
+        return Some(meta);
+    }
+
+    let disk_time_store = TimeStore::load(rec_dir.join("time"));
+    Some(clip_meta_from_candidate(
+        segment,
+        duration_cache,
+        &disk_time_store,
+    ))
 }
 
 pub(crate) fn resolve_segment(rec_dir: &Path, seq: SegmentId) -> Option<SegmentCandidate> {
@@ -400,11 +397,30 @@ fn max_segment_seq(candidates: &[SegmentCandidate]) -> Option<u32> {
     candidates.iter().map(|candidate| candidate.seq).max()
 }
 
-fn server_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
+fn clip_meta_from_candidate(
+    candidate: SegmentCandidate,
+    duration_cache: Option<&DurationCache>,
+    time_store: &TimeStore,
+) -> ClipMeta {
+    let start_ms = derive_start_ms(candidate.facts.as_ref(), time_store);
+    ClipMeta {
+        id: candidate.seq,
+        start_ms,
+        dur_ms: duration_cache
+            .and_then(|cache| cache.duration_ms(candidate.seq, &candidate.path, candidate.bytes)),
+        bytes: candidate.bytes,
+        locked: false,
+        etag: format!("{}-{}", candidate.seq, candidate.bytes),
+        time_approximate: start_ms.is_none(),
+    }
+}
+
+fn derive_start_ms(facts: Option<&SegmentFacts>, time_store: &TimeStore) -> Option<u64> {
+    let facts = facts?;
+    let offset = time_store.offset_for_tag(&facts.boot_tag)?;
+    let mono_ms = i64::try_from(facts.mono_ms).ok()?;
+    let wall_ms = mono_ms.checked_add(offset)?;
+    (wall_ms >= 0).then_some(wall_ms as u64)
 }
 
 fn io_error_to_clip_error(error: io::Error) -> ClipError {
@@ -442,8 +458,12 @@ mod tests {
         resolve_range, resolve_segment, ClipError, RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
     };
     use crate::recorder::{stamped_segment_filename, SegmentFacts};
+    use crate::time_sync::{OffsetRecord, TimeStore};
     use crate::ts_duration::DurationCache;
     use std::{fs, io, path::Path};
+
+    const BOOT_ABC: &str = "abc123de-f456-4000-8000-000000000001";
+    const BOOT_DEF: &str = "def456ab-c123-4000-8000-000000000001";
 
     #[test]
     fn http_etag_quotes_the_seq_bytes_pair() {
@@ -738,6 +758,118 @@ mod tests {
     }
 
     #[test]
+    fn read_finished_clips_derives_start_ms_from_facts_and_offset() {
+        let rec_dir = temp_rec_dir();
+        let time_dir = temp_rec_dir();
+        write_file(
+            &rec_dir.path,
+            &stamped_name_with_mono(7, "abc123def456", 9000),
+            b"clip",
+        );
+        write_offset(&time_dir.path, BOOT_ABC, 1000);
+        let time_store = TimeStore::load(time_dir.path.clone());
+        time_store.set_boot_id(BOOT_ABC);
+        let duration_cache = DurationCache::new();
+
+        let (clips, next_cursor) =
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+
+        assert_eq!(next_cursor, None);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].start_ms, Some(10_000));
+        assert!(!clips[0].time_approximate);
+    }
+
+    #[test]
+    fn read_finished_clips_stays_approximate_without_facts_or_offset() {
+        let rec_dir = temp_rec_dir();
+        let time_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"bare");
+        write_file(
+            &rec_dir.path,
+            &stamped_name_with_mono(8, "abc123def456", 9000),
+            b"stamped",
+        );
+        write_offset(&time_dir.path, BOOT_DEF, 1000);
+        let time_store = TimeStore::load(time_dir.path.clone());
+        time_store.set_boot_id(BOOT_DEF);
+        let duration_cache = DurationCache::new();
+
+        let (clips, _) =
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+
+        assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [8, 7]);
+        for clip in clips {
+            assert_eq!(clip.start_ms, None);
+            assert!(clip.time_approximate);
+        }
+    }
+
+    #[test]
+    fn read_finished_clips_degrades_to_approximate_when_mono_overflows_i64() {
+        let rec_dir = temp_rec_dir();
+        let time_dir = temp_rec_dir();
+        write_file(
+            &rec_dir.path,
+            &stamped_name_with_mono(7, "abc123def456", u64::MAX),
+            b"clip",
+        );
+        write_offset(&time_dir.path, BOOT_ABC, 1000);
+        let time_store = TimeStore::load(time_dir.path.clone());
+        time_store.set_boot_id(BOOT_ABC);
+        let duration_cache = DurationCache::new();
+
+        let (clips, _) =
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+
+        assert_eq!(clips[0].start_ms, None);
+        assert!(clips[0].time_approximate);
+    }
+
+    #[test]
+    fn read_finished_clips_keys_offsets_by_segment_boottag() {
+        let rec_dir = temp_rec_dir();
+        let time_dir = temp_rec_dir();
+        write_file(
+            &rec_dir.path,
+            &stamped_name_with_mono(7, "abc123def456", 50),
+            b"clip",
+        );
+        write_offset(&time_dir.path, BOOT_ABC, 1000);
+        write_offset(&time_dir.path, BOOT_DEF, 2000);
+        let time_store = TimeStore::load(time_dir.path.clone());
+        time_store.set_boot_id(BOOT_DEF);
+        let duration_cache = DurationCache::new();
+
+        let (clips, _) =
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+
+        assert_eq!(clips[0].start_ms, Some(1050));
+        assert!(!clips[0].time_approximate);
+    }
+
+    #[test]
+    fn read_finished_clips_requires_the_segment_boot_offset() {
+        let rec_dir = temp_rec_dir();
+        let time_dir = temp_rec_dir();
+        write_file(
+            &rec_dir.path,
+            &stamped_name_with_mono(7, "abc123def456", 50),
+            b"clip",
+        );
+        write_offset(&time_dir.path, BOOT_DEF, 2000);
+        let time_store = TimeStore::load(time_dir.path.clone());
+        time_store.set_boot_id(BOOT_DEF);
+        let duration_cache = DurationCache::new();
+
+        let (clips, _) =
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+
+        assert_eq!(clips[0].start_ms, None);
+        assert!(clips[0].time_approximate);
+    }
+
+    #[test]
     fn resolve_limit_uses_default_and_clamps_bounds() {
         assert_eq!(resolve_limit(None), DEFAULT_LIMIT);
         assert_eq!(resolve_limit(Some(0)), 1);
@@ -750,13 +882,31 @@ mod tests {
     }
 
     fn stamped_name(seq: u32) -> String {
+        stamped_name_with_mono(seq, "abc123def456", 123456789)
+    }
+
+    fn stamped_name_with_mono(seq: u32, boot_tag: &str, mono_ms: u64) -> String {
         stamped_segment_filename(
             seq,
             &SegmentFacts {
-                boot_tag: "abc123def456".to_string(),
-                mono_ms: 123456789,
+                boot_tag: boot_tag.to_string(),
+                mono_ms,
             },
         )
+    }
+
+    fn write_offset(dir: &Path, boot_id: &str, offset_ms: i64) {
+        let record = OffsetRecord {
+            boot_id: boot_id.to_string(),
+            offset_ms,
+            source: "app".to_string(),
+            synced_at_mono_ms: 123,
+        };
+        write_file(
+            dir,
+            &format!("{boot_id}.json"),
+            &serde_json::to_vec(&record).unwrap(),
+        );
     }
 
     fn read_finished_clips_for_test(
@@ -766,7 +916,15 @@ mod tests {
         limit: usize,
     ) -> (Vec<super::ClipMeta>, Option<u32>) {
         let duration_cache = DurationCache::new();
-        read_finished_clips(rec_dir, unpullable_from, cursor, limit, &duration_cache)
+        let time_store = TimeStore::in_memory();
+        read_finished_clips(
+            rec_dir,
+            unpullable_from,
+            cursor,
+            limit,
+            &duration_cache,
+            &time_store,
+        )
     }
 
     struct TempRecDir {

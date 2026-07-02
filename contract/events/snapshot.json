@@ -25,5 +25,8 @@
     "available": 256000000,
     "swap_total": 134217728,
     "swap_used": 0
+  },
+  "time": {
+    "synced": true
   }
 }

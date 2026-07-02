@@ -35,6 +35,7 @@ pub mod preview;
 pub mod recorder;
 mod recording;
 mod sysfacts;
+pub mod time_sync;
 mod ts_duration;
 pub mod world;
 
@@ -50,6 +51,7 @@ pub struct AppState {
     pub started: Instant,
     pub backend: Arc<dyn Backend>,
     pub rec_dir: Arc<Path>,
+    pub(crate) time_store: Arc<time_sync::TimeStore>,
     pub(crate) clip_durations: Arc<DurationCache>,
     request_seq: Arc<AtomicU64>,
     host_policy: Arc<HostPolicy>,
@@ -63,6 +65,11 @@ impl AppState {
         let started = Instant::now();
         let boot_id: Arc<str> = Arc::from(boot_id);
         backend.set_context(boot_id.clone(), started);
+        let time_store = backend.time_store();
+        time_store.set_boot_id(boot_id.as_ref());
+        if time_store.current_boot_synced() {
+            backend.mark_time_synced();
+        }
         let clip_durations = backend.clip_durations();
 
         Self {
@@ -70,6 +77,7 @@ impl AppState {
             started,
             backend: Arc::new(backend),
             rec_dir: Arc::from(PathBuf::from(DEFAULT_REC_DIR).into_boxed_path()),
+            time_store,
             clip_durations,
             request_seq: Arc::new(AtomicU64::new(1)),
             host_policy: Arc::new(HostPolicy::default()),
@@ -97,6 +105,7 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/preview/live.mjpeg", get(preview::live_mjpeg))
         .route("/v1/recording/start", post(recording::start))
         .route("/v1/recording/stop", post(recording::stop))
+        .route("/v1/time", post(time_sync::sync_time))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             host_allowlist,

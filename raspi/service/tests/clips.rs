@@ -23,6 +23,8 @@ use dancam::{
 };
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
+const BOOT_TAG: &str = "3f1c0e7a8f3b";
+const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
 
 struct StubBackend {
     hub: EventHub,
@@ -109,7 +111,7 @@ async fn clips_route_lists_finished_clips_and_headers() {
     assert_eq!(clips[0]["dur_ms"], Value::Null);
     assert_eq!(clips[0]["locked"], false);
     assert_eq!(clips[0]["time_approximate"], true);
-    assert!(json["server_time_ms"].as_u64().is_some_and(|t_ms| t_ms > 0));
+    assert_eq!(json["server_time_ms"], Value::Null);
     assert_eq!(json["next_cursor"], Value::Null);
 }
 
@@ -144,6 +146,7 @@ async fn clips_route_reports_duration_for_real_transport_stream() {
     );
     assert_eq!(clips[0]["start_ms"], Value::Null);
     assert_eq!(clips[0]["time_approximate"], true);
+    assert_eq!(json["server_time_ms"], Value::Null);
 }
 
 #[tokio::test]
@@ -215,6 +218,27 @@ async fn clips_route_lists_mixed_bare_and_stamped_segments_by_seq() {
 }
 
 #[tokio::test]
+async fn clips_route_derives_times_after_sync() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write(&stamped_name_for_tag(7, BOOT_TAG, 10), b"stamped");
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+
+    let sync = app
+        .clone()
+        .oneshot(time_request(VALID_EPOCH_MS, "time-1"))
+        .await
+        .unwrap();
+    assert_eq!(sync.status(), StatusCode::OK);
+
+    let json = response_json(app.oneshot(clips_request("/v1/clips")).await.unwrap()).await;
+    let clip = &json["clips"].as_array().unwrap()[0];
+
+    assert!(clip["start_ms"].as_u64().is_some());
+    assert_eq!(clip["time_approximate"], false);
+    assert!(json["server_time_ms"].as_u64().is_some());
+}
+
+#[tokio::test]
 async fn clips_route_clamps_zero_limit_to_one() {
     let rec_dir = TempRecDir::new();
     for seq in 0..3 {
@@ -276,7 +300,7 @@ async fn clips_route_returns_empty_for_missing_dir() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["clips"].as_array().unwrap().len(), 0);
-    assert!(json["server_time_ms"].as_u64().is_some_and(|t_ms| t_ms > 0));
+    assert_eq!(json["server_time_ms"], Value::Null);
     assert_eq!(json["next_cursor"], Value::Null);
 }
 
@@ -718,13 +742,28 @@ fn header_value(response: &axum::http::Response<Body>, name: header::HeaderName)
 }
 
 fn stamped_name(seq: u32) -> String {
+    stamped_name_for_tag(seq, "abc123def456", 123456789)
+}
+
+fn stamped_name_for_tag(seq: u32, boot_tag: &str, mono_ms: u64) -> String {
     stamped_segment_filename(
         seq,
         &SegmentFacts {
-            boot_tag: "abc123def456".to_string(),
-            mono_ms: 123456789,
+            boot_tag: boot_tag.to_string(),
+            mono_ms,
         },
     )
+}
+
+fn time_request(epoch_ms: i64, idempotency_key: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/time")
+        .header("Host", "localhost:8080")
+        .header("Content-Type", "application/json")
+        .header("Idempotency-Key", idempotency_key)
+        .body(Body::from(format!(r#"{{"epoch_ms":{epoch_ms}}}"#)))
+        .unwrap()
 }
 
 struct TempRecDir {

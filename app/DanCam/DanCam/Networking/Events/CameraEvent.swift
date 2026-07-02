@@ -13,6 +13,7 @@ nonisolated enum CameraEvent: Decodable, Equatable, Sendable {
     case storageChanged(used: UInt64, total: UInt64)
     case tempChanged(soc: Double?, sensor: Double?)
     case memChanged(total: UInt64, available: UInt64, swapTotal: UInt64, swapUsed: UInt64)
+    case timeSynced(atMs: UInt64)
     case heartbeat(tMs: UInt64)
     case unknown(type: String)
 }
@@ -68,6 +69,10 @@ extension CameraEvent {
         var tMs: UInt64
     }
 
+    nonisolated private struct TimeSyncedPayload: Decodable {
+        var atMs: UInt64
+    }
+
     nonisolated init(from decoder: Decoder) throws {
         let type = try TypeEnvelope(from: decoder).type
 
@@ -110,6 +115,8 @@ extension CameraEvent {
                 swapTotal: payload.swapTotal,
                 swapUsed: payload.swapUsed
             )
+        case "time_synced":
+            self = .timeSynced(atMs: try TimeSyncedPayload(from: decoder).atMs)
         case "heartbeat":
             self = .heartbeat(tMs: try HeartbeatPayload(from: decoder).tMs)
         default:
@@ -126,6 +133,7 @@ nonisolated struct World: Codable, Equatable, Sendable {
     var storage: Storage?
     var tempC: TempC
     var mem: Mem?
+    var time: TimeStatus? = nil
 }
 
 extension World {
@@ -172,6 +180,8 @@ extension World {
             next.tempC = TempC(soc: soc, sensor: sensor)
         case .memChanged(let total, let available, let swapTotal, let swapUsed):
             next.mem = Mem(total: total, available: available, swapTotal: swapTotal, swapUsed: swapUsed)
+        case .timeSynced:
+            next.time = TimeStatus(synced: true)
         case .heartbeat, .unknown:
             break
         }
@@ -231,4 +241,8 @@ nonisolated struct Mem: Codable, Equatable, Sendable {
     var available: UInt64
     var swapTotal: UInt64
     var swapUsed: UInt64
+}
+
+nonisolated struct TimeStatus: Codable, Equatable, Sendable {
+    var synced: Bool
 }

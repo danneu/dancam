@@ -2,7 +2,7 @@ import Foundation
 
 nonisolated struct ClipsResponse: Codable, Equatable, Sendable {
     var clips: [Clip]
-    var serverTimeMs: UInt64
+    var serverTimeMs: UInt64?
     var nextCursor: String?
 }
 

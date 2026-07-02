@@ -29,6 +29,7 @@ use crate::{
         SegmentId,
     },
     sysfacts::{DiskUsage, MemInfo},
+    time_sync::TimeStore,
     ts_duration::{ts_pts_packet, DurationCache},
     world::{CameraState, Input, TempC},
 };
@@ -66,6 +67,12 @@ pub trait Backend: Send + Sync + 'static {
     /// `dur_ms` is computed once from its file and reused, not recomputed at list time.
     fn clip_durations(&self) -> Arc<DurationCache>;
 
+    fn time_store(&self) -> Arc<TimeStore> {
+        Arc::new(TimeStore::in_memory())
+    }
+
+    fn mark_time_synced(&self) {}
+
     fn set_context(&self, _boot_id: Arc<str>, _started: Instant) {}
 
     fn tick(&self) {}
@@ -102,6 +109,7 @@ pub struct MockBackend {
     hub: Arc<EventHub>,
     recorder: Option<MockRecorder>,
     clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
     boot_tag: Arc<StdMutex<Option<String>>>,
 }
 
@@ -122,6 +130,12 @@ impl MockBackend {
         let (frames_tx, _) = watch::channel::<Option<Bytes>>(None);
         let hub = Arc::new(EventHub::new(CameraState::Running));
         let clip_durations = Arc::new(DurationCache::new());
+        let time_store = Arc::new(
+            recorder
+                .as_ref()
+                .map(|(rec_dir, _)| TimeStore::load(rec_dir.join("time")))
+                .unwrap_or_else(TimeStore::in_memory),
+        );
         let boot_tag = Arc::new(StdMutex::new(None));
         let recorder = recorder.map(|(rec_dir, roll_interval)| {
             MockRecorder::new(
@@ -129,6 +143,7 @@ impl MockBackend {
                 roll_interval,
                 hub.clone(),
                 clip_durations.clone(),
+                time_store.clone(),
                 boot_tag.clone(),
             )
         });
@@ -140,6 +155,7 @@ impl MockBackend {
             hub,
             recorder,
             clip_durations,
+            time_store,
             boot_tag,
         }
     }
@@ -214,8 +230,18 @@ impl Backend for MockBackend {
         self.clip_durations.clone()
     }
 
+    fn time_store(&self) -> Arc<TimeStore> {
+        self.time_store.clone()
+    }
+
+    fn mark_time_synced(&self) {
+        self.hub.drive_now(Input::TimeSynced);
+    }
+
     fn set_context(&self, boot_id: Arc<str>, started: Instant) {
         self.hub.set_context(boot_id, started);
+        self.time_store
+            .set_boot_id(self.hub.snapshot().boot_id.as_str());
         *self.boot_tag.lock().expect("mock boot_tag mutex poisoned") =
             boot_tag(self.hub.snapshot().boot_id.as_str());
     }
@@ -235,6 +261,7 @@ struct MockRecorder {
     roll_interval: Duration,
     hub: Arc<EventHub>,
     clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
     boot_tag: Arc<StdMutex<Option<String>>>,
     task: Arc<Mutex<Option<MockRecordingTask>>>,
 }
@@ -249,6 +276,7 @@ struct MockRecordingContext {
     roll_interval: Duration,
     hub: Arc<EventHub>,
     clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
     boot_tag: Arc<StdMutex<Option<String>>>,
     session: u64,
     start_segment: SegmentId,
@@ -260,6 +288,7 @@ impl MockRecorder {
         roll_interval: Duration,
         hub: Arc<EventHub>,
         clip_durations: Arc<DurationCache>,
+        time_store: Arc<TimeStore>,
         boot_tag: Arc<StdMutex<Option<String>>>,
     ) -> Self {
         let roll_interval = if roll_interval.is_zero() {
@@ -273,6 +302,7 @@ impl MockRecorder {
             roll_interval,
             hub,
             clip_durations,
+            time_store,
             boot_tag,
             task: Arc::new(Mutex::new(None)),
         }
@@ -306,12 +336,14 @@ impl MockRecorder {
         let roll_interval = self.roll_interval;
         let hub = self.hub.clone();
         let clip_durations = self.clip_durations.clone();
+        let time_store = self.time_store.clone();
         let boot_tag = self.boot_tag.clone();
         let context = MockRecordingContext {
             rec_dir,
             roll_interval,
             hub,
             clip_durations,
+            time_store,
             boot_tag,
             session,
             start_segment,
@@ -356,6 +388,7 @@ async fn run_mock_recording_writer(
         roll_interval,
         hub,
         clip_durations,
+        time_store,
         boot_tag,
         session,
         start_segment,
@@ -398,7 +431,9 @@ async fn run_mock_recording_writer(
                 if let Err(error) = file.flush().await {
                     tracing::error!(%error, seq, "failed to flush final mock recording segment");
                 }
-                let finalized = finalized_clip_meta(rec_dir.clone(), seq, clip_durations.clone()).await;
+                let finalized =
+                    finalized_clip_meta(rec_dir.clone(), seq, clip_durations.clone(), time_store.clone())
+                        .await;
                 hub.drive_now(Input::RecordingStopped { session, finalized });
                 return;
             }
@@ -411,7 +446,14 @@ async fn run_mock_recording_writer(
                         });
                         return;
                     }
-                    let finalized = match finalized_clip_meta(rec_dir.clone(), seq, clip_durations.clone()).await {
+                    let finalized = match finalized_clip_meta(
+                        rec_dir.clone(),
+                        seq,
+                        clip_durations.clone(),
+                        time_store.clone(),
+                    )
+                    .await
+                    {
                         Some(meta) => meta,
                         None => {
                             tracing::error!(seq, "failed to stat finalized mock recording segment");
@@ -475,9 +517,15 @@ async fn finalized_clip_meta(
     rec_dir: Arc<Path>,
     seq: SegmentId,
     clip_durations: Arc<DurationCache>,
+    time_store: Arc<TimeStore>,
 ) -> Option<ClipMeta> {
     match tokio::task::spawn_blocking(move || {
-        clip_meta(rec_dir.as_ref(), seq, Some(clip_durations.as_ref()))
+        clip_meta(
+            rec_dir.as_ref(),
+            seq,
+            Some(clip_durations.as_ref()),
+            time_store.as_ref(),
+        )
     })
     .await
     {
