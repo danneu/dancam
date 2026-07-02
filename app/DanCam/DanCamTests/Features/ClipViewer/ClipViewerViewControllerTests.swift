@@ -39,7 +39,30 @@ struct ClipViewerViewControllerTests {
         try await waitUntil { controller.currentPlayerItemURL == cacheURL }
         #expect(controller.currentPlayerItemURL == cacheURL)
         #expect(controller.statusText == "Ready")
+        #expect(controller.progressIndicatorForTesting == .hidden)
         #expect(pullCalls.values().isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func initialCacheLookupShowsIndeterminateProgress() async {
+        let allowLookup = AsyncSignal()
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in
+                    await allowLookup.wait()
+                    return nil
+                },
+                insert: { _, _, source in source }
+            )
+        )
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.statusText == "Preparing")
+        #expect(controller.progressIndicatorForTesting == .indeterminate)
+
+        controller.didMove(toParent: nil)
+        await allowLookup.signal()
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -60,9 +83,64 @@ struct ClipViewerViewControllerTests {
         try await waitUntil { controller.statusText == "\(Formatters.byteSize(1)) of \(Formatters.byteSize(1))" }
 
         #expect(controller.isShareButtonEnabled == false)
+        #expect(controller.progressIndicatorForTesting == .determinate)
 
         controller.didMove(toParent: nil)
         await allowCompletion.signal()
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [UInt64?.none, UInt64?(0)])
+    func unknownOrZeroExpectedPullShowsIndeterminateProgress(expected: UInt64?) async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01, 0x02, 0x03, 0x04, 0x05]))
+        let allowCompletion = AsyncSignal()
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let controller = makeController(
+            clipPull: gatedPullClient(
+                sourceURL: sourceURL,
+                allowCompletion: allowCompletion,
+                bytesWritten: 5,
+                expected: expected
+            ),
+            remuxer: ClipRemuxer { _, _ in
+                Issue.record("The remuxer should not run while the pull is gated.")
+                return ClipRemuxResult(fileURL: sourceURL, duration: .zero, bytes: 0)
+            }
+        )
+
+        controller.loadViewIfNeeded()
+        try await waitUntil { controller.statusText == "\(Formatters.byteSize(5)) pulled" }
+
+        #expect(controller.progressIndicatorForTesting == .indeterminate)
+
+        controller.didMove(toParent: nil)
+        await allowCompletion.signal()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func remuxPreparingShowsIndeterminateProgress() async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        let remuxStarted = AsyncSignal()
+        let allowRemuxCompletion = AsyncSignal()
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let controller = makeController(
+            pullEvents: completedPullEvents(sourceURL: sourceURL),
+            remuxer: gatedRemuxer(
+                allowCompletion: allowRemuxCompletion,
+                didStart: remuxStarted
+            )
+        )
+
+        controller.loadViewIfNeeded()
+
+        await remuxStarted.wait()
+        #expect(controller.statusText == "Preparing")
+        #expect(controller.progressIndicatorForTesting == .indeterminate)
+
+        await allowRemuxCompletion.signal()
+        try await waitUntil { controller.currentPlayerItemURL == sourceURL }
+        controller.didMove(toParent: nil)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -328,6 +406,8 @@ struct ClipViewerViewControllerTests {
         controller.loadViewIfNeeded()
 
         try await waitUntil { controller.currentPlayerItemURL == cachedURL }
+        #expect(controller.statusText == "Ready")
+        #expect(controller.progressIndicatorForTesting == .hidden)
         #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
         #expect(FileManager.default.fileExists(atPath: mp4URL.path) == false)
         #expect(FileManager.default.fileExists(atPath: cachedURL.path))
@@ -354,6 +434,7 @@ struct ClipViewerViewControllerTests {
         controller.loadViewIfNeeded()
 
         try await waitUntil { controller.statusText == "Clip failed" }
+        #expect(controller.progressIndicatorForTesting == .hidden)
         #expect(controller.isRetryButtonHidden == false)
         #expect(controller.isShareButtonEnabled == false)
 
@@ -560,18 +641,20 @@ struct ClipViewerViewControllerTests {
     private func gatedPullClient(
         sourceURL: URL,
         allowCompletion: AsyncSignal,
-        calls: CallLog<Int> = CallLog<Int>()
+        calls: CallLog<Int> = CallLog<Int>(),
+        bytesWritten: UInt64 = 1,
+        expected: UInt64? = 1
     ) -> ClipPullClient {
         ClipPullClient { clipID, _ in
             calls.append(clipID)
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     continuation.yield(.opened(fileURL: sourceURL))
-                    continuation.yield(.progress(bytesWritten: 1, expected: 1))
+                    continuation.yield(.progress(bytesWritten: bytesWritten, expected: expected))
                     await allowCompletion.wait()
                     continuation.yield(.completed(ClipPullResult(
                         fileURL: sourceURL,
-                        bytes: 1,
+                        bytes: bytesWritten,
                         elapsed: .milliseconds(1),
                         throughputMbps: 1,
                         resolvedETag: "\"list-etag\""
@@ -583,6 +666,20 @@ struct ClipViewerViewControllerTests {
                     task.cancel()
                 }
             }
+        }
+    }
+
+    private func gatedRemuxer(
+        allowCompletion: AsyncSignal,
+        didStart: AsyncSignal
+    ) -> ClipRemuxer {
+        ClipRemuxer { source, _ in
+            await didStart.signal()
+            await allowCompletion.wait()
+
+            let attributes = try? FileManager.default.attributesOfItem(atPath: source.path)
+            let bytes = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+            return ClipRemuxResult(fileURL: source, duration: .zero, bytes: bytes)
         }
     }
 

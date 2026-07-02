@@ -16,6 +16,15 @@
 > the interleaving hazard between thumbnail lookups and clip-viewer insert or
 > version-wipe operations.
 
+> **Note (2026-07-02):** Clip-viewer wait UI keeps determinate and indeterminate
+> work visually separate. The initial cache-lookup window, remux/insert
+> "Preparing" phase, and unknown-size pull use an indeterminate spinner. The
+> determinate `UIProgressView` is reserved for known-size pull progress, and its
+> animation is gated on the first layout pass so it never animates against
+> pre-layout bounds. `.playing` no longer shows a full bar, and `ViewerState`
+> remains unchanged: the pre-lookup window is stateless UI setup, so a cache hit
+> logs `viewer none -> playing`.
+
 ## Context
 
 ADR 08 added a progressive fMP4/HLS path so the viewer could paint a first frame

@@ -9,7 +9,9 @@ final class ClipViewerViewController: UIViewController {
     private let clip: Clip
 
     private let scrollView = UIScrollView()
+    private let progressContainer = UIView()
     private let progressView = UIProgressView(progressViewStyle: .default)
+    private let preparingIndicator = UIActivityIndicatorView(style: .medium)
     private let statusLabel = UILabel()
     private let resultLabel = UILabel()
     private let retryButton = UIButton(type: .system)
@@ -35,6 +37,7 @@ final class ClipViewerViewController: UIViewController {
     private var shareArtifactDirectories: Set<URL> = []
     private var didSelfHealCacheHitFailure = false
     private var isPresentingFullScreen = false
+    private var hasCompletedFirstLayout = false
 
     // Root for the per-share clone subdirectories. Internal (not private) with a single
     // default so a test can point it at a regular file, forcing the clone below to fail and
@@ -61,10 +64,14 @@ final class ClipViewerViewController: UIViewController {
         configureViews()
         configureShareButton()
 
-        state = .preparing
         pullTask = Task { [weak self] in
             await self?.loadFromCacheThenPlayOrPull()
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        hasCompletedFirstLayout = true
     }
 
     override func didMove(toParent parent: UIViewController?) {
@@ -92,6 +99,18 @@ final class ClipViewerViewController: UIViewController {
 
     var progressFraction: Float {
         progressView.progress
+    }
+
+    var progressIndicatorForTesting: ProgressIndicatorState {
+        if preparingIndicator.isAnimating {
+            return .indeterminate
+        }
+
+        if progressView.isHidden == false {
+            return .determinate
+        }
+
+        return .hidden
     }
 
     var hasEmbeddedPlayer: Bool {
@@ -140,10 +159,15 @@ final class ClipViewerViewController: UIViewController {
     }
 
     private func configureViews() {
+        progressContainer.translatesAutoresizingMaskIntoConstraints = false
+
         progressView.progress = 0
         progressView.translatesAutoresizingMaskIntoConstraints = false
 
-        statusLabel.text = "Preparing pull"
+        preparingIndicator.hidesWhenStopped = true
+        preparingIndicator.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel.text = "Preparing"
         statusLabel.font = .preferredFont(forTextStyle: .headline)
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.numberOfLines = 0
@@ -168,12 +192,15 @@ final class ClipViewerViewController: UIViewController {
         captionLabel.numberOfLines = 0
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        progressContainer.addSubview(progressView)
+        progressContainer.addSubview(preparingIndicator)
+        showIndeterminate()
 
         let stack = UIStackView(arrangedSubviews: [
             playerContainerView,
             captionLabel,
             statusLabel,
-            progressView,
+            progressContainer,
             resultLabel,
             retryButton,
         ])
@@ -197,6 +224,16 @@ final class ClipViewerViewController: UIViewController {
             stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
 
             playerContainerView.heightAnchor.constraint(equalTo: playerContainerView.widthAnchor, multiplier: 0.75),
+
+            progressContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 22),
+            progressContainer.heightAnchor.constraint(greaterThanOrEqualTo: preparingIndicator.heightAnchor),
+
+            progressView.leadingAnchor.constraint(equalTo: progressContainer.leadingAnchor),
+            progressView.trailingAnchor.constraint(equalTo: progressContainer.trailingAnchor),
+            progressView.centerYAnchor.constraint(equalTo: progressContainer.centerYAnchor),
+
+            preparingIndicator.centerXAnchor.constraint(equalTo: progressContainer.centerXAnchor),
+            preparingIndicator.centerYAnchor.constraint(equalTo: progressContainer.centerYAnchor),
         ])
     }
 
@@ -286,6 +323,7 @@ final class ClipViewerViewController: UIViewController {
         pullTask = nil
         removeTemporaryFiles()
         detachPlayer()
+        progressView.setProgress(0, animated: false)
         state = .pulling(PullProgress(bytesWritten: 0, expected: clip.bytes > 0 ? clip.bytes : nil))
 
         pullTask = Task { [weak self] in
@@ -451,19 +489,19 @@ final class ClipViewerViewController: UIViewController {
             renderProgress(progress)
         case .preparing:
             shareButton.isEnabled = false
-            progressView.setProgress(1, animated: true)
+            showIndeterminate()
             statusLabel.text = "Preparing"
             resultLabel.text = nil
             retryButton.isHidden = true
         case .playing:
             shareButton.isEnabled = true
-            progressView.setProgress(1, animated: false)
+            hideProgressIndicators()
             statusLabel.text = "Ready"
             resultLabel.text = nil
             retryButton.isHidden = true
         case .failed(let message):
             shareButton.isEnabled = false
-            progressView.setProgress(0, animated: false)
+            hideProgressIndicators()
             statusLabel.text = "Clip failed"
             resultLabel.text = message
             retryButton.isHidden = false
@@ -472,13 +510,29 @@ final class ClipViewerViewController: UIViewController {
 
     private func renderProgress(_ progress: PullProgress) {
         if let expected = progress.expected, expected > 0 {
-            progressView.setProgress(Float(Double(progress.bytesWritten) / Double(expected)), animated: true)
+            showDeterminate(Float(Double(progress.bytesWritten) / Double(expected)))
         } else {
-            progressView.setProgress(0, animated: false)
+            showIndeterminate()
         }
         statusLabel.text = progressStatusText(progress)
         resultLabel.text = nil
         retryButton.isHidden = true
+    }
+
+    private func showIndeterminate() {
+        progressView.isHidden = true
+        preparingIndicator.startAnimating()
+    }
+
+    private func showDeterminate(_ fraction: Float) {
+        preparingIndicator.stopAnimating()
+        progressView.isHidden = false
+        progressView.setProgress(fraction, animated: hasCompletedFirstLayout)
+    }
+
+    private func hideProgressIndicators() {
+        preparingIndicator.stopAnimating()
+        progressView.isHidden = true
     }
 
     private func progressStatusText(_ progress: PullProgress) -> String {
@@ -535,6 +589,12 @@ final class ClipViewerViewController: UIViewController {
     private struct PullProgress: Equatable {
         var bytesWritten: UInt64
         var expected: UInt64?
+    }
+
+    enum ProgressIndicatorState: Equatable {
+        case hidden
+        case indeterminate
+        case determinate
     }
 
     private enum PlaybackSource: Equatable {
