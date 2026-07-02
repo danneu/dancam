@@ -344,6 +344,11 @@ final class ClipViewerViewController: UIViewController {
         let playerViewController = AVPlayerViewController()
         playerViewController.player = player
         playerViewController.delegate = self
+        // Dashcam clips don't need Live Text, subject lift, visual lookup, or code
+        // detection; turning off AVKit's paused-frame analysis also quiets the system
+        // VisionKit analyzer log noise (VKCImageAnalyzerRequest / verify_image_parameters
+        // / "Visual isTranslatable"). Default is true; flag is iOS 16+, target is 26.5.
+        playerViewController.allowsVideoFrameAnalysis = false
         playerViewController.view.translatesAutoresizingMaskIntoConstraints = false
 
         addChild(playerViewController)
