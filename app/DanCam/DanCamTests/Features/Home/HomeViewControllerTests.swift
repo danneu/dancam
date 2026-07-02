@@ -259,6 +259,32 @@ struct HomeViewControllerTests {
         #expect(synced.isTimeUnverifiedPillVisibleForTesting == false)
     }
 
+    @Test func recordItemPresentationFollowsRecordingState() {
+        let (controller, store) = makeControllerAndStore(clips: [], loader: .noop)
+        controller.loadViewIfNeeded()
+
+        store.send(.recording(.recorderPhaseObserved(.idle)))
+
+        #expect(controller.recordItemForTesting.title == "Record")
+        #expect(controller.recordItemForTesting.isEnabled)
+        #expect(controller.recordItemForTesting.accessibilityLabel == "Start recording")
+        #expect(controller.recordItemForTesting.image != nil)
+
+        store.send(.recording(.recorderPhaseObserved(.starting)))
+
+        #expect(controller.recordItemForTesting.title == "Starting")
+        #expect(controller.recordItemForTesting.isEnabled == false)
+        #expect(controller.recordItemForTesting.accessibilityLabel == "Starting recording")
+        #expect(controller.recordItemForTesting.image != nil)
+
+        store.send(.recording(.recorderPhaseObserved(.recording)))
+
+        #expect(controller.recordItemForTesting.title == "Stop")
+        #expect(controller.recordItemForTesting.isEnabled)
+        #expect(controller.recordItemForTesting.accessibilityLabel == "Stop recording")
+        #expect(controller.recordItemForTesting.image != nil)
+    }
+
     @Test func manualRefreshSpinnerStaysUntilClipsReachTerminalStatus() throws {
         let (controller, store) = makeControllerAndStore(
             clips: [],

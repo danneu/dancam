@@ -9,16 +9,16 @@ struct RecordButtonStyleTests {
                 title: String,
                 image: String?,
                 enabled: Bool,
-                busy: Bool,
-                treatment: RecordButtonTreatment
+                treatment: RecordButtonTreatment,
+                accessibilityLabel: String
             )
         ] = [
-            (.unknown, "Record", "record.circle", false, false, .record),
-            (.idle, "Record", "record.circle", true, false, .record),
-            (.failed("lost"), "Record", "record.circle", true, false, .record),
-            (.starting, "Starting", nil, false, true, .record),
-            (.recording, "Stop", "stop.fill", true, false, .neutral),
-            (.stopping, "Stopping", nil, false, true, .neutral),
+            (.unknown, "Record", "record.circle", false, .record, "Start recording"),
+            (.idle, "Record", "record.circle", true, .record, "Start recording"),
+            (.failed("lost"), "Record", "record.circle", true, .record, "Start recording"),
+            (.starting, "Starting", "record.circle", false, .record, "Starting recording"),
+            (.recording, "Stop", "stop.fill", true, .neutral, "Stop recording"),
+            (.stopping, "Stopping", "stop.fill", false, .neutral, "Stopping recording"),
         ]
 
         for testCase in cases {
@@ -27,8 +27,8 @@ struct RecordButtonStyleTests {
             #expect(style.title == testCase.title)
             #expect(style.systemImage == testCase.image)
             #expect(style.isEnabled == testCase.enabled)
-            #expect(style.showsActivityIndicator == testCase.busy)
             #expect(style.treatment == testCase.treatment)
+            #expect(style.accessibilityLabel == testCase.accessibilityLabel)
         }
     }
 }
