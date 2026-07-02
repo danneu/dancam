@@ -141,3 +141,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `14-2026-07-01-structured-logging-and-export.md` -- use Apple unified logging as the
   app's diagnostic stream and expose current-process log export from the Debug screen.
 - `15-2026-07-01-clip-export-share.md` -- system share sheet over the cached MP4.
+- `16-2026-07-01-client-side-clip-thumbnails.md` -- generate clip-list thumbnails on the
+  phone (cache-first memory/disk/free-MP4/ranged-prefix pipeline); supersedes the raspi
+  `/thumb` endpoint and cached `seg-<seq>.jpg` thumbnails.

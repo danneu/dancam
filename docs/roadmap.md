@@ -194,14 +194,16 @@ mock first.
             spinner reads as a hang), a short preparing phase, and then the cached MP4;
             handles pull failure / resume, cache-insert failure, playback failure, and
             manual Retry.
-      - [ ] **App:** clip rows show duration + best-effort created time + a placeholder
-            poster; generate and cache a real poster from any clip already pulled (free
-            -- the phone has the bytes; no Pi work, no extra wire).
+      - [ ] **App:** clip rows show duration + best-effort created time + a real first-frame
+            thumbnail generated on the phone (app ADR 16): cache-first
+            memory/disk/free-cached-MP4/ranged-prefix pipeline. Watched clips are free (the
+            phone has the bytes); not-yet-watched clips ranged-*read* a ~2 MB prefix -- no Pi
+            writes, no `/thumb` endpoint.
       - Scope fence: one finished segment per clip (no multi-segment timeline), no export
-        (`tide`), no real timestamps (`moss`), no locked/incident clips (`nova`), no
-        server-side browse thumbnails (deferred -- see deepening passes). If the
-        iPhone-poster approach replaces ADR 02's Pi-generated `/thumb` for the pulled
-        case, append a note to ADR 02 when `lime` lands.
+        (`tide`), no real timestamps (`moss`), no locked/incident clips (`nova`). Thumbnails
+        are generated client-side per app ADR 16, which supersedes ADR 02's Pi-generated
+        `/thumb` (and the cached `seg-<seq>.jpg` in raspi ADR 03) for both the pulled and
+        not-yet-pulled cases -- no server-side browse thumbnails.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
       (missing / unformatted / wrong filesystem); auto-format on first insert;
       format-from-app with a double-confirm (`POST /v1/storage/format`).
@@ -222,9 +224,7 @@ mock first.
 - [ ] **Later / deepening passes.** Thermal-behavior policy (what recording does at
       the sensor's 50 C limit); replace the Python Picamera2 camera owner with an
       all-Rust camera binary before or during the read-only car-image pass; HDR tuning;
-      server-side browse thumbnails (`GET /v1/clips/{id}/thumb` -- a cheap lazy ffmpeg
-      keyframe decode cached per segment, software single-frame only; for clips not yet
-      pulled, deferred out of `lime`); auth hardening (token, then pinned-cert TLS); GPS
+      auth hardening (token, then pinned-cert TLS); GPS
       time source; parked / sentry
       mode (gated on a future constant-power topology -- v1 power is switched /
       drive-only, see the power-source ADR).

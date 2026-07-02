@@ -70,7 +70,7 @@ nonisolated enum HomeRow: Equatable, Sendable {
     }
 }
 
-final class HomeViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, ConnectionResumable {
+final class HomeViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching, ConnectionResumable {
     private let dependencies: AppDependencies
     private let store: AppStore
     private let previewViewController: PreviewViewController
@@ -100,6 +100,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     private var rows: [HomeRow] = []
     private var liveTickTimer: Timer?
     private var isVisible = false
+    private var prefetchHandles: [IndexPath: ThumbnailLoader.PrefetchHandle] = [:]
 
     init(
         dependencies: AppDependencies,
@@ -152,6 +153,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         super.viewWillAppear(animated)
         isVisible = true
         updateLiveTickTimer()
+        reconfigureVisibleThumbnails()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -159,10 +161,13 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         isVisible = false
         store.send(.clips(.onDisappear))
         stopLiveTickTimer()
+        cancelAllPrefetches()
+        quietVisibleThumbnailLoads()
     }
 
     deinit {
         stopLiveTickTimer()
+        cancelAllPrefetches()
     }
 
     func resumeLiveWork() {
@@ -268,10 +273,11 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
 
         clipsTableView.dataSource = self
         clipsTableView.delegate = self
-        clipsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "clip")
+        clipsTableView.prefetchDataSource = self
+        clipsTableView.register(ClipThumbnailCell.self, forCellReuseIdentifier: "clipThumbnail")
         clipsTableView.register(LiveClipCell.self, forCellReuseIdentifier: "liveClip")
         clipsTableView.rowHeight = UITableView.automaticDimension
-        clipsTableView.estimatedRowHeight = 56
+        clipsTableView.estimatedRowHeight = 72
         clipsTableView.tableFooterView = UIView()
         refreshControl.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
         clipsTableView.refreshControl = refreshControl
@@ -350,6 +356,11 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
             now: now
         )
 
+        // A full reload invalidates every index-path key in the prefetch map, so drop the
+        // outstanding handles (still-queued warms are cancelled; post-permit warms finish and
+        // cache regardless). Any still-wanted row is re-requested by the next prefetch/cellForRow.
+        cancelAllPrefetches()
+
         clipsTableView.backgroundView = rows.isEmpty ? emptyClipsBackgroundView : nil
         clipsTableView.reloadData()
         updateLiveTickTimer()
@@ -420,24 +431,15 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
             return cell
 
         case .finished(let clip):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "clip", for: indexPath)
-            configureFinishedCell(cell, clip: clip)
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: "clipThumbnail",
+                for: indexPath
+            ) as? ClipThumbnailCell else {
+                return UITableViewCell(style: .default, reuseIdentifier: nil)
+            }
+            cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
             return cell
         }
-    }
-
-    private func configureFinishedCell(_ cell: UITableViewCell, clip: Clip) {
-        let filename = String(format: "seg_%05d.ts", clip.id)
-        var content = UIListContentConfiguration.subtitleCell()
-        content.text = filename
-        content.secondaryText = Formatters.clipMetadata(durMs: clip.durMs, bytes: clip.bytes)
-        content.textProperties.font = .preferredFont(forTextStyle: .body)
-        content.textProperties.adjustsFontForContentSizeCategory = true
-        content.secondaryTextProperties.font = .preferredFont(forTextStyle: .subheadline)
-        content.secondaryTextProperties.adjustsFontForContentSizeCategory = true
-        content.secondaryTextProperties.color = .secondaryLabel
-        cell.contentConfiguration = content
-        cell.selectionStyle = .default
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -467,6 +469,70 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         }
 
         store.send(.clips(.loadMore))
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        didEndDisplaying cell: UITableViewCell,
+        forRowAt indexPath: IndexPath
+    ) {
+        // `prepareForReuse` fires only on re-dequeue, so a row scrolled offscreen but not yet
+        // reused would keep its load (and strong token) live. Quiet it now: a still-queued
+        // entry is dropped, a scroll-back re-requests it cache-first.
+        (cell as? ClipThumbnailCell)?.cancelLoad()
+    }
+
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        for indexPath in indexPaths {
+            guard rows.indices.contains(indexPath.row),
+                  case .finished(let clip) = rows[indexPath.row] else {
+                continue
+            }
+            // Cancel-before-replace: a `PrefetchHandle` is a value type with no `deinit`, so
+            // overwriting a slot without cancelling would orphan the prior handle's token and
+            // keep pinning its loader entry.
+            prefetchHandles[indexPath]?.cancel()
+            prefetchHandles[indexPath] = dependencies.thumbnailLoader.prefetch(clip)
+        }
+    }
+
+    func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
+        // Cancel the stored handle -- never re-derive a clip id from `rows`, which a reload can
+        // shift; the handle already carries the correct `(id, etag)`.
+        for indexPath in indexPaths {
+            prefetchHandles.removeValue(forKey: indexPath)?.cancel()
+        }
+    }
+
+    private func cancelAllPrefetches() {
+        for handle in prefetchHandles.values {
+            handle.cancel()
+        }
+        prefetchHandles.removeAll()
+    }
+
+    private func quietVisibleThumbnailLoads() {
+        for cell in clipsTableView.visibleCells {
+            (cell as? ClipThumbnailCell)?.cancelLoad()
+        }
+    }
+
+    /// Re-request visible rows on return by reconfiguring the visible `ClipThumbnailCell`s
+    /// *in place* -- the same shape `updateVisibleLiveElapsed()` uses -- rather than a
+    /// `reloadData()`. A reload would route each cell through `prepareForReuse` (blanking it
+    /// to the placeholder) before `configure`, flashing every already-painted cell; in-place
+    /// reconfigure skips reuse, so a painted cell hits the same-identity no-op and a cell
+    /// quieted on the way out retries once, cache-first.
+    private func reconfigureVisibleThumbnails() {
+        guard let visibleRows = clipsTableView.indexPathsForVisibleRows else { return }
+        for indexPath in visibleRows {
+            guard rows.indices.contains(indexPath.row),
+                  case .finished(let clip) = rows[indexPath.row],
+                  let cell = clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell else {
+                continue
+            }
+            cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
+        }
     }
 }
 

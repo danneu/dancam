@@ -2,6 +2,9 @@
 
 - **Status:** Accepted
 - **Amended:** 2026-07-01 -- service listen socket is dual-stack; Host port check uses the bound port.
+- **Amended:** 2026-07-01 -- the `GET /v1/clips/{id}/thumb` thumbnail endpoint is superseded by
+  app ADR 16 (`app/docs/design/16-2026-07-01-client-side-clip-thumbnails.md`): thumbnails are
+  generated client-side, so this endpoint is not built. The rest of the wire contract stands.
 - **Date:** 2026-06-22
 - **Owner:** raspi (the Pi serves the wire contract; the canonical copy lives here)
 - **Related:** root `AGENTS.md` (all five cross-cutting principles);
@@ -350,6 +353,7 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
 - `GET /v1/clips/{id}` -- resumable pull; `Range`/`If-Range`, `Accept-Ranges`, `ETag`,
   `Content-Range`; `application/mp2t` (the `.ts` segment bytes).
 - `GET /v1/clips/{id}/thumb?w=` -- keyframe JPEG (the Pi caches one per segment).
+  **Superseded (thumbnails) by app ADR 16: generated client-side; this endpoint is not built.**
 
 The Pi serves **no `.m3u8`**: HLS playlists are built **app-side** over loopback (see
 clip playback below). This keeps every Pi request on the pinned `NWConnection`.

@@ -1,6 +1,11 @@
 # ADR: Storage ring buffer and incident-lock model
 
 - **Status:** Accepted
+- **Amended:** 2026-07-01 -- the cached `seg-<seq>.jpg` first-keyframe thumbnails and
+  `openThumb` are superseded by app ADR 16
+  (`app/docs/design/16-2026-07-01-client-side-clip-thumbnails.md`): thumbnails are generated
+  client-side, so the Pi caches no `.jpg` and serves no `/thumb`. The `.ts` ring, incident
+  lock, and GC below are unaffected.
 - **Date:** 2026-06-23
 - **Owner:** raspi
 - **Related:** root `AGENTS.md` (SD is source of truth; Wi-Fi preview + pull only;
@@ -71,6 +76,8 @@ read-only root filesystem:
 `segments/` is the ring. Each `seg-<seq>.ts` is a finalized 30-60 s MPEG-TS
 segment. Each `seg-<seq>.jpg` is a cached first-keyframe thumbnail. Thumbnails
 are generated off the storage coordinator and are regenerable on miss.
+(Superseded by app ADR 16: thumbnails are generated client-side, so the Pi writes no
+`seg-<seq>.jpg`. The `.ts` ring and everything below stand.)
 
 `incidents/<id>/seg-<seq>.ts` entries are hardlinks to the segment inodes locked
 by that incident. `incident.json` stores durable incident metadata.
@@ -513,7 +520,7 @@ Endpoint mapping is one-to-one for storage-touching operations:
 - `GET /v1/capabilities` time/anchor slice -> `syncState`
 - `GET /v1/clips` -> `listClips`
 - `GET /v1/clips/{id}` -> `openClip`
-- `GET /v1/clips/{id}/thumb` -> `openThumb`
+- `GET /v1/clips/{id}/thumb` -> `openThumb` (superseded by app ADR 16; not built)
 - `POST /v1/incidents/lock` -> `lock`
 - `GET /v1/incidents` -> `listIncidents`
 - `POST /v1/incidents/{id}/extend` -> `extendIncident`

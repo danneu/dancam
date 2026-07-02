@@ -1,15 +1,23 @@
 import Foundation
 
-nonisolated struct ClipCache: Sendable {
+/// On-disk cache of generated clip thumbnails, keyed `thumb-<id>-<token>.jpg` under its
+/// own root. It mirrors `ClipCache`'s version-sentinel + mtime-LRU shape but must not
+/// share `ClipCache`'s root: `ClipCache` wipes its whole root on a version bump and its
+/// eviction/sweep hardcode the `clip-`/`.mp4` namespace. Thumbnails are tiny, so a small
+/// budget holds hundreds of clips.
+///
+/// Unlike `ClipCache` (which moves an already-on-disk pulled file), a thumbnail is
+/// generated in memory, so `insert` takes the encoded JPEG bytes directly.
+nonisolated struct ThumbnailCache: Sendable {
     var lookup: @Sendable (_ clipID: Int, _ etag: String) -> URL?
-    var insert: @Sendable (_ clipID: Int, _ etag: String, _ source: URL) throws -> URL
+    var insert: @Sendable (_ clipID: Int, _ etag: String, _ data: Data) throws -> URL
 
     static func live(
         rootDirectory: URL,
         now: @escaping @Sendable () -> Date,
-        maxBytes: Int = 500 * 1024 * 1024
-    ) -> ClipCache {
-        ClipCache(
+        maxBytes: Int = 64 * 1024 * 1024
+    ) -> ThumbnailCache {
+        ThumbnailCache(
             lookup: { clipID, etag in
                 do {
                     let fileManager = FileManager.default
@@ -22,23 +30,18 @@ nonisolated struct ClipCache: Sendable {
                     return nil
                 }
             },
-            insert: { clipID, etag, source in
+            insert: { clipID, etag, data in
                 let fileManager = FileManager.default
                 try ensureCurrentVersion(rootDirectory: rootDirectory, fileManager: fileManager)
                 let destination = cacheURL(rootDirectory: rootDirectory, clipID: clipID, etag: etag)
 
-                if source != destination {
-                    try sweepClipVersions(
-                        rootDirectory: rootDirectory,
-                        clipID: clipID,
-                        preserving: source,
-                        fileManager: fileManager
-                    )
-                    if fileManager.fileExists(atPath: destination.path) {
-                        try fileManager.removeItem(at: destination)
-                    }
-                    try fileManager.moveItem(at: source, to: destination)
-                }
+                try sweepClipVersions(
+                    rootDirectory: rootDirectory,
+                    clipID: clipID,
+                    preserving: destination,
+                    fileManager: fileManager
+                )
+                try data.write(to: destination, options: .atomic)
 
                 try stamp(destination, date: now(), fileManager: fileManager)
                 try evictIfNeeded(
@@ -52,15 +55,18 @@ nonisolated struct ClipCache: Sendable {
         )
     }
 
-    static let noop = ClipCache(
+    static let noop = ThumbnailCache(
         lookup: { _, _ in nil },
-        insert: { _, _, source in source }
+        insert: { clipID, etag, _ in
+            FileManager.default.temporaryDirectory
+                .appending(path: "thumb-\(clipID)-\(CacheKey.etagToken(etag)).jpg")
+        }
     )
 
     private static let version = 1
 
     private static func cacheURL(rootDirectory: URL, clipID: Int, etag: String) -> URL {
-        rootDirectory.appending(path: "clip-\(clipID)-\(CacheKey.etagToken(etag)).mp4")
+        rootDirectory.appending(path: "thumb-\(clipID)-\(CacheKey.etagToken(etag)).jpg")
     }
 
     private static func ensureCurrentVersion(
@@ -80,14 +86,14 @@ nonisolated struct ClipCache: Sendable {
     private static func sweepClipVersions(
         rootDirectory: URL,
         clipID: Int,
-        preserving source: URL,
+        preserving destination: URL,
         fileManager: FileManager
     ) throws {
-        let prefix = "clip-\(clipID)-"
+        let prefix = "thumb-\(clipID)-"
         for url in try fileManager.contentsOfDirectory(at: rootDirectory, includingPropertiesForKeys: nil)
             where url.lastPathComponent.hasPrefix(prefix)
-                && url.pathExtension == "mp4"
-                && url != source {
+                && url.pathExtension == "jpg"
+                && url != destination {
             try fileManager.removeItem(at: url)
         }
     }
@@ -120,7 +126,7 @@ nonisolated struct ClipCache: Sendable {
         fileManager: FileManager
     ) throws -> [CacheEntry] {
         try fileManager.contentsOfDirectory(at: rootDirectory, includingPropertiesForKeys: nil)
-            .filter { $0.lastPathComponent.hasPrefix("clip-") && $0.pathExtension == "mp4" }
+            .filter { $0.lastPathComponent.hasPrefix("thumb-") && $0.pathExtension == "jpg" }
             .map { url in
                 let attributes = try fileManager.attributesOfItem(atPath: url.path)
                 let bytes = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
