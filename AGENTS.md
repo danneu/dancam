@@ -79,6 +79,7 @@ dancam/
   raspi/                 <- camera-unit software (Raspberry Pi). Has its own AGENTS.md.
     service/             <- Rust control/media service crate
     docs/design/         <- raspi-side ADRs ({seq}-YYYY-MM-DD-{slug}.md)
+  contract/events/       <- shared /v1/events wire contract (canonical event bodies + README)
   references/            <- third-party source clones (git-ignored; `just fetch-references`)
 ```
 
@@ -87,6 +88,18 @@ When you work inside `app/` or `raspi/`, read that folder's AGENTS.md first
 the details and constraints specific to that side. Each side's file links back here and
 to its sibling, so the three stay navigable (and de-duped: root owns the cross-cutting
 decisions, each side owns its own).
+
+## Contract
+
+`contract/` holds the versioned wire contract shared by both sides -- currently
+`contract/events/`, the canonical `/v1/events` event bodies (one JSON file per
+event `type`, plus a `README.md` describing the SSE framing). These files are the
+source of truth for the format: both the raspi Rust service
+(`raspi/service/src/events.rs#fn fixture`) and the app's Swift test suite
+(`app/DanCam/DanCamTests/Networking/Events/CameraEventCorpusTests.swift`) load
+them as a golden corpus and assert their decoders round-trip every file. It lives
+at the repo root, a peer of `app/` and `raspi/`, because it belongs to neither
+side -- it is the boundary between them, not documentation to file under `docs/`.
 
 ## References
 
