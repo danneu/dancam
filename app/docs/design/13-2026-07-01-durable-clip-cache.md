@@ -69,6 +69,14 @@ Viewer states collapse to pulling progress, preparing, playing, and failed. Navi
 away cancels the pull/remux task and deletes temp artifacts; committed cache files
 survive. Terminal pull/remux/cache-insert failures show an error card with Retry.
 
+Clip viewer teardown is scoped to actual removal: pop/removal via
+`didMove(toParent: nil)` and `deinit` cancel pull/remux work, delete temp artifacts,
+delete share clones, and detach the embedded player. Transient disappearances do not
+tear down the viewer. AVKit fullscreen from an embedded `AVPlayerViewController`
+fires the container's `viewWillDisappear`, so tying teardown to disappearance
+destroys the player mid-fullscreen. The viewer uses `AVPlayerViewControllerDelegate`
+for explicit fullscreen enter/exit state and diagnostics instead.
+
 The viewer still observes `AVPlayerItem.status`. A cache-hit playback failure self-heals
 once by re-pulling, covering a purged or unreadable `Library/Caches` file. A post-remux
 playback failure surfaces as failed instead of looping, because re-pulling the same
@@ -108,7 +116,8 @@ Mitigations:
   missing-file lookup, and version-sentinel wipe.
 - Viewer tests cover cache hits without pull, miss -> pull -> remux -> insert -> play,
   forwarding `resolvedETag`, temp cleanup on remux/cache failures and nav-away, Retry,
-  and playback-failure routing.
+  playback-failure routing, non-removal disappearance preserving the player, fullscreen
+  round-trip state, and removal detaching the player.
 - `ClipPullClient` tests pin that normal completion reports the quoted list validator
   and a mid-pull representation restart reports the new quoted response `ETag`.
 

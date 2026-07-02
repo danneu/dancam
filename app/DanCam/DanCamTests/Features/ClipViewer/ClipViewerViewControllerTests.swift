@@ -60,7 +60,7 @@ struct ClipViewerViewControllerTests {
 
         #expect(controller.isShareButtonEnabled == false)
 
-        controller.viewWillDisappear(false)
+        controller.didMove(toParent: nil)
         await allowCompletion.signal()
     }
 
@@ -80,6 +80,83 @@ struct ClipViewerViewControllerTests {
 
         #expect(controller.statusText == "Ready")
         #expect(controller.isShareButtonEnabled == true)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func disappearanceWithoutRemovalKeepsPlayer() throws {
+        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+        defer { controller.didMove(toParent: nil) }
+
+        controller.loadViewIfNeeded()
+
+        let artifact = try #require(controller.makeShareArtifactForTesting())
+        let directory = try #require(artifact.temporaryDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        controller.viewWillDisappear(false)
+
+        #expect(controller.hasEmbeddedPlayer == true)
+        #expect(controller.currentPlayerItemURL == cacheURL)
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func fullscreenRoundTripKeepsPlayer() throws {
+        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+        defer { controller.didMove(toParent: nil) }
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.hasEmbeddedPlayer == true)
+        #expect(controller.isPresentingFullScreenForTesting == false)
+
+        controller.enterFullScreenForTesting()
+
+        #expect(controller.hasEmbeddedPlayer == true)
+        #expect(controller.currentPlayerItemURL == cacheURL)
+        #expect(controller.isPresentingFullScreenForTesting == true)
+
+        controller.exitFullScreenForTesting()
+
+        #expect(controller.hasEmbeddedPlayer == true)
+        #expect(controller.currentPlayerItemURL == cacheURL)
+        #expect(controller.isPresentingFullScreenForTesting == false)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func removalTearsDownPlayer() throws {
+        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            )
+        )
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.hasEmbeddedPlayer == true)
+        #expect(controller.currentPlayerItemURL == cacheURL)
+
+        controller.didMove(toParent: nil)
+
+        #expect(controller.hasEmbeddedPlayer == false)
+        #expect(controller.currentPlayerItemURL == nil)
     }
 
     @Test func shareArtifactIsNilBeforePlaying() {
@@ -155,7 +232,7 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func viewWillDisappearCleansUpShareArtifacts() throws {
+    func removalCleansUpShareArtifacts() throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
@@ -172,7 +249,7 @@ struct ClipViewerViewControllerTests {
         defer { try? FileManager.default.removeItem(at: directory) }   // safety net if the assert fails
         #expect(FileManager.default.fileExists(atPath: directory.path))
 
-        controller.viewWillDisappear(false)                            // house pattern -> tearDown()
+        controller.didMove(toParent: nil)
 
         #expect(FileManager.default.fileExists(atPath: directory.path) == false)
     }
@@ -214,7 +291,7 @@ struct ClipViewerViewControllerTests {
         #expect(controller.isShareButtonEnabled == false)
         try await waitUntil { pullCalls.values().count == 1 }
 
-        controller.viewWillDisappear(false)
+        controller.didMove(toParent: nil)
         await allowCompletion.signal()
     }
 
@@ -396,7 +473,7 @@ struct ClipViewerViewControllerTests {
         controller.loadViewIfNeeded()
         try await waitUntil { controller.progressFraction == 1 }
 
-        controller.viewWillDisappear(false)
+        controller.didMove(toParent: nil)
         await allowCompletion.signal()
 
         try await waitUntil {

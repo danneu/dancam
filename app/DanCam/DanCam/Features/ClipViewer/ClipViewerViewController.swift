@@ -34,6 +34,7 @@ final class ClipViewerViewController: UIViewController {
     private var temporaryFiles: Set<URL> = []
     private var shareArtifactDirectories: Set<URL> = []
     private var didSelfHealCacheHitFailure = false
+    private var isPresentingFullScreen = false
 
     // Root for the per-share clone subdirectories. Internal (not private) with a single
     // default so a test can point it at a regular file, forcing the clone below to fail and
@@ -67,9 +68,11 @@ final class ClipViewerViewController: UIViewController {
         }
     }
 
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        tearDown()
+    override func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        if parent == nil {
+            tearDown()
+        }
     }
 
     isolated deinit {
@@ -108,6 +111,10 @@ final class ClipViewerViewController: UIViewController {
         shareButton.isEnabled
     }
 
+    var isPresentingFullScreenForTesting: Bool {
+        isPresentingFullScreen
+    }
+
     func retryForTesting() {
         retry()
     }
@@ -123,6 +130,14 @@ final class ClipViewerViewController: UIViewController {
 
     func failCurrentPlayerForTesting() {
         handlePlayerItemFailed(source: currentPlaybackSource, message: "Clip playback failed.")
+    }
+
+    func enterFullScreenForTesting() {
+        setFullScreen(true)
+    }
+
+    func exitFullScreenForTesting() {
+        setFullScreen(false)
     }
 
     private func configureViews() {
@@ -328,6 +343,7 @@ final class ClipViewerViewController: UIViewController {
         let player = AVPlayer(playerItem: item)
         let playerViewController = AVPlayerViewController()
         playerViewController.player = player
+        playerViewController.delegate = self
         playerViewController.view.translatesAutoresizingMaskIntoConstraints = false
 
         addChild(playerViewController)
@@ -347,6 +363,15 @@ final class ClipViewerViewController: UIViewController {
         observePlayerItem(item, source: source)
         state = .playing(url)
         player.play()
+    }
+
+    private func setFullScreen(_ newValue: Bool) {
+        guard isPresentingFullScreen != newValue else { return }
+
+        isPresentingFullScreen = newValue
+        Log.playback.notice(
+            "clip_id=\(self.clip.id, privacy: .public) phase=fullscreen state=\(newValue ? "enter" : "exit", privacy: .public)"
+        )
     }
 
     private func observePlayerItem(_ item: AVPlayerItem, source: PlaybackSource) {
@@ -527,6 +552,31 @@ final class ClipViewerViewController: UIViewController {
                 "playing"
             case .failed:
                 "failed"
+            }
+        }
+    }
+}
+
+extension ClipViewerViewController: AVPlayerViewControllerDelegate {
+    func playerViewController(
+        _ playerViewController: AVPlayerViewController,
+        willBeginFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        setFullScreen(true)
+        coordinator.animate(alongsideTransition: nil) { [weak self] context in
+            if context.isCancelled {
+                self?.setFullScreen(false)
+            }
+        }
+    }
+
+    func playerViewController(
+        _ playerViewController: AVPlayerViewController,
+        willEndFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        coordinator.animate(alongsideTransition: nil) { [weak self] context in
+            if context.isCancelled == false {
+                self?.setFullScreen(false)
             }
         }
     }
