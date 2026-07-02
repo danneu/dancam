@@ -4,6 +4,10 @@ final class ConnectionStatusStripView: UIView {
     private let pill = StatusPillView()
     private let separatorView = UIView()
 
+    private var hairlineHeight: CGFloat { 1 / max(traitCollection.displayScale, 1) }
+    private lazy var separatorHeightConstraint =
+        separatorView.heightAnchor.constraint(equalToConstant: hairlineHeight)
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         configureBaseView()
@@ -63,7 +67,11 @@ final class ConnectionStatusStripView: UIView {
             separatorView.leadingAnchor.constraint(equalTo: leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: trailingAnchor),
             separatorView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            separatorHeightConstraint,
         ])
+
+        registerForTraitChanges([UITraitDisplayScale.self]) { (view: Self, _) in
+            view.separatorHeightConstraint.constant = view.hairlineHeight
+        }
     }
 }

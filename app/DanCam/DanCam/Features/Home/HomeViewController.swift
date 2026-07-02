@@ -372,7 +372,9 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
             guard liveTickTimer == nil else { return }
 
             liveTickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                self?.updateVisibleLiveElapsed()
+                MainActor.assumeIsolated {
+                    self?.updateVisibleLiveElapsed()
+                }
             }
         } else {
             stopLiveTickTimer()
