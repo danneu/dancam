@@ -32,6 +32,36 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func deleteSendsClientCommandAndPopsViewer() async throws {
+        let clip = Clip(
+            id: 7,
+            startMs: nil,
+            durMs: 30_000,
+            bytes: 1,
+            locked: false,
+            etag: "7-1",
+            timeApproximate: false
+        )
+        let calls = CallLog<Int>()
+        let controller = makeController(
+            clipsClient: ClipsClient(
+                fetch: { _ in fatalError("Delete should not fetch clips.") },
+                delete: { id in calls.append(id) }
+            ),
+            clip: clip
+        )
+        let root = UIViewController()
+        let navigationController = UINavigationController(rootViewController: root)
+        navigationController.pushViewController(controller, animated: false)
+        controller.loadViewIfNeeded()
+
+        controller.performDeleteForTesting()
+
+        try await waitUntil { calls.values() == [7] }
+        #expect(navigationController.viewControllers.contains(controller) == false)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func cacheHitPlaysLookedUpURLWithoutPulling() async throws {
         let cacheURL = URL(filePath: "/tmp/dancam-cache-hit-\(UUID().uuidString).mp4")
         let pullCalls = CallLog<Int>()
@@ -605,6 +635,7 @@ struct ClipViewerViewControllerTests {
         clipPull: ClipPullClient = .noop,
         clipCache: ClipCache = .noop,
         remuxer: ClipRemuxer = .noop,
+        clipsClient: ClipsClient = .noop,
         clip: Clip = Clip(
             id: 1,
             startMs: nil,
@@ -615,13 +646,21 @@ struct ClipViewerViewControllerTests {
             timeApproximate: false
         )
     ) -> ClipViewerViewController {
-        ClipViewerViewController(
-            dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError("Health is not used by ClipViewerViewControllerTests.") }),
-                clipPull: clipPull,
-                clipRemuxer: remuxer,
-                clipCache: clipCache
-            ),
+        let dependencies = AppDependencies(
+            health: HealthClient(fetch: { fatalError("Health is not used by ClipViewerViewControllerTests.") }),
+            clips: clipsClient,
+            clipPull: clipPull,
+            clipRemuxer: remuxer,
+            clipCache: clipCache
+        )
+        let store = AppStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies,
+            reduce: AppFeature.reduce
+        )
+        return ClipViewerViewController(
+            dependencies: dependencies,
+            store: store,
             clip: clip
         )
     }

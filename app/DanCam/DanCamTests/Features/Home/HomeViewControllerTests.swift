@@ -159,8 +159,8 @@ struct HomeViewControllerTests {
             timeApproximate: clipA.timeApproximate
         )
 
-        store.send(.clips(.clipsResponse(.success(ClipsResponse(
-            clips: [clipC, relabeledClipA],
+        store.send(.clips(.clipsResponse(epoch: 0, .success(ClipsResponse(
+            clips: [clipC, relabeledClipA, clipB],
             serverTimeMs: 0,
             nextCursor: nil
         )))))
@@ -213,7 +213,7 @@ struct HomeViewControllerTests {
             timeApproximate: false
         )
 
-        store.send(.clips(.clipsResponse(.success(ClipsResponse(
+        store.send(.clips(.clipsResponse(epoch: 0, .success(ClipsResponse(
             clips: [trustedClip],
             serverTimeMs: 1_767_225_601_000,
             nextCursor: nil
@@ -231,6 +231,51 @@ struct HomeViewControllerTests {
         #expect(updatedCell.isLoadingForTesting == false)
         #expect(loader.requestCount(ClipThumbnailIdentity(trustedClip)) == 1)
         #expect(updatedSubtitle.contains("00:30"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func clipRemovedRemovesFinishedRow() async throws {
+        let (controller, store) = makeControllerAndStore(clips: [clipA, clipB], loader: .noop)
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: self.clipA.id) != nil
+        }
+
+        store.send(.clips(.clipRemoved(id: clipA.id)))
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: self.clipA.id) == nil
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func performDeleteForTestingRoutesToClipsClientAndRemovesRow() async throws {
+        let deleteSpy = HomeDeleteSpy()
+        let (controller, _) = makeControllerAndStore(
+            clips: [clipA],
+            loader: .noop,
+            clipsClient: deleteSpy.client()
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: self.clipA.id) != nil
+        }
+        controller.performDeleteForTesting(clipID: clipA.id)
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: self.clipA.id) == nil
+        }
+        for _ in 0..<200 {
+            if await deleteSpy.deletedIDs() == [clipA.id] {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("Timed out waiting for clip delete.")
     }
 
     @Test func timeUnverifiedPillVisibilityFollowsProjection() {
@@ -308,7 +353,7 @@ struct HomeViewControllerTests {
         #expect(controller.isRefreshingForTesting)
         #expect(controller.isManualRefreshingForTesting)
 
-        store.send(.clips(.clipsResponse(.failure(.transport("No route")))))
+        store.send(.clips(.clipsResponse(epoch: 1, .failure(.transport("No route")))))
 
         #expect(controller.isRefreshingForTesting == false)
         #expect(controller.isManualRefreshingForTesting == false)
@@ -336,12 +381,12 @@ struct HomeViewControllerTests {
         let (staleController, staleStore) = makeControllerAndStore(clips: [clipA], loader: .noop)
         staleController.loadViewIfNeeded()
 
-        staleStore.send(.clips(.clipsResponse(.failure(.transport("No route")))))
+        staleStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport("No route")))))
 
         #expect(staleController.clipsFailureMessageForTesting == "Transport error: No route")
         #expect(staleController.isShowingEmptyStateForTesting == false)
 
-        staleStore.send(.clips(.clipsResponse(.success(ClipsResponse(
+        staleStore.send(.clips(.clipsResponse(epoch: 0, .success(ClipsResponse(
             clips: [],
             serverTimeMs: 0,
             nextCursor: nil
@@ -353,7 +398,7 @@ struct HomeViewControllerTests {
         emptyController.loadViewIfNeeded()
         #expect(emptyController.isShowingEmptyStateForTesting)
 
-        emptyStore.send(.clips(.clipsResponse(.failure(.transport("No route")))))
+        emptyStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport("No route")))))
 
         #expect(emptyController.clipsFailureMessageForTesting == "Transport error: No route")
         #expect(emptyController.isShowingEmptyStateForTesting == false)
@@ -433,6 +478,25 @@ struct HomeViewControllerTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         Issue.record("Timed out waiting for condition.")
+    }
+}
+
+private actor HomeDeleteSpy {
+    private var ids: [Int] = []
+
+    nonisolated func client() -> ClipsClient {
+        ClipsClient(
+            fetch: { _ in ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil) },
+            delete: { id in await self.record(id) }
+        )
+    }
+
+    func deletedIDs() -> [Int] {
+        ids
+    }
+
+    private func record(_ id: Int) {
+        ids.append(id)
     }
 }
 

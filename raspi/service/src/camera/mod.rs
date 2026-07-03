@@ -178,11 +178,16 @@ impl Backend for CameraBackend {
             return Err(BackendError::CameraOffline);
         }
 
-        let start_segment = self.storage.allocate_start_segment().map_err(|error| {
-            tracing::error!(%error, "start segment allocation failed");
-            BackendError::Storage
-        })?;
-        let events = self.hub.drive_now(Input::StartCommand { start_segment });
+        let (start_segment, events) = self
+            .storage
+            .reserve_start_segment(|seg| {
+                self.hub
+                    .drive_now(Input::StartCommand { start_segment: seg })
+            })
+            .map_err(|error| {
+                tracing::error!(%error, "start segment allocation failed");
+                BackendError::Storage
+            })?;
         let Some(session) = starting_session(&events) else {
             return Ok(());
         };
@@ -226,6 +231,10 @@ impl Backend for CameraBackend {
 
     fn unpullable_from(&self) -> Option<SegmentId> {
         self.hub.unpullable_from()
+    }
+
+    fn note_clip_removed(&self, id: SegmentId) {
+        self.hub.drive_now(Input::ClipRemoved { id });
     }
 
     fn clip_durations(&self) -> Arc<DurationCache> {
@@ -693,7 +702,11 @@ async fn finalized_clip_meta(
     })
     .await
     {
-        Ok(meta) => meta,
+        Ok(Ok(meta)) => meta,
+        Ok(Err(error)) => {
+            tracing::error!(%error, seq, "failed to stat finalized camera segment");
+            None
+        }
         Err(error) => {
             tracing::error!(%error, seq, "camera clip metadata task failed");
             None

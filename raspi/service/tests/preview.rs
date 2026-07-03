@@ -54,6 +54,8 @@ impl Backend for StubBackend {
         None
     }
 
+    fn note_clip_removed(&self, _id: SegmentId) {}
+
     fn clip_durations(&self) -> Arc<DurationCache> {
         Arc::new(DurationCache::default())
     }

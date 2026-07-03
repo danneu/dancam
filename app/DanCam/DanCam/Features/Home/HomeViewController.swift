@@ -609,10 +609,44 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         case .finished(let clip):
             tableView.deselectRow(at: indexPath, animated: true)
             navigationController?.pushViewController(
-                ClipViewerViewController(dependencies: dependencies, clip: clip),
+                ClipViewerViewController(dependencies: dependencies, store: store, clip: clip),
                 animated: true
             )
         }
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
+    ) -> UISwipeActionsConfiguration? {
+        guard let row = row(at: indexPath),
+              case .finished(let clip) = row else {
+            return nil
+        }
+
+        let action = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, completion in
+            guard let self else {
+                completion(false)
+                return
+            }
+
+            let alert = UIAlertController(
+                title: "Delete clip?",
+                message: "This removes the clip from the camera unit.",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+                completion(false)
+            })
+            alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { _ in
+                self.performDelete(clip)
+                completion(true)
+            })
+            self.present(alert, animated: true)
+        }
+        action.image = UIImage(systemName: "trash")
+
+        return UISwipeActionsConfiguration(actions: [action])
     }
 
     func tableView(
@@ -668,6 +702,15 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private func row(at indexPath: IndexPath) -> HomeRow? {
         guard let id = dataSource.itemIdentifier(for: indexPath) else { return nil }
         return rowsByID[id]
+    }
+
+    private func performDelete(_ clip: Clip) {
+        store.send(.clips(.deleteTapped(clip)))
+    }
+
+    func performDeleteForTesting(clipID: Int) {
+        guard let clip = finishedClips.first(where: { $0.id == clipID }) else { return }
+        performDelete(clip)
     }
 
     private func prunePrefetches(surviving identities: Set<ClipThumbnailIdentity>) {

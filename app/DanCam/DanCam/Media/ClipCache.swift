@@ -3,6 +3,17 @@ import Foundation
 nonisolated struct ClipCache: Sendable {
     var lookup: @Sendable (_ clipID: Int, _ etag: String) async -> URL?
     var insert: @Sendable (_ clipID: Int, _ etag: String, _ source: URL) async throws -> URL
+    var remove: @Sendable (_ clipID: Int) async -> Void
+
+    init(
+        lookup: @escaping @Sendable (_ clipID: Int, _ etag: String) async -> URL?,
+        insert: @escaping @Sendable (_ clipID: Int, _ etag: String, _ source: URL) async throws -> URL,
+        remove: @escaping @Sendable (_ clipID: Int) async -> Void = { _ in }
+    ) {
+        self.lookup = lookup
+        self.insert = insert
+        self.remove = remove
+    }
 
     static func live(
         rootDirectory: URL,
@@ -16,13 +27,17 @@ nonisolated struct ClipCache: Sendable {
             },
             insert: { clipID, etag, source in
                 try await store.insert(clipID, etag, source)
+            },
+            remove: { clipID in
+                await store.remove(clipID)
             }
         )
     }
 
     static let noop = ClipCache(
         lookup: { _, _ in nil },
-        insert: { _, _, source in source }
+        insert: { _, _, source in source },
+        remove: { _ in }
     )
 
     private static let version = 1
@@ -78,6 +93,19 @@ nonisolated struct ClipCache: Sendable {
             )
             return destination
         }
+
+        func remove(_ clipID: Int) {
+            do {
+                let fileManager = FileManager.default
+                try ClipCache.ensureCurrentVersion(rootDirectory: rootDirectory, fileManager: fileManager)
+                try ClipCache.sweepClipVersions(
+                    rootDirectory: rootDirectory,
+                    clipID: clipID,
+                    preserving: nil,
+                    fileManager: fileManager
+                )
+            } catch {}
+        }
     }
 
     private static func cacheURL(rootDirectory: URL, clipID: Int, etag: String) -> URL {
@@ -101,7 +129,7 @@ nonisolated struct ClipCache: Sendable {
     private static func sweepClipVersions(
         rootDirectory: URL,
         clipID: Int,
-        preserving source: URL,
+        preserving source: URL?,
         fileManager: FileManager
     ) throws {
         let prefix = "clip-\(clipID)-"

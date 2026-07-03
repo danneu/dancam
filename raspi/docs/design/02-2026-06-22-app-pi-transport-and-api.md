@@ -5,6 +5,9 @@
 - **Amended:** 2026-07-01 -- the `GET /v1/clips/{id}/thumb` thumbnail endpoint is superseded by
   app ADR 16 (`app/docs/design/16-2026-07-01-client-side-clip-thumbnails.md`): thumbnails are
   generated client-side, so this endpoint is not built. The rest of the wire contract stands.
+- **Amended:** 2026-07-02 -- ADR 17 adds `DELETE /v1/clips/{id}` and `clip_removed` as
+  an off-record-path finished-clip mutation, and tightens clip list/serve scan errors to
+  fail closed with `503`.
 - **Date:** 2026-06-22
 - **Owner:** raspi (the Pi serves the wire contract; the canonical copy lives here)
 - **Related:** root `AGENTS.md` (all five cross-cutting principles);
@@ -115,6 +118,15 @@
 > derived at read time from filename-stamped monotonic facts plus that offset. The
 > `time_synced` event remains the additive events-plane signal, and snapshots gain
 > `time: {synced}` when the route lands.
+
+> **Note (2026-07-02): Clip delete.** ADR 17 adds `DELETE /v1/clips/{id}` for finished,
+> below-floor clip removal and the `clip_removed` SSE delta. This is the first
+> phone-initiated mutation of committed footage, but it remains off the record path:
+> active or newly reserved segments are refused before any unlink, and the storage
+> coordinator durably raises `state/state.json` `high_water_seq >= id` before deleting
+> files so the id cannot be reused. `/v1/clips` and `GET /v1/clips/{id}` now fail closed
+> with `503` on recording-directory scan errors rather than returning an empty `200` or
+> a fail-open `404`; a missing recording directory remains a truthful empty list.
 
 ## Context
 
@@ -364,6 +376,14 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > receive a silent unfiltered page.
 - `GET /v1/clips/{id}` -- resumable pull; `Range`/`If-Range`, `Accept-Ranges`, `ETag`,
   `Content-Range`; `application/mp2t` (the `.ts` segment bytes).
+- `DELETE /v1/clips/{id}` -- delete a finished, below-floor clip. Requires the mutation
+  headers (`Content-Type: application/json` and non-empty `Idempotency-Key`). `204`
+  means the coordinator raised the high-water witness, removed every matching segment
+  file for the id, fsynced the recording directory, and emitted `clip_removed`. `404`
+  means the id is gone, missing, or currently not deletable because it is at or above
+  the live floor. `503` means a storage fault prevented durable acknowledgement; it may
+  be transient or operator-actionable depending on the underlying scan/witness/unlink
+  failure.
 - `GET /v1/clips/{id}/thumb?w=` -- keyframe JPEG (the Pi caches one per segment).
   **Superseded (thumbnails) by app ADR 16: generated client-side; this endpoint is not built.**
 
@@ -375,8 +395,8 @@ clip playback below). This keeps every Pi request on the pinned `NWConnection`.
 - `GET /v1/events` -- SSE stream: periodic heartbeat (keepalive, ~2 s) plus
   `incident_saved`, `incident_resolved` (a pre-sync lock's precise window has bound after
   time sync -- safe to read/pull now), `storage_full`, `recording_stopped`,
-  `temp_warning`, `time_synced`. Offline is detected by **absence of heartbeat**, not a
-  push.
+  `temp_warning`, `time_synced`, `clip_removed`. Offline is detected by **absence of
+  heartbeat**, not a push.
 
 **Storage companion fields (reconciled 2026-06-23).** The storage ADR
 (`03-2026-06-23-storage-ring-buffer-incident-lock.md`) introduced facts the app needs to
@@ -520,12 +540,15 @@ silently stopping. On reconnect, a gap in `newest_ts` flags "possible gap in cov
 
 ### Constraint reconciliation
 
-- **SD is the source of truth:** every endpoint is preview/read/pull; nothing is on the
-  record path; all can fail with zero effect on what is written; only finished segments
-  are served. The in-progress segment is not pullable -- with one benign exception: an
-  incident lock force-finalizes the current segment (a recording-pipeline close/reopen,
-  not a transport write to the card) so the just-marked footage becomes a finished,
-  pullable segment within seconds.
+- **SD is the source of truth:** the Pi still records locally and the app still reads,
+  previews, pulls, and now requests deletion of selected finished footage. `DELETE
+  /v1/clips/{id}` is the one committed-footage mutation on this surface, but it is off
+  the record path: it refuses active/newly reserved segments before unlinking, raises the
+  segment-id witness before deletion, and acknowledges only after the unlink set and
+  containing-directory fsync are durable. The in-progress segment is not pullable -- with
+  one benign exception: an incident lock force-finalizes the current segment (a
+  recording-pipeline close/reopen, not a transport write to the card) so the just-marked
+  footage becomes a finished, pullable segment within seconds.
 - **Wi-Fi is 2.4 GHz preview + pull only:** preview is low-res capped MJPEG; pull is
   on-demand + resumable + by selection (no bulk mirroring); control/SSE are tiny. The
   pre-sync incident hold is deliberately **not** exposed as a segment list precisely so a

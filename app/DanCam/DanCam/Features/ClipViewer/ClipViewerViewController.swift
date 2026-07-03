@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class ClipViewerViewController: UIViewController {
     private let dependencies: AppDependencies
+    private let store: AppStore
     private let clip: Clip
 
     private let scrollView = UIScrollView()
@@ -16,6 +17,7 @@ final class ClipViewerViewController: UIViewController {
     private let resultLabel = UILabel()
     private let retryButton = UIButton(type: .system)
     private let shareButton = UIBarButtonItem()
+    private let deleteButton = UIBarButtonItem()
     private let playerContainerView = UIView()
     private let captionLabel = UILabel()
 
@@ -45,8 +47,9 @@ final class ClipViewerViewController: UIViewController {
     var shareScratchDirectory = FileManager.default.temporaryDirectory
         .appending(path: "clip-share", directoryHint: .isDirectory)
 
-    init(dependencies: AppDependencies, clip: Clip) {
+    init(dependencies: AppDependencies, store: AppStore, clip: Clip) {
         self.dependencies = dependencies
+        self.store = store
         self.clip = clip
         super.init(nibName: nil, bundle: nil)
     }
@@ -151,6 +154,10 @@ final class ClipViewerViewController: UIViewController {
         shareTapped(shareButton)
     }
 
+    func performDeleteForTesting() {
+        performDelete()
+    }
+
     func failCurrentPlayerForTesting() {
         handlePlayerItemFailed(source: currentPlaybackSource, message: "Clip playback failed.")
     }
@@ -249,7 +256,17 @@ final class ClipViewerViewController: UIViewController {
         shareButton.action = #selector(shareTapped(_:))
         shareButton.accessibilityLabel = "Share clip"
         shareButton.isEnabled = false
-        navigationItem.rightBarButtonItem = shareButton
+        configureDeleteButton()
+        navigationItem.rightBarButtonItems = [shareButton, deleteButton]
+    }
+
+    private func configureDeleteButton() {
+        deleteButton.image = UIImage(systemName: "trash")
+        deleteButton.style = .plain
+        deleteButton.target = self
+        deleteButton.action = #selector(deleteTapped)
+        deleteButton.accessibilityLabel = "Delete clip"
+        deleteButton.tintColor = .systemRed
     }
 
     @objc private func retryButtonTapped() {
@@ -275,6 +292,24 @@ final class ClipViewerViewController: UIViewController {
             }
         }
         present(activityViewController, animated: true)
+    }
+
+    @objc private func deleteTapped() {
+        let alert = UIAlertController(
+            title: "Delete clip?",
+            message: "This removes the clip from the camera unit.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
+            self?.performDelete()
+        })
+        present(alert, animated: true)
+    }
+
+    private func performDelete() {
+        store.send(.clips(.deleteTapped(clip)))
+        navigationController?.popViewController(animated: true)
     }
 
     private struct ShareArtifact {

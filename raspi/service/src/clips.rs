@@ -18,7 +18,9 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 
 use crate::{
+    mutation::{require_mutation_headers, MutationHeaderError},
     recorder::{parse_segment_filename, SegmentFacts, SegmentId},
+    storage::SegmentDeleteError,
     time_sync::TimeStore,
     ts_duration::DurationCache,
     AppState,
@@ -66,12 +68,12 @@ pub(crate) struct ClipsQuery {
 pub(crate) async fn list_clips(
     State(state): State<AppState>,
     Query(query): Query<ClipsQuery>,
-) -> Result<Json<ClipsResponse>, StatusCode> {
+) -> Result<Json<ClipsResponse>, ClipError> {
     if query.from_ms.is_some() || query.to.is_some() {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(ClipError::BadRequest);
     }
     if query.order.as_deref().is_some_and(|order| order != "desc") {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(ClipError::BadRequest);
     }
 
     let cursor = query
@@ -79,13 +81,13 @@ pub(crate) async fn list_clips(
         .as_deref()
         .map(str::parse::<SegmentId>)
         .transpose()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+        .map_err(|_| ClipError::BadRequest)?;
     let limit = resolve_limit(query.limit);
     let unpullable_from = state.backend.unpullable_from();
     let rec_dir = state.storage.rec_dir();
     let duration_cache = state.clip_durations.clone();
     let time_store = state.time_store.clone();
-    let (clips, next_cursor) = match tokio::task::spawn_blocking(move || {
+    let (clips, next_cursor) = tokio::task::spawn_blocking(move || {
         read_finished_clips(
             rec_dir.as_ref(),
             unpullable_from,
@@ -96,13 +98,14 @@ pub(crate) async fn list_clips(
         )
     })
     .await
-    {
-        Ok(page) => page,
-        Err(error) => {
-            tracing::error!(%error, "clip listing task failed");
-            (Vec::new(), None)
-        }
-    };
+    .map_err(|error| {
+        tracing::error!(%error, "clip listing task failed");
+        ClipError::Unavailable
+    })?
+    .map_err(|error| {
+        tracing::error!(%error, "failed to list clips");
+        ClipError::Unavailable
+    })?;
 
     Ok(Json(ClipsResponse {
         clips,
@@ -129,6 +132,10 @@ pub async fn serve_clip(
         .await
         .map_err(|error| {
             tracing::error!(%error, "clip resolve task failed");
+            ClipError::Unavailable
+        })?
+        .map_err(|error| {
+            tracing::error!(%error, id, "failed to resolve clip");
             ClipError::Unavailable
         })?
         .ok_or(ClipError::NotFound)?;
@@ -164,6 +171,29 @@ pub async fn serve_clip(
         }
         RangeResolution::Unsatisfiable => Err(ClipError::RangeNotSatisfiable { total }),
     }
+}
+
+pub async fn delete_clip(
+    State(state): State<AppState>,
+    PathParam(id): PathParam<u32>,
+    headers: HeaderMap,
+) -> Result<StatusCode, DeleteClipError> {
+    require_mutation_headers(&headers)?;
+
+    let storage = state.storage.clone();
+    let backend = state.backend.clone();
+    tokio::task::spawn_blocking(move || {
+        storage.delete_finished_segment(id, || backend.unpullable_from())
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, id, "clip delete task failed");
+        ClipError::Unavailable
+    })?
+    .map_err(segment_delete_to_clip_error)?;
+
+    state.backend.note_clip_removed(id);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// RFC 9110 entity-tag wire form: quoted `"{seq}-{bytes}"`. Used for both the
@@ -287,8 +317,8 @@ pub(crate) fn read_finished_clips(
     limit: usize,
     duration_cache: &DurationCache,
     time_store: &TimeStore,
-) -> (Vec<ClipMeta>, Option<SegmentId>) {
-    let candidates = segment_candidates(rec_dir);
+) -> io::Result<(Vec<ClipMeta>, Option<SegmentId>)> {
+    let candidates = segment_candidates(rec_dir)?;
     let mut candidates: Vec<_> = candidates
         .into_iter()
         .filter(|candidate| unpullable_from.is_none_or(|floor| candidate.seq < floor))
@@ -307,25 +337,27 @@ pub(crate) fn read_finished_clips(
         .map(|candidate| clip_meta_from_candidate(candidate, Some(duration_cache), time_store))
         .collect();
 
-    (clips, next_cursor)
+    Ok((clips, next_cursor))
 }
 
 pub(crate) fn resolve_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
 }
 
-pub(crate) fn open_segment(rec_dir: &Path) -> Option<(u32, PathBuf, u64)> {
-    let candidates = segment_candidates(rec_dir);
-    let max_seq = max_segment_seq(&candidates)?;
+pub(crate) fn open_segment(rec_dir: &Path) -> io::Result<Option<(u32, PathBuf, u64)>> {
+    let candidates = segment_candidates(rec_dir)?;
+    let Some(max_seq) = max_segment_seq(&candidates) else {
+        return Ok(None);
+    };
 
-    candidates
+    Ok(candidates
         .into_iter()
         .find(|candidate| candidate.seq == max_seq)
-        .map(|candidate| (candidate.seq, candidate.path, candidate.bytes))
+        .map(|candidate| (candidate.seq, candidate.path, candidate.bytes)))
 }
 
-pub(crate) fn max_clip_seq(rec_dir: &Path) -> Option<u32> {
-    open_segment(rec_dir).map(|(seq, _, _)| seq)
+pub(crate) fn max_clip_seq(rec_dir: &Path) -> io::Result<Option<u32>> {
+    open_segment(rec_dir).map(|segment| segment.map(|(seq, _, _)| seq))
 }
 
 pub(crate) fn clip_meta(
@@ -333,48 +365,92 @@ pub(crate) fn clip_meta(
     seq: SegmentId,
     duration_cache: Option<&DurationCache>,
     time_store: &TimeStore,
-) -> Option<ClipMeta> {
-    let segment = resolve_segment(rec_dir, seq)?;
+) -> io::Result<Option<ClipMeta>> {
+    let Some(segment) = resolve_segment(rec_dir, seq)? else {
+        return Ok(None);
+    };
     let meta = clip_meta_from_candidate(segment.clone(), duration_cache, time_store);
     if !meta.time_approximate || segment.facts.is_none() {
-        return Some(meta);
+        return Ok(Some(meta));
     }
 
     let disk_time_store = TimeStore::load(rec_dir.join("time"));
-    Some(clip_meta_from_candidate(
+    Ok(Some(clip_meta_from_candidate(
         segment,
         duration_cache,
         &disk_time_store,
-    ))
+    )))
 }
 
-pub(crate) fn resolve_segment(rec_dir: &Path, seq: SegmentId) -> Option<SegmentCandidate> {
-    segment_candidates(rec_dir)
+pub(crate) fn resolve_segment(
+    rec_dir: &Path,
+    seq: SegmentId,
+) -> io::Result<Option<SegmentCandidate>> {
+    Ok(segment_candidates(rec_dir)?
         .into_iter()
-        .find(|candidate| candidate.seq == seq)
+        .find(|candidate| candidate.seq == seq))
 }
 
-fn segment_candidates(rec_dir: &Path) -> Vec<SegmentCandidate> {
-    let Ok(entries) = std::fs::read_dir(rec_dir) else {
-        return Vec::new();
+fn segment_candidates(rec_dir: &Path) -> io::Result<Vec<SegmentCandidate>> {
+    let entries = match std::fs::read_dir(rec_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
     };
 
-    let parsed = entries
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            let parsed = parse_segment_filename(path.file_name()?.to_str()?)?;
-            let metadata = entry.metadata().ok()?;
-            metadata.is_file().then_some(SegmentCandidate {
-                seq: parsed.seq,
+    let mut parsed = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(parsed_name) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(parse_segment_filename)
+        else {
+            continue;
+        };
+        let metadata = entry.metadata()?;
+        if metadata.is_file() {
+            parsed.push(SegmentCandidate {
+                seq: parsed_name.seq,
                 bytes: metadata.len(),
                 path,
-                facts: parsed.facts,
-            })
-        })
-        .collect::<Vec<_>>();
+                facts: parsed_name.facts,
+            });
+        }
+    }
 
-    dedupe_candidates(parsed)
+    Ok(dedupe_candidates(parsed))
+}
+
+pub(crate) fn segment_paths_for_id(rec_dir: &Path, id: SegmentId) -> io::Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(rec_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(parsed_name) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(parse_segment_filename)
+        else {
+            continue;
+        };
+        if parsed_name.seq != id {
+            continue;
+        }
+        let metadata = entry.metadata()?;
+        if metadata.is_file() {
+            paths.push(path);
+        }
+    }
+
+    Ok(paths)
 }
 
 fn dedupe_candidates(candidates: Vec<SegmentCandidate>) -> Vec<SegmentCandidate> {
@@ -432,6 +508,7 @@ fn io_error_to_clip_error(error: io::Error) -> ClipError {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ClipError {
+    BadRequest,
     NotFound,
     Unavailable,
     RangeNotSatisfiable { total: u64 },
@@ -440,6 +517,7 @@ pub enum ClipError {
 impl IntoResponse for ClipError {
     fn into_response(self) -> Response {
         match self {
+            ClipError::BadRequest => StatusCode::BAD_REQUEST.into_response(),
             ClipError::NotFound => StatusCode::NOT_FOUND.into_response(),
             ClipError::Unavailable => StatusCode::SERVICE_UNAVAILABLE.into_response(),
             ClipError::RangeNotSatisfiable { total } => Response::builder()
@@ -451,15 +529,55 @@ impl IntoResponse for ClipError {
     }
 }
 
+#[derive(Debug)]
+pub enum DeleteClipError {
+    MutationHeaders(MutationHeaderError),
+    Clip(ClipError),
+}
+
+impl From<MutationHeaderError> for DeleteClipError {
+    fn from(error: MutationHeaderError) -> Self {
+        Self::MutationHeaders(error)
+    }
+}
+
+impl From<ClipError> for DeleteClipError {
+    fn from(error: ClipError) -> Self {
+        Self::Clip(error)
+    }
+}
+
+impl IntoResponse for DeleteClipError {
+    fn into_response(self) -> Response {
+        match self {
+            DeleteClipError::MutationHeaders(error) => error.into_response(),
+            DeleteClipError::Clip(error) => error.into_response(),
+        }
+    }
+}
+
+fn segment_delete_to_clip_error(error: SegmentDeleteError) -> ClipError {
+    match error {
+        SegmentDeleteError::NotFound => ClipError::NotFound,
+        SegmentDeleteError::Io(error) => {
+            tracing::error!(%error, "failed to delete clip");
+            ClipError::Unavailable
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         http_etag, io_error_to_clip_error, max_clip_seq, read_finished_clips, resolve_limit,
-        resolve_range, resolve_segment, ClipError, RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
+        resolve_range, resolve_segment, segment_paths_for_id, ClipError, RangeResolution,
+        DEFAULT_LIMIT, MAX_LIMIT,
     };
     use crate::recorder::{stamped_segment_filename, SegmentFacts};
     use crate::time_sync::{OffsetRecord, TimeStore};
     use crate::ts_duration::DurationCache;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::{fs, io, path::Path};
 
     const BOOT_ABC: &str = "abc123de-f456-4000-8000-000000000001";
@@ -613,6 +731,25 @@ mod tests {
         assert_eq!(next_cursor, None);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn read_finished_clips_fails_closed_for_unreadable_existing_dir() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00000.ts", b"zero");
+        fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let duration_cache = DurationCache::new();
+        let time_store = TimeStore::in_memory();
+        let result =
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+
+        fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o700)).unwrap();
+        if result.is_ok() {
+            return;
+        }
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    }
+
     #[test]
     fn max_clip_seq_uses_segment_filename_parser() {
         let rec_dir = temp_rec_dir();
@@ -620,7 +757,7 @@ mod tests {
         write_file(&rec_dir.path, "seg_00003.ts", b"three");
         write_file(&rec_dir.path, "seg_999.ts", b"ignored");
 
-        assert_eq!(max_clip_seq(&rec_dir.path), Some(3));
+        assert_eq!(max_clip_seq(&rec_dir.path).unwrap(), Some(3));
     }
 
     #[test]
@@ -629,7 +766,7 @@ mod tests {
         write_file(&rec_dir.path, "seg_99999.ts", b"almost");
         write_file(&rec_dir.path, "seg_100000.ts", b"crossed");
 
-        assert_eq!(max_clip_seq(&rec_dir.path), Some(100000));
+        assert_eq!(max_clip_seq(&rec_dir.path).unwrap(), Some(100000));
     }
 
     #[test]
@@ -638,7 +775,7 @@ mod tests {
         write_file(&rec_dir.path, "seg_00099.ts", b"bare");
         write_file(&rec_dir.path, &stamped_name(100), b"stamped");
 
-        assert_eq!(max_clip_seq(&rec_dir.path), Some(100));
+        assert_eq!(max_clip_seq(&rec_dir.path).unwrap(), Some(100));
     }
 
     #[test]
@@ -647,7 +784,7 @@ mod tests {
         write_file(&rec_dir.path, "seg_00007.ts", b"bare");
         write_file(&rec_dir.path, &stamped_name(7), b"stamped");
 
-        let segment = resolve_segment(&rec_dir.path, 7).unwrap();
+        let segment = resolve_segment(&rec_dir.path, 7).unwrap().unwrap();
 
         assert_eq!(segment.seq, 7);
         assert_eq!(segment.bytes, 7);
@@ -657,6 +794,27 @@ mod tests {
             segment.path.file_name().and_then(|name| name.to_str()),
             Some(expected.as_str())
         );
+    }
+
+    #[test]
+    fn segment_paths_for_id_collects_duplicates_and_excludes_non_files() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"bare");
+        let stamped = stamped_name(7);
+        write_file(&rec_dir.path, &stamped, b"stamped");
+        write_file(&rec_dir.path, &stamped_name(8), b"other");
+        fs::create_dir(rec_dir.path.join("seg_00009.ts")).unwrap();
+
+        let mut paths = segment_paths_for_id(&rec_dir.path, 7)
+            .unwrap()
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        paths.sort();
+
+        assert_eq!(paths, ["seg_00007.ts".to_string(), stamped]);
+        assert_eq!(segment_paths_for_id(&rec_dir.path, 8).unwrap().len(), 1);
+        assert!(segment_paths_for_id(&rec_dir.path, 9).unwrap().is_empty());
     }
 
     #[test]
@@ -772,7 +930,8 @@ mod tests {
         let duration_cache = DurationCache::new();
 
         let (clips, next_cursor) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
+                .unwrap();
 
         assert_eq!(next_cursor, None);
         assert_eq!(clips.len(), 1);
@@ -796,7 +955,8 @@ mod tests {
         let duration_cache = DurationCache::new();
 
         let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
+                .unwrap();
 
         assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [8, 7]);
         for clip in clips {
@@ -820,7 +980,8 @@ mod tests {
         let duration_cache = DurationCache::new();
 
         let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
+                .unwrap();
 
         assert_eq!(clips[0].start_ms, None);
         assert!(clips[0].time_approximate);
@@ -842,7 +1003,8 @@ mod tests {
         let duration_cache = DurationCache::new();
 
         let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
+                .unwrap();
 
         assert_eq!(clips[0].start_ms, Some(1050));
         assert!(!clips[0].time_approximate);
@@ -863,7 +1025,8 @@ mod tests {
         let duration_cache = DurationCache::new();
 
         let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
+                .unwrap();
 
         assert_eq!(clips[0].start_ms, None);
         assert!(clips[0].time_approximate);
@@ -925,6 +1088,7 @@ mod tests {
             &duration_cache,
             &time_store,
         )
+        .unwrap()
     }
 
     struct TempRecDir {

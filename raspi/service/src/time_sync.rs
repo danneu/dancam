@@ -16,8 +16,8 @@ use axum::{
 
 use crate::{
     clock,
+    mutation::{require_mutation_headers, MutationHeaderError},
     recorder::boot_tag,
-    recording::{require_mutation_headers, RecordingRequestError},
     AppState,
 };
 
@@ -218,14 +218,14 @@ pub struct TimeSyncResponse {
 
 #[derive(Debug)]
 pub enum TimeSyncError {
-    MutationHeaders(RecordingRequestError),
+    MutationHeaders(MutationHeaderError),
     InvalidJson,
     ImplausibleEpoch,
     Unavailable,
 }
 
-impl From<RecordingRequestError> for TimeSyncError {
-    fn from(error: RecordingRequestError) -> Self {
+impl From<MutationHeaderError> for TimeSyncError {
+    fn from(error: MutationHeaderError) -> Self {
         Self::MutationHeaders(error)
     }
 }

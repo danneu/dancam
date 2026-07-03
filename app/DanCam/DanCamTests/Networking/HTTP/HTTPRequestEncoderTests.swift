@@ -53,4 +53,26 @@ struct HTTPRequestEncoderTests {
         {}
         """)
     }
+
+    @Test(.tags(.networking))
+    func encodesDeleteWithoutBodyOrContentLength() throws {
+        let url = try #require(URL(string: "http://10.42.0.1:8080/v1/clips/7"))
+
+        let request = try HTTPRequestEncoder.delete(
+            url: url,
+            extraHeaders: [
+                ("Content-Type", "application/json"),
+                ("Idempotency-Key", "fixed-key"),
+            ]
+        )
+
+        #expect(String(decoding: request, as: UTF8.self) == """
+        DELETE /v1/clips/7 HTTP/1.1\r
+        Host: 10.42.0.1:8080\r
+        Content-Type: application/json\r
+        Idempotency-Key: fixed-key\r
+        \r
+
+        """)
+    }
 }

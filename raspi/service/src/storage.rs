@@ -1,11 +1,9 @@
 //! Single-writer storage coordination for recording-dir mutations.
 //!
-//! This first cut coordinates only start-segment allocation. It guarantees that
-//! every id returned by [`StorageCoordinator::allocate_start_segment`] has been
-//! durably written to `state/state.json` as `high_water_seq` before the caller
-//! sees it. Rollover ids are still minted by the active recorder/camera writer
-//! and remain scan-covered while their files exist; future delete and GC work
-//! must write-ahead the witness before unlinking any segment that may exceed it.
+//! This coordinates start-segment reservation and finished-segment deletion. Every
+//! reserved start id is durably written to `state/state.json` as `high_water_seq`
+//! before the caller commits the recorder floor, and every delete raises that
+//! same witness before unlinking a matching segment file.
 
 use std::{
     fs::{self, File},
@@ -14,7 +12,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{clips::max_clip_seq, recorder::SegmentId};
+use crate::{
+    clips::{max_clip_seq, segment_paths_for_id},
+    recorder::SegmentId,
+};
 
 const STATE_DIR: &str = "state";
 const STATE_FILE: &str = "state.json";
@@ -22,11 +23,9 @@ const TMP_STATE_FILE: &str = "state.json.tmp";
 
 /// Coordinates recording-dir mutations behind one in-process mutex.
 ///
-/// Allocation is the only mutation implemented today. A future
-/// `delete_finished_segment(seq)` operation belongs under the same mutex: it
-/// must validate that the segment is finished and safe to pull, durably persist
-/// `high_water_seq >= seq`, then unlink the segment and invalidate any cached
-/// duration for that id.
+/// Start reservation and finished-clip delete run under the same mutation mutex.
+/// Any mutation that removes files must raise the durable witness before the
+/// first unlink so a removed id cannot be reissued.
 #[derive(Debug)]
 pub struct StorageCoordinator {
     rec_dir: Arc<Path>,
@@ -45,23 +44,74 @@ impl StorageCoordinator {
         self.rec_dir.clone()
     }
 
-    pub fn allocate_start_segment(&self) -> io::Result<SegmentId> {
+    pub fn reserve_start_segment<R>(
+        &self,
+        commit: impl FnOnce(SegmentId) -> R,
+    ) -> io::Result<(SegmentId, R)> {
         let _guard = self
             .mutation
             .lock()
             .expect("storage coordinator mutex poisoned");
-        let witness = read_witness(self.rec_dir.as_ref())?;
-        let scanned = max_clip_seq(self.rec_dir.as_ref());
-        let next = witness
-            .into_iter()
-            .chain(scanned)
-            .max()
-            .map(|seq| seq.saturating_add(1))
-            .unwrap_or(0);
+        let next = next_start_segment(self.rec_dir.as_ref())?;
 
         persist_witness(self.rec_dir.as_ref(), next)?;
-        Ok(next)
+        let committed = commit(next);
+        Ok((next, committed))
     }
+
+    #[cfg(test)]
+    pub fn allocate_start_segment(&self) -> io::Result<SegmentId> {
+        self.reserve_start_segment(|_| ()).map(|(id, _)| id)
+    }
+
+    pub fn delete_finished_segment(
+        &self,
+        id: SegmentId,
+        live_floor: impl FnOnce() -> Option<SegmentId>,
+    ) -> Result<(), SegmentDeleteError> {
+        let _guard = self
+            .mutation
+            .lock()
+            .expect("storage coordinator mutex poisoned");
+        let rec_dir = self.rec_dir.as_ref();
+
+        if live_floor().is_some_and(|floor| id >= floor) {
+            return Err(SegmentDeleteError::NotFound);
+        }
+
+        let paths = segment_paths_for_id(rec_dir, id).map_err(SegmentDeleteError::Io)?;
+        if paths.is_empty() {
+            return Err(SegmentDeleteError::NotFound);
+        }
+
+        let existing = read_witness(rec_dir)
+            .map_err(SegmentDeleteError::Io)?
+            .unwrap_or(0);
+        persist_witness(rec_dir, existing.max(id)).map_err(SegmentDeleteError::Io)?;
+
+        for path in paths {
+            fs::remove_file(path).map_err(SegmentDeleteError::Io)?;
+        }
+        fsync_dir(rec_dir).map_err(SegmentDeleteError::Io)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum SegmentDeleteError {
+    NotFound,
+    Io(io::Error),
+}
+
+fn next_start_segment(rec_dir: &Path) -> io::Result<SegmentId> {
+    let witness = read_witness(rec_dir)?;
+    let scanned = max_clip_seq(rec_dir)?;
+    Ok(witness
+        .into_iter()
+        .chain(scanned)
+        .max()
+        .map(|seq| seq.saturating_add(1))
+        .unwrap_or(0))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -127,7 +177,7 @@ mod tests {
         thread,
     };
 
-    use super::{state_path, StorageCoordinator};
+    use super::{state_path, SegmentDeleteError, StorageCoordinator};
     use crate::recorder::{segment_filename, SegmentId};
 
     #[test]
@@ -177,6 +227,47 @@ mod tests {
 
         assert_eq!(coordinator.allocate_start_segment().unwrap(), 9);
         assert_eq!(read_high_water_seq(&rec_dir.path), 9);
+    }
+
+    #[test]
+    fn delete_raises_witness_and_prevents_id_reuse() {
+        let rec_dir = TempRecDir::new();
+        for seq in 0..=2 {
+            write_segment(&rec_dir.path, seq);
+        }
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        coordinator.delete_finished_segment(2, || None).unwrap();
+
+        assert!(!rec_dir.path.join(segment_filename(2)).exists());
+        assert!(read_high_water_seq(&rec_dir.path) >= 2);
+        assert!(coordinator.allocate_start_segment().unwrap() >= 3);
+    }
+
+    #[test]
+    fn corrupt_witness_fails_delete_before_unlinking() {
+        for body in [
+            "not json",
+            "{}",
+            r#"{"high_water_seq":"7"}"#,
+            r#"{"high_water_seq":-1}"#,
+        ] {
+            let rec_dir = TempRecDir::new();
+            write_segment(&rec_dir.path, 2);
+            write_raw_witness(&rec_dir.path, body);
+            let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+            let error = coordinator.delete_finished_segment(2, || None).unwrap_err();
+
+            match error {
+                SegmentDeleteError::Io(error) => {
+                    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+                }
+                SegmentDeleteError::NotFound => panic!("corrupt witness must be an IO error"),
+            }
+            assert!(rec_dir.path.join(segment_filename(2)).exists());
+            assert_eq!(fs::read_to_string(state_path(&rec_dir.path)).unwrap(), body);
+        }
     }
 
     #[test]

@@ -31,6 +31,7 @@ pub mod event_hub;
 pub mod events;
 mod health;
 mod jpeg;
+mod mutation;
 pub mod preview;
 pub mod recorder;
 mod recording;
@@ -102,7 +103,10 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/status", get(events::status))
         .route("/v1/events", get(events::events))
         .route("/v1/clips", get(clips::list_clips))
-        .route("/v1/clips/{id}", get(clips::serve_clip))
+        .route(
+            "/v1/clips/{id}",
+            get(clips::serve_clip).delete(clips::delete_clip),
+        )
         .route("/v1/preview/live.mjpeg", get(preview::live_mjpeg))
         .route("/v1/recording/start", post(recording::start))
         .route("/v1/recording/stop", post(recording::stop))

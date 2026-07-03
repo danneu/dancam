@@ -63,6 +63,7 @@ pub trait Backend: Send + Sync + 'static {
     fn snapshot(&self) -> Snapshot;
     fn connect(&self) -> EventConnection;
     fn unpullable_from(&self) -> Option<SegmentId>;
+    fn note_clip_removed(&self, id: SegmentId);
 
     /// The cache the finalize path and `/v1/clips` share so a finished segment's
     /// `dur_ms` is computed once from its file and reused, not recomputed at list time.
@@ -233,6 +234,10 @@ impl Backend for MockBackend {
         self.hub.unpullable_from()
     }
 
+    fn note_clip_removed(&self, id: SegmentId) {
+        self.hub.drive_now(Input::ClipRemoved { id });
+    }
+
     fn clip_durations(&self) -> Arc<DurationCache> {
         self.clip_durations.clone()
     }
@@ -333,11 +338,16 @@ impl MockRecorder {
             return Ok(());
         }
 
-        let start_segment = self.storage.allocate_start_segment().map_err(|error| {
-            tracing::error!(%error, "start segment allocation failed");
-            BackendError::Storage
-        })?;
-        let events = self.hub.drive_now(Input::StartCommand { start_segment });
+        let (start_segment, events) = self
+            .storage
+            .reserve_start_segment(|seg| {
+                self.hub
+                    .drive_now(Input::StartCommand { start_segment: seg })
+            })
+            .map_err(|error| {
+                tracing::error!(%error, "start segment allocation failed");
+                BackendError::Storage
+            })?;
         let Some(session) = starting_session(&events) else {
             return Ok(());
         };
@@ -540,7 +550,11 @@ async fn finalized_clip_meta(
     })
     .await
     {
-        Ok(meta) => meta,
+        Ok(Ok(meta)) => meta,
+        Ok(Err(error)) => {
+            tracing::error!(%error, seq, "failed to stat finalized mock recording segment");
+            None
+        }
         Err(error) => {
             tracing::error!(%error, seq, "mock clip metadata task failed");
             None

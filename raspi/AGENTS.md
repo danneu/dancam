@@ -337,3 +337,6 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `16-2026-07-02-storage-coordinator-segment-id-witness.md` (Accepted) -- the storage
   coordinator owns start-segment allocation and persists `state/state.json`
   `high_water_seq` before handing out a session-start id.
+- `17-2026-07-02-clip-delete.md` (Accepted) -- `DELETE /v1/clips/{id}` removes
+  finished below-floor clips through the storage coordinator, raises the segment-id
+  witness before unlinking, and emits `clip_removed` after durable success.

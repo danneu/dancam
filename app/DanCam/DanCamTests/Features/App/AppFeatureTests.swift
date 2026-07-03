@@ -68,11 +68,11 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.recording = .recording
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
-        await store.receive(.clips(.clipsResponse(.success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
-            $0.clips.loadEpoch = 1
         }
         await store.send(.streamStopped)
         await store.finishEffects()
@@ -94,6 +94,7 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.recording = .idle
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
         await store.receive(.timeSyncResponded(success: true))
         await store.finishEffects()
@@ -117,6 +118,7 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.recording = .idle
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
         await store.finishEffects()
 
@@ -139,6 +141,7 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.recording = .idle
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
         await store.receive(.timeSyncResponded(success: true))
         await store.finishEffects()
@@ -163,6 +166,7 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.recording = .idle
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
         await store.receive(.timeSyncResponded(success: false))
         await store.receive(.timeSyncRetry)
@@ -194,17 +198,19 @@ struct AppFeatureTests {
             $0.link = .online(unsynced)
             $0.recording = .idle
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
         await store.receive(.timeSyncResponded(success: false))
         await sleepGate.waitForSleep(.seconds(2))
 
         await store.send(.event(.timeSynced(atMs: 1_000))) {
             $0.link = .online(synced)
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 2
         }
-        await store.receive(.clips(.clipsResponse(.success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 2, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
-            $0.clips.loadEpoch = 1
         }
 
         await sleepGate.release(.seconds(2))
@@ -236,6 +242,7 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.recording = .idle
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
         await store.receive(.timeSyncResponded(success: false))
         await sleepGate.waitForSleep(.seconds(2))
@@ -252,6 +259,7 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.streamReconnectAttempt = 0
             $0.clips.status = .loading
+            $0.clips.headEpoch = 2
         }
         await store.receive(.timeSyncResponded(success: true))
         await store.send(.streamStopped)
@@ -281,18 +289,19 @@ struct AppFeatureTests {
         let folded = CameraSamples.clip(id: 3)
         let stale = CameraSamples.clipsResponse(ids: [2, 1])
         let store = TestStore(
-            initialState: state(link: .online(world)),
+            initialState: state(link: .online(world), clips: ClipsFeature.State(headEpoch: 1)),
             dependencies: dependencies(),
             reduce: AppFeature.reduce
         )
 
         await store.send(.event(.clipFinalized(folded))) {
             $0.clips.clips = [folded]
+            $0.clips.clipFinalizeEpoch[3] = 1
         }
-        await store.send(.clips(.clipsResponse(.success(stale)))) {
+        await store.send(.clips(.clipsResponse(epoch: 1, .success(stale)))) {
             $0.clips.clips = [folded] + stale.clips
             $0.clips.status = .idle
-            $0.clips.loadEpoch = 1
+            $0.clips.clipFinalizeEpoch = [3: 1]
         }
         await store.finishEffects()
     }
@@ -408,11 +417,11 @@ struct AppFeatureTests {
 
         await store.send(.manualRefresh) {
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
-        await store.receive(.clips(.clipsResponse(.success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
-            $0.clips.loadEpoch = 1
         }
         await store.finishEffects()
         store.expectNoReceivedActions()
@@ -443,11 +452,11 @@ struct AppFeatureTests {
 
         await store.send(.manualRefresh) {
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
-        await store.receive(.clips(.clipsResponse(.success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
-            $0.clips.loadEpoch = 1
         }
 
         await allowSnapshot.signal()
@@ -456,6 +465,7 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.streamReconnectAttempt = 0
             $0.clips.status = .loading
+            $0.clips.headEpoch = 2
         }
         await store.send(.streamStopped)
         await store.finishEffects()
@@ -512,6 +522,7 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.recording = .idle
             $0.clips.status = .loading
+            $0.clips.headEpoch = 1
         }
         await offlineStore.send(.streamStopped)
         await offlineStore.finishEffects()

@@ -92,6 +92,7 @@ impl World {
                 finalized,
                 opened,
             } => self.apply_segment_rollover(session, finalized, opened, now_ms),
+            Input::ClipRemoved { id } => vec![Event::ClipRemoved { id }],
             Input::RecordingStopped { session, finalized } => {
                 self.apply_recording_stopped(session, finalized, now_ms)
             }
@@ -294,6 +295,9 @@ pub enum Input {
         finalized: ClipMeta,
         opened: SegmentId,
     },
+    ClipRemoved {
+        id: SegmentId,
+    },
     RecordingStopped {
         session: SessionId,
         finalized: Option<ClipMeta>,
@@ -441,6 +445,23 @@ mod tests {
         );
         assert_eq!(world.current_segment(), Some(44));
         assert_eq!(world.unpullable_from(), Some(44));
+    }
+
+    #[test]
+    fn clip_removed_emits_without_mutating_recorder_state() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(Input::StartCommand { start_segment: 43 }, 5000);
+        world.apply(
+            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id: 43 }),
+            5200,
+        );
+        let before = world.clone();
+
+        assert_eq!(
+            world.apply(Input::ClipRemoved { id: 42 }, 8000),
+            vec![Event::ClipRemoved { id: 42 }]
+        );
+        assert_eq!(world, before);
     }
 
     #[test]

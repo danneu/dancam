@@ -14,6 +14,18 @@ nonisolated enum HTTPRequestResponse {
         return try await roundTrip(url: url, request: request, openByteStream: openByteStream)
     }
 
+    static func delete(
+        url: URL,
+        extraHeaders: [(String, String)] = [],
+        openByteStream: OpenByteStream
+    ) async throws -> (HTTPResponseHead, Data) {
+        let request = try HTTPRequestEncoder.delete(
+            url: url,
+            extraHeaders: extraHeaders + [("Connection", "close")]
+        )
+        return try await roundTrip(url: url, request: request, openByteStream: openByteStream)
+    }
+
     static func post(
         url: URL,
         body: Data,

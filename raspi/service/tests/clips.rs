@@ -1,4 +1,10 @@
-use std::{fs, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
+use std::{
+    fs,
+    path::PathBuf,
+    pin::Pin,
+    sync::{mpsc, Arc},
+    time::Instant,
+};
 
 use async_trait::async_trait;
 use axum::{
@@ -16,7 +22,7 @@ use tower::ServiceExt;
 use dancam::{
     backend::{Backend, BackendError, FrameStream},
     event_hub::{EventConnection, EventHub},
-    events::Snapshot,
+    events::{Event, Snapshot},
     recorder::{stamped_segment_filename, RecorderEvent, SegmentFacts, SegmentId},
     storage::StorageCoordinator,
     world::{CameraState, Input},
@@ -28,7 +34,7 @@ const BOOT_TAG: &str = "3f1c0e7a8f3b";
 const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
 
 struct StubBackend {
-    hub: EventHub,
+    hub: Arc<EventHub>,
 }
 
 #[async_trait]
@@ -55,6 +61,10 @@ impl Backend for StubBackend {
 
     fn unpullable_from(&self) -> Option<SegmentId> {
         self.hub.unpullable_from()
+    }
+
+    fn note_clip_removed(&self, id: SegmentId) {
+        self.hub.drive_now(Input::ClipRemoved { id });
     }
 
     fn clip_durations(&self) -> Arc<DurationCache> {
@@ -303,6 +313,27 @@ async fn clips_route_returns_empty_for_missing_dir() {
     assert_eq!(json["clips"].as_array().unwrap().len(), 0);
     assert_eq!(json["server_time_ms"], Value::Null);
     assert_eq!(json["next_cursor"], Value::Null);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn clips_route_returns_unavailable_for_unreadable_existing_dir() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o000)).unwrap();
+
+    if fs::read_dir(&rec_dir.path).is_ok() {
+        fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(clips_request("/v1/clips"))
+        .await
+        .unwrap();
+
+    fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]
@@ -635,26 +666,298 @@ async fn serve_clip_returns_not_found_for_directory_named_like_clip() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn serve_clip_returns_unavailable_for_unreadable_existing_dir() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o000)).unwrap();
+
+    if fs::read_dir(&rec_dir.path).is_ok() {
+        fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(clip_request("/v1/clips/7"))
+        .await
+        .unwrap();
+
+    fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn delete_clip_removes_existing_clip_and_serves_not_found_afterward() {
+    let rec_dir = TempRecDir::new();
+    let clip_path = rec_dir.path.join("seg_00007.ts");
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+
+    let response = app
+        .clone()
+        .oneshot(delete_request("/v1/clips/7"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(!clip_path.exists());
+    let get = app.oneshot(clip_request("/v1/clips/7")).await.unwrap();
+    assert_eq!(get.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn delete_clip_resolves_stamped_only_segment_by_id() {
+    let rec_dir = TempRecDir::new();
+    let name = stamped_name(7);
+    let clip_path = rec_dir.path.join(&name);
+    rec_dir.write(&name, b"stamped");
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(delete_request("/v1/clips/7"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(!clip_path.exists());
+}
+
+#[tokio::test]
+async fn delete_clip_removes_bare_and_stamped_duplicates() {
+    let rec_dir = TempRecDir::new();
+    let stamped = stamped_name(7);
+    let bare_path = rec_dir.path.join("seg_00007.ts");
+    let stamped_path = rec_dir.path.join(&stamped);
+    rec_dir.write("seg_00007.ts", b"bare");
+    rec_dir.write(&stamped, b"stamped");
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+
+    let response = app
+        .clone()
+        .oneshot(delete_request("/v1/clips/7"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(!bare_path.exists());
+    assert!(!stamped_path.exists());
+    let get = app.oneshot(clip_request("/v1/clips/7")).await.unwrap();
+    assert_eq!(get.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn delete_clip_returns_not_found_for_missing_id() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(delete_request("/v1/clips/8"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn delete_clip_excludes_open_segment_while_recording() {
+    let rec_dir = TempRecDir::new();
+    let clip_path = rec_dir.path.join("seg_00007.ts");
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+
+    let response = dancam::app(state(
+        rec_dir.path.clone(),
+        StubBackend::recording_segment(7),
+    ))
+    .oneshot(delete_request("/v1/clips/7"))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(clip_path.exists());
+}
+
+#[tokio::test]
+async fn delete_clip_returns_not_found_for_directory_named_like_clip() {
+    let rec_dir = TempRecDir::new();
+    fs::create_dir(rec_dir.path.join("seg_00009.ts")).unwrap();
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(delete_request("/v1/clips/9"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delete_clip_returns_unavailable_for_unreadable_rec_dir() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o000)).unwrap();
+
+    if fs::read_dir(&rec_dir.path).is_ok() {
+        fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+
+    let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+        .oneshot(delete_request("/v1/clips/7"))
+        .await
+        .unwrap();
+
+    fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn delete_clip_requires_mutation_headers() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+
+    let missing_key = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/clips/7")
+                .header("Host", "localhost:8080")
+                .header("Content-Type", "application/json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_key.status(), StatusCode::BAD_REQUEST);
+
+    let missing_content_type = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/clips/7")
+                .header("Host", "localhost:8080")
+                .header("Idempotency-Key", "delete-7")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        missing_content_type.status(),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+}
+
+#[tokio::test]
+async fn delete_clip_emits_clip_removed_after_durable_delete() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    let stub = StubBackend::idle();
+    let mut connection = stub.hub().connect();
+    let app = dancam::app(state(rec_dir.path.clone(), stub));
+
+    let response = app.oneshot(delete_request("/v1/clips/7")).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let event = connection.rx.recv().await.unwrap();
+    assert_eq!(event.event, Event::ClipRemoved { id: 7 });
+}
+
+#[tokio::test]
+async fn concurrent_deletes_raise_witness_monotonically() {
+    let rec_dir = TempRecDir::new();
+    for seq in 0..=11 {
+        rec_dir.write(&format!("seg_{seq:05}.ts"), b"segment");
+    }
+    let (state, coordinator) = state_with_storage(rec_dir.path.clone(), StubBackend::idle());
+    let app = dancam::app(state);
+
+    let delete_11 = tokio::spawn(app.clone().oneshot(delete_request("/v1/clips/11")));
+    let delete_10 = tokio::spawn(app.clone().oneshot(delete_request("/v1/clips/10")));
+
+    let response_11 = delete_11.await.unwrap().unwrap();
+    let response_10 = delete_10.await.unwrap().unwrap();
+
+    assert_eq!(response_11.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response_10.status(), StatusCode::NO_CONTENT);
+    assert!(!rec_dir.path.join("seg_00011.ts").exists());
+    assert!(!rec_dir.path.join("seg_00010.ts").exists());
+    let (next, _) = coordinator.reserve_start_segment(|_| ()).unwrap();
+    assert!(next >= 12, "next segment id was {next}");
+}
+
+#[tokio::test]
+async fn delete_waits_for_reservation_floor_before_scanning() {
+    let rec_dir = TempRecDir::new();
+    for seq in 0..=6 {
+        rec_dir.write(&format!("seg_{seq:05}.ts"), b"segment");
+    }
+    let reserved_path = rec_dir.path.join("seg_00007.ts");
+    let stub = StubBackend::idle();
+    let hub = stub.hub();
+    let (state, coordinator) = state_with_storage(rec_dir.path.clone(), stub);
+    let app = dancam::app(state);
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let rec_path = rec_dir.path.clone();
+    let reservation_coordinator = coordinator.clone();
+
+    let reservation = tokio::task::spawn_blocking(move || {
+        reservation_coordinator
+            .reserve_start_segment(|seg| {
+                assert_eq!(seg, 7);
+                fs::write(rec_path.join("seg_00007.ts"), b"reserved").unwrap();
+                hub.drive(Input::StartCommand { start_segment: seg }, 1500);
+                ready_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            })
+            .unwrap();
+    });
+
+    ready_rx.recv().unwrap();
+    let delete = tokio::spawn(app.oneshot(delete_request("/v1/clips/7")));
+    for _ in 0..5 {
+        tokio::task::yield_now().await;
+        assert!(reserved_path.exists());
+    }
+
+    release_tx.send(()).unwrap();
+    reservation.await.unwrap();
+    let response = delete.await.unwrap().unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(reserved_path.exists());
+}
+
 fn state(rec_dir: PathBuf, backend: StubBackend) -> AppState {
-    AppState::new(BOOT_ID.to_string(), backend)
-        .with_storage(Arc::new(StorageCoordinator::new(rec_dir)))
+    state_with_storage(rec_dir, backend).0
+}
+
+fn state_with_storage(
+    rec_dir: PathBuf,
+    backend: StubBackend,
+) -> (AppState, Arc<StorageCoordinator>) {
+    let storage = Arc::new(StorageCoordinator::new(rec_dir));
+    let state = AppState::new(BOOT_ID.to_string(), backend).with_storage(storage.clone());
+    (state, storage)
 }
 
 impl StubBackend {
     fn idle() -> Self {
         Self {
-            hub: EventHub::new(CameraState::Running),
+            hub: Arc::new(EventHub::new(CameraState::Running)),
         }
     }
 
     fn starting_at(start_segment: SegmentId) -> Self {
-        let hub = EventHub::new(CameraState::Running);
+        let hub = Arc::new(EventHub::new(CameraState::Running));
         hub.drive(Input::StartCommand { start_segment }, 1000);
         Self { hub }
     }
 
     fn recording_segment(id: SegmentId) -> Self {
-        let hub = EventHub::new(CameraState::Running);
+        let hub = Arc::new(EventHub::new(CameraState::Running));
         hub.drive(Input::StartCommand { start_segment: id }, 1000);
         hub.drive(
             Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id }),
@@ -664,7 +967,7 @@ impl StubBackend {
     }
 
     fn failed_after_roll(start: SegmentId, open: SegmentId) -> Self {
-        let hub = EventHub::new(CameraState::Running);
+        let hub = Arc::new(EventHub::new(CameraState::Running));
         hub.drive(
             Input::StartCommand {
                 start_segment: start,
@@ -700,10 +1003,25 @@ impl StubBackend {
         );
         Self { hub }
     }
+
+    fn hub(&self) -> Arc<EventHub> {
+        self.hub.clone()
+    }
 }
 
 fn clip_request(uri: &str) -> Request<Body> {
     clip_request_with_headers(uri, &[])
+}
+
+fn delete_request(uri: &str) -> Request<Body> {
+    Request::builder()
+        .method("DELETE")
+        .uri(uri)
+        .header("Host", "localhost:8080")
+        .header("Content-Type", "application/json")
+        .header("Idempotency-Key", "delete")
+        .body(Body::empty())
+        .unwrap()
 }
 
 fn clips_request(uri: &str) -> Request<Body> {

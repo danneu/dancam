@@ -34,6 +34,10 @@ struct CameraEventCorpusTests {
             CameraEvent.self,
             from: Data(contentsOf: corpusURL("clip_finalized.json"))
         )
+        let removed = try decoder.decode(
+            CameraEvent.self,
+            from: Data(contentsOf: corpusURL("clip_removed.json"))
+        )
         let timeSynced = try decoder.decode(
             CameraEvent.self,
             from: Data(contentsOf: corpusURL("time_synced.json"))
@@ -64,6 +68,7 @@ struct CameraEventCorpusTests {
             etag: "42-1048576",
             timeApproximate: true
         )))
+        #expect(removed == .clipRemoved(id: 42))
         #expect(timeSynced == .timeSynced(atMs: 7_000))
     }
 

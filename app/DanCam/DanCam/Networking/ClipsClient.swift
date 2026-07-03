@@ -21,14 +21,24 @@ nonisolated struct ClipsClient {
     typealias OpenByteStream = @Sendable (URL, Data) async throws -> AsyncThrowingStream<Data, Error>
 
     var fetch: @Sendable (_ cursor: String?) async throws -> ClipsResponse
+    var delete: @Sendable (_ clipID: Int) async throws -> Void
+
+    init(
+        fetch: @escaping @Sendable (_ cursor: String?) async throws -> ClipsResponse,
+        delete: @escaping @Sendable (_ clipID: Int) async throws -> Void = { _ in }
+    ) {
+        self.fetch = fetch
+        self.delete = delete
+    }
 
     static func live(
         baseURL: URL,
         pinning: InterfacePinning,
         connectTimeout: Duration,
-        receiveIdleTimeout: Duration
+        receiveIdleTimeout: Duration,
+        makeIdempotencyKey: @escaping @Sendable () -> String = { UUID().uuidString }
     ) -> ClipsClient {
-        live(baseURL: baseURL, pinning: pinning) { url, request in
+        live(baseURL: baseURL, pinning: pinning, makeIdempotencyKey: makeIdempotencyKey) { url, request in
             try await NWByteStream.open(
                 url: url,
                 request: request,
@@ -42,9 +52,10 @@ nonisolated struct ClipsClient {
     static func live(
         baseURL: URL,
         pinning: InterfacePinning = .disabled,
+        makeIdempotencyKey: @escaping @Sendable () -> String = { UUID().uuidString },
         openByteStream: @escaping OpenByteStream
     ) -> ClipsClient {
-        ClipsClient { cursor in
+        ClipsClient(fetch: { cursor in
             let requestURL = if let cursor {
                 baseURL
                     .appending(path: "v1/clips")
@@ -80,10 +91,35 @@ nonisolated struct ClipsClient {
             } catch {
                 throw ClipsError.decoding(error.localizedDescription)
             }
-        }
+        }, delete: { clipID in
+            let requestURL = baseURL.appending(path: "v1/clips/\(clipID)")
+            let head: HTTPResponseHead
+
+            do {
+                (head, _) = try await HTTPRequestResponse.delete(
+                    url: requestURL,
+                    extraHeaders: [
+                        ("Content-Type", "application/json"),
+                        ("Idempotency-Key", makeIdempotencyKey()),
+                    ],
+                    openByteStream: openByteStream
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as URLError where error.code == .cancelled {
+                throw error
+            } catch {
+                throw ClipsError.transport(error.localizedDescription)
+            }
+
+            guard (200...299).contains(head.statusCode) else {
+                throw ClipsError.http(head.statusCode)
+            }
+        })
     }
 
-    static let noop = ClipsClient { _ in
-        ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)
-    }
+    static let noop = ClipsClient(
+        fetch: { _ in ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil) },
+        delete: { _ in }
+    )
 }

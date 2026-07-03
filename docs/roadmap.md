@@ -210,6 +210,14 @@ mock first.
         are generated client-side per app ADR 16, which supersedes ADR 02's Pi-generated
         `/thumb` (and the cached `seg-<seq>.jpg` in raspi ADR 03) for both the pulled and
         not-yet-pulled cases -- no server-side browse thumbnails.
+- [x] **Swoop `ebb` -- Delete recorded clips.** Let the app remove a single finished
+      clip from the Pi via Home swipe-to-delete or the clip-viewer Delete button, with a
+      destructive confirmation and optimistic row removal. Builds on `lime`'s browse/watch
+      UI and ADR 16's storage coordinator: the Pi serves `DELETE /v1/clips/{id}`, refuses
+      active/below-floor violations, write-ahead-raises `state/state.json`
+      `high_water_seq` before unlinking every path for the id, and emits `clip_removed`
+      after durable success so every connected client reconciles. This is clip-level
+      footage removal, not `kelp`'s card-level format/SD-management work.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
       (missing / unformatted / wrong filesystem); auto-format on first insert;
       format-from-app with a double-confirm (`POST /v1/storage/format`).

@@ -6,6 +6,7 @@ nonisolated enum CameraEvent: Decodable, Equatable, Sendable {
     case recordingStarted(session: UInt64, atMs: UInt64)
     case segmentOpened(session: UInt64, id: Int, atMs: UInt64)
     case clipFinalized(Clip)
+    case clipRemoved(id: Int)
     case recordingStopping(session: UInt64, atMs: UInt64)
     case recordingStopped(session: UInt64, atMs: UInt64)
     case recorderFailed(session: UInt64, detail: String, atMs: UInt64)
@@ -36,6 +37,10 @@ extension CameraEvent {
         var session: UInt64
         var id: Int
         var atMs: UInt64
+    }
+
+    nonisolated private struct ClipRemovedPayload: Decodable {
+        var id: Int
     }
 
     nonisolated private struct RecorderFailedPayload: Decodable {
@@ -90,6 +95,8 @@ extension CameraEvent {
             self = .segmentOpened(session: payload.session, id: payload.id, atMs: payload.atMs)
         case "clip_finalized":
             self = .clipFinalized(try Clip(from: decoder))
+        case "clip_removed":
+            self = .clipRemoved(id: try ClipRemovedPayload(from: decoder).id)
         case "recording_stopping":
             let payload = try SessionPayload(from: decoder)
             self = .recordingStopping(session: payload.session, atMs: payload.atMs)
@@ -157,7 +164,7 @@ extension World {
             next.recorder.session = session
             next.recorder.currentSegment = RecorderSegment(id: id, durMs: nil)
             next.recorder.detail = nil
-        case .clipFinalized:
+        case .clipFinalized, .clipRemoved:
             break
         case .recordingStopping(let session, _):
             next.recorder.phase = .stopping

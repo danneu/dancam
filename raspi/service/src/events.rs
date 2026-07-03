@@ -33,6 +33,9 @@ pub enum Event {
         at_ms: u64,
     },
     ClipFinalized(ClipMeta),
+    ClipRemoved {
+        id: u32,
+    },
     RecordingStopping {
         session: u64,
         at_ms: u64,
@@ -155,12 +158,18 @@ async fn enrich_current_segment(mut snapshot: Snapshot, state: &AppState) -> Sna
     let duration_cache = state.clip_durations.clone();
     let id = current.id;
     let dur_ms = match tokio::task::spawn_blocking(move || {
-        let segment = resolve_segment(rec_dir.as_ref(), id)?;
-        duration_cache.duration_ms(id, &segment.path, segment.bytes)
+        let Some(segment) = resolve_segment(rec_dir.as_ref(), id)? else {
+            return Ok::<Option<u64>, std::io::Error>(None);
+        };
+        Ok(duration_cache.duration_ms(id, &segment.path, segment.bytes))
     })
     .await
     {
-        Ok(dur_ms) => dur_ms,
+        Ok(Ok(dur_ms)) => dur_ms,
+        Ok(Err(error)) => {
+            tracing::debug!(%error, id, "skipping current segment duration enrichment");
+            None
+        }
         Err(error) => {
             tracing::error!(%error, "current segment duration task failed");
             None
@@ -251,6 +260,7 @@ mod tests {
                 etag: "42-1048576".to_string(),
                 time_approximate: true,
             }),
+            Event::ClipRemoved { id: 42 },
             Event::RecordingStopping {
                 session: 7,
                 at_ms: 60000,
@@ -293,6 +303,7 @@ mod tests {
             Event::RecordingStarted { .. } => "recording_started",
             Event::SegmentOpened { .. } => "segment_opened",
             Event::ClipFinalized(_) => "clip_finalized",
+            Event::ClipRemoved { .. } => "clip_removed",
             Event::RecordingStopping { .. } => "recording_stopping",
             Event::RecordingStopped { .. } => "recording_stopped",
             Event::RecorderFailed { .. } => "recorder_failed",

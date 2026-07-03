@@ -1,12 +1,13 @@
 use axum::{
     extract::State,
-    http::{
-        header::{HeaderMap, CONTENT_TYPE},
-        StatusCode,
-    },
+    http::{HeaderMap, StatusCode},
 };
 
-use crate::{backend::BackendError, AppState};
+use crate::{
+    backend::BackendError,
+    mutation::{require_mutation_headers, MutationHeaderError},
+    AppState,
+};
 
 pub async fn start(
     State(state): State<AppState>,
@@ -36,94 +37,21 @@ pub async fn stop(
 
 #[derive(Debug)]
 pub enum RecordingRequestError {
-    MissingJsonContentType,
-    MissingIdempotencyKey,
+    MutationHeaders(MutationHeaderError),
     Backend(BackendError),
 }
 
 impl axum::response::IntoResponse for RecordingRequestError {
     fn into_response(self) -> axum::response::Response {
         match self {
-            RecordingRequestError::MissingJsonContentType => (
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                "Content-Type must be application/json",
-            )
-                .into_response(),
-            RecordingRequestError::MissingIdempotencyKey => {
-                (StatusCode::BAD_REQUEST, "Idempotency-Key is required").into_response()
-            }
+            RecordingRequestError::MutationHeaders(error) => error.into_response(),
             RecordingRequestError::Backend(error) => error.into_response(),
         }
     }
 }
 
-pub(crate) fn require_mutation_headers(headers: &HeaderMap) -> Result<(), RecordingRequestError> {
-    let content_type = headers
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    if !is_json_content_type(content_type) {
-        return Err(RecordingRequestError::MissingJsonContentType);
-    }
-
-    let idempotency_key = headers
-        .get("idempotency-key")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .trim();
-    if idempotency_key.is_empty() {
-        return Err(RecordingRequestError::MissingIdempotencyKey);
-    }
-
-    Ok(())
-}
-
-fn is_json_content_type(value: &str) -> bool {
-    value
-        .split(';')
-        .next()
-        .map(|media_type| media_type.trim().eq_ignore_ascii_case("application/json"))
-        .unwrap_or(false)
-}
-
-#[cfg(test)]
-mod tests {
-    use axum::http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
-
-    use super::{require_mutation_headers, RecordingRequestError};
-
-    #[test]
-    fn mutation_headers_require_json_content_type() {
-        let mut headers = HeaderMap::new();
-        headers.insert("idempotency-key", HeaderValue::from_static("key"));
-
-        assert!(matches!(
-            require_mutation_headers(&headers),
-            Err(RecordingRequestError::MissingJsonContentType)
-        ));
-    }
-
-    #[test]
-    fn mutation_headers_require_non_empty_idempotency_key() {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert("idempotency-key", HeaderValue::from_static(" "));
-
-        assert!(matches!(
-            require_mutation_headers(&headers),
-            Err(RecordingRequestError::MissingIdempotencyKey)
-        ));
-    }
-
-    #[test]
-    fn mutation_headers_accept_json_with_params() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/json; charset=utf-8"),
-        );
-        headers.insert("idempotency-key", HeaderValue::from_static("key"));
-
-        assert!(require_mutation_headers(&headers).is_ok());
+impl From<MutationHeaderError> for RecordingRequestError {
+    fn from(error: MutationHeaderError) -> Self {
+        Self::MutationHeaders(error)
     }
 }

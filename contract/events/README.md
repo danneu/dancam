@@ -30,6 +30,8 @@ SSE framing.
 - Authoritative event order is the SSE `id:` sequence.
 - `segment_opened` and `clip_finalized` are separate events. Rollover emits
   `clip_finalized` for the old segment and `segment_opened` for the new one.
+- `clip_removed` is the symmetric list-removal delta for a finished clip that
+  has been durably deleted from the Pi.
 - `recording_starting` and `recording_stopping` are authoritative accepted
   command transitions, not just local app optimism.
 - Clients must ignore unknown event `type` values.

@@ -88,6 +88,17 @@ enum AppFeature {
                 )
             }
 
+            if case .clipRemoved(let id) = event {
+                effects.append(
+                    ClipsFeature.reduce(
+                        state: &state.clips,
+                        action: .clipRemoved(id: id),
+                        dependencies: dependencies
+                    )
+                    .map(Action.clips)
+                )
+            }
+
             if case .timeSynced = event {
                 effects.append(.cancel(id: timeSyncID))
                 effects.append(
@@ -466,6 +477,8 @@ private extension CameraEvent {
             "segmentOpened"
         case .clipFinalized:
             "clipFinalized"
+        case .clipRemoved:
+            "clipRemoved"
         case .recordingStopping:
             "recordingStopping"
         case .recordingStopped:
@@ -518,11 +531,19 @@ private extension ClipsFeature.Action {
             "onDisappear"
         case .clipFinalized:
             "clipFinalized"
+        case .deleteTapped:
+            "deleteTapped"
+        case .deleteResponse(_, .success):
+            "deleteResponse.success"
+        case .deleteResponse(_, .failure):
+            "deleteResponse.failure"
+        case .clipRemoved:
+            "clipRemoved"
         case .loadMore:
             "loadMore"
-        case .clipsResponse(.success):
+        case .clipsResponse(_, .success):
             "clipsResponse.success"
-        case .clipsResponse(.failure):
+        case .clipsResponse(_, .failure):
             "clipsResponse.failure"
         case .pageResponse(_, .success):
             "pageResponse.success"

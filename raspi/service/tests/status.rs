@@ -53,6 +53,8 @@ impl Backend for StubBackend {
         self.hub.unpullable_from()
     }
 
+    fn note_clip_removed(&self, _id: SegmentId) {}
+
     fn clip_durations(&self) -> Arc<DurationCache> {
         Arc::new(DurationCache::default())
     }
