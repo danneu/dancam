@@ -79,6 +79,19 @@ Older images used this `init=` hook instead:
  init=/usr/lib/raspi-config/init_resize.sh
 ```
 
+For example, the current Imager output may look like this before editing (the
+`PARTUUID` and `ds=nocloud;i=...` value vary per write):
+
+```text
+console=serial0,115200 console=tty1 root=PARTUUID=041bba91-02 rootfstype=ext4 fsck.repair=yes rootwait resize cfg80211.ieee80211_regdom=US ds=nocloud;i=rpi-imager-1783445063965
+```
+
+Remove only `resize`, leaving the rest of the line intact:
+
+```text
+console=serial0,115200 console=tty1 root=PARTUUID=041bba91-02 rootfstype=ext4 fsck.repair=yes rootwait cfg80211.ieee80211_regdom=US ds=nocloud;i=rpi-imager-1783445063965
+```
+
 Insert the card in the Pi and power on through the `PWR` micro-USB port. First boot
 runs cloud-init -- it creates `<your-username>`, installs your key, joins Wi-Fi, and
 sets the hostname, then reboots once. Give it ~60-90s.
