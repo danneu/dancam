@@ -49,18 +49,50 @@ Flash the microSD with **Raspberry Pi Imager 2.0.10 or newer** (older Imager can
 customize Trixie -- 1.9.x writes the wrong format and 2.0.6-2.0.8 can leave SSH off):
 
 1. **Choose OS:** `Raspberry Pi OS (other)` -> `Raspberry Pi OS Lite (64-bit)`.
-2. **Choose storage:** the microSD.
+2. **Choose storage:** a 32 GB or larger high-endurance consumer microSD.
 3. **Edit Settings** (the OS-customization step) and set:
    - Hostname: `dancam`
    - Username `<your-username>` + a password
    - Enable SSH -> "Allow public-key authentication only", and add your
      `~/.ssh/<your-key>.pub`
    - Configure wireless LAN: your home Wi-Fi SSID + password (so it joins headless)
-4. Write the card, insert it in the Pi, and power on (the `PWR` micro-USB
-   port). First boot runs cloud-init -- it creates `<your-username>`, installs your
-   key, joins Wi-Fi, and sets the hostname, then reboots once. Give it ~60-90s.
+4. Write the card. Leave it available to the Mac for the next step; do not boot it
+   yet.
 
-## 2. SSH in
+## 2. Disable auto-expand and partition the card
+
+Before first boot, edit `cmdline.txt` on the Mac-mounted FAT boot partition. It is a
+single line; remove this exact text from that line, then save and eject the card:
+
+```text
+ init=/usr/lib/raspi-config/init_resize.sh
+```
+
+Insert the card in the Pi and power on through the `PWR` micro-USB port. First boot
+runs cloud-init -- it creates `<your-username>`, installs your key, joins Wi-Fi, and
+sets the hostname, then reboots once. Give it ~60-90s.
+
+Then partition the card from the Mac:
+
+```sh
+just raspi-partition
+```
+
+The partitioner grows root to the fixed 8 GiB size, creates labeled ext4
+`dancam-persist` and `dancam-data` partitions, and leaves about 5% of the card
+unpartitioned. It does not write fstab, mount anything, or create mountpoint
+directories; provisioning owns those facts.
+
+Verify the four-partition shape and labels:
+
+```sh
+ssh dancam.local 'lsblk -o NAME,SIZE,LABEL /dev/mmcblk0'
+```
+
+Expect `mmcblk0p1` through `mmcblk0p4`, with `dancam-persist` on p3 and
+`dancam-data` on p4. Mountpoints appear only after section 4 provisioning.
+
+## 3. SSH in
 
 From the Mac over the home LAN (mDNS). `-i` points at the **private** key -- the
 counterpart of the `.pub` you added when flashing (omit `-i` if it's a default name
@@ -76,7 +108,7 @@ Confirm it came up as the 64-bit Trixie kernel (`aarch64` / `v8` = 64-bit):
 uname -a
 ```
 
-## 3. Provision the system layer (Ansible)
+## 4. Provision the system layer (Ansible)
 
 The Pi's onboard system state -- apt upgrade, the IMX708 camera overlay, the camera
 process dependencies (`python3-picamera2`, `ffmpeg`), mDNS scoping, the
@@ -107,7 +139,7 @@ just raspi-provision-lint     # --syntax-check + ansible-lint, hardware-free
 
 Re-running is idempotent: a converged Pi reports `changed=0` and does not reboot. The
 one piece the playbook deliberately leaves unset is the AP password -- that is a
-one-time manual step in section 6, so the secret never enters the repo.
+one-time manual step in section 7, so the secret never enters the repo.
 
 Two of these -- persistent journald and the hardware watchdog -- are the freeze-
 recovery layer from
@@ -142,9 +174,9 @@ A watchdog reboot recovers the *service*, not the recording: the recorder comes 
 `curl -s http://dancam.local:8080/v1/status` showing `recorder.phase` `idle` is
 expected, not a failure.
 
-## 4. Enable the camera (IMX708)
+## 5. Enable the camera (IMX708)
 
-Provisioning (section 3) turned off `camera_auto_detect` and loaded the in-kernel
+Provisioning (section 4) turned off `camera_auto_detect` and loaded the in-kernel
 `dtoverlay=imx708` in `/boot/firmware/config.txt`, then rebooted to apply it (the why
 -- not an official module, in-kernel overlay survives `apt upgrade` unlike Arducam's
 prebuilt-driver script -- lives in the playbook task comments). SSH back in and
@@ -163,21 +195,21 @@ Optionally pull the image to the Mac to eyeball focus/orientation:
 scp -i ~/.ssh/<your-key> <your-username>@dancam.local:/tmp/test.jpg ~/Desktop/dancam-test.jpg
 ```
 
-## 5. Verify the camera process dependencies
+## 6. Verify the camera process dependencies
 
 The production camera owner is a Python Picamera2 subprocess supervised by the Rust
-service. Provisioning (section 3) installed Picamera2 and `ffmpeg` from apt (not pip,
+service. Provisioning (section 4) installed Picamera2 and `ffmpeg` from apt (not pip,
 so they match the Raspberry Pi OS libcamera stack, and without the desktop GUI
-recommends). Confirm the import path works -- the camera overlay from section 4 must
+recommends). Confirm the import path works -- the camera overlay from section 5 must
 already be enabled before the import/open path is useful on the Pi:
 
 ```sh
 python3 -c "from picamera2 import Picamera2; print('ok')"
 ```
 
-## 6. Create the dev access point profile
+## 7. Create the dev access point profile
 
-Provisioning (section 3) created the `dancam-ap` NetworkManager hotspot profile --
+Provisioning (section 4) created the `dancam-ap` NetworkManager hotspot profile --
 SSID `dancam-dev`, WPA2-AES (RSN/CCMP, no TKIP), channel 1, `10.42.0.1/24`, shared
 IPv4, `connection.autoconnect no` -- with one field left unset on purpose: the WPA2
 password. Set it once by hand on the Pi so the secret never lands in the repo, the
@@ -226,7 +258,7 @@ not autoconnect. Do not join `dancam-dev` from the Mac during an active remote
 LLM session if the Mac's only internet path is your home Wi-Fi; use the iPhone for
 AP testing.
 
-## 7. Deploy and run the service
+## 8. Deploy and run the service
 
 Cross-compile and deploy from the Mac in one command (Nix flake + `deploy.sh`;
 details in [`AGENTS.md`](AGENTS.md) "Rust dev loop"). From the repo
@@ -384,7 +416,7 @@ raise service verbosity without rebuilding, add `Environment=RUST_LOG=dancam=deb
 with `sudo systemctl edit dancam`, then restart `dancam`; DEBUG includes emitted SSE
 events with `seq` and body, and TRACE adds heartbeats.
 
-## 8. Smoke-test the AP path
+## 9. Smoke-test the AP path
 
 With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, join
 `dancam-dev` from the iPhone, and fetch:

@@ -17,6 +17,20 @@ raspi-check:
 raspi-deploy:
     ./raspi/deploy.sh
 
+# Hardware-free regression for the SD-card partition math.
+raspi-partition-test:
+    bash raspi/scripts/partition-card-test.sh
+
+# Copy the SD-card partitioner to the Pi and run it with sudo.
+raspi-partition:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HOST="${DANCAM_HOST:-pi@dancam.local}"
+    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+    SSH_KEY="${SSH_KEY/#\~/$HOME}"
+    scp -i "$SSH_KEY" raspi/scripts/partition-card.sh "$HOST:/tmp/dancam-partition-card.sh"
+    ssh -t -i "$SSH_KEY" "$HOST" "sudo bash /tmp/dancam-partition-card.sh"
+
 # Provision the Pi's system layer with Ansible over home Wi-Fi (apt, camera overlay,
 # mDNS, locale, AP profile, video group). Override the address with host=192.168.1.50
 # when mDNS is flaky. Prompts once for your sudo password.

@@ -413,7 +413,7 @@ power-pull campaign (stage 5).
 
 - [x] 1. docs(raspi): record sd card layout decision
 - [x] 2. feat(raspi): add storage mount witness and segment fsync
-- [ ] 3. feat(raspi): add sd partitioning tooling
+- [x] 3. feat(raspi): add sd partitioning tooling
 - [ ] 4. feat(raspi): adopt data and persist partitions
 - [ ] 5. feat(raspi): harden car image readonly root
 
