@@ -10,10 +10,27 @@
   hosts: dancam
   become: true
 
+  vars:
+    car_image: false
+
   tasks:
-    # Car-image hardening (read-only overlay root, /data journaled partition, AP
-    # autoconnect) is deliberately deferred -- see raspi/AGENTS.md dev-vs-car notes
-    # and ADR 09. No speculative tasks here; this provisions the dev image only.
+    # Dev-shared storage adoption lives here: both the desk image and the later car
+    # image use /persist and /data. Car-image-only hardening (read-only root,
+    # read-only /boot/firmware, AP autoconnect, tmpfs/binds) is deliberately
+    # deferred behind the car_image flag.
+
+    - name: Check for the dancam data partition label
+      # Stage 4 is a flag day: old expanded-root cards cannot be migrated in place
+      # because ext4 cannot shrink. Fail before touching apt/config state so the
+      # fix is the explicit one: reflash and run the partitioner.
+      ansible.builtin.stat:
+        path: /dev/disk/by-label/dancam-data
+      register: dancam_data_partition_label
+
+    - name: Require the dancam SD card layout before provisioning
+      ansible.builtin.fail:
+        msg: "Missing /dev/disk/by-label/dancam-data; reflash and run `just raspi-partition` before provisioning."
+      when: not dancam_data_partition_label.stat.exists
 
     - name: Upgrade all apt packages to current
       # Fresh Lite image lags; full == faithful "apt full-upgrade". notify fires
@@ -148,18 +165,85 @@
         groups: video
         append: true
 
+    - name: Mount the persistent OS-state partition
+      # /persist carries small OS state that must survive reboots and /data formats:
+      # journald now, NetworkManager/timesync in the car-image pass. nofail keeps a
+      # storage failure from bricking a headless unit in emergency mode.
+      ansible.posix.mount:
+        path: /persist
+        src: LABEL=dancam-persist
+        fstype: ext4
+        opts: noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s
+        dump: '0'
+        passno: '2'
+        state: mounted
+
+    - name: Mount the recording data partition
+      # /data is the only hot recording partition. Service-side mount witnesses
+      # refuse recording/time mutations if this mount is missing; nofail keeps the
+      # API and preview path reachable for diagnosis.
+      ansible.posix.mount:
+        path: /data
+        src: LABEL=dancam-data
+        fstype: ext4
+        opts: noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s
+        dump: '0'
+        passno: '2'
+        state: mounted
+
+    - name: Create the persistent journal source directory
+      # The bind mount exposes this directory at /var/log/journal. setgid preserves
+      # the systemd-journal group on files journald creates after the restart.
+      ansible.builtin.file:
+        path: /persist/journal
+        state: directory
+        owner: root
+        group: systemd-journal
+        mode: '2755'
+      notify:
+        - Restart systemd-journald
+        - Flush journald
+        - Sync journald
+
+    - name: Bind the persistent journal onto /var/log/journal
+      # systemd-fstab-generator orders this after persist.mount, and upstream
+      # systemd-journal-flush.service has RequiresMountsFor=/var/log/journal. The
+      # bind keeps journal state on /persist without teaching journald a custom path.
+      ansible.posix.mount:
+        path: /var/log/journal
+        src: /persist/journal
+        fstype: none
+        opts: bind,nofail
+        dump: '0'
+        passno: '0'
+        state: mounted
+      notify:
+        - Restart systemd-journald
+        - Flush journald
+        - Sync journald
+
+    - name: Create the recording directory on the data partition
+      # Directory ownership is playbook-owned because partitioning knows only
+      # geometry/filesystems, not the service user or recording layout.
+      ansible.builtin.file:
+        path: /data/rec
+        state: directory
+        owner: dancam
+        group: dancam
+        mode: '0755'
+
     # Persistent, size-capped journald so the abrupt reboots this unit takes (power
     # loss, watchdog resets, freezes) leave a post-mortem trail: previous-boot logs
-    # survive in /var/log/journal, readable via `journalctl -b -1`. Before this the
-    # dir existed but stayed volatile (Storage defaulted to auto with logs only in
-    # /run), so the 2026-06-30 freeze and the ADR 06 AP failure were unprovable. One
+    # survive in /persist/journal via the /var/log/journal bind, readable via
+    # `journalctl -b -1`. Before this the dir existed but stayed volatile (Storage
+    # defaulted to auto with logs only in /run), so the 2026-06-30 freeze and the ADR
+    # 06 AP failure were unprovable. One
     # ini_file task per option, all writing the [Journal] drop-in; each notifies the
     # restart+flush+sync handlers so this boot's logs are captured durably on converge,
-    # not left to shutdown-time flush timing (the dir already existed yet stayed
-    # volatile, so an explicit restart+flush is what actually persists this boot). Dev
-    # image only -- the read-only-root car image must relocate the journal to the
-    # journaled /data partition. ini_file self-creates the parent dir in normal mode
-    # and, under --check, reports would-change without creating it or erroring on a
+    # not left to shutdown-time flush timing (the bind now exists, so an explicit
+    # restart+flush is what actually persists this boot). ini_file self-creates the
+    # parent dir in normal mode and, under --check, reports would-change without
+    # creating it or erroring on a
     # fresh Pi, so no separate `file: state=directory` task is needed (ansible.builtin.
     # copy to a file dest would fail_json on the missing parent under --check, aborting
     # the dry run). no_extra_spaces writes canonical Key=Value; mode 0644 is the
@@ -242,6 +326,28 @@
         mode: '0644'
       notify: Reboot host
 
+    - name: Clamp kernel dirty writeback for recording segments
+      # The Pi has 512 MB RAM; ratio defaults can let too much segment data sit dirty,
+      # widening the power-cut loss window and making segment-close fsync spikes
+      # larger. These 16/64 MiB byte clamps are tunable after bench evidence.
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/60-dancam-writeback.conf
+        mode: '0644'
+        content: |
+          # Bound dirty segment data on a 512 MB Pi.
+          # Tunable after bench data: lower reduces power-cut exposure; higher reduces IO churn.
+          vm.dirty_background_bytes=16777216
+          vm.dirty_bytes=67108864
+      notify: Reload sysctl settings
+
+    - name: Enable weekly filesystem trimming
+      # fstrim.timer reclaims deleted ring-buffer space for the SD controller without
+      # paying discard latency on every unlink/write.
+      ansible.builtin.systemd_service:
+        name: fstrim.timer
+        enabled: true
+        state: started
+
   handlers:
     - name: Restart avahi-daemon
       # Re-read avahi-daemon.conf so the wlan0 scoping takes effect now, not just on
@@ -271,6 +377,12 @@
       # fsync the persistent store so the flushed logs survive an abrupt reboot. Like
       # Flush journald this is an action, not drift, so it stays changed_when false.
       ansible.builtin.command: journalctl --sync
+      changed_when: false
+
+    - name: Reload sysctl settings
+      # Apply the writeback clamp immediately; the drop-in also persists it for boot.
+      # This is an action, not drift, so the handler does not mark the run changed.
+      ansible.builtin.command: sysctl -p /etc/sysctl.d/60-dancam-writeback.conf
       changed_when: false
 
     # Defined last so it runs after the other handlers. A handler runs once per play no

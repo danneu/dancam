@@ -36,9 +36,9 @@ Edit `.env`:
   Pi OS images often name the Imager-created profile `preconfigured`.
 
 These are connection settings only. The camera service always runs as the fixed
-`dancam` system user and records under `/var/lib/dancam/rec`; there is no service
-user to configure. `raspi/ansible/inventory.ini` is tracked and contains only the
-shared `dancam.local` host constant.
+`dancam` system user and records under `/data/rec`; there is no service user to
+configure. `raspi/ansible/inventory.ini` is tracked and contains only the shared
+`dancam.local` host constant.
 
 Direct `./raspi/deploy.sh` runs do not auto-load `.env`; either use
 `just raspi-deploy` or export the same variables in your shell first.
@@ -60,6 +60,10 @@ customize Trixie -- 1.9.x writes the wrong format and 2.0.6-2.0.8 can leave SSH 
    yet.
 
 ## 2. Disable auto-expand and partition the card
+
+Cards flashed before the `dune` SD-card layout migration must be reflashed. The old
+expanded-root layout cannot be migrated in place because ext4 can grow online but
+cannot shrink online; `just raspi-partition` will refuse that card shape.
 
 Before first boot, edit `cmdline.txt` on the Mac-mounted FAT boot partition. It is a
 single line; remove this exact text from that line, then save and eject the card:
@@ -113,9 +117,10 @@ uname -a
 The Pi's onboard system state -- apt upgrade, the IMX708 camera overlay, the camera
 process dependencies (`python3-picamera2`, `ffmpeg`), mDNS scoping, the
 `en_US.UTF-8` locale, the `dancam-ap` access-point profile (without its password),
-the `dancam` service user's `video`-group membership, persistent journald (dev
-image), and the on-board hardware watchdog -- is provisioned declaratively with
-Ansible. The playbook
+the `dancam` service user's `video`-group membership, `/persist` and `/data` mounts,
+persistent journald backed by `/persist/journal`, `/data/rec` ownership, kernel
+writeback clamps, weekly `fstrim.timer`, and the on-board hardware watchdog -- is
+provisioned declaratively with Ansible. The playbook
 (`raspi/ansible/site.yml`) is the source of truth for that state; the *why* behind each
 choice lives in its task comments (see also
 `raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`). Run it from the
@@ -138,6 +143,8 @@ just raspi-provision-lint     # --syntax-check + ansible-lint, hardware-free
 ```
 
 Re-running is idempotent: a converged Pi reports `changed=0` and does not reboot. The
+playbook now fails fast on pre-`dune` cards that do not expose
+`/dev/disk/by-label/dancam-data`; reflash and rerun section 2 before provisioning. The
 one piece the playbook deliberately leaves unset is the AP password -- that is a
 one-time manual step in section 7, so the secret never enters the repo.
 
@@ -155,6 +162,15 @@ ssh dancam.local "systemd-analyze cat-config systemd/journald.conf | grep -E '^S
 ssh dancam.local "systemd-analyze cat-config systemd/journald.conf | grep -E '^SystemMaxUse *=' | tail -n1"     # SystemMaxUse=200M
 ssh dancam.local "systemd-analyze cat-config systemd/journald.conf | grep -E '^SyncIntervalSec *=' | tail -n1"  # SyncIntervalSec=60s
 ssh dancam.local journalctl --list-boots                        # >= 2 boots after a reboot: previous boot retained
+```
+
+Confirm the storage layout and maintenance timers landed:
+
+```sh
+ssh dancam.local 'findmnt /persist && findmnt /data && findmnt /var/log/journal'
+ssh dancam.local 'ls -ld /data/rec /persist/journal'
+ssh dancam.local 'systemctl is-enabled fstrim.timer'       # enabled
+ssh dancam.local 'sysctl vm.dirty_background_bytes vm.dirty_bytes'
 ```
 
 Confirm the watchdog is actually armed. `journalctl -b _PID=1` carries systemd's
@@ -280,15 +296,17 @@ service is ready to test. The deployed unit sets:
 ```ini
 Environment=DANCAM_BIND=[::]:8080
 Environment=DANCAM_BACKEND=camera
-Environment=DANCAM_REC_DIR=/var/lib/dancam/rec
+Environment=DANCAM_REC_DIR=/data/rec
+Environment=DANCAM_REQUIRE_REC_MOUNT=/data
 User=dancam
-StateDirectory=dancam
 ```
 
 `DANCAM_BACKEND=camera` makes the service spawn one long-lived Picamera2 owner
 process. That process owns libcamera, emits low-res MJPEG preview on stdout, and
-writes H.264 MPEG-TS recording segments under `/var/lib/dancam/rec` as the fixed
-`dancam` service user. It also locks the IMX708 lens to infinity with autofocus
+writes H.264 MPEG-TS recording segments under `/data/rec` as the fixed `dancam`
+service user. `DANCAM_REQUIRE_REC_MOUNT=/data` makes recording and time-sync writes
+fail closed if `/data` is not mounted; health, status, and preview still come up for
+diagnosis. The camera process also locks the IMX708 lens to infinity with autofocus
 disabled; see
 `raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`. Local `just raspi-mock`
 still defaults to the mock backend and cycles committed test-pattern frames.
