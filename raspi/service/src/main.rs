@@ -1,4 +1,9 @@
-use std::{env, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use dancam::{
     app,
@@ -20,11 +25,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::from_std(std_listener)?;
     let local_addr = listener.local_addr()?;
     let boot_id = resolve_boot_id();
+    let required_rec_mountpoint = env::var_os("DANCAM_REQUIRE_REC_MOUNT").map(PathBuf::from);
+    log_required_mountpoint(required_rec_mountpoint.as_deref());
     let (state, supervisor): (AppState, Option<SupervisorControl>) =
         match env::var("DANCAM_BACKEND").as_deref() {
             Ok("camera") => {
                 let config = CameraConfig::from_env();
-                let storage = Arc::new(StorageCoordinator::new(config.rec_dir().to_path_buf()));
+                let storage = Arc::new(storage_coordinator(
+                    config.rec_dir().to_path_buf(),
+                    required_rec_mountpoint.as_deref(),
+                ));
                 let (backend, supervisor) = CameraProcess::spawn(config, storage.clone());
                 (
                     AppState::new(boot_id, backend).with_storage(storage),
@@ -34,7 +44,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok("mock") | Err(_) => {
                 let rec_dir = env::var_os("DANCAM_REC_DIR")
                     .map_or_else(|| PathBuf::from(dancam::DEFAULT_REC_DIR), PathBuf::from);
-                let storage = Arc::new(StorageCoordinator::new(rec_dir));
+                let storage = Arc::new(storage_coordinator(
+                    rec_dir,
+                    required_rec_mountpoint.as_deref(),
+                ));
                 let roll_interval = mock_segment_interval();
                 (
                     AppState::new(
@@ -70,6 +83,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn storage_coordinator(rec_dir: PathBuf, required_mountpoint: Option<&Path>) -> StorageCoordinator {
+    let storage = StorageCoordinator::new(rec_dir);
+    if let Some(mountpoint) = required_mountpoint {
+        storage.with_required_mountpoint(mountpoint.to_path_buf())
+    } else {
+        storage
+    }
+}
+
+fn log_required_mountpoint(required_mountpoint: Option<&Path>) {
+    let Some(mountpoint) = required_mountpoint else {
+        return;
+    };
+
+    if let Err(error) = dancam::storage::ensure_required_mountpoint(mountpoint) {
+        tracing::error!(%error, mountpoint = %mountpoint.display(), "required recording mountpoint is unhealthy");
+    }
 }
 
 fn mock_segment_interval() -> Duration {

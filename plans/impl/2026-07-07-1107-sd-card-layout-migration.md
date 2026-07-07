@@ -412,7 +412,13 @@ power-pull campaign (stage 5).
 ## Commit progress
 
 - [x] 1. docs(raspi): record sd card layout decision
-- [ ] 2. feat(raspi): add storage mount witness and segment fsync
+- [x] 2. feat(raspi): add storage mount witness and segment fsync
 - [ ] 3. feat(raspi): add sd partitioning tooling
 - [ ] 4. feat(raspi): adopt data and persist partitions
 - [ ] 5. feat(raspi): harden car image readonly root
+
+## Implementation notes
+
+- `camera.py` tolerates `EINVAL` from directory `fsync` so the self-test stays
+  portable on development hosts that reject directory fsync; Linux ext4 still
+  executes the directory fsync used by the Pi.

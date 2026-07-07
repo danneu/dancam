@@ -18,6 +18,7 @@ use crate::{
     clock,
     mutation::{require_mutation_headers, MutationHeaderError},
     recorder::boot_tag,
+    storage::ensure_required_mountpoint,
     AppState,
 };
 
@@ -27,6 +28,7 @@ const MAX_EPOCH_MS: i64 = 4_102_444_800_000;
 #[derive(Debug)]
 pub struct TimeStore {
     dir: Option<PathBuf>,
+    required_mountpoint: Option<PathBuf>,
     inner: Mutex<TimeState>,
 }
 
@@ -68,6 +70,7 @@ impl TimeStore {
 
         Self {
             dir: Some(dir),
+            required_mountpoint: None,
             inner: Mutex::new(state),
         }
     }
@@ -75,8 +78,14 @@ impl TimeStore {
     pub fn in_memory() -> Self {
         Self {
             dir: None,
+            required_mountpoint: None,
             inner: Mutex::new(TimeState::default()),
         }
+    }
+
+    pub fn with_required_mountpoint(mut self, mountpoint: PathBuf) -> Self {
+        self.required_mountpoint = Some(mountpoint);
+        self
     }
 
     pub fn set_boot_id(&self, boot_id: impl Into<String>) {
@@ -164,6 +173,9 @@ impl TimeStore {
         };
 
         if let Some(dir) = &self.dir {
+            if let Some(mountpoint) = &self.required_mountpoint {
+                ensure_required_mountpoint(mountpoint)?;
+            }
             persist_record(dir, &record)?;
         }
 
@@ -388,6 +400,24 @@ mod tests {
         let second = read_record(&dir.path, BOOT_A);
 
         assert_eq!(second, first);
+    }
+
+    #[test]
+    fn required_mountpoint_rejects_plain_dir_without_creating_time_record() {
+        let rec_dir = TempDir::new("time-store-required-mount");
+        let time_dir = rec_dir.path.join("time");
+        let store =
+            TimeStore::load(time_dir.clone()).with_required_mountpoint(rec_dir.path.clone());
+        store.set_boot_id(BOOT_A);
+
+        let error = store.sync(VALID_EPOCH_MS).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let message = error.to_string();
+        assert!(message.contains("not a mounted filesystem"), "{message}");
+        assert!(message.contains("findmnt"), "{message}");
+        assert!(!time_dir.exists());
+        assert!(!time_dir.join(format!("{BOOT_A}.json")).exists());
     }
 
     #[test]

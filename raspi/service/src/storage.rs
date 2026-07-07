@@ -8,6 +8,7 @@
 use std::{
     fs::{self, File},
     io::{self, ErrorKind},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -29,6 +30,7 @@ const TMP_STATE_FILE: &str = "state.json.tmp";
 #[derive(Debug)]
 pub struct StorageCoordinator {
     rec_dir: Arc<Path>,
+    required_mountpoint: Option<Arc<Path>>,
     mutation: Mutex<()>,
 }
 
@@ -36,12 +38,22 @@ impl StorageCoordinator {
     pub fn new(rec_dir: PathBuf) -> Self {
         Self {
             rec_dir: Arc::from(rec_dir.into_boxed_path()),
+            required_mountpoint: None,
             mutation: Mutex::new(()),
         }
     }
 
+    pub fn with_required_mountpoint(mut self, mountpoint: PathBuf) -> Self {
+        self.required_mountpoint = Some(Arc::from(mountpoint.into_boxed_path()));
+        self
+    }
+
     pub fn rec_dir(&self) -> Arc<Path> {
         self.rec_dir.clone()
+    }
+
+    pub fn required_mountpoint(&self) -> Option<Arc<Path>> {
+        self.required_mountpoint.clone()
     }
 
     pub fn reserve_start_segment<R>(
@@ -52,6 +64,8 @@ impl StorageCoordinator {
             .mutation
             .lock()
             .expect("storage coordinator mutex poisoned");
+        self.ensure_rec_mounted()?;
+        fs::create_dir_all(self.rec_dir.as_ref())?;
         let next = next_start_segment(self.rec_dir.as_ref())?;
 
         persist_witness(self.rec_dir.as_ref(), next)?;
@@ -74,6 +88,7 @@ impl StorageCoordinator {
             .lock()
             .expect("storage coordinator mutex poisoned");
         let rec_dir = self.rec_dir.as_ref();
+        self.ensure_rec_mounted().map_err(SegmentDeleteError::Io)?;
 
         if live_floor().is_some_and(|floor| id >= floor) {
             return Err(SegmentDeleteError::NotFound);
@@ -95,12 +110,58 @@ impl StorageCoordinator {
         fsync_dir(rec_dir).map_err(SegmentDeleteError::Io)?;
         Ok(())
     }
+
+    fn ensure_rec_mounted(&self) -> io::Result<()> {
+        if let Some(mountpoint) = &self.required_mountpoint {
+            ensure_required_mountpoint(mountpoint.as_ref())?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
 pub enum SegmentDeleteError {
     NotFound,
     Io(io::Error),
+}
+
+pub fn ensure_required_mountpoint(mountpoint: &Path) -> io::Result<()> {
+    if !mountpoint.is_absolute() {
+        return Err(mount_witness_error(
+            mountpoint,
+            "required mountpoint path must be absolute",
+        ));
+    }
+
+    let metadata = fs::metadata(mountpoint)
+        .map_err(|error| mount_witness_error(mountpoint, format!("failed to stat: {error}")))?;
+    if !metadata.is_dir() {
+        return Err(mount_witness_error(mountpoint, "path is not a directory"));
+    }
+
+    let parent = mountpoint.parent().unwrap_or(mountpoint);
+    let parent_metadata = fs::metadata(parent).map_err(|error| {
+        mount_witness_error(
+            mountpoint,
+            format!("failed to stat parent {}: {error}", parent.display()),
+        )
+    })?;
+    if metadata.dev() != parent_metadata.dev() || metadata.ino() == parent_metadata.ino() {
+        return Ok(());
+    }
+
+    Err(mount_witness_error(mountpoint, "same device as its parent"))
+}
+
+fn mount_witness_error(mountpoint: &Path, detail: impl std::fmt::Display) -> io::Error {
+    io::Error::new(
+        ErrorKind::InvalidData,
+        format!(
+            "{} is not a mounted filesystem for recordings ({detail}); check 'findmnt {}', /etc/fstab, and dmesg before retrying.",
+            mountpoint.display(),
+            mountpoint.display()
+        ),
+    )
 }
 
 fn next_start_segment(rec_dir: &Path) -> io::Result<SegmentId> {
@@ -194,6 +255,46 @@ mod tests {
     }
 
     #[test]
+    fn absent_rec_dir_is_created_by_the_coordinator() {
+        let root = TempRecDir::new();
+        let rec_dir = root.path.join("rec");
+        let coordinator = StorageCoordinator::new(rec_dir.clone());
+
+        assert_eq!(coordinator.allocate_start_segment().unwrap(), 0);
+        assert!(rec_dir.is_dir());
+        assert_eq!(read_high_water_seq(&rec_dir), 0);
+    }
+
+    #[test]
+    fn required_mountpoint_rejects_plain_dir_without_creating_rec_dir() {
+        let mountpoint = TempRecDir::new();
+        let rec_dir = mountpoint.path.join("rec");
+        let coordinator = StorageCoordinator::new(rec_dir.clone())
+            .with_required_mountpoint(mountpoint.path.clone());
+
+        let error = coordinator.allocate_start_segment().unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let message = error.to_string();
+        assert!(message.contains("not a mounted filesystem"), "{message}");
+        assert!(message.contains("findmnt"), "{message}");
+        assert!(!rec_dir.exists());
+        assert!(!state_path(&rec_dir).exists());
+    }
+
+    #[test]
+    fn root_required_mountpoint_allows_allocation() {
+        let root = TempRecDir::new();
+        let rec_dir = root.path.join("rec");
+        let coordinator =
+            StorageCoordinator::new(rec_dir.clone()).with_required_mountpoint(PathBuf::from("/"));
+
+        assert_eq!(coordinator.allocate_start_segment().unwrap(), 0);
+        assert!(rec_dir.is_dir());
+        assert_eq!(read_high_water_seq(&rec_dir), 0);
+    }
+
+    #[test]
     fn absent_witness_with_existing_files_allocates_after_the_scan() {
         let rec_dir = TempRecDir::new();
         write_segment(&rec_dir.path, 5);
@@ -268,6 +369,29 @@ mod tests {
             assert!(rec_dir.path.join(segment_filename(2)).exists());
             assert_eq!(fs::read_to_string(state_path(&rec_dir.path)).unwrap(), body);
         }
+    }
+
+    #[test]
+    fn required_mountpoint_fails_delete_before_unlink_or_witness() {
+        let mountpoint = TempRecDir::new();
+        let rec_dir = mountpoint.path.join("rec");
+        write_segment(&rec_dir, 2);
+        let coordinator = StorageCoordinator::new(rec_dir.clone())
+            .with_required_mountpoint(mountpoint.path.clone());
+
+        let error = coordinator.delete_finished_segment(2, || None).unwrap_err();
+
+        match error {
+            SegmentDeleteError::Io(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+                let message = error.to_string();
+                assert!(message.contains("not a mounted filesystem"), "{message}");
+                assert!(message.contains("findmnt"), "{message}");
+            }
+            SegmentDeleteError::NotFound => panic!("mount witness failure must be an IO error"),
+        }
+        assert!(rec_dir.join(segment_filename(2)).exists());
+        assert!(!state_path(&rec_dir).exists());
     }
 
     #[test]

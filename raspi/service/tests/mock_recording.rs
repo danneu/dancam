@@ -14,7 +14,10 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 use dancam::{
-    backend::MockBackend, recorder::parse_segment_filename, storage::StorageCoordinator, AppState,
+    backend::{Backend, BackendError, MockBackend},
+    recorder::parse_segment_filename,
+    storage::StorageCoordinator,
+    AppState,
 };
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
@@ -166,6 +169,21 @@ async fn writer_mock_start_fails_closed_when_witness_is_corrupt() {
     assert_eq!(status["recorder"]["phase"], "idle");
     assert_eq!(status["recorder"]["current_segment"], Value::Null);
     assert!(segment_ids(&rec_dir.path).is_empty());
+}
+
+#[tokio::test]
+async fn writer_mock_start_fails_closed_when_required_mountpoint_is_plain_dir() {
+    let mountpoint = TempRecDir::new();
+    let rec_dir = mountpoint.path.join("rec");
+    let storage = Arc::new(
+        StorageCoordinator::new(rec_dir.clone()).with_required_mountpoint(mountpoint.path.clone()),
+    );
+    let backend = MockBackend::recording_to(storage, Duration::from_secs(30));
+
+    let error = backend.start_recording().await.unwrap_err();
+
+    assert_eq!(error, BackendError::Storage);
+    assert!(!rec_dir.exists());
 }
 
 async fn poll_status_for_segment(

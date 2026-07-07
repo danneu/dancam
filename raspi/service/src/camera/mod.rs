@@ -119,7 +119,13 @@ impl CameraProcess {
         let (commands_tx, commands_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let clip_durations = Arc::new(DurationCache::new());
-        let time_store = Arc::new(TimeStore::load(config.rec_dir.join("time")));
+        let time_store = {
+            let mut store = TimeStore::load(config.rec_dir.join("time"));
+            if let Some(mountpoint) = storage.required_mountpoint() {
+                store = store.with_required_mountpoint(mountpoint.as_ref().to_path_buf());
+            }
+            Arc::new(store)
+        };
 
         let supervisor = tokio::spawn(supervise(
             config,

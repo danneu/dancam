@@ -8,6 +8,7 @@ JSON events and any plain-text diagnostics.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import math
 import os
@@ -16,6 +17,7 @@ import queue
 import re
 import secrets
 import sys
+import tempfile
 import threading
 import time
 from typing import Any
@@ -192,6 +194,71 @@ def stamp_segment(rec_dir: Path, seq: int, boot_tag: str, mono_ms_value: int) ->
         )
 
 
+def resolve_segment_path(rec_dir: Path, seq: int) -> Path | None:
+    bare: Path | None = None
+    stamped: Path | None = None
+    try:
+        paths = list(rec_dir.iterdir())
+    except FileNotFoundError:
+        return None
+
+    for path in paths:
+        match = SEGMENT_RE.match(path.name)
+        if match is None:
+            continue
+        parsed = parse_segment_filename(path.name)
+        if parsed != seq:
+            continue
+        if match.group(2) is not None:
+            stamped = path
+        elif bare is None:
+            bare = path
+    return stamped or bare
+
+
+def fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        try:
+            os.fsync(fd)
+        except OSError as error:
+            # Some development hosts do not support fsync on directories; Linux ext4 does.
+            if error.errno != errno.EINVAL:
+                raise
+    finally:
+        os.close(fd)
+
+
+def fsync_segment(rec_dir: Path, seq: int) -> Path:
+    segment = resolve_segment_path(rec_dir, seq)
+    if segment is None:
+        raise FileNotFoundError(errno.ENOENT, f"segment {seq} not found", str(rec_dir))
+
+    fd = os.open(segment, os.O_RDONLY)
+    try:
+        if hasattr(os, "fdatasync"):
+            os.fdatasync(fd)
+        else:
+            os.fsync(fd)
+    finally:
+        os.close(fd)
+    fsync_dir(rec_dir)
+    return segment
+
+
+def try_fsync_segment(rec_dir: Path, seq: int) -> bool:
+    try:
+        fsync_segment(rec_dir, seq)
+    except FileNotFoundError as error:
+        print(
+            f"segment {seq} disappeared before fsync: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
+    return True
+
+
 def watch_segment_events(
     rec_dir: Path,
     session_id: int,
@@ -208,6 +275,8 @@ def watch_segment_events(
         except FileNotFoundError:
             names = []
         for event in detect_segment_events(baseline, prev_max, names):
+            if event["event"] == "segment_closed" and not try_fsync_segment(rec_dir, event["id"]):
+                continue
             if event["event"] == "segment_opened":
                 opened_mono_ms = mono_ms()
                 stamp_segment(rec_dir, event["id"], boot_tag, opened_mono_ms)
@@ -218,6 +287,8 @@ def watch_segment_events(
     while not watcher_shutdown.wait(0.25):
         scan_once()
     scan_once()
+    if prev_max is not None:
+        try_fsync_segment(rec_dir, prev_max)
 
 
 def run_self_test() -> int:
@@ -259,6 +330,11 @@ def run_self_test() -> int:
         parse_segment_filename("seg_100000_abc123def456_987654321.ts")
         == 100000
     )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        rec_dir = Path(temp_dir)
+        stamped = rec_dir / stamped_segment_filename(5, "abc123def456", 987654321)
+        stamped.write_bytes(b"segment")
+        assert fsync_segment(rec_dir, 5) == stamped
     for name in [
         "seg_999.ts",
         "seg_000005.ts",
@@ -393,12 +469,12 @@ class FakeCameraDriver:
         self.segment_started_at: float | None = None
 
     def start(self) -> None:
-        ensure_rec_dir(self.rec_dir)
         self.preview_thread = threading.Thread(target=self._preview_loop, name="fake-preview", daemon=True)
         self.preview_thread.start()
         emit_event("ready")
 
     def start_recording(self, session_id: int, start_segment_index: int) -> None:
+        ensure_rec_dir(self.rec_dir)
         with self.lock:
             if self.recording.is_set():
                 emit_event("recording_started", session_id=self.current_session_id or session_id)
@@ -534,8 +610,6 @@ class RealCameraDriver:
         self.segment_watcher_thread: threading.Thread | None = None
 
     def start(self) -> None:
-        ensure_rec_dir(self.rec_dir)
-
         from picamera2 import Picamera2
         from picamera2.encoders import MJPEGEncoder
         from picamera2.outputs import Output
@@ -577,6 +651,7 @@ class RealCameraDriver:
         emit_event("ready")
 
     def start_recording(self, session_id: int, start_segment_index: int) -> None:
+        ensure_rec_dir(self.rec_dir)
         if self.recording:
             emit_event("recording_started", session_id=self.current_session_id or session_id)
             return

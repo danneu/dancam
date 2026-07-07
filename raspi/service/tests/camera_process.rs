@@ -195,7 +195,7 @@ async fn python_fake_contract_honors_start_segment_and_emits_lifecycle() {
     let mut lines = BufReader::new(stderr).lines();
 
     wait_for_event(&mut lines, "ready").await;
-    assert!(rec_dir.is_dir());
+    assert!(!rec_dir.exists());
 
     let frame = tokio::time::timeout(Duration::from_secs(2), frames.recv())
         .await
@@ -207,6 +207,7 @@ async fn python_fake_contract_honors_start_segment_and_emits_lifecycle() {
     send_start_command(&mut stdin, 99, 5).await;
     let started = wait_for_event(&mut lines, "recording_started").await;
     assert_eq!(started["session_id"], 99);
+    assert!(rec_dir.is_dir());
     let opened = wait_for_event(&mut lines, "segment_opened").await;
     assert_eq!(opened["session_id"], 99);
     assert_eq!(opened["id"], 5);
@@ -234,6 +235,61 @@ async fn python_fake_contract_honors_start_segment_and_emits_lifecycle() {
     assert_new_segments_are_stamped(&rec_dir, &[5, 6]);
 
     let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn python_fake_reaches_ready_when_rec_dir_cannot_be_created() {
+    if !python3_available().await {
+        return;
+    }
+
+    let root = temp_rec_dir("camera-bad-rec-dir");
+    fs::create_dir_all(&root).unwrap();
+    let parent_file = root.join("not-a-dir");
+    fs::write(&parent_file, b"file").unwrap();
+    let rec_dir = parent_file.join("rec");
+    let mut child = Command::new("python3")
+        .arg(camera_script())
+        .arg("--fake")
+        .arg("--rec-dir")
+        .arg(&rec_dir)
+        .arg("--preview-fps")
+        .arg("10")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let mut frames = spawn_stdout_drain(stdout);
+    let mut lines = BufReader::new(stderr).lines();
+
+    wait_for_event(&mut lines, "ready").await;
+    let frame = tokio::time::timeout(Duration::from_secs(2), frames.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(frame.starts_with(&[0xff, 0xd8]));
+
+    send_start_command(&mut stdin, 99, 5).await;
+    let error = wait_for_event(&mut lines, "error").await;
+    assert!(
+        error["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("Not a directory")),
+        "unexpected error event: {error}"
+    );
+    let status = tokio::time::timeout(Duration::from_secs(2), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!status.success());
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]

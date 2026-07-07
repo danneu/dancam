@@ -140,7 +140,13 @@ impl MockBackend {
         let time_store = Arc::new(
             recorder
                 .as_ref()
-                .map(|(storage, _)| TimeStore::load(storage.rec_dir().join("time")))
+                .map(|(storage, _)| {
+                    let mut store = TimeStore::load(storage.rec_dir().join("time"));
+                    if let Some(mountpoint) = storage.required_mountpoint() {
+                        store = store.with_required_mountpoint(mountpoint.as_ref().to_path_buf());
+                    }
+                    store
+                })
                 .unwrap_or_else(TimeStore::in_memory),
         );
         let boot_tag = Arc::new(StdMutex::new(None));
@@ -324,12 +330,6 @@ impl MockRecorder {
     }
 
     async fn start(&self) -> Result<(), BackendError> {
-        if let Err(error) = tokio::fs::create_dir_all(self.rec_dir.as_ref()).await {
-            let rec_dir = self.rec_dir.display().to_string();
-            tracing::error!(%error, rec_dir, "failed to create mock recording directory");
-            return Err(BackendError::Channel);
-        }
-
         let mut guard = self.task.lock().await;
         if guard.as_ref().is_some_and(|task| task.handle.is_finished()) {
             *guard = None;
@@ -449,8 +449,12 @@ async fn run_mock_recording_writer(
     loop {
         tokio::select! {
             _ = &mut stop_rx => {
-                if let Err(error) = file.flush().await {
-                    tracing::error!(%error, seq, "failed to flush final mock recording segment");
+                if let Err(error) = flush_and_sync_mock_segment(&mut file).await {
+                    tracing::error!(%error, seq, "failed to sync final mock recording segment");
+                    hub.drive_now(Input::Fail {
+                        detail: format!("failed to sync final mock recording segment {seq}: {error}"),
+                    });
+                    return;
                 }
                 let finalized =
                     finalized_clip_meta(rec_dir.clone(), seq, clip_durations.clone(), time_store.clone())
@@ -460,10 +464,10 @@ async fn run_mock_recording_writer(
             }
             _ = interval.tick() => {
                 if segment_started.elapsed() >= roll_interval {
-                    if let Err(error) = file.flush().await {
-                        tracing::error!(%error, seq, "failed to flush mock recording segment");
+                    if let Err(error) = flush_and_sync_mock_segment(&mut file).await {
+                        tracing::error!(%error, seq, "failed to sync mock recording segment");
                         hub.drive_now(Input::Fail {
-                            detail: format!("failed to flush mock recording segment {seq}: {error}"),
+                            detail: format!("failed to sync mock recording segment {seq}: {error}"),
                         });
                         return;
                     }
@@ -532,6 +536,11 @@ async fn write_mock_packet(
     file.write_all(&packet).await?;
     *packet_index += 1;
     Ok(())
+}
+
+async fn flush_and_sync_mock_segment(file: &mut tokio::fs::File) -> std::io::Result<()> {
+    file.flush().await?;
+    file.sync_data().await
 }
 
 async fn finalized_clip_meta(
