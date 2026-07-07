@@ -218,9 +218,28 @@ mock first.
       `high_water_seq` before unlinking every path for the id, and emits `clip_removed`
       after durable success so every connected client reconciles. This is clip-level
       footage removal, not `kelp`'s card-level format/SD-management work.
-- [ ] **Swoop `kelp` -- SD card management.** Pi detects the card and surfaces issues
-      (missing / unformatted / wrong filesystem); auto-format on first insert;
-      format-from-app with a double-confirm (`POST /v1/storage/format`).
+- [ ] **Swoop `dune` -- SD card layout migration.** Move the Pi onto the final
+      crash-safe card layout before `kelp`: four MBR partitions, a plain read-only root
+      for the car image, `/persist` for OS state, `/data` for the recording ring, and
+      no overlayfs or consumer-card PLP assumptions. _This is the storage foundation
+      that makes later card formatting safe instead of a directory cleanup._
+      - [ ] Service durability + mount witness: fsync closed segments before events,
+            add mock parity, and gate recording/time-sync mutations on a mounted
+            `/data`.
+      - [ ] Partition tooling: on-Pi `sfdisk`/`resize2fs` script, Mac regression for
+            the sector math, Just recipes, and README bring-up steps.
+      - [ ] Dev-shared adoption: Ansible mounts `/persist`, `/data`, and the journald
+            bind; deploys `/data/rec` with `DANCAM_REQUIRE_REC_MOUNT=/data`; enables
+            fstrim and dirty-page clamps; reflashes the current dev card.
+      - [ ] Car-image hardening: `car_image`-gated read-only root/boot, tmpfs and
+            `/persist` binds for writable OS state, read-only-root-aware deploy, and
+            bench power-cut validation.
+- [ ] **Swoop `kelp` -- SD card management.** Pi detects `/data` issues and surfaces
+      them to the app (missing / unformatted / wrong filesystem); auto-format on first
+      insert; format-from-app with a double-confirm (`POST /v1/storage/format`). After
+      `dune`, "format the SD" means mkfs of `/data` only -- never the OS or `/persist`.
+      The app-facing storage/card-health UI belongs here; `dune` only provides the
+      lower-level layout and fail-closed mount witness.
 - [ ] **Swoop `moss` -- Time provenance.** The Pi has no RTC, so clip timestamps are
       derived from immutable segment facts plus a per-boot phone-clock offset rather
       than stored as wall-clock conclusions. This makes pre-sync and power-cut

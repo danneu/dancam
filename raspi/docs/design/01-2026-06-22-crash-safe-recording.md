@@ -56,6 +56,16 @@
 > (`setts=pts=N*DURATION:dts=N*DURATION`, `-segment_time 30`, `-reset_timestamps 1`), so
 > silently dropping any of these fails the self-test. Append-only per the ADR convention.
 
+> **Note (2026-07-04):** `18-2026-07-04-sd-card-layout-and-readonly-root.md`
+> supersedes two implementation details in this ADR. Layer 2's read-only root is now a
+> **plain read-only ext4 root**, not the `raspi-config` overlayfs path. Layer 3's
+> **consumer PLP-card requirement is dropped**: no consumer high-endurance microSD in
+> the selected tier makes a power-loss-protection claim, so the project accepts the
+> residual FTL risk and mitigates it with recoverable partitions, a reformat-friendly
+> `/data`, card-as-consumable operations, and prompt incident pull. The Layer 2
+> `fsync()` requirement remains correct; `dune` stage 2 implements segment-close
+> durability in the camera owner and mock writer. Append-only per the ADR convention.
+
 ## Context
 
 The camera unit is powered from the car. When the engine goes off, power is cut

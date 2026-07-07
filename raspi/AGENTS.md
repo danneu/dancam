@@ -60,10 +60,11 @@ this ecosystem, and autofocus tops out at 120 deg (wider needs a fixed-focus M12
 Most of this is now settled in ADRs (linked per item below); the remainder is the
 current provisional direction until it is captured.
 
-- **OS:** Raspberry Pi OS Lite, 64-bit (Trixie / Debian 13), with a **read-only
-  root filesystem** (overlayfs) so power loss can never corrupt the OS. Footage
-  goes on a **separate journaled partition** (ext4 or F2FS). See the crash-safe
-  recording ADR.
+- **OS:** Raspberry Pi OS Lite, 64-bit (Trixie / Debian 13). The car image uses a
+  **plain read-only ext4 root** (no overlayfs), read-only `/boot/firmware`, a small
+  writable `/persist` OS-state island, and a writable ext4 `/data` recording
+  partition. The dev image uses the same partition layout but keeps root writable.
+  See the SD-card-layout ADR.
 - **Capture/encode:** a single Picamera2 camera-owner subprocess, supervised by the
   Rust service over stdio (never linked -- see the service-language ADR and the
   Picamera2 camera-owner ADR). It owns libcamera once, emits low-res MJPEG preview
@@ -91,11 +92,15 @@ current provisional direction until it is captured.
 - **Control + media service:** a small **Rust** service (see the service-language
   ADR) exposing a control API (start/stop, settings, time sync, incident lock) and a
   media API (list/preview/pull clips) to the app.
-- **Power-loss safety:** an industrial microSD with power-loss protection (PLP). The
-  unit runs off a switched USB accessory source that dies with the car, so power loss
-  is abrupt and unsignaled -- no clean-shutdown path and no supercapacitor; the
-  crash-safe layers carry recording integrity. No lithium batteries -- they are a fire
-  risk baking in a hot car. See `docs/design/04-2026-06-23-power-source-and-shutdown.md`.
+- **Power-loss safety:** a high-endurance consumer microSD treated as a consumable,
+  plus software layers that recover cleanly when power is cut. Consumer endurance
+  cards in this tier do **not** provide PLP, so the remaining FTL risk is accepted and
+  mitigated with a read-only OS, journaled `/data`, segment-close fsync, a 5% unwritten
+  tail, and prompt incident pull. The unit runs off a switched USB accessory source
+  that dies with the car, so power loss is abrupt and unsignaled -- no clean-shutdown
+  path and no supercapacitor. No lithium batteries -- they are a fire risk baking in a
+  hot car. See `docs/design/04-2026-06-23-power-source-and-shutdown.md` and
+  `docs/design/18-2026-07-04-sd-card-layout-and-readonly-root.md`.
 
 ## Structure (planned)
 
@@ -143,17 +148,19 @@ Same Raspberry Pi OS base, two configurations:
 
 | | Dev image (on the desk) | Car image (deployed) |
 |---|---|---|
-| Root filesystem | writable -- edit & restart freely | read-only (overlayfs) |
+| Root filesystem | writable plain ext4 root -- edit & restart freely | plain read-only ext4 root (no overlayfs) |
 | Network | joins home Wi-Fi as a client; AP is a manual `dancam-ap` toggle | runs the AP (NetworkManager hotspot, 2.4 GHz) |
 | Access | `ssh <your-username>@dancam.local` over the LAN; if AP is up, use a separate client, not the Mac's only Wi-Fi interface | phone joins the Pi's AP |
-| Recordings | a folder on root is fine early | dedicated journaled `/data` partition |
+| Recordings | dedicated `/data/rec` partition path, with root still writable for dev | dedicated `/data/rec` on the journaled data partition |
+| Logs / OS state | persistent journald and small OS state under `/persist` | persistent journald and small OS state under `/persist`; `/data` stays format-safe |
 
-The dev image is where we build: writable root, manual AP toggle, recordings in a
-folder on root, so we can edit and restart freely. The car image (read-only overlayfs
-root, always-on AP, journaled `/data`) is how that same durably-built software gets
-packaged for deployment; the crash-safe ADR is the spec both build toward. This is a
-forced difference in how the software is *run*, not a license to build the software
-itself dumb first and harden later -- you just don't fight read-only root on the desk.
+The dev image is where we build: writable root, manual AP toggle, same `/data` and
+`/persist` partition layout, so we can edit and restart freely. The car image (plain
+read-only root, always-on AP, journaled `/data`, `/persist` for OS state) is how that
+same durably-built software gets packaged for deployment; the crash-safe and SD-card
+layout ADRs are the specs both build toward. This is a forced difference in how the
+software is *run*, not a license to build the software itself dumb first and harden
+later -- you just don't fight read-only root on the desk.
 
 ### OS and first flash (once)
 
@@ -189,23 +196,32 @@ itself dumb first and harden later -- you just don't fight read-only root on the
 - Fallback if Wi-Fi is fussy: the data micro-USB port supports gadget mode
   (`g_ether`) -> SSH over the USB cable.
 
-### microSD partition layout (car image)
+### microSD partition layout
 
-One physical card (the Zero 2 W has a single slot); OS and footage share it in
-separate partitions. The card must be high-endurance / PLP-rated (see the crash-safe
-ADR).
+One physical card (the Zero 2 W has a single slot); OS, OS state, and footage share it
+in separate partitions. Minimum supported card: 32 GB high-endurance consumer microSD.
+Consumer cards in this tier are **not PLP cards**, so the software assumes abrupt
+power loss can still interrupt the card's FTL and keeps every higher layer
+recoverable.
+
+All partition starts are 4 MiB-aligned. p1 through p3 are fixed size; p4 flexes with
+capacity and leaves about 5% of the card unpartitioned for flash overprovisioning.
 
 ```
-p1  ~512MB  FAT32      /boot/firmware   firmware (effectively read-only)
-p2  ~8-16GB ext4       /                OS root -- mounted READ-ONLY (overlayfs)
-p3  rest    ext4/f2fs  /data            recordings ring buffer + logs (only RW partition)
+p1  512 MiB  FAT32  /boot/firmware  ro in car  firmware and kernels
+p2  8 GiB    ext4   /               ro in car  plain read-only root, no overlayfs
+p3  1 GiB    ext4   /persist        rw         logs, NetworkManager, timesync state
+p4  rest-5%  ext4   /data           rw         recording ring under /data/rec
+    ~5% unpartitioned tail, never written
 ```
 
-Only `/data` is written at runtime, which is what makes abrupt power loss safe:
-journaled, `fsync()` at segment close, on a PLP card; `p1`/`p2` are read-only so a
-cut cannot corrupt the OS. Note: the app's "format the SD" action (swoop `kelp`)
-clears **`/data` only**, never the whole card -- the OS lives on the same card. (Early
-dev skips this layout entirely -- see the dev-vs-car note above.)
+`/data` is the only hot recording partition. The app's "format the SD" action (swoop
+`kelp`) reformats **`/data` only**, never `/persist` or the OS partitions, so logs and
+connectivity state survive a data-partition format or failure. The deployed service
+sets `DANCAM_REC_DIR=/data/rec` and `DANCAM_REQUIRE_REC_MOUNT=/data`; with `nofail`
+fstab entries, boot and diagnostics stay up when `/data` is missing while recording
+mutations fail closed at the service boundary. See
+`docs/design/18-2026-07-04-sd-card-layout-and-readonly-root.md`.
 
 ### Rust dev loop
 
@@ -237,8 +253,9 @@ shell, not `rustup target add`.
   the service listens on the dual-stack wildcard and `DANCAM_BACKEND=camera` so
   preview uses the real camera; the binary defaults to loopback-only and the mock
   backend.
-- Logs: `journalctl -u dancam -f`. Under the read-only car image, point logs at
-  `/data` or keep them in RAM -- root is not writable.
+- Logs: `journalctl -u dancam -f`. Persistent journald is backed by
+  `/persist/journal` and bind-mounted at `/var/log/journal`, so previous-boot logs
+  survive without making `/data` carry OS state.
 - Request/response access logs include `x-request-id` for app/Pi correlation; grep
   `journalctl -u dancam` for the response id. Pi-generated ids are a per-process
   incrementing counter that resets on service start; safe inbound ids are still echoed.
@@ -340,3 +357,8 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `17-2026-07-02-clip-delete.md` (Accepted) -- `DELETE /v1/clips/{id}` removes
   finished below-floor clips through the storage coordinator, raises the segment-id
   witness before unlinking, and emits `clip_removed` after durable success.
+- `18-2026-07-04-sd-card-layout-and-readonly-root.md` (Accepted) -- the final SD card
+  layout: fixed boot/root/persist partitions, flex `/data` with a 5% unwritten tail,
+  plain read-only ext4 root for the car image, `/persist` for OS state, and
+  mount-witness requirements so `/data` failures are diagnosable instead of bricking
+  the unit.

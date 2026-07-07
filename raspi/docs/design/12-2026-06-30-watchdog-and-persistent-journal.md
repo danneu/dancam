@@ -14,6 +14,12 @@
   from logs because the dev image had no previous-boot journal" -- this closes that
   gap)
 
+> **Note (2026-07-04):** `18-2026-07-04-sd-card-layout-and-readonly-root.md`
+> supersedes this ADR's deferred car-image journal location. Persistent journald
+> relocates to `/persist/journal`, bind-mounted at `/var/log/journal`, not to `/data`.
+> `/data` remains the recording partition and the only partition `kelp` formats from
+> the app. Append-only per the ADR convention.
+
 ## Context
 
 On 2026-06-30 the Pi hard-froze mid-`raspi-deploy`: the ACT LED went to a steady
