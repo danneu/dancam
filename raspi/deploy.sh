@@ -65,6 +65,21 @@ rsync -avz -e "ssh -i $SSH_KEY" "$CAMERA" "$HOST:/tmp/dancam-camera.py"
 echo "==> installing + restarting on $HOST (sudo may prompt)"
 ssh -t -i "$SSH_KEY" "$HOST" '
   set -e
+  root_options="$(findmnt -no OPTIONS /)"
+  remounted_root=false
+  case ",$root_options," in
+    *,ro,*)
+      sudo mount -o remount,rw /
+      remounted_root=true
+      ;;
+  esac
+  cleanup() {
+    if [ "$remounted_root" = true ]; then
+      sudo mount -o remount,ro /
+    fi
+  }
+  trap cleanup EXIT HUP INT TERM
+
   sudo install -m 0755 /tmp/dancam.new /usr/local/bin/dancam
   sudo install -d /usr/local/lib/dancam
   sudo install -m 0755 /tmp/dancam-camera.py /usr/local/lib/dancam/camera.py

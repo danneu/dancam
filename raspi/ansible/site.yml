@@ -16,8 +16,8 @@
   tasks:
     # Dev-shared storage adoption lives here: both the desk image and the later car
     # image use /persist and /data. Car-image-only hardening (read-only root,
-    # read-only /boot/firmware, AP autoconnect, tmpfs/binds) is deliberately
-    # deferred behind the car_image flag.
+    # read-only /boot/firmware, tmpfs/binds, storage health) is gated behind the
+    # car_image flag so the desk image stays writable.
 
     - name: Check for the dancam data partition label
       # Stage 4 is a flag day: old expanded-root cards cannot be migrated in place
@@ -347,6 +347,371 @@
         name: fstrim.timer
         enabled: true
         state: started
+
+    - name: Create persistent NetworkManager state directories
+      # The car image freezes root after first boot, but the AP PSK is hand-set and
+      # must survive reboots without writing /etc. Seed first, then bind from
+      # /persist; machine-id and SSH host keys are already materialized by first boot
+      # and simply freeze under the read-only root, so they need no mutable island.
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /persist/nm, mode: '0755' }
+        - { path: /persist/nm/system-connections, mode: '0700' }
+        - { path: /persist/nm/var-lib, mode: '0755' }
+      when: car_image
+
+    - name: Seed NetworkManager connection profiles into persist
+      # One-time copy preserves the hand-entered dancam-ap PSK before the bind mount
+      # hides /etc/NetworkManager/system-connections under the read-only root.
+      ansible.builtin.command:
+        cmd: cp -a /etc/NetworkManager/system-connections/. /persist/nm/system-connections/
+        creates: /persist/nm/.system-connections-seeded
+      when: car_image
+
+    - name: Mark NetworkManager connection profiles seeded
+      # The sentinel lives outside the bind source so NetworkManager never sees a
+      # non-profile marker under system-connections.
+      ansible.builtin.copy:
+        dest: /persist/nm/.system-connections-seeded
+        content: ""
+        force: false
+        owner: root
+        group: root
+        mode: '0644'
+      when: car_image
+
+    - name: Seed NetworkManager runtime state into persist
+      # NetworkManager writes leases, timestamps, and generated state under
+      # /var/lib/NetworkManager; keeping that state in /persist avoids dirtying root.
+      ansible.builtin.command:
+        cmd: cp -a /var/lib/NetworkManager/. /persist/nm/var-lib/
+        creates: /persist/nm/.var-lib-seeded
+      when: car_image
+
+    - name: Mark NetworkManager runtime state seeded
+      # Prevents re-copying mutable NM state over the persisted state on later
+      # pre-read-only maintenance runs.
+      ansible.builtin.copy:
+        dest: /persist/nm/.var-lib-seeded
+        content: ""
+        force: false
+        owner: root
+        group: root
+        mode: '0644'
+      when: car_image
+
+    - name: Create persistent systemd-timesync state directories
+      # timesyncd's clock state is the only clock source before the phone syncs time;
+      # bind it to /persist so a read-only root does not lose the last-known time.
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: systemd-timesync
+        group: systemd-timesync
+        mode: '0755'
+      loop:
+        - /var/lib/systemd/timesync
+        - /persist/timesync
+      when: car_image
+
+    - name: Seed systemd-timesync state into persist
+      # Preserve any first-boot clock file before the read-only car image binds the
+      # live timesync path to /persist.
+      ansible.builtin.command:
+        cmd: cp -a /var/lib/systemd/timesync/. /persist/timesync/
+        creates: /persist/.timesync-seeded
+      when: car_image
+
+    - name: Mark systemd-timesync state seeded
+      # Prevents a later maintenance provision from overwriting newer persisted
+      # timesync state with an older pre-bind copy.
+      ansible.builtin.copy:
+        dest: /persist/.timesync-seeded
+        content: ""
+        force: false
+        owner: root
+        group: root
+        mode: '0644'
+      when: car_image
+
+    - name: Bind persistent NetworkManager connection profiles
+      # The AP PSK lives in the profile files; binding this path is what lets the car
+      # image keep the secret across a read-only-root reboot without committing it.
+      # nofail keeps a bad /persist from becoming an emergency-mode brick; the
+      # storage-health unit reports the unhealthy state after boot.
+      ansible.posix.mount:
+        path: /etc/NetworkManager/system-connections
+        src: /persist/nm/system-connections
+        fstype: none
+        opts: bind,nofail
+        dump: '0'
+        passno: '0'
+        state: mounted
+      when: car_image
+
+    - name: Bind persistent NetworkManager runtime state
+      # NetworkManager's mutable runtime state is small OS state, not footage, so it
+      # belongs in /persist and stays out of the /data format boundary. nofail keeps
+      # /persist damage diagnosable instead of boot-blocking.
+      ansible.posix.mount:
+        path: /var/lib/NetworkManager
+        src: /persist/nm/var-lib
+        fstype: none
+        opts: bind,nofail
+        dump: '0'
+        passno: '0'
+        state: mounted
+      when: car_image
+
+    - name: Bind persistent systemd-timesync state
+      # Preserves last-known clock state across car-image boots while keeping /var
+      # itself read-only except for explicit tmpfs or bind-mounted islands. nofail
+      # lets the boot-health unit surface /persist damage.
+      ansible.posix.mount:
+        path: /var/lib/systemd/timesync
+        src: /persist/timesync
+        fstype: none
+        opts: bind,nofail
+        dump: '0'
+        passno: '0'
+        state: mounted
+      when: car_image
+
+    - name: Configure tmpfs for /tmp on the car image
+      # /tmp is scratch space; tmpfs avoids dirtying the read-only root and caps RAM
+      # exposure on a 512 MB board. Applied on the reboot that flips root read-only.
+      ansible.posix.mount:
+        path: /tmp
+        src: tmpfs
+        fstype: tmpfs
+        opts: rw,nosuid,nodev,noatime,mode=1777,size=64M
+        dump: '0'
+        passno: '0'
+        state: present
+      notify: Reboot host
+      when: car_image
+
+    - name: Configure tmpfs for /var/log on the car image
+      # Volatile logs stay bounded while /var/log/journal is separately bind-mounted
+      # from /persist/journal; systemd orders the nested mount by path depth at boot.
+      ansible.posix.mount:
+        path: /var/log
+        src: tmpfs
+        fstype: tmpfs
+        opts: rw,nosuid,nodev,noatime,mode=0755,size=32M
+        dump: '0'
+        passno: '0'
+        state: present
+      notify: Reboot host
+      when: car_image
+
+    - name: Configure the car image root filesystem read-only
+      # Plain read-only ext4 fails loud with EROFS and avoids overlayfs' silent
+      # fallback/recursion hazards. Do not remount live while Ansible is still
+      # writing config; the notified reboot applies this fstab posture.
+      ansible.posix.mount:
+        path: /
+        src: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='device') | first) | default('/dev/mmcblk0p2', true) }}"
+        fstype: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='fstype') | first) | default('ext4', true) }}"
+        opts: ro,noatime,errors=remount-ro
+        dump: '0'
+        passno: '1'
+        state: present
+      notify: Reboot host
+      when: car_image
+
+    - name: Configure the car image boot filesystem read-only
+      # Firmware/kernel writes are bench-only maintenance operations; the deployed
+      # image should not leave FAT metadata writable during normal car power cuts.
+      ansible.posix.mount:
+        path: /boot/firmware
+        src: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/boot/firmware') | map(attribute='device') | first) | default('/dev/mmcblk0p1', true) }}"
+        fstype: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/boot/firmware') | map(attribute='fstype') | first) | default('vfat', true) }}"
+        opts: ro,noatime
+        dump: '0'
+        passno: '0'
+        state: present
+      notify: Reboot host
+      when: car_image
+
+    - name: Mask unattended package-maintenance timers on the car image
+      # apt/dpkg/man-db write package metadata under the read-only root. Car-image
+      # maintenance is a bench action after an intentional remount, not a timer.
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        masked: true
+        state: stopped
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+        - man-db.timer
+        - dpkg-db-backup.timer
+      when: car_image
+
+    - name: Gather service facts for legacy swap detection
+      # Trixie uses rpi-swap/zram, but masking the legacy swapfile service keeps an
+      # older image from reintroducing file-backed swap on the read-only root.
+      ansible.builtin.service_facts:
+      when: car_image
+
+    - name: Mask legacy dphys-swapfile service when present
+      # Old images may still carry this service; masking it avoids a future package
+      # hook or reboot recreating /var/swap.
+      ansible.builtin.systemd_service:
+        name: dphys-swapfile.service
+        enabled: false
+        masked: true
+        state: stopped
+      when:
+        - car_image
+        - "'dphys-swapfile.service' in ansible_facts.services"
+
+    - name: Ensure the stock zram swap service is active
+      # Raspberry Pi OS Trixie uses rpi-swap for RAM-backed zram swap. Keep that
+      # service explicit so removing SD-backed swap does not leave the 512 MB unit
+      # without the stock memory-pressure cushion.
+      ansible.builtin.systemd_service:
+        name: rpi-swap.service
+        enabled: true
+        state: started
+      when: car_image
+
+    - name: Detect active file-backed swap
+      # Pure zram swap is acceptable on the 512 MB Pi; SD-backed swap is not, because
+      # it adds uncontrolled writes to the same card we are protecting from power cuts.
+      ansible.builtin.command: awk 'NR > 1 && ($1 == "/var/swap" || $1 == "/swapfile") { print $1 }' /proc/swaps
+      register: dancam_active_file_swap
+      changed_when: false
+      when: car_image
+
+    - name: Turn off active file-backed swap
+      # Remove the live SD-backed swap device before deleting its file, otherwise the
+      # inode can stay swapped-on after the directory entry is gone.
+      ansible.builtin.command: "swapoff {{ item }}"
+      loop: "{{ dancam_active_file_swap.stdout_lines | default([]) }}"
+      changed_when: true
+      when: car_image
+
+    - name: Remove file-backed swap images
+      # Leaves the car image with only rpi-swap's RAM-backed zram swap.
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/swap
+        - /swapfile
+      when: car_image
+
+    - name: Assert zram has no writeback device
+      # If a future image wires zram writeback to disk, fail loud instead of silently
+      # preserving a hidden SD write path under the read-only-root car profile.
+      ansible.builtin.shell: |
+        set -eu
+        for backing in /sys/block/zram*/backing_dev; do
+          [ -e "$backing" ] || continue
+          value="$(cat "$backing")"
+          [ "$value" = none ] || printf '%s=%s\n' "$backing" "$value"
+        done
+      args:
+        executable: /bin/sh
+      register: dancam_zram_writeback_devices
+      changed_when: false
+      failed_when: dancam_zram_writeback_devices.stdout | length > 0
+      when: car_image
+
+    - name: Create dancam helper directory
+      # Ansible owns this boot-time helper; deploy.sh may later reuse the same
+      # directory for the camera process on bench deploys.
+      ansible.builtin.file:
+        path: /usr/local/lib/dancam
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: car_image
+
+    - name: Install the boot storage-health witness script
+      # Boot must stay diagnosable when /data is bad: nofail avoids emergency mode,
+      # this unit turns storage damage red in systemctl --failed, and the service's
+      # per-mutation mount witness refuses recording/time writes.
+      ansible.builtin.copy:
+        dest: /usr/local/lib/dancam/storage-health.sh
+        owner: root
+        group: root
+        mode: '0755'
+        content: |
+          #!/bin/sh
+          set -eu
+
+          for mount_path in /persist /data; do
+            info="$(findmnt -nro FSTYPE,OPTIONS --mountpoint "$mount_path")" || {
+              echo "$mount_path is not mounted" >&2
+              exit 1
+            }
+
+            set -- $info
+            fstype="$1"
+            opts="$2"
+
+            if [ "$fstype" != ext4 ]; then
+              echo "$mount_path is $fstype, expected ext4" >&2
+              exit 1
+            fi
+
+            case ",$opts," in
+              *,rw,*) ;;
+              *)
+                echo "$mount_path is not mounted rw" >&2
+                exit 1
+                ;;
+            esac
+
+            probe="$mount_path/.dancam-storage-health"
+            printf checked > "$probe"
+            sync -f "$probe" 2>/dev/null || sync
+            rm -f "$probe"
+          done
+      when: car_image
+
+    - name: Install the boot storage-health witness unit
+      # Enabled independently from dancam.service so it is red in systemctl --failed
+      # even when the API stays up for diagnosis.
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/dancam-storage-health.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=DanCam storage mount health check
+          Documentation=man:findmnt(8)
+          DefaultDependencies=no
+          After=local-fs.target
+          Before=dancam.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/local/lib/dancam/storage-health.sh
+
+          [Install]
+          WantedBy=multi-user.target
+      when: car_image
+
+    - name: Enable the boot storage-health witness unit
+      # It starts at every boot via multi-user.target; ordering before dancam.service
+      # makes the boot-time storage verdict visible before the API starts.
+      ansible.builtin.systemd_service:
+        name: dancam-storage-health.service
+        enabled: true
+        daemon_reload: true
+      when: car_image
 
   handlers:
     - name: Restart avahi-daemon

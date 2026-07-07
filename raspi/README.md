@@ -129,6 +129,7 @@ upstream:
 
 ```sh
 just raspi-provision          # converge the Pi; reboots itself if a task needs it
+just raspi-provision-car      # final car-image pass; see section 10 before running
 ```
 
 It prompts once for your sudo password. When mDNS is flaky, target a raw LAN IP:
@@ -311,6 +312,10 @@ disabled; see
 `raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`. Local `just raspi-mock`
 still defaults to the mock backend and cycles committed test-pattern frames.
 
+On a car image, `deploy.sh` temporarily remounts `/` read-write for the install block
+and remounts it read-only again before exiting. That path is for bench updates only;
+normal car runtime keeps root read-only.
+
 For app development against the local mock Pi, run:
 
 ```sh
@@ -462,3 +467,43 @@ In the app, verify that the home screen health fetch succeeds, then open Live pr
 and confirm that the camera feed is moving. Stop then Start should resume the stream.
 In the 2026-06-25 `fox` spike, this worked over `dancam-dev` with cellular left on; no
 captive sheet was observed.
+
+## 10. Harden the car image
+
+Run this only when the card is ready to become the deployed car image. The regular
+desk image should stop at `just raspi-provision`; it stays writable so iteration and
+debugging are cheap. Before hardening, set the AP PSK in section 7 at least once if
+you want to prove the hand-set secret survives the move into `/persist`.
+
+From the repo root, over home Wi-Fi:
+
+```sh
+just raspi-provision-car
+```
+
+The car pass keeps `/persist` and `/data` writable, but flips `/` and
+`/boot/firmware` read-only on the notified reboot; moves NetworkManager and
+systemd-timesync state into `/persist`; mounts `/tmp` and `/var/log` as bounded
+tmpfs; masks unattended package-maintenance timers; removes file-backed swap; and
+enables `dancam-storage-health.service`. That health unit runs before
+`dancam.service` and fails visibly in `systemctl --failed` if `/persist` or `/data`
+is not mounted read-write ext4. It does not replace the service's mount witness:
+recording and time-sync mutations still fail closed if `/data` goes missing.
+
+After the reboot, verify:
+
+```sh
+ssh dancam.local 'findmnt -no TARGET,OPTIONS / && findmnt -no TARGET,OPTIONS /boot/firmware'
+ssh dancam.local 'findmnt /tmp /var/log /etc/NetworkManager/system-connections /var/lib/NetworkManager /var/lib/systemd/timesync'
+ssh dancam.local 'systemctl is-enabled dancam-storage-health.service'
+ssh dancam.local 'systemctl is-active dancam-storage-health.service'    # active
+ssh dancam.local 'systemctl list-unit-files apt-daily.timer apt-daily-upgrade.timer man-db.timer dpkg-db-backup.timer' # masked
+ssh dancam.local 'swapon --show'
+```
+
+Then run the normal deploy and smoke tests. Confirm recording still lands under
+`/data/rec`, the AP PSK survives a reboot, and `journalctl -b -1` can read the
+previous boot from `/persist/journal`. Before trusting the card in the car, do the
+destructive negative test on the bench: break the `/data` fstab entry, reboot, confirm
+`dancam-storage-health.service` is failed and recording returns the mount-witness
+error instead of bricking the Pi, then restore `/data` and reboot.

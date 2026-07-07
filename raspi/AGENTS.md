@@ -149,18 +149,19 @@ Same Raspberry Pi OS base, two configurations:
 | | Dev image (on the desk) | Car image (deployed) |
 |---|---|---|
 | Root filesystem | writable plain ext4 root -- edit & restart freely | plain read-only ext4 root (no overlayfs) |
-| Network | joins home Wi-Fi as a client; AP is a manual `dancam-ap` toggle | runs the AP (NetworkManager hotspot, 2.4 GHz) |
+| Network | joins home Wi-Fi as a client; AP is a manual `dancam-ap` toggle | phone path uses the persisted `dancam-ap` hotspot; AP autoconnect policy is a later decision |
 | Access | `ssh <your-username>@dancam.local` over the LAN; if AP is up, use a separate client, not the Mac's only Wi-Fi interface | phone joins the Pi's AP |
 | Recordings | dedicated `/data/rec` partition path, with root still writable for dev | dedicated `/data/rec` on the journaled data partition |
-| Logs / OS state | persistent journald and small OS state under `/persist` | persistent journald and small OS state under `/persist`; `/data` stays format-safe |
+| Logs / OS state | persistent journald and small OS state under `/persist` | journald, NetworkManager state, and timesync state under `/persist`; `/data` stays format-safe |
 
 The dev image is where we build: writable root, manual AP toggle, same `/data` and
 `/persist` partition layout, so we can edit and restart freely. The car image (plain
-read-only root, always-on AP, journaled `/data`, `/persist` for OS state) is how that
+read-only root, writable `/data`, and `/persist` for OS/connection state) is how that
 same durably-built software gets packaged for deployment; the crash-safe and SD-card
-layout ADRs are the specs both build toward. This is a forced difference in how the
-software is *run*, not a license to build the software itself dumb first and harden
-later -- you just don't fight read-only root on the desk.
+layout ADRs are the specs both build toward. AP autoconnect is intentionally not
+settled here. This is a forced difference in how the software is *run*, not a license
+to build the software itself dumb first and harden later -- you just don't fight
+read-only root on the desk.
 
 ### OS and first flash (once)
 

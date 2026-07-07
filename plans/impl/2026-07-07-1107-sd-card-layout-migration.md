@@ -415,10 +415,14 @@ power-pull campaign (stage 5).
 - [x] 2. feat(raspi): add storage mount witness and segment fsync
 - [x] 3. feat(raspi): add sd partitioning tooling
 - [x] 4. feat(raspi): adopt data and persist partitions
-- [ ] 5. feat(raspi): harden car image readonly root
+- [x] 5. feat(raspi): harden car image readonly root
 
 ## Implementation notes
 
 - `camera.py` tolerates `EINVAL` from directory `fsync` so the self-test stays
   portable on development hosts that reject directory fsync; Linux ext4 still
   executes the directory fsync used by the Pi.
+- The car-image root, boot, `/tmp`, and `/var/log` fstab posture is applied on
+  the notified reboot rather than live-remounting during provisioning; this keeps
+  Ansible from making root or `/var/log` read-only/hidden while it is still
+  writing the rest of the car-image state.
