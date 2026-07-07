@@ -66,7 +66,14 @@ expanded-root layout cannot be migrated in place because ext4 can grow online bu
 cannot shrink online; `just raspi-partition` will refuse that card shape.
 
 Before first boot, edit `cmdline.txt` on the Mac-mounted FAT boot partition. It is a
-single line; remove this exact text from that line, then save and eject the card:
+single line; remove the root auto-expand trigger from that line, then save and eject
+the card. Current Raspberry Pi OS images use this standalone token:
+
+```text
+resize
+```
+
+Older images used this `init=` hook instead:
 
 ```text
  init=/usr/lib/raspi-config/init_resize.sh
