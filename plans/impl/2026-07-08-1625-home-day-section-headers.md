@@ -326,7 +326,7 @@ any Pi/contract changes -- recorded in the roadmap `sift` entry, not built here.
 - [x] 1. feat(app): add day-header and time-of-day formatters
 - [x] 2. feat(app): compose home rows into day sections
 - [x] 3. feat(app): render home clips in sticky day sections
-- [ ] 4. docs: add sift clip-finding swoop to roadmap
+- [x] 4. docs: add sift clip-finding swoop to roadmap
 
 ## Implementation notes
 

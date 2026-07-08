@@ -261,6 +261,15 @@ mock first.
       - Scope fence: no GPS source, no correction/rebind after the first accepted
         per-boot offset, no multi-segment timeline, and no incident pre-sync holds
         until `nova`.
+- [ ] **Swoop `sift` -- Find clips in the Recent list.** Make the finished-clip list
+      navigable when the user knows roughly when footage happened, building on
+      `moss` time provenance and the existing `/v1/clips` listing rather than adding a
+      new browsing surface.
+      - [x] Group Recent clips under sticky day headers, with undated footage kept in
+            in-place "Date unknown" runs.
+      - [ ] Group clips by drive using a boottag exposed in `/v1/clips`.
+      - [ ] Add a calendar jump backed by the reserved `from`/`to` window params.
+      - [ ] Add a locked/incidents filter after `nova` defines incident state.
 - [ ] **Swoop `nova` -- Incident lock (manual).** A "save this moment" button: Pi
       force-finalizes the open segment and protects the window, built to the storage
       ADR (idempotency, pre-sync holds) rather than a throwaway lock we'd redo later.
