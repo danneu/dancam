@@ -491,6 +491,24 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func remuxFailureShowsHonestMessage() async throws {
+        let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let controller = makeController(
+            pullEvents: completedPullEvents(sourceURL: sourceURL),
+            remuxer: ClipRemuxer { _, _ in
+                throw ClipRemuxError.invalidTransportStream("No H.264 PES packets found.")
+            }
+        )
+
+        controller.loadViewIfNeeded()
+
+        try await waitUntil { controller.statusText == "Clip failed" }
+        #expect(controller.resultText == "Clip contains no playable video: No H.264 PES packets found.")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func insertFailureShowsErrorCleansTempsAndRetryStartsANewPull() async throws {
         let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
         let mp4URL = FileManager.default.temporaryDirectory

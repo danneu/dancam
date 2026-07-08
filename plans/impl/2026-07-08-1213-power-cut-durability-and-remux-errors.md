@@ -415,4 +415,4 @@ Manual end-to-end on the real Pi:
 
 - [x] 1. fdatasync the in-flight segment every 2s to bound power-cut loss
 - [x] 2. scrub unrecoverable zero-byte segments at boot
-- [ ] 3. describe clip remux failures in human terms
+- [x] 3. describe clip remux failures in human terms

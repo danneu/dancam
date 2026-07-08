@@ -45,3 +45,18 @@ nonisolated enum ClipRemuxError: Error, Equatable, Sendable {
     case writer(String)
     case file(String)
 }
+
+extension ClipRemuxError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .invalidTransportStream(let detail):
+            "Clip contains no playable video: \(detail)"
+        case .invalidH264(let detail):
+            "Clip video data is damaged: \(detail)"
+        case .writer(let detail):
+            "Could not prepare clip for playback: \(detail)"
+        case .file(let detail):
+            "Could not read clip data: \(detail)"
+        }
+    }
+}
