@@ -15,3 +15,12 @@ nonisolated struct Clip: Codable, Equatable, Sendable {
     var etag: String
     var timeApproximate: Bool
 }
+
+extension Clip {
+    /// Non-nil only when the Pi recorded this clip with verified wall-clock time.
+    nonisolated var resolvedStartDate: Date? {
+        guard let startMs, timeApproximate == false else { return nil }
+
+        return Date(timeIntervalSince1970: Double(startMs) / 1_000)
+    }
+}

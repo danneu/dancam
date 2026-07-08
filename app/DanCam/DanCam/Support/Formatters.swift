@@ -43,8 +43,7 @@ nonisolated enum Formatters {
     }
 
     static func clipExportFilename(_ clip: Clip, timeZone: TimeZone = .current) -> String {
-        if let startMs = clip.startMs, clip.timeApproximate == false {
-            let date = Date(timeIntervalSince1970: Double(startMs) / 1_000)
+        if let date = clip.resolvedStartDate {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.timeZone = timeZone
@@ -56,14 +55,47 @@ nonisolated enum Formatters {
     }
 
     static func clipCreatedTime(_ clip: Clip, timeZone: TimeZone = .current) -> String? {
-        guard let startMs = clip.startMs, clip.timeApproximate == false else { return nil }
+        guard let date = clip.resolvedStartDate else { return nil }
 
-        let date = Date(timeIntervalSince1970: Double(startMs) / 1_000)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter.string(from: date)
+    }
+
+    static func clipTimeOfDay(_ clip: Clip, timeZone: TimeZone = .current) -> String? {
+        guard let date = clip.resolvedStartDate else { return nil }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
+    static func dayHeader(_ dayStart: Date, now: Date, calendar: Calendar = .current) -> String {
+        if calendar.isDate(dayStart, inSameDayAs: now) {
+            return "Today"
+        }
+
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(dayStart, inSameDayAs: yesterday)
+        {
+            return "Yesterday"
+        }
+
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "EEEE, MMM d"
+
+        if calendar.component(.year, from: dayStart) != calendar.component(.year, from: now) {
+            formatter.dateFormat += ", yyyy"
+        }
+
+        return formatter.string(from: dayStart)
     }
 
     private static func minutesSeconds(totalSeconds: UInt64) -> String {

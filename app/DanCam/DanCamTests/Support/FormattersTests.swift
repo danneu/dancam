@@ -123,6 +123,45 @@ struct FormattersTests {
         }
     }
 
+    @Test func clipTimeOfDayUsesTrustedTimesOnly() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let cases: [(clip: Clip, text: String?)] = [
+            (
+                clip(id: 1, startMs: 1_767_276_151_000, timeApproximate: false),
+                "14:02:31"
+            ),
+            (
+                clip(id: 7, startMs: 1_767_276_151_000, timeApproximate: true),
+                nil
+            ),
+            (
+                clip(id: 8, startMs: nil, timeApproximate: false),
+                nil
+            ),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.clipTimeOfDay(testCase.clip, timeZone: utc) == testCase.text)
+        }
+    }
+
+    @Test func dayHeaderFormatsRelativeAndCalendarDates() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let calendar = gregorianCalendar(timeZone: utc)
+        let now = try date(2026, 1, 3, hour: 12, calendar: calendar)
+
+        let cases: [(dayStart: Date, text: String)] = [
+            (try date(2026, 1, 3, calendar: calendar), "Today"),
+            (try date(2026, 1, 2, calendar: calendar), "Yesterday"),
+            (try date(2026, 1, 1, calendar: calendar), "Thursday, Jan 1"),
+            (try date(2025, 12, 31, calendar: calendar), "Wednesday, Dec 31, 2025"),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.dayHeader(testCase.dayStart, now: now, calendar: calendar) == testCase.text)
+        }
+    }
+
     @Test func clipDetailLinePrefixesTrustedCreatedTime() throws {
         let utc = try #require(TimeZone(secondsFromGMT: 0))
         let trusted = clip(id: 1, startMs: 1_767_225_600_000, timeApproximate: false)
@@ -183,6 +222,35 @@ struct FormattersTests {
             locked: false,
             etag: "etag",
             timeApproximate: timeApproximate
+        )
+    }
+
+    private func gregorianCalendar(timeZone: TimeZone) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
+
+    private func date(
+        _ year: Int,
+        _ month: Int,
+        _ day: Int,
+        hour: Int = 0,
+        minute: Int = 0,
+        second: Int = 0,
+        calendar: Calendar
+    ) throws -> Date {
+        try #require(
+            DateComponents(
+                calendar: calendar,
+                timeZone: calendar.timeZone,
+                year: year,
+                month: month,
+                day: day,
+                hour: hour,
+                minute: minute,
+                second: second
+            ).date
         )
     }
 }
