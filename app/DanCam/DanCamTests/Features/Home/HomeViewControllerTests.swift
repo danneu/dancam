@@ -377,6 +377,47 @@ struct HomeViewControllerTests {
         #expect(controller.isManualRefreshingForTesting == false)
     }
 
+    @Test func clipsBodyPlaceholderFollowsLoadingEmptyRefreshAndRows() throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            clipsClient: parkedClipsClient()
+        )
+        let window = try embed(controller)
+        defer {
+            controller.viewWillDisappear(false)
+            window.isHidden = true
+        }
+
+        store.send(.clips(.load))
+
+        #expect(controller.isShowingLoadingStateForTesting)
+        #expect(controller.isShowingEmptyStateForTesting == false)
+
+        store.send(.clips(.clipsResponse(epoch: 1, .success(ClipsResponse(
+            clips: [],
+            serverTimeMs: nil,
+            nextCursor: nil
+        )))))
+
+        #expect(controller.isShowingEmptyStateForTesting)
+        #expect(controller.isShowingLoadingStateForTesting == false)
+
+        store.send(.clips(.refresh))
+
+        #expect(controller.isShowingEmptyStateForTesting)
+        #expect(controller.isShowingLoadingStateForTesting == false)
+
+        store.send(.clips(.clipsResponse(epoch: 2, .success(ClipsResponse(
+            clips: [clipA],
+            serverTimeMs: nil,
+            nextCursor: nil
+        )))))
+
+        #expect(controller.isShowingEmptyStateForTesting == false)
+        #expect(controller.isShowingLoadingStateForTesting == false)
+    }
+
     @Test func clipsFailurePresentationIsVisibleAndSuppressesEmptyState() {
         let (staleController, staleStore) = makeControllerAndStore(clips: [clipA], loader: .noop)
         staleController.loadViewIfNeeded()
@@ -393,10 +434,11 @@ struct HomeViewControllerTests {
         )))))
 
         #expect(staleController.clipsFailureMessageForTesting == nil)
+        #expect(staleController.isShowingEmptyStateForTesting)
 
         let (emptyController, emptyStore) = makeControllerAndStore(clips: [], loader: .noop)
         emptyController.loadViewIfNeeded()
-        #expect(emptyController.isShowingEmptyStateForTesting)
+        #expect(emptyController.isShowingEmptyStateForTesting == false)
 
         emptyStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport("No route")))))
 

@@ -50,4 +50,18 @@ struct PreviewDecodeStateTests {
         #expect(newRendered)
         #expect(state.latestRenderedSequence == 0)
     }
+
+    @Test func invalidateRejectsLateDecodeFromDroppedStream() throws {
+        var state = PreviewDecodeState()
+        let oldFrame = PreviewFrame(sequence: 4, jpeg: Data("old".utf8))
+
+        state.enqueue(oldFrame)
+        let pendingDecode = state.startNextDecode()
+        let oldDecode = try #require(pendingDecode)
+        state.invalidate()
+        let oldRendered = state.finishDecode(generation: oldDecode.generation, sequence: oldFrame.sequence + 1)
+
+        #expect(oldRendered == false)
+        #expect(state.latestRenderedSequence == -1)
+    }
 }

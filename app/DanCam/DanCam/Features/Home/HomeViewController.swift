@@ -96,6 +96,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var recorderObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
     private var clipsStatusObservation: StoreObservation?
+    private var clipsLoadedObservation: StoreObservation?
 
     private let headerContainer = UIView()
     private let headerStack = UIStackView()
@@ -110,7 +111,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
     private let refreshControl = UIRefreshControl()
     private let clipsFailureBanner = StatusPillView()
-    private let emptyClipsBackgroundView = UIView()
+    private let clipsBodyPlaceholderView = UIStackView()
+    private let clipsLoadingIndicator = UIActivityIndicatorView(style: .medium)
     private let emptyClipsView = UIStackView()
     private let emptyClipsImageView = UIImageView(image: UIImage(systemName: "film"))
     private let emptyClipsLabel = UILabel()
@@ -122,6 +124,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var recorder: RecorderSnapshot?
     private var finishedClips: [Clip] = []
     private var clipsStatus: ClipsFeature.State.Status = .idle
+    private var clipsHasLoadedOnce = false
     private var rows: [HomeRow] = []
     private var rowsByID: [HomeRowID: HomeRow] = [:]
     private var liveTickTimer: Timer?
@@ -186,6 +189,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         clipsStatusObservation = store.observe(\.clips.status) { [weak self] status in
             self?.handleClipsStatus(status)
         }
+        clipsLoadedObservation = store.observe(\.clips.hasLoadedOnce) { [weak self] hasLoadedOnce in
+            self?.clipsHasLoadedOnce = hasLoadedOnce
+            self?.updateClipsPresentation()
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -245,6 +252,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         headerStack.addArrangedSubview(recordButtonRow)
         headerStack.addArrangedSubview(statusPillsStack)
         headerStack.addArrangedSubview(clipsHeaderLabel)
+        headerStack.addArrangedSubview(clipsBodyPlaceholderView)
 
         headerContainer.addSubview(headerStack)
         clipsTableView.tableHeaderView = headerContainer
@@ -339,7 +347,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func configurePreview() {
-        previewViewController.view.backgroundColor = .black
         previewViewController.view.layer.cornerRadius = 16
         previewViewController.view.layer.cornerCurve = .continuous
         previewViewController.view.layer.masksToBounds = true
@@ -388,7 +395,22 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         emptyClipsView.addArrangedSubview(emptyClipsImageView)
         emptyClipsView.addArrangedSubview(emptyClipsLabel)
 
-        emptyClipsBackgroundView.addSubview(emptyClipsView)
+        clipsLoadingIndicator.hidesWhenStopped = true
+
+        clipsBodyPlaceholderView.axis = .vertical
+        clipsBodyPlaceholderView.alignment = .center
+        clipsBodyPlaceholderView.spacing = 8
+        clipsBodyPlaceholderView.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: 4,
+            leading: 0,
+            bottom: 8,
+            trailing: 0
+        )
+        clipsBodyPlaceholderView.isLayoutMarginsRelativeArrangement = true
+        clipsBodyPlaceholderView.isHidden = true
+        clipsBodyPlaceholderView.addArrangedSubview(clipsLoadingIndicator)
+        clipsBodyPlaceholderView.addArrangedSubview(emptyClipsView)
+        emptyClipsView.isHidden = true
 
         clipsTableView.delegate = self
         clipsTableView.prefetchDataSource = self
@@ -430,11 +452,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         refreshControl.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
         clipsTableView.refreshControl = refreshControl
         clipsTableView.translatesAutoresizingMaskIntoConstraints = false
-
-        NSLayoutConstraint.activate([
-            emptyClipsView.centerXAnchor.constraint(equalTo: emptyClipsBackgroundView.centerXAnchor),
-            emptyClipsView.centerYAnchor.constraint(equalTo: emptyClipsBackgroundView.centerYAnchor),
-        ])
     }
 
     private func renderStatusPills(_ pills: HomeStatusPills) {
@@ -536,6 +553,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func updateClipsPresentation() {
+        let placeholder: ClipsBodyPlaceholderPresentation
+
         switch clipsStatus {
         case .failed(let message):
             clipsFailureBanner.configure(
@@ -544,13 +563,55 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                 backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
             )
             clipsFailureBanner.isHidden = false
-            clipsTableView.backgroundView = nil
+            placeholder = .hidden
         case .idle, .loading:
             clipsFailureBanner.isHidden = true
-            clipsTableView.backgroundView = rows.isEmpty ? emptyClipsBackgroundView : nil
+            if rows.isEmpty == false {
+                placeholder = .hidden
+            } else if clipsHasLoadedOnce {
+                placeholder = .empty
+            } else if clipsStatus == .loading {
+                placeholder = .loading
+            } else {
+                placeholder = .hidden
+            }
         }
 
+        applyClipsBodyPlaceholder(placeholder)
         view.setNeedsLayout()
+    }
+
+    private enum ClipsBodyPlaceholderPresentation {
+        case hidden
+        case loading
+        case empty
+    }
+
+    private func applyClipsBodyPlaceholder(_ presentation: ClipsBodyPlaceholderPresentation) {
+        let wasHidden = clipsBodyPlaceholderView.isHidden
+        let wasShowingLoading = clipsLoadingIndicator.isAnimating
+        let wasShowingEmpty = emptyClipsView.isHidden == false
+
+        switch presentation {
+        case .hidden:
+            clipsBodyPlaceholderView.isHidden = true
+            clipsLoadingIndicator.stopAnimating()
+            emptyClipsView.isHidden = true
+        case .loading:
+            clipsBodyPlaceholderView.isHidden = false
+            emptyClipsView.isHidden = true
+            clipsLoadingIndicator.startAnimating()
+        case .empty:
+            clipsBodyPlaceholderView.isHidden = false
+            clipsLoadingIndicator.stopAnimating()
+            emptyClipsView.isHidden = false
+        }
+
+        if wasHidden != clipsBodyPlaceholderView.isHidden ||
+            wasShowingLoading != clipsLoadingIndicator.isAnimating ||
+            wasShowingEmpty != (emptyClipsView.isHidden == false) {
+            needsHeaderRefit = true
+        }
     }
 
     private func updateLiveTickTimer() {
@@ -774,7 +835,13 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     var isShowingEmptyStateForTesting: Bool {
-        clipsTableView.backgroundView != nil
+        clipsBodyPlaceholderView.isHidden == false &&
+            emptyClipsView.isHidden == false &&
+            emptyClipsLabel.isHidden == false
+    }
+
+    var isShowingLoadingStateForTesting: Bool {
+        clipsBodyPlaceholderView.isHidden == false && clipsLoadingIndicator.isAnimating
     }
 
     func pullToRefreshForTesting() {

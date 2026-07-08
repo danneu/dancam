@@ -9,6 +9,7 @@ enum ClipsFeature {
         var pendingDeleteIDs: Set<Int> = []
         var suppressedClipIDs: Set<Int> = []
         var headEpoch = 0
+        var hasLoadedOnce = false
         var clipFinalizeEpoch: [Int: Int] = [:]
 
         enum Status: Equatable {
@@ -120,6 +121,7 @@ enum ClipsFeature {
             state.pendingDeleteIDs.subtract(reconciliation.authoritativeAbsentIDs)
             state.clips = reconciliation.clips
             state.status = .idle
+            state.hasLoadedOnce = true
             state.nextCursor = response.nextCursor
             state.isPaging = false
             state.clipFinalizeEpoch = state.clipFinalizeEpoch.filter { $0.value >= epoch }

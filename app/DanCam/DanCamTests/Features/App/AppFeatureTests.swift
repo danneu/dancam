@@ -73,6 +73,7 @@ struct AppFeatureTests {
         await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
+            $0.clips.hasLoadedOnce = true
         }
         await store.send(.streamStopped)
         await store.finishEffects()
@@ -211,6 +212,7 @@ struct AppFeatureTests {
         await store.receive(.clips(.clipsResponse(epoch: 2, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
+            $0.clips.hasLoadedOnce = true
         }
 
         await sleepGate.release(.seconds(2))
@@ -301,6 +303,7 @@ struct AppFeatureTests {
         await store.send(.clips(.clipsResponse(epoch: 1, .success(stale)))) {
             $0.clips.clips = [folded] + stale.clips
             $0.clips.status = .idle
+            $0.clips.hasLoadedOnce = true
             $0.clips.clipFinalizeEpoch = [3: 1]
         }
         await store.finishEffects()
@@ -422,6 +425,7 @@ struct AppFeatureTests {
         await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
+            $0.clips.hasLoadedOnce = true
         }
         await store.finishEffects()
         store.expectNoReceivedActions()
@@ -457,6 +461,7 @@ struct AppFeatureTests {
         await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
+            $0.clips.hasLoadedOnce = true
         }
 
         await allowSnapshot.signal()

@@ -6,9 +6,19 @@ final class PreviewViewController: UIViewController {
     private var streamObservation: StoreObservation?
 
     private let imageView = UIImageView()
+    private let placeholderView = UIView()
+    private let placeholderStack = UIStackView()
+    private let placeholderGlyphView = UIImageView(image: UIImage(systemName: "video.slash"))
+    private let placeholderSpinner = UIActivityIndicatorView(style: .medium)
     private let statusPill = StatusPillView()
 
     private var decodeState = PreviewDecodeState()
+
+    enum PlaceholderStateForTesting: Equatable {
+        case hidden
+        case spinner
+        case glyph
+    }
 
     init(dependencies: AppDependencies) {
         store = Store(
@@ -62,10 +72,30 @@ final class PreviewViewController: UIViewController {
         imageView.contentMode = .scaleAspectFit
         imageView.translatesAutoresizingMaskIntoConstraints = false
 
+        placeholderView.backgroundColor = .secondarySystemBackground
+        placeholderView.isOpaque = true
+        placeholderView.translatesAutoresizingMaskIntoConstraints = false
+
+        placeholderGlyphView.tintColor = .secondaryLabel
+        placeholderGlyphView.contentMode = .scaleAspectFit
+        placeholderGlyphView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 28, weight: .regular)
+        placeholderGlyphView.translatesAutoresizingMaskIntoConstraints = false
+
+        placeholderSpinner.hidesWhenStopped = true
+
+        placeholderStack.axis = .vertical
+        placeholderStack.alignment = .center
+        placeholderStack.spacing = 8
+        placeholderStack.translatesAutoresizingMaskIntoConstraints = false
+        placeholderStack.addArrangedSubview(placeholderGlyphView)
+        placeholderStack.addArrangedSubview(placeholderSpinner)
+
         statusPill.isHidden = true
         statusPill.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(imageView)
+        view.addSubview(placeholderView)
+        placeholderView.addSubview(placeholderStack)
         view.addSubview(statusPill)
 
         NSLayoutConstraint.activate([
@@ -73,6 +103,19 @@ final class PreviewViewController: UIViewController {
             imageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             imageView.topAnchor.constraint(equalTo: view.topAnchor),
             imageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            placeholderView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            placeholderView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            placeholderView.topAnchor.constraint(equalTo: view.topAnchor),
+            placeholderView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            placeholderGlyphView.widthAnchor.constraint(equalToConstant: 34),
+            placeholderGlyphView.heightAnchor.constraint(equalToConstant: 34),
+
+            placeholderStack.centerXAnchor.constraint(equalTo: placeholderView.centerXAnchor),
+            placeholderStack.centerYAnchor.constraint(equalTo: placeholderView.centerYAnchor),
+            placeholderStack.leadingAnchor.constraint(greaterThanOrEqualTo: placeholderView.leadingAnchor, constant: 16),
+            placeholderStack.trailingAnchor.constraint(lessThanOrEqualTo: placeholderView.trailingAnchor, constant: -16),
 
             statusPill.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             statusPill.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -10),
@@ -83,19 +126,50 @@ final class PreviewViewController: UIViewController {
     private func render(_ state: PreviewFeature.State) {
         switch state.phase {
         case .idle:
+            invalidateAndClearImage()
+            applyPlaceholder(.glyph)
             statusPill.isHidden = true
         case .connecting:
+            invalidateAndClearImage()
+            applyPlaceholder(.spinner)
             statusPill.configure(caption: "Connecting", dotColor: .systemOrange, backgroundStyle: .material)
             statusPill.isHidden = false
         case .streaming(let frame):
+            applyPlaceholder(.hidden)
             statusPill.configure(caption: "Live", dotColor: .systemGreen, backgroundStyle: .material)
             statusPill.isHidden = false
             enqueueDecode(frame)
         case .stopped:
+            invalidateAndClearImage()
+            applyPlaceholder(.glyph)
             statusPill.isHidden = true
         case .failed:
+            invalidateAndClearImage()
+            applyPlaceholder(.glyph)
             statusPill.configure(caption: "Preview offline", dotColor: .systemRed, backgroundStyle: .material)
             statusPill.isHidden = false
+        }
+    }
+
+    private func invalidateAndClearImage() {
+        decodeState.invalidate()
+        imageView.image = nil
+    }
+
+    private func applyPlaceholder(_ state: PlaceholderStateForTesting) {
+        switch state {
+        case .hidden:
+            placeholderView.isHidden = true
+            placeholderSpinner.stopAnimating()
+            placeholderGlyphView.isHidden = true
+        case .spinner:
+            placeholderView.isHidden = false
+            placeholderGlyphView.isHidden = true
+            placeholderSpinner.startAnimating()
+        case .glyph:
+            placeholderView.isHidden = false
+            placeholderSpinner.stopAnimating()
+            placeholderGlyphView.isHidden = false
         }
     }
 
@@ -127,6 +201,31 @@ final class PreviewViewController: UIViewController {
         startNextDecodeIfNeeded()
     }
 
+    var placeholderStateForTesting: PlaceholderStateForTesting {
+        if placeholderView.isHidden {
+            return .hidden
+        }
+        if placeholderSpinner.isAnimating {
+            return .spinner
+        }
+        return .glyph
+    }
+
+    var statusCaptionForTesting: String? {
+        statusPill.isHidden ? nil : statusPill.accessibilityLabel
+    }
+
+    var displayedImageForTesting: UIImage? {
+        imageView.image
+    }
+
+    func seedDisplayedImageForTesting(_ image: UIImage) {
+        imageView.image = image
+    }
+
+    func applyForTesting(_ state: PreviewFeature.State) {
+        render(state)
+    }
 }
 
 nonisolated struct PreviewDecodeState {
@@ -141,6 +240,10 @@ nonisolated struct PreviewDecodeState {
     private var isDecoding = false
 
     mutating func beginNewStream() {
+        invalidate()
+    }
+
+    mutating func invalidate() {
         generation += 1
         latestRenderedSequence = -1
         pendingDecode = nil

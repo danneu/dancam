@@ -17,9 +17,11 @@ struct ClipsFeatureTests {
             $0.status = .loading
             $0.headEpoch = 1
         }
+        #expect(store.state.hasLoadedOnce == false)
         await store.receive(.clipsResponse(epoch: 1, .success(response))) {
             $0.clips = response.clips
             $0.status = .idle
+            $0.hasLoadedOnce = true
             $0.nextCursor = "1"
         }
         let cursors = await queue.requestedCursors()
@@ -71,6 +73,7 @@ struct ClipsFeatureTests {
         await store.receive(.clipsResponse(epoch: 1, .success(staleResponse))) {
             $0.clips = [folded] + staleResponse.clips
             $0.status = .idle
+            $0.hasLoadedOnce = true
             $0.clipFinalizeEpoch = [3: 1]
         }
     }
@@ -216,6 +219,7 @@ struct ClipsFeatureTests {
         await store.send(.clipsResponse(epoch: 1, .success(response))) {
             $0.clips = response.clips
             $0.status = .idle
+            $0.hasLoadedOnce = true
             $0.pendingDeleteIDs = []
             $0.suppressedClipIDs = [7]
         }
@@ -237,6 +241,7 @@ struct ClipsFeatureTests {
 
         await store.send(.clipsResponse(epoch: 1, .success(response))) {
             $0.status = .idle
+            $0.hasLoadedOnce = true
         }
         await store.send(.pageResponse(epoch: 1, .success(response)))
         await store.send(.clipFinalized(clip)) {
@@ -268,6 +273,7 @@ struct ClipsFeatureTests {
         await store.send(.clipsResponse(epoch: 1, .success(response))) {
             $0.clips = response.clips
             $0.status = .idle
+            $0.hasLoadedOnce = true
             $0.suppressedClipIDs = [5]
         }
     }
@@ -287,6 +293,7 @@ struct ClipsFeatureTests {
         await store.send(.clipsResponse(epoch: 1, .success(response))) {
             $0.clips = response.clips + older
             $0.status = .idle
+            $0.hasLoadedOnce = true
             $0.nextCursor = "6"
         }
     }
@@ -306,6 +313,7 @@ struct ClipsFeatureTests {
         await store.send(.clipsResponse(epoch: 2, .success(response))) {
             $0.clips = response.clips
             $0.status = .idle
+            $0.hasLoadedOnce = true
             $0.suppressedClipIDs = [10]
             $0.clipFinalizeEpoch = [:]
         }
@@ -325,6 +333,7 @@ struct ClipsFeatureTests {
         await store.send(.clipsResponse(epoch: 1, .success(response))) {
             $0.clips = []
             $0.status = .idle
+            $0.hasLoadedOnce = true
             $0.suppressedClipIDs = [3, 4, 5]
         }
     }
@@ -365,6 +374,7 @@ struct ClipsFeatureTests {
         await store.receive(.clipsResponse(epoch: 6, .success(freshHead))) {
             $0.clips = freshHead.clips + CameraSamples.clipsResponse(ids: [500, 499]).clips
             $0.status = .idle
+            $0.hasLoadedOnce = true
             $0.nextCursor = "601"
             $0.isPaging = false
         }
