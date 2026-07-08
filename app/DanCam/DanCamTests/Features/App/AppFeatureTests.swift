@@ -302,6 +302,42 @@ struct AppFeatureTests {
         await store.finishEffects()
     }
 
+    @Test func onlineResnapshotReconcilesStaleRecordingWhenPhaseUnchanged() async {
+        let world = CameraSamples.world(phase: .idle)
+        let store = TestStore(
+            initialState: state(link: .online(world), recording: .recording),
+            dependencies: dependencies(clips: cancellingClipsClient()),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.streamReconnectAttempt = 0
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+        }
+        await store.finishEffects()
+    }
+
+    @Test func onlineResnapshotClearsStaleFailedCommandFromIdlePhase() async {
+        let world = CameraSamples.world(phase: .idle)
+        let store = TestStore(
+            initialState: state(link: .online(world), recording: .failed("HTTP 503")),
+            dependencies: dependencies(clips: cancellingClipsClient()),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.streamReconnectAttempt = 0
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+        }
+        await store.finishEffects()
+    }
+
     @Test func offlineCancelsInFlightRecordingCommand() async {
         let world = CameraSamples.world(phase: .recording)
         let stopStarted = AsyncSignal()

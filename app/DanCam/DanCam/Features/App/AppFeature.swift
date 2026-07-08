@@ -60,11 +60,13 @@ enum AppFeature {
 
         case .event(let event):
             let previousPhase = state.link.onlineWorld?.recorder.phase
+            var isSnapshot = false
             var effects = [armHeartbeat(dependencies: dependencies)]
 
             state.link.fold(event)
 
             if case .snapshot = event {
+                isSnapshot = true
                 state.streamReconnectAttempt = 0
                 effects.append(
                     ClipsFeature.reduce(
@@ -112,7 +114,7 @@ enum AppFeature {
             }
 
             if let phase = state.link.onlineWorld?.recorder.phase,
-               phase != previousPhase {
+               isSnapshot || phase != previousPhase {
                 effects.append(
                     reduceRecording(
                         state: &state,
