@@ -224,8 +224,9 @@ mock first.
       no overlayfs or consumer-card PLP assumptions. _This is the storage foundation
       that makes later card formatting safe instead of a directory cleanup._
       - [ ] Service durability + mount witness: fsync closed segments before events,
-            add mock parity, and gate recording/time-sync mutations on a mounted
-            `/data`.
+            fdatasync the in-flight segment every ~2 s and scrub unrecoverable
+            zero-byte leftovers at boot witness-first (ADR 19), add mock parity, and
+            gate recording/time-sync mutations on a mounted `/data`.
       - [ ] Partition tooling: on-Pi `sfdisk`/`resize2fs` script, Mac regression for
             the sector math, Just recipes, and README bring-up steps.
       - [ ] Dev-shared adoption: Ansible mounts `/persist`, `/data`, and the journald

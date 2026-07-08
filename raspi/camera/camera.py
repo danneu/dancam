@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import io
 import json
 import math
 import os
@@ -20,10 +21,11 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 
 SEGMENT_WIDTH = 5
+INFLIGHT_FLUSH_INTERVAL_SECS = 2.0
 U32_MAX = 0xFFFF_FFFF
 BOOT_TAG_WIDTH = 12
 SEGMENT_RE = re.compile(r"^seg_([0-9]+)(?:_([0-9a-f]{12})_([0-9]+))?\.ts$")
@@ -249,14 +251,58 @@ def fsync_segment(rec_dir: Path, seq: int) -> Path:
 def try_fsync_segment(rec_dir: Path, seq: int) -> bool:
     try:
         fsync_segment(rec_dir, seq)
-    except FileNotFoundError as error:
+    except OSError as error:
         print(
-            f"segment {seq} disappeared before fsync: {error}",
+            f"failed to fsync segment {seq}: {error}",
             file=sys.stderr,
             flush=True,
         )
         return False
     return True
+
+
+class InflightFlusher:
+    def __init__(
+        self,
+        flush: Callable[[int], Any],
+        interval: float = INFLIGHT_FLUSH_INTERVAL_SECS,
+        now: Callable[[], float] = time.monotonic,
+        log: Callable[[int, OSError], None] | None = None,
+    ):
+        self.flush = flush
+        self.interval = interval
+        self.now = now
+        self.log = log or self._log
+        self.last_flush = now()
+        self.failure_logged = False
+
+    def tick(self, seq: int | None) -> bool:
+        if seq is None:
+            return False
+
+        now = self.now()
+        if now - self.last_flush < self.interval:
+            return False
+
+        self.last_flush = now
+        try:
+            self.flush(seq)
+        except OSError as error:
+            if not self.failure_logged:
+                self.log(seq, error)
+                self.failure_logged = True
+            return False
+
+        self.failure_logged = False
+        return True
+
+    @staticmethod
+    def _log(seq: int, error: OSError) -> None:
+        print(
+            f"failed to fsync in-flight segment {seq}: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def watch_segment_events(
@@ -265,8 +311,13 @@ def watch_segment_events(
     baseline: int,
     watcher_shutdown: threading.Event,
     boot_tag: str,
+    flush: Callable[[int], Any] | None = None,
+    flush_interval: float = INFLIGHT_FLUSH_INTERVAL_SECS,
 ) -> None:
     prev_max: int | None = None
+    if flush is None:
+        flush = lambda seq: fsync_segment(rec_dir, seq)
+    flusher = InflightFlusher(flush, interval=flush_interval)
 
     def scan_once() -> None:
         nonlocal prev_max
@@ -282,10 +333,12 @@ def watch_segment_events(
                 stamp_segment(rec_dir, event["id"], boot_tag, opened_mono_ms)
             emit_event(event["event"], session_id=session_id, id=event["id"])
             if event["event"] == "segment_opened":
+                # detect_segment_events filters opened ids to seqs >= baseline.
                 prev_max = event["id"]
 
     while not watcher_shutdown.wait(0.25):
         scan_once()
+        flusher.tick(prev_max)
     scan_once()
     if prev_max is not None:
         try_fsync_segment(rec_dir, prev_max)
@@ -335,6 +388,122 @@ def run_self_test() -> int:
         stamped = rec_dir / stamped_segment_filename(5, "abc123def456", 987654321)
         stamped.write_bytes(b"segment")
         assert fsync_segment(rec_dir, 5) == stamped
+    attempts: list[int] = []
+    failures: list[tuple[int, str]] = []
+    fake_now = 0.0
+
+    def now() -> float:
+        return fake_now
+
+    def flush(seq: int) -> None:
+        attempts.append(seq)
+
+    flusher = InflightFlusher(
+        flush,
+        interval=2.0,
+        now=now,
+        log=lambda seq, error: failures.append((seq, str(error))),
+    )
+    assert not flusher.tick(None)
+    assert attempts == []
+    assert not flusher.tick(7)
+    assert attempts == []
+    fake_now = 2.0
+    assert flusher.tick(7)
+    assert attempts == [7]
+    assert not flusher.tick(7)
+    assert attempts == [7]
+    fake_now = 4.1
+    assert flusher.tick(8)
+    assert attempts == [7, 8]
+
+    failing_attempts: list[int] = []
+    failing_now = 0.0
+    errors: list[OSError] = [
+        OSError(errno.EIO, "card failed"),
+        FileNotFoundError(errno.ENOENT, "rolled over"),
+        OSError(errno.EIO, "card failed again"),
+    ]
+
+    def failing_clock() -> float:
+        return failing_now
+
+    def failing_flush(seq: int) -> None:
+        failing_attempts.append(seq)
+        if errors:
+            raise errors.pop(0)
+
+    flusher = InflightFlusher(
+        failing_flush,
+        interval=2.0,
+        now=failing_clock,
+        log=lambda seq, error: failures.append((seq, str(error))),
+    )
+    failing_now = 2.0
+    assert not flusher.tick(9)
+    assert failing_attempts == [9]
+    assert len(failures) == 1
+    assert not flusher.tick(9)
+    assert failing_attempts == [9]
+    failing_now = 4.0
+    assert not flusher.tick(9)
+    assert failing_attempts == [9, 9]
+    assert len(failures) == 1
+    failing_now = 6.0
+    assert not flusher.tick(9)
+    assert failing_attempts == [9, 9, 9]
+    assert len(failures) == 1
+    failing_now = 8.0
+    assert flusher.tick(9)
+    assert failing_attempts == [9, 9, 9, 9]
+    failing_now = 10.0
+    errors.append(OSError(errno.EIO, "card failed after recovery"))
+    assert not flusher.tick(9)
+    assert len(failures) == 2
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        rec_dir = Path(temp_dir)
+        (rec_dir / segment_filename(5)).write_bytes(b"older")
+        (rec_dir / segment_filename(6)).write_bytes(b"newer")
+        shutdown = threading.Event()
+        shutdown.set()
+        original_fsync_segment = globals()["fsync_segment"]
+        stderr = io.StringIO()
+        original_stderr = sys.stderr
+
+        def raise_sync(_rec_dir: Path, _seq: int) -> Path:
+            raise OSError(errno.EIO, "writeback failed")
+
+        try:
+            globals()["fsync_segment"] = raise_sync
+            sys.stderr = stderr
+            assert not try_fsync_segment(rec_dir, 5)
+            watch_segment_events(rec_dir, 1, 5, shutdown, "abc123def456")
+        finally:
+            globals()["fsync_segment"] = original_fsync_segment
+            sys.stderr = original_stderr
+        assert stderr.getvalue().count("failed to fsync segment") >= 1
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        rec_dir = Path(temp_dir)
+        (rec_dir / segment_filename(7)).write_bytes(b"open")
+        shutdown = threading.Event()
+        periodic_attempts: list[int] = []
+
+        def spy_flush(seq: int) -> None:
+            periodic_attempts.append(seq)
+            shutdown.set()
+
+        thread = threading.Thread(
+            target=watch_segment_events,
+            args=(rec_dir, 1, 7, shutdown, "abc123def456"),
+            kwargs={"flush": spy_flush, "flush_interval": 0.0},
+            daemon=True,
+        )
+        thread.start()
+        thread.join(timeout=1)
+        assert not thread.is_alive()
+        assert periodic_attempts == [7]
     for name in [
         "seg_999.ts",
         "seg_000005.ts",

@@ -54,6 +54,7 @@ const MOCK_FRAME_BYTES: [&[u8]; 12] = [
 /// 90 kHz PTS ticks per mock packet -- one packet stands in for one 100 ms tick at the
 /// TS clock rate, so a segment's PTS span tracks the wall-clock time it stayed open.
 const MOCK_PTS_TICKS_PER_PACKET: u64 = 9000;
+const MOCK_INFLIGHT_SYNC_INTERVAL: Duration = Duration::from_secs(2);
 
 #[async_trait]
 pub trait Backend: Send + Sync + 'static {
@@ -297,8 +298,46 @@ struct MockRecordingContext {
     clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
     boot_tag: Arc<StdMutex<Option<String>>>,
+    periodic_sync: Arc<dyn MockPeriodicSync>,
     session: u64,
     start_segment: SegmentId,
+}
+
+#[async_trait]
+trait MockPeriodicSync: Send + Sync {
+    async fn sync(&self, file: &mut tokio::fs::File) -> std::io::Result<()>;
+}
+
+struct FlushAndSyncMockSegment;
+
+#[async_trait]
+impl MockPeriodicSync for FlushAndSyncMockSegment {
+    async fn sync(&self, file: &mut tokio::fs::File) -> std::io::Result<()> {
+        flush_and_sync_mock_segment(file).await
+    }
+}
+
+struct InflightSyncCadence {
+    last: tokio::time::Instant,
+    interval: Duration,
+}
+
+impl InflightSyncCadence {
+    fn new(now: tokio::time::Instant, interval: Duration) -> Self {
+        Self {
+            last: now,
+            interval,
+        }
+    }
+
+    fn due(&mut self, now: tokio::time::Instant) -> bool {
+        if now.duration_since(self.last) < self.interval {
+            return false;
+        }
+
+        self.last = now;
+        true
+    }
 }
 
 impl MockRecorder {
@@ -366,6 +405,7 @@ impl MockRecorder {
             clip_durations,
             time_store,
             boot_tag,
+            periodic_sync: Arc::new(FlushAndSyncMockSegment),
             session,
             start_segment,
         };
@@ -411,6 +451,7 @@ async fn run_mock_recording_writer(
         clip_durations,
         time_store,
         boot_tag,
+        periodic_sync,
         session,
         start_segment,
     } = context;
@@ -444,6 +485,7 @@ async fn run_mock_recording_writer(
     }));
 
     let mut segment_started = tokio::time::Instant::now();
+    let mut sync_cadence = InflightSyncCadence::new(segment_started, MOCK_INFLIGHT_SYNC_INTERVAL);
     let mut interval = tokio::time::interval(Duration::from_millis(100));
 
     loop {
@@ -512,6 +554,8 @@ async fn run_mock_recording_writer(
                         opened: seq,
                     });
                     segment_started = tokio::time::Instant::now();
+                    sync_cadence =
+                        InflightSyncCadence::new(segment_started, MOCK_INFLIGHT_SYNC_INTERVAL);
                 }
 
                 if let Err(error) = write_mock_packet(&mut file, &mut packet_index).await {
@@ -520,6 +564,11 @@ async fn run_mock_recording_writer(
                         detail: format!("failed to write mock recording segment {seq}: {error}"),
                     });
                     return;
+                }
+                if sync_cadence.due(tokio::time::Instant::now()) {
+                    if let Err(error) = periodic_sync.sync(&mut file).await {
+                        tracing::warn!(%error, seq, "failed to sync in-flight mock recording segment");
+                    }
                 }
             }
         }
@@ -620,4 +669,138 @@ fn starting_session(events: &[SeqEvent]) -> Option<u64> {
         crate::events::Event::RecordingStarting { session, .. } => Some(session),
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs, io,
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
+
+    use async_trait::async_trait;
+    use tokio::sync::oneshot;
+
+    use super::{
+        run_mock_recording_writer, starting_session, InflightSyncCadence, MockPeriodicSync,
+        MockRecordingContext,
+    };
+    use crate::{
+        event_hub::EventHub,
+        events::Event,
+        time_sync::TimeStore,
+        ts_duration::DurationCache,
+        world::{CameraState, Input},
+    };
+
+    #[test]
+    fn inflight_sync_cadence_fires_once_per_interval() {
+        let start = tokio::time::Instant::now();
+        let mut cadence = InflightSyncCadence::new(start, Duration::from_secs(2));
+
+        assert!(!cadence.due(start));
+        assert!(!cadence.due(start + Duration::from_millis(1_999)));
+        assert!(cadence.due(start + Duration::from_secs(2)));
+        assert!(!cadence.due(start + Duration::from_millis(3_999)));
+        assert!(cadence.due(start + Duration::from_secs(4)));
+    }
+
+    #[tokio::test]
+    async fn mock_writer_periodic_sync_failure_does_not_stop_recording() {
+        let rec_dir = TempRecDir::new();
+        let hub = Arc::new(EventHub::new(CameraState::Running));
+        let events = hub.drive_now(Input::StartCommand { start_segment: 0 });
+        let session = starting_session(&events).expect("start command should create a session");
+        let mut connection = hub.connect();
+        let sync_calls = Arc::new(AtomicUsize::new(0));
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let context = MockRecordingContext {
+            rec_dir: Arc::from(rec_dir.path.as_path()),
+            roll_interval: Duration::from_millis(4_500),
+            hub: hub.clone(),
+            clip_durations: Arc::new(DurationCache::new()),
+            time_store: Arc::new(TimeStore::in_memory()),
+            boot_tag: Arc::new(std::sync::Mutex::new(None)),
+            periodic_sync: Arc::new(CountingPeriodicSync {
+                calls: sync_calls.clone(),
+            }),
+            session,
+            start_segment: 0,
+        };
+        let handle = tokio::spawn(run_mock_recording_writer(context, stop_rx));
+
+        tokio::time::timeout(Duration::from_secs(7), async {
+            let mut saw_finalized = false;
+            loop {
+                let seq_event = connection
+                    .rx
+                    .recv()
+                    .await
+                    .expect("event hub should stay open");
+                match seq_event.event {
+                    Event::RecorderFailed { detail, .. } => {
+                        panic!("periodic sync failure stopped recording: {detail}")
+                    }
+                    Event::ClipFinalized(meta) if meta.id == 0 => {
+                        assert!(
+                            sync_calls.load(Ordering::SeqCst) > 0,
+                            "first rollover happened before the periodic sync hook"
+                        );
+                        saw_finalized = true;
+                    }
+                    Event::SegmentOpened { id: 1, .. } if saw_finalized => break,
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for rollover after periodic sync failure");
+        assert!(sync_calls.load(Ordering::SeqCst) >= 1);
+
+        let _ = stop_tx.send(());
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("mock writer did not stop")
+            .expect("mock writer task panicked");
+    }
+
+    struct CountingPeriodicSync {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl MockPeriodicSync for CountingPeriodicSync {
+        async fn sync(&self, _file: &mut tokio::fs::File) -> io::Result<()> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                return Err(io::Error::other("injected periodic sync failure"));
+            }
+
+            Ok(())
+        }
+    }
+
+    struct TempRecDir {
+        path: PathBuf,
+    }
+
+    impl TempRecDir {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("dancam-backend-test-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&path).unwrap();
+            Self { path }
+        }
+    }
+
+    impl Drop for TempRecDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 }
