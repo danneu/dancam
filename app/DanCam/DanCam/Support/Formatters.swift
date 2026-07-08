@@ -114,7 +114,7 @@ nonisolated enum Formatters {
 
     /// Home list-row subtitle: recording time plus duration, without filesize.
     static func clipListLine(_ clip: Clip, timeZone: TimeZone = .current) -> String {
-        let created = clipCreatedTime(clip, timeZone: timeZone)
+        let created = clipTimeOfDay(clip, timeZone: timeZone)
         let duration = clipDuration(clip.durMs)
         return [created, duration].compactMap { $0 }.joined(separator: " · ")
     }

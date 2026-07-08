@@ -325,9 +325,10 @@ any Pi/contract changes -- recorded in the roadmap `sift` entry, not built here.
 
 - [x] 1. feat(app): add day-header and time-of-day formatters
 - [x] 2. feat(app): compose home rows into day sections
-- [ ] 3. feat(app): render home clips in sticky day sections
+- [x] 3. feat(app): render home clips in sticky day sections
 - [ ] 4. docs: add sift clip-finding swoop to roadmap
 
 ## Implementation notes
 
 - Commit 2 keeps the existing flat Home table wired through one section until commit 3 replaces rendering; that temporary section uses `.dateUnknown(occurrence: 0)` because `.main` was removed with the new two-case `HomeSection`.
+- Commit 3 snapshots visible thumbnail images around section rebuckets because `UITableView` may recreate a visible cell when the section identifier changes even though the row identifier is stable.

@@ -80,7 +80,7 @@ final class ClipThumbnailCell: UITableViewCell {
         fatalError("ClipThumbnailCell is programmatic.")
     }
 
-    func configure(clip: Clip, loader: ThumbnailLoader) {
+    func configure(clip: Clip, loader: ThumbnailLoader, preservedThumbnail: UIImage? = nil) {
         titleLabel.text = String(format: "seg_%05d.ts", clip.id)
         let subtitle = Formatters.clipListLine(clip)
         subtitleLabel.text = subtitle
@@ -94,12 +94,22 @@ final class ClipThumbnailCell: UITableViewCell {
             // in-flight load, blank to the placeholder, and start exactly one fresh load.
             cancelLoad()
             resetToPlaceholder()
-            startLoad(clip: clip, loader: loader)
+            if let preservedThumbnail {
+                thumbnailView.image = preservedThumbnail
+                hasThumbnail = true
+            } else {
+                startLoad(clip: clip, loader: loader)
+            }
         } else if loadTask == nil, hasThumbnail == false {
             // (a) same identity, nothing in flight and nothing painted: a prior load finished
             // `nil` or was cancelled by `cancelLoad()`. Retry once, cheaply (cache-first,
             // single-flighted). A same identity with a live load or a painted frame is a no-op.
-            startLoad(clip: clip, loader: loader)
+            if let preservedThumbnail {
+                thumbnailView.image = preservedThumbnail
+                hasThumbnail = true
+            } else {
+                startLoad(clip: clip, loader: loader)
+            }
         }
     }
 
@@ -120,8 +130,12 @@ final class ClipThumbnailCell: UITableViewCell {
         resetToPlaceholder()
     }
 
-    var displayedImageForTesting: UIImage? {
+    var currentThumbnailImage: UIImage? {
         thumbnailView.image
+    }
+
+    var displayedImageForTesting: UIImage? {
+        currentThumbnailImage
     }
 
     var isLoadingForTesting: Bool {

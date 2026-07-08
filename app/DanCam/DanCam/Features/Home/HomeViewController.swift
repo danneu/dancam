@@ -182,6 +182,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let dependencies: AppDependencies
     private let store: AppStore
     private let previewViewController: PreviewViewController
+    private let wallNow: () -> Date
+    private let currentCalendar: () -> Calendar
 
     private var recordingObservation: StoreObservation?
     private var statusPillsObservation: StoreObservation?
@@ -189,6 +191,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var clipsObservation: StoreObservation?
     private var clipsStatusObservation: StoreObservation?
     private var clipsLoadedObservation: StoreObservation?
+    private var calendarDayChangedObserver: NSObjectProtocol?
+    private var significantTimeChangedObserver: NSObjectProtocol?
 
     private let headerContainer = UIView()
     private let headerStack = UIStackView()
@@ -217,8 +221,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var finishedClips: [Clip] = []
     private var clipsStatus: ClipsFeature.State.Status = .idle
     private var clipsHasLoadedOnce = false
+    private var sections: [HomeSectionModel] = []
     private var rows: [HomeRow] = []
     private var rowsByID: [HomeRowID: HomeRow] = [:]
+    private var paginationTailIDs: Set<HomeRowID> = []
+    private var preservedVisibleThumbnails: [ClipThumbnailIdentity: UIImage] = [:]
+    private var preservedThumbnailGeneration = 0
     private var liveTickTimer: Timer?
     private var isVisible = false
     private var isManualRefreshing = false
@@ -228,10 +236,14 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     init(
         dependencies: AppDependencies,
-        store: AppStore
+        store: AppStore,
+        wallNow: @escaping () -> Date = Date.init,
+        currentCalendar: @escaping () -> Calendar = { .current }
     ) {
         self.dependencies = dependencies
         self.store = store
+        self.wallNow = wallNow
+        self.currentCalendar = currentCalendar
         previewViewController = PreviewViewController(dependencies: dependencies)
         super.init(nibName: nil, bundle: nil)
     }
@@ -258,6 +270,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         addChild(previewViewController)
         configureViews()
         previewViewController.didMove(toParent: self)
+        observeDayRolloverNotifications()
 
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (viewController: HomeViewController, _) in
             viewController.needsHeaderRefit = true
@@ -315,6 +328,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     isolated deinit {
         stopLiveTickTimer()
         cancelAllPrefetches()
+        if let calendarDayChangedObserver {
+            NotificationCenter.default.removeObserver(calendarDayChangedObserver)
+        }
+        if let significantTimeChangedObserver {
+            NotificationCenter.default.removeObserver(significantTimeChangedObserver)
+        }
     }
 
     func resumeLiveWork() {
@@ -518,6 +537,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
         clipsTableView.delegate = self
         clipsTableView.prefetchDataSource = self
+        clipsTableView.register(
+            HomeDayHeaderView.self,
+            forHeaderFooterViewReuseIdentifier: HomeDayHeaderView.reuseIdentifier
+        )
         clipsTableView.register(ClipThumbnailCell.self, forCellReuseIdentifier: "clipThumbnail")
         clipsTableView.register(LiveClipCell.self, forCellReuseIdentifier: "liveClip")
         dataSource = UITableViewDiffableDataSource<HomeSection, HomeRowID>(
@@ -555,12 +578,19 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                 ) as? ClipThumbnailCell else {
                     return UITableViewCell(style: .default, reuseIdentifier: nil)
                 }
-                cell.configure(clip: clip, loader: self.dependencies.thumbnailLoader)
+                cell.configure(
+                    clip: clip,
+                    loader: self.dependencies.thumbnailLoader,
+                    preservedThumbnail: self.preservedVisibleThumbnails[ClipThumbnailIdentity(clip)]
+                )
                 return cell
             }
         }
         clipsTableView.rowHeight = UITableView.automaticDimension
         clipsTableView.estimatedRowHeight = 72
+        clipsTableView.sectionHeaderTopPadding = 0
+        clipsTableView.sectionHeaderHeight = UITableView.automaticDimension
+        clipsTableView.estimatedSectionHeaderHeight = 32
         clipsTableView.tableFooterView = UIView()
         clipsTableView.alwaysBounceVertical = true
         refreshControl.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
@@ -626,28 +656,49 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         renderRows()
     }
 
-    private func renderRows(now: ContinuousClock.Instant? = nil) {
+    private func renderRows(now: ContinuousClock.Instant? = nil, completion: (() -> Void)? = nil) {
         let now = now ?? clock.now
         let previousLive = rows.first?.liveSegment
-        let newRows = HomeRow.compose(
+        let visibleThumbnails = visibleThumbnailImages()
+        let newSections = HomeRow.composeSections(
             clips: finishedClips,
             recording: recordingState,
             recorder: recorderTruth,
             previousLive: previousLive,
-            now: now
+            now: now,
+            today: wallNow(),
+            calendar: currentCalendar()
         )
+        let newRows = newSections.flatMap(\.rows)
         let reconfigure = HomeRowDiff.reconfiguredIDs(old: rows, new: newRows)
 
+        sections = newSections
         rows = newRows
         rowsByID = Dictionary(uniqueKeysWithValues: newRows.map { ($0.id, $0) })
+        paginationTailIDs = Set(newRows.suffix(paginationThreshold).map(\.id))
         prunePrefetches(surviving: Set(newRows.compactMap(\.finishedIdentity)))
+        preservedThumbnailGeneration += 1
+        let thumbnailGeneration = preservedThumbnailGeneration
+        preservedVisibleThumbnails = visibleThumbnails
 
         var snapshot = NSDiffableDataSourceSnapshot<HomeSection, HomeRowID>()
-        let flatSection = HomeSection.dateUnknown(occurrence: 0)
-        snapshot.appendSections([flatSection])
-        snapshot.appendItems(newRows.map(\.id), toSection: flatSection)
+        snapshot.appendSections(newSections.map(\.id))
+        for section in newSections {
+            snapshot.appendItems(section.rows.map(\.id), toSection: section.id)
+        }
         snapshot.reconfigureItems(reconfigure)
-        dataSource.apply(snapshot, animatingDifferences: canAnimateTableUpdates)
+        dataSource.apply(
+            snapshot,
+            animatingDifferences: canAnimateTableUpdates,
+            completion: { [weak self] in
+                MainActor.assumeIsolated {
+                    if self?.preservedThumbnailGeneration == thumbnailGeneration {
+                        self?.preservedVisibleThumbnails.removeAll()
+                    }
+                    completion?()
+                }
+            }
+        )
 
         updateClipsPresentation()
         updateLiveTickTimer()
@@ -754,6 +805,54 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         liveTickTimer = nil
     }
 
+    private func observeDayRolloverNotifications() {
+        calendarDayChangedObserver = NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleDayRollover()
+            }
+        }
+        significantTimeChangedObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.significantTimeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleDayRollover()
+            }
+        }
+    }
+
+    private func handleDayRollover() {
+        renderRows { [weak self] in
+            MainActor.assumeIsolated {
+                self?.refreshVisibleDayHeaders()
+            }
+        }
+    }
+
+    private func refreshVisibleDayHeaders() {
+        for sectionIndex in 0..<sections.count {
+            guard let headerView = clipsTableView.headerView(forSection: sectionIndex) as? HomeDayHeaderView,
+                  let section = dataSource.sectionIdentifier(for: sectionIndex) else {
+                continue
+            }
+            headerView.configure(title: headerTitle(for: section))
+        }
+    }
+
+    private func headerTitle(for section: HomeSection) -> String {
+        switch section {
+        case .day(let startOfDay, _):
+            Formatters.dayHeader(startOfDay, now: wallNow(), calendar: currentCalendar())
+        case .dateUnknown:
+            "Date unknown"
+        }
+    }
+
     private func updateVisibleLiveElapsed() {
         guard let segment = rows.first?.liveSegment,
               segment.isTicking,
@@ -836,13 +935,26 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         willDisplay cell: UITableViewCell,
         forRowAt indexPath: IndexPath
     ) {
-        guard let row = row(at: indexPath),
-              indexPath.row >= max(rows.count - paginationThreshold, 0),
+        guard let id = dataSource.itemIdentifier(for: indexPath),
+              paginationTailIDs.contains(id),
+              let row = rowsByID[id],
               case .finished = row else {
             return
         }
 
         store.send(.clips(.loadMore))
+    }
+
+    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+        guard let sectionID = dataSource.sectionIdentifier(for: section),
+              let headerView = tableView.dequeueReusableHeaderFooterView(
+                  withIdentifier: HomeDayHeaderView.reuseIdentifier
+              ) as? HomeDayHeaderView else {
+            return nil
+        }
+
+        headerView.configure(title: headerTitle(for: sectionID))
+        return headerView
     }
 
     func tableView(
@@ -915,6 +1027,22 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         }
     }
 
+    private func visibleThumbnailImages() -> [ClipThumbnailIdentity: UIImage] {
+        guard let visibleRows = clipsTableView.indexPathsForVisibleRows else { return [:] }
+
+        var images: [ClipThumbnailIdentity: UIImage] = [:]
+        for indexPath in visibleRows {
+            guard let row = row(at: indexPath),
+                  case .finished(let clip) = row,
+                  let cell = clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell,
+                  let image = cell.currentThumbnailImage else {
+                continue
+            }
+            images[ClipThumbnailIdentity(clip)] = image
+        }
+        return images
+    }
+
     /// Re-request visible rows on return by reconfiguring the visible `ClipThumbnailCell`s
     /// in place. Diffable snapshots do not reload on appear, so a painted cell hits the
     /// same-identity no-op and a cell quieted on the way out retries once, cache-first.
@@ -933,6 +1061,22 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     func clipThumbnailCellForTesting(clipID: Int) -> ClipThumbnailCell? {
         guard let indexPath = dataSource.indexPath(for: .finished(clipID)) else { return nil }
         return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell
+    }
+
+    var sectionHeaderTitlesForTesting: [String] {
+        sections.map { headerTitle(for: $0.id) }
+    }
+
+    func dayHeaderViewForTesting(section: Int) -> HomeDayHeaderView? {
+        clipsTableView.headerView(forSection: section) as? HomeDayHeaderView
+    }
+
+    func indexPathForTesting(rowID: HomeRowID) -> IndexPath? {
+        dataSource.indexPath(for: rowID)
+    }
+
+    func layoutClipsTableForTesting() {
+        clipsTableView.layoutIfNeeded()
     }
 
     func liveClipCellForTesting() -> LiveClipCell? {

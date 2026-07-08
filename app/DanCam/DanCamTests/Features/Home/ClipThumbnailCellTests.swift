@@ -113,7 +113,7 @@ struct ClipThumbnailCellTests {
         #expect(probe.callCount() == 2)  // no third load
     }
 
-    @Test func configureDropsByteSizeFromSubtitle() throws {
+    @Test func configureUsesTimeOfDayAndDurationSubtitle() throws {
         let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
         let clip = clip(
             id: 7,
@@ -127,7 +127,8 @@ struct ClipThumbnailCellTests {
         cell.configure(clip: clip, loader: .noop)
 
         let subtitle = try #require(cell.subtitleTextForTesting)
-        #expect(subtitle.contains("00:30"))
+        #expect(subtitle.range(of: #"^\d{2}:\d{2}:\d{2} · 00:30$"#, options: .regularExpression) != nil)
+        #expect(subtitle.contains("2026") == false)
         #expect(subtitle.contains(Formatters.byteSize(clip.bytes)) == false)
     }
 

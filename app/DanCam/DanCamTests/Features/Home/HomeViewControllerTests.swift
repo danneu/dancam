@@ -48,6 +48,106 @@ struct HomeViewControllerTests {
         #expect(probe.prefetchCancelCount(clipB) == 0)
     }
 
+    @Test func rendersStickyDayHeadersForDatedClipSections() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let calendar = gregorianCalendar(timeZone: utc)
+        let now = try date(2026, 1, 3, hour: 12, calendar: calendar)
+        let todayClip = datedClip(id: 10, start: try date(2026, 1, 3, hour: 11, calendar: calendar))
+        let olderClip = datedClip(id: 9, start: try date(2026, 1, 1, hour: 10, calendar: calendar))
+        let controller = makeController(
+            clips: [todayClip, olderClip],
+            loader: .noop,
+            wallNow: { now },
+            currentCalendar: { calendar }
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        controller.layoutClipsTableForTesting()
+
+        #expect(controller.sectionHeaderTitlesForTesting == ["Today", "Thursday, Jan 1"])
+        let header = try #require(controller.dayHeaderViewForTesting(section: 0))
+        #expect(header.titleTextForTesting == "Today")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func paginationTriggersFromTailIDsAcrossSections() async throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let calendar = gregorianCalendar(timeZone: utc)
+        let now = try date(2026, 1, 3, hour: 12, calendar: calendar)
+        let fetchSpy = HomeFetchSpy()
+        let clips = [
+            datedClip(id: 10, start: try date(2026, 1, 3, hour: 11, calendar: calendar)),
+            datedClip(id: 9, start: try date(2026, 1, 3, hour: 10, calendar: calendar)),
+            CameraSamples.clip(id: 8, durMs: 30_000, timeApproximate: true),
+            datedClip(id: 7, start: try date(2026, 1, 2, hour: 9, calendar: calendar)),
+            datedClip(id: 6, start: try date(2026, 1, 2, hour: 8, calendar: calendar)),
+            datedClip(id: 5, start: try date(2026, 1, 1, hour: 7, calendar: calendar)),
+        ]
+        let controller = makeController(
+            clips: clips,
+            loader: .noop,
+            clipsClient: fetchSpy.client(),
+            nextCursor: "5",
+            wallNow: { now },
+            currentCalendar: { calendar }
+        )
+        controller.loadViewIfNeeded()
+
+        let firstIndexPath = try #require(controller.indexPathForTesting(rowID: .finished(10)))
+        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: firstIndexPath)
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(await fetchSpy.requestedCursors() == [])
+
+        let lastIndexPath = try #require(controller.indexPathForTesting(rowID: .finished(5)))
+        #expect(lastIndexPath.section != firstIndexPath.section)
+        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: lastIndexPath)
+
+        try await waitForCursors(fetchSpy, [Optional("5")])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func dayRolloverMovesLiveRowAndRefreshesVisibleHeaders() async throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let calendar = gregorianCalendar(timeZone: utc)
+        var now = try date(2026, 1, 3, hour: 23, minute: 59, calendar: calendar)
+        let finishedClip = datedClip(id: 21, start: try date(2026, 1, 3, hour: 12, calendar: calendar))
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 107_000)
+        )
+        let controller = makeController(
+            clips: [finishedClip],
+            loader: .noop,
+            world: world,
+            recording: .recording,
+            wallNow: { now },
+            currentCalendar: { calendar }
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.layoutClipsTableForTesting()
+            return controller.sectionHeaderTitlesForTesting == ["Today"] &&
+                controller.indexPathForTesting(rowID: .live(session: 7, id: 24))?.section == 0 &&
+                controller.indexPathForTesting(rowID: .finished(finishedClip.id))?.section == 0
+        }
+        let todayHeader = try #require(controller.dayHeaderViewForTesting(section: 0))
+        #expect(todayHeader.titleTextForTesting == "Today")
+
+        now = try date(2026, 1, 4, hour: 0, minute: 1, calendar: calendar)
+        NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
+
+        try await waitUntil {
+            controller.layoutClipsTableForTesting()
+            return controller.sectionHeaderTitlesForTesting == ["Today", "Yesterday"] &&
+                controller.indexPathForTesting(rowID: .live(session: 7, id: 24))?.section == 0 &&
+                controller.indexPathForTesting(rowID: .finished(finishedClip.id))?.section == 1 &&
+                controller.dayHeaderViewForTesting(section: 1)?.titleTextForTesting == "Yesterday"
+        }
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func aReRepresentedClipCancelsItsStaleHandle() async throws {
         let probe = HomeLoaderProbe()
@@ -699,8 +799,11 @@ struct HomeViewControllerTests {
         world: World? = nil,
         recording: RecordingFeature.State = .unknown,
         clipsClient: ClipsClient = .noop,
+        nextCursor: String? = nil,
         preview: PreviewClient = .noop,
-        recordingClient: RecordingClient = .noop
+        recordingClient: RecordingClient = .noop,
+        wallNow: @escaping () -> Date = Date.init,
+        currentCalendar: @escaping () -> Calendar = { .current }
     ) -> HomeViewController {
         makeControllerAndStore(
             clips: clips,
@@ -708,8 +811,11 @@ struct HomeViewControllerTests {
             world: world,
             recording: recording,
             clipsClient: clipsClient,
+            nextCursor: nextCursor,
             preview: preview,
-            recordingClient: recordingClient
+            recordingClient: recordingClient,
+            wallNow: wallNow,
+            currentCalendar: currentCalendar
         ).0
     }
 
@@ -719,11 +825,15 @@ struct HomeViewControllerTests {
         world: World? = nil,
         recording: RecordingFeature.State = .unknown,
         clipsClient: ClipsClient = .noop,
+        nextCursor: String? = nil,
         preview: PreviewClient = .noop,
-        recordingClient: RecordingClient = .noop
+        recordingClient: RecordingClient = .noop,
+        wallNow: @escaping () -> Date = Date.init,
+        currentCalendar: @escaping () -> Calendar = { .current }
     ) -> (HomeViewController, AppStore) {
         var state = AppFeature.State()
         state.clips.clips = clips
+        state.clips.nextCursor = nextCursor
         state.recording = recording
         if let world {
             state.link = .online(world)
@@ -738,7 +848,15 @@ struct HomeViewControllerTests {
             heartbeatTimeout: { throw CancellationError() }
         )
         let store = AppStore(initialState: state, dependencies: dependencies, reduce: AppFeature.reduce)
-        return (HomeViewController(dependencies: dependencies, store: store), store)
+        return (
+            HomeViewController(
+                dependencies: dependencies,
+                store: store,
+                wallNow: wallNow,
+                currentCalendar: currentCalendar
+            ),
+            store
+        )
     }
 
     private func parkedClipsClient() -> ClipsClient {
@@ -770,6 +888,59 @@ struct HomeViewControllerTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         Issue.record("Timed out waiting for condition.")
+    }
+
+    private func waitForCursors(_ spy: HomeFetchSpy, _ expected: [String?]) async throws {
+        for _ in 0..<200 {
+            if await spy.requestedCursors() == expected { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("Timed out waiting for cursor requests.")
+    }
+
+    private func datedClip(id: Int, start: Date) -> Clip {
+        Clip(
+            id: id,
+            startMs: epochMs(start),
+            durMs: 30_000,
+            bytes: UInt64(id * 100),
+            locked: false,
+            etag: "\(id)-\(id * 100)",
+            timeApproximate: false
+        )
+    }
+
+    private func epochMs(_ date: Date) -> UInt64 {
+        UInt64((date.timeIntervalSince1970 * 1_000).rounded())
+    }
+
+    private func gregorianCalendar(timeZone: TimeZone) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
+
+    private func date(
+        _ year: Int,
+        _ month: Int,
+        _ day: Int,
+        hour: Int = 0,
+        minute: Int = 0,
+        second: Int = 0,
+        calendar: Calendar
+    ) throws -> Date {
+        try #require(
+            DateComponents(
+                calendar: calendar,
+                timeZone: calendar.timeZone,
+                year: year,
+                month: month,
+                day: day,
+                hour: hour,
+                minute: minute,
+                second: second
+            ).date
+        )
     }
 
     private func colorMatches(_ color: UIColor?, _ expected: UIColor) -> Bool {
@@ -808,6 +979,25 @@ private actor HomeDeleteSpy {
 
     private func record(_ id: Int) {
         ids.append(id)
+    }
+}
+
+private actor HomeFetchSpy {
+    private var cursors: [String?] = []
+
+    nonisolated func client() -> ClipsClient {
+        ClipsClient { cursor in
+            await self.record(cursor)
+            return ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)
+        }
+    }
+
+    func requestedCursors() -> [String?] {
+        cursors
+    }
+
+    private func record(_ cursor: String?) {
+        cursors.append(cursor)
     }
 }
 
