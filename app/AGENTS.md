@@ -147,3 +147,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `17-2026-07-02-selector-observation-and-view-state.md` -- selector-based observation,
   derived rendered view-state, and diffable Home row rendering that keeps thumbnails
   painted across row updates.
+- `18-2026-07-08-heartbeat-fresh-present-tense.md` -- present-tense UI claims require
+  heartbeat-fresh state; stale recorder state stays typed and visually last-known rather
+  than being extrapolated as live.

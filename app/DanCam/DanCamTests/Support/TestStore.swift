@@ -14,6 +14,7 @@ final class TestStore<State: Equatable, Action: Equatable, Dependencies> {
     private var nextTaskToken: UInt64 = 0
     private var tasks: [UInt64: Task<Void, Never>] = [:]
     private var taskIDs: [AnyHashable: UInt64] = [:]
+    private var canceledTasks: [Task<Void, Never>] = []
 
     init(initialState: State, dependencies: Dependencies, reduce: @escaping Reducer) {
         state = initialState
@@ -51,6 +52,17 @@ final class TestStore<State: Equatable, Action: Equatable, Dependencies> {
     func finishEffects() async {
         while tasks.isEmpty == false {
             let currentTasks = Array(tasks.values)
+            for task in currentTasks {
+                await task.value
+            }
+        }
+    }
+
+    func finishCanceledEffects() async {
+        while canceledTasks.isEmpty == false {
+            let currentTasks = canceledTasks
+            canceledTasks.removeAll()
+
             for task in currentTasks {
                 await task.value
             }
@@ -118,7 +130,9 @@ final class TestStore<State: Equatable, Action: Equatable, Dependencies> {
 
     private func cancelTask(id: AnyHashable) {
         guard let token = taskIDs.removeValue(forKey: id) else { return }
-        tasks.removeValue(forKey: token)?.cancel()
+        guard let task = tasks.removeValue(forKey: token) else { return }
+        canceledTasks.append(task)
+        task.cancel()
     }
 
     private func finishTask(token: UInt64, id: AnyHashable?) {

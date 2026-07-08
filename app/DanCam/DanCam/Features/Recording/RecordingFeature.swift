@@ -15,7 +15,10 @@ enum RecordingFeature {
         case stopTapped
         case recordingResponse(Result<Bool, RecordingError>)
         case recorderPhaseObserved(RecorderPhase)
+        case linkWentOffline
     }
+
+    private static let commandID = "recording"
 
     static func reduce(
         state: inout State,
@@ -25,7 +28,7 @@ enum RecordingFeature {
         switch action {
         case .startTapped:
             state = .starting
-            return .run(id: "recording", cancelInFlight: true) { send in
+            return .run(id: commandID, cancelInFlight: true) { send in
                 do {
                     try await dependencies.recording.start()
                     guard Task.isCancelled == false else { return }
@@ -45,7 +48,7 @@ enum RecordingFeature {
 
         case .stopTapped:
             state = .stopping
-            return .run(id: "recording", cancelInFlight: true) { send in
+            return .run(id: commandID, cancelInFlight: true) { send in
                 do {
                     try await dependencies.recording.stop()
                     guard Task.isCancelled == false else { return }
@@ -110,6 +113,10 @@ enum RecordingFeature {
                 }
             }
             return .none
+
+        case .linkWentOffline:
+            state = .unknown
+            return .cancel(id: commandID)
         }
     }
 }

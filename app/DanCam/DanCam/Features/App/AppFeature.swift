@@ -59,7 +59,7 @@ enum AppFeature {
             ])
 
         case .event(let event):
-            let previousPhase = state.link.world?.recorder.phase
+            let previousPhase = state.link.onlineWorld?.recorder.phase
             var effects = [armHeartbeat(dependencies: dependencies)]
 
             state.link.fold(event)
@@ -111,7 +111,7 @@ enum AppFeature {
                 )
             }
 
-            if let phase = state.link.world?.recorder.phase,
+            if let phase = state.link.onlineWorld?.recorder.phase,
                phase != previousPhase {
                 effects.append(
                     reduceRecording(
@@ -130,6 +130,11 @@ enum AppFeature {
             return .merge([
                 .cancel(id: heartbeatID),
                 .cancel(id: timeSyncID),
+                reduceRecording(
+                    state: &state,
+                    action: .linkWentOffline,
+                    dependencies: dependencies
+                ),
                 scheduleReconnect(
                     attempt: state.streamReconnectAttempt,
                     dependencies: dependencies
@@ -143,6 +148,11 @@ enum AppFeature {
                 .cancel(id: streamID),
                 .cancel(id: heartbeatID),
                 .cancel(id: timeSyncID),
+                reduceRecording(
+                    state: &state,
+                    action: .linkWentOffline,
+                    dependencies: dependencies
+                ),
                 scheduleReconnect(
                     attempt: state.streamReconnectAttempt,
                     dependencies: dependencies
@@ -516,6 +526,8 @@ private extension RecordingFeature.Action {
             "recordingResponse.failure"
         case .recorderPhaseObserved:
             "recorderPhaseObserved"
+        case .linkWentOffline:
+            "linkWentOffline"
         }
     }
 }

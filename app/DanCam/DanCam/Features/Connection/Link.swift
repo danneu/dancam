@@ -3,6 +3,17 @@ nonisolated enum Link: Equatable {
     case online(World)
     case offline(last: World?)
 
+    var recorderTruth: RecorderTruth {
+        switch self {
+        case .online(let world):
+            .live(world.recorder)
+        case .offline(last: let world?):
+            .lastKnown(world.recorder)
+        case .offline(last: nil), .connecting:
+            .unknown
+        }
+    }
+
     var world: World? {
         switch self {
         case .connecting:
@@ -34,4 +45,10 @@ nonisolated enum Link: Equatable {
     mutating func wentOffline() {
         self = .offline(last: world)
     }
+}
+
+nonisolated enum RecorderTruth: Equatable, Sendable {
+    case live(RecorderSnapshot)
+    case lastKnown(RecorderSnapshot)
+    case unknown
 }

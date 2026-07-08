@@ -83,4 +83,13 @@ struct LinkTests {
 
         #expect(link == .offline(last: world))
     }
+
+    @Test func recorderTruthReflectsLinkFreshness() {
+        let world = CameraSamples.world(phase: .recording)
+
+        #expect(Link.online(world).recorderTruth == .live(world.recorder))
+        #expect(Link.offline(last: world).recorderTruth == .lastKnown(world.recorder))
+        #expect(Link.offline(last: nil).recorderTruth == .unknown)
+        #expect(Link.connecting.recorderTruth == .unknown)
+    }
 }

@@ -70,6 +70,23 @@ struct RecordingFeatureTests {
         }
     }
 
+    @Test(arguments: [
+        RecordingFeature.State.recording,
+        .starting,
+        .stopping,
+    ])
+    func linkWentOfflineResetsPresentTenseStates(state: RecordingFeature.State) async {
+        let store = TestStore(
+            initialState: state,
+            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            reduce: RecordingFeature.reduce
+        )
+
+        await store.send(.linkWentOffline) {
+            $0 = .unknown
+        }
+    }
+
     @Test func startTappedStartsRecording() async {
         let store = TestStore(
             initialState: RecordingFeature.State.idle,

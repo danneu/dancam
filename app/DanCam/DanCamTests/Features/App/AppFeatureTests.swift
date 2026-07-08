@@ -260,6 +260,7 @@ struct AppFeatureTests {
         await store.send(.event(.snapshot(world))) {
             $0.link = .online(world)
             $0.streamReconnectAttempt = 0
+            $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 2
         }
@@ -269,6 +270,78 @@ struct AppFeatureTests {
         await store.finishEffects()
 
         #expect(await time.callCount() == 2)
+    }
+
+    @Test(arguments: OfflineDisconnect.allCases)
+    func offlineThenSamePhaseSnapshotRederivesRecording(disconnect: OfflineDisconnect) async {
+        let world = CameraSamples.world(phase: .recording)
+        let store = TestStore(
+            initialState: state(link: .online(world), recording: .recording),
+            dependencies: dependencies(clips: cancellingClipsClient(), sleep: longSleep),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(disconnect.action) {
+            $0.link = .offline(last: world)
+            $0.recording = .unknown
+            $0.streamReconnectAttempt = 1
+        }
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .recording
+            $0.streamReconnectAttempt = 0
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+        }
+
+        await store.send(.streamStopped) {
+            $0.streamReconnectAttempt = 0
+        }
+        await store.finishCanceledEffects()
+        await store.finishEffects()
+    }
+
+    @Test func offlineCancelsInFlightRecordingCommand() async {
+        let world = CameraSamples.world(phase: .recording)
+        let stopStarted = AsyncSignal()
+        let releaseStop = AsyncSignal()
+        let store = TestStore(
+            initialState: state(link: .online(world), recording: .recording),
+            dependencies: dependencies(
+                recording: RecordingClient(
+                    start: { fatalError("Start should not be called.") },
+                    stop: {
+                        await stopStarted.signal()
+                        await releaseStop.wait()
+                    }
+                ),
+                sleep: longSleep
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.recordTapped) {
+            $0.recording = .stopping
+        }
+        await stopStarted.wait()
+
+        await store.send(.heartbeatTimedOut) {
+            $0.link = .offline(last: world)
+            $0.recording = .unknown
+            $0.streamReconnectAttempt = 1
+        }
+
+        await releaseStop.signal()
+        await store.finishCanceledEffects()
+        store.expectNoReceivedActions()
+        #expect(store.state.recording == .unknown)
+
+        await store.send(.streamStopped) {
+            $0.streamReconnectAttempt = 0
+        }
+        await store.finishCanceledEffects()
+        await store.finishEffects()
     }
 
     @Test func heartbeatDoesNotBounceOptimisticStarting() async {
@@ -721,7 +794,31 @@ enum TimeSyncDisconnect: CaseIterable, CustomStringConvertible {
             state.streamReconnectAttempt = 0
         case .streamFailed, .heartbeatTimedOut:
             state.link = .offline(last: lastWorld)
+            state.recording = .unknown
             state.streamReconnectAttempt = 1
+        }
+    }
+}
+
+enum OfflineDisconnect: CaseIterable, CustomStringConvertible {
+    case streamFailed
+    case heartbeatTimedOut
+
+    var description: String {
+        switch self {
+        case .streamFailed:
+            "streamFailed"
+        case .heartbeatTimedOut:
+            "heartbeatTimedOut"
+        }
+    }
+
+    var action: AppFeature.Action {
+        switch self {
+        case .streamFailed:
+            .streamFailed
+        case .heartbeatTimedOut:
+            .heartbeatTimedOut
         }
     }
 }
