@@ -241,7 +241,7 @@ mock first.
       `dune`, "format the SD" means mkfs of `/data` only -- never the OS or `/persist`.
       The app-facing storage/card-health UI belongs here; `dune` only provides the
       lower-level layout and fail-closed mount witness.
-- [ ] **Swoop `moss` -- Time provenance.** The Pi has no RTC, so clip timestamps are
+- [x] **Swoop `moss` -- Time provenance.** The Pi has no RTC, so clip timestamps are
       derived from immutable segment facts plus a per-boot phone-clock offset rather
       than stored as wall-clock conclusions. This makes pre-sync and power-cut
       segments resolve once the boot offset is known.
@@ -252,7 +252,7 @@ mock first.
       - [x] **Pi:** add the write-once per-boot offset store and `POST /v1/time`; derive
             clip `start_ms`, `time_approximate`, `server_time_ms`, snapshot
             `time.synced`, and `time_synced` events from the offset.
-      - [ ] **App:** POST the phone's current epoch on unsynced snapshots, retry while
+      - [x] **App:** POST the phone's current epoch on unsynced snapshots, retry while
             connected and unsynced, reload clips on `time_synced`, and show "Time
             unverified" until the world reports synced.
       - [x] **Mock parity:** both the Rust mock backend and Python fake camera exercise
