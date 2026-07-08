@@ -51,6 +51,10 @@ final class StatusPillView: UIView {
         }
     }
 
+    var dotColorForTesting: UIColor? {
+        dotView.isHidden ? nil : dotView.backgroundColor
+    }
+
     private func configureBaseView() {
         isAccessibilityElement = true
         clipsToBounds = true

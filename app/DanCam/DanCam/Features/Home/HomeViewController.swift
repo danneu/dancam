@@ -1,13 +1,31 @@
 import UIKit
 
 nonisolated struct LiveSegment: Equatable, Sendable {
+    enum Elapsed: Equatable, Sendable {
+        case ticking(seedDurMs: UInt64?, anchor: ContinuousClock.Instant)
+        case frozen(durMs: UInt64)
+    }
+
     var sessionId: UInt64
     var id: Int
-    var seedDurMs: UInt64?
-    var anchor: ContinuousClock.Instant
+    var elapsed: Elapsed
 
     func elapsedDurMs(at now: ContinuousClock.Instant) -> UInt64 {
-        (seedDurMs ?? 0) + Self.milliseconds(from: anchor.duration(to: now))
+        switch elapsed {
+        case .ticking(let seedDurMs, let anchor):
+            (seedDurMs ?? 0) + Self.milliseconds(from: anchor.duration(to: now))
+        case .frozen(let durMs):
+            durMs
+        }
+    }
+
+    var isTicking: Bool {
+        switch elapsed {
+        case .ticking:
+            true
+        case .frozen:
+            false
+        }
     }
 
     private static func milliseconds(from duration: Duration) -> UInt64 {
@@ -26,40 +44,88 @@ nonisolated enum HomeRow: Equatable, Sendable {
 
     static func compose(
         clips: [Clip],
-        recorder: RecorderSnapshot?,
+        recorder: RecorderTruth,
         previousLive: LiveSegment?,
         now: ContinuousClock.Instant
     ) -> [HomeRow] {
         var rows = clips.map(HomeRow.finished)
-        guard let recorder, let currentSegment = recorder.currentSegment else {
-            return rows
+
+        let live: LiveSegment?
+        switch recorder {
+        case .unknown:
+            live = nil
+        case .live(let snapshot):
+            live = tickingLiveSegment(from: snapshot, previousLive: previousLive, now: now)
+        case .lastKnown(let snapshot):
+            live = frozenLiveSegment(from: snapshot, previousLive: previousLive, now: now)
         }
 
-        let live: LiveSegment
-        if let previousLive,
-           previousLive.sessionId == recorder.session,
-           previousLive.id == currentSegment.id {
-            if let durMs = currentSegment.durMs {
-                live = LiveSegment(
-                    sessionId: recorder.session,
-                    id: currentSegment.id,
-                    seedDurMs: max(durMs, previousLive.elapsedDurMs(at: now)),
-                    anchor: now
-                )
-            } else {
-                live = previousLive
-            }
-        } else {
-            live = LiveSegment(
-                sessionId: recorder.session,
-                id: currentSegment.id,
-                seedDurMs: currentSegment.durMs,
-                anchor: now
-            )
+        guard let live else {
+            return rows
         }
 
         rows.insert(.live(live), at: 0)
         return rows
+    }
+
+    private static func tickingLiveSegment(
+        from recorder: RecorderSnapshot,
+        previousLive: LiveSegment?,
+        now: ContinuousClock.Instant
+    ) -> LiveSegment? {
+        guard let currentSegment = recorder.currentSegment else { return nil }
+
+        if let previousLive,
+           previousLive.sessionId == recorder.session,
+           previousLive.id == currentSegment.id {
+            let previousDurMs = previousLive.elapsedDurMs(at: now)
+            if let durMs = currentSegment.durMs {
+                return LiveSegment(
+                    sessionId: recorder.session,
+                    id: currentSegment.id,
+                    elapsed: .ticking(seedDurMs: max(durMs, previousDurMs), anchor: now)
+                )
+            }
+
+            if previousLive.isTicking {
+                return previousLive
+            }
+
+            return LiveSegment(
+                sessionId: recorder.session,
+                id: currentSegment.id,
+                elapsed: .ticking(seedDurMs: previousDurMs, anchor: now)
+            )
+        }
+
+        return LiveSegment(
+            sessionId: recorder.session,
+            id: currentSegment.id,
+            elapsed: .ticking(seedDurMs: currentSegment.durMs, anchor: now)
+        )
+    }
+
+    private static func frozenLiveSegment(
+        from recorder: RecorderSnapshot,
+        previousLive: LiveSegment?,
+        now: ContinuousClock.Instant
+    ) -> LiveSegment? {
+        guard let currentSegment = recorder.currentSegment else { return nil }
+
+        let durMs: UInt64
+        if let previousLive,
+           previousLive.sessionId == recorder.session,
+           previousLive.id == currentSegment.id {
+            durMs = previousLive.elapsedDurMs(at: now)
+        } else {
+            durMs = currentSegment.durMs ?? 0
+        }
+
+        return LiveSegment(
+            sessionId: recorder.session,
+            id: currentSegment.id,
+            elapsed: .frozen(durMs: durMs)
+        )
     }
 
     var liveSegment: LiveSegment? {
@@ -121,7 +187,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var dataSource: UITableViewDiffableDataSource<HomeSection, HomeRowID>!
 
     private var recordingState: RecordingFeature.State = .unknown
-    private var recorder: RecorderSnapshot?
+    private var recorderTruth: RecorderTruth = .unknown
     private var finishedClips: [Clip] = []
     private var clipsStatus: ClipsFeature.State.Status = .idle
     private var clipsHasLoadedOnce = false
@@ -179,8 +245,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         statusPillsObservation = store.observe(select: { HomeStatusPills.from($0.link.world) }) { [weak self] pills in
             self?.renderStatusPills(pills)
         }
-        recorderObservation = store.observe(\.link.world?.recorder) { [weak self] recorder in
-            self?.recorder = recorder
+        recorderObservation = store.observe(select: { $0.link.recorderTruth }) { [weak self] recorderTruth in
+            self?.recorderTruth = recorderTruth
             self?.renderRows()
         }
         clipsObservation = store.observe(\.clips.clips) { [weak self] clips in
@@ -528,7 +594,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         let previousLive = rows.first?.liveSegment
         let newRows = HomeRow.compose(
             clips: finishedClips,
-            recorder: recorder,
+            recorder: recorderTruth,
             previousLive: previousLive,
             now: now
         )
@@ -630,8 +696,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func updateLiveTickTimer() {
-        let hasLiveRow = rows.contains { $0.liveSegment != nil }
-        if hasLiveRow, isVisible {
+        let hasTickingLiveRow = rows.contains { $0.liveSegment?.isTicking == true }
+        if hasTickingLiveRow, isVisible {
             guard liveTickTimer == nil else { return }
 
             liveTickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -651,6 +717,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     private func updateVisibleLiveElapsed() {
         guard let segment = rows.first?.liveSegment,
+              segment.isTicking,
               let indexPath = dataSource.indexPath(for: .live(session: segment.sessionId, id: segment.id)),
               let cell = clipsTableView.cellForRow(at: indexPath) as? LiveClipCell else {
             return
@@ -829,8 +896,24 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell
     }
 
+    func liveClipCellForTesting() -> LiveClipCell? {
+        guard let segment = rows.first?.liveSegment,
+              let indexPath = dataSource.indexPath(for: .live(session: segment.sessionId, id: segment.id)) else {
+            return nil
+        }
+        return clipsTableView.cellForRow(at: indexPath) as? LiveClipCell
+    }
+
     var recordButtonForTesting: RecordButton {
         recordButton
+    }
+
+    var isLiveTickTimerRunningForTesting: Bool {
+        liveTickTimer != nil
+    }
+
+    var isRecPillVisibleForTesting: Bool {
+        recPill.isHidden == false
     }
 
     var isTimeUnverifiedPillVisibleForTesting: Bool {
@@ -867,9 +950,13 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         refreshControl.beginRefreshing()
         refreshPulled()
     }
+
+    func tickLiveElapsedForTesting() {
+        updateVisibleLiveElapsed()
+    }
 }
 
-private final class LiveClipCell: UITableViewCell {
+final class LiveClipCell: UITableViewCell {
     private let titleLabel = UILabel()
     private let elapsedLabel = UILabel()
     private let recBadge = StatusPillView(caption: "REC", dotColor: .systemRed)
@@ -886,12 +973,44 @@ private final class LiveClipCell: UITableViewCell {
 
     func configure(segment: LiveSegment, now: ContinuousClock.Instant) {
         titleLabel.text = String(format: "seg_%05d.ts", segment.id)
+        switch segment.elapsed {
+        case .ticking:
+            recBadge.configure(
+                caption: "REC",
+                dotColor: .systemRed,
+                backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.14))
+            )
+        case .frozen:
+            recBadge.configure(
+                caption: "REC",
+                dotColor: .systemGray,
+                backgroundStyle: .tinted(UIColor.systemGray.withAlphaComponent(0.14))
+            )
+        }
         updateElapsed(segment: segment, now: now)
-        accessibilityLabel = "\(titleLabel.text ?? ""), recording, \(elapsedLabel.text ?? "")"
+        switch segment.elapsed {
+        case .ticking:
+            accessibilityLabel = "\(titleLabel.text ?? ""), recording, \(elapsedLabel.text ?? "")"
+        case .frozen:
+            accessibilityLabel = "\(titleLabel.text ?? ""), last known recording, \(elapsedLabel.text ?? "")"
+        }
     }
 
     func updateElapsed(segment: LiveSegment, now: ContinuousClock.Instant) {
-        elapsedLabel.text = Formatters.countUpDuration(segment.elapsedDurMs(at: now))
+        switch segment.elapsed {
+        case .ticking:
+            elapsedLabel.text = Formatters.countUpDuration(segment.elapsedDurMs(at: now))
+        case .frozen(let durMs):
+            elapsedLabel.text = Formatters.approximateDuration(durMs)
+        }
+    }
+
+    var elapsedTextForTesting: String? {
+        elapsedLabel.text
+    }
+
+    var recBadgeForTesting: StatusPillView {
+        recBadge
     }
 
     private func configureViews() {

@@ -38,6 +38,10 @@ nonisolated enum Formatters {
         minutesSeconds(totalSeconds: durMs / 1_000)
     }
 
+    static func approximateDuration(_ durMs: UInt64) -> String {
+        "~" + minutesSeconds(totalSeconds: durMs / 1_000)
+    }
+
     static func clipExportFilename(_ clip: Clip, timeZone: TimeZone = .current) -> String {
         if let startMs = clip.startMs, clip.timeApproximate == false {
             let date = Date(timeIntervalSince1970: Double(startMs) / 1_000)

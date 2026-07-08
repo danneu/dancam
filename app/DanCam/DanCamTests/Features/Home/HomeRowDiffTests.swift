@@ -63,8 +63,8 @@ struct HomeRowDiffTests {
 
     @Test func stableLiveRowDoesNotReconfigureAndSegmentChangeIsInsertRemove() {
         let clock = ContinuousClock()
-        let live = LiveSegment(sessionId: 7, id: 4, seedDurMs: 1_000, anchor: clock.now)
-        let nextLive = LiveSegment(sessionId: 7, id: 5, seedDurMs: 1_000, anchor: clock.now)
+        let live = LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: 1_000, anchor: clock.now))
+        let nextLive = LiveSegment(sessionId: 7, id: 5, elapsed: .ticking(seedDurMs: 1_000, anchor: clock.now))
 
         #expect(HomeRowDiff.reconfiguredIDs(old: [.live(live)], new: [.live(live)]) == [])
         #expect(HomeRowDiff.reconfiguredIDs(old: [.live(live)], new: [.live(nextLive)]) == [])
@@ -73,7 +73,7 @@ struct HomeRowDiffTests {
     @Test func liveAndFinishedRowsWithSameNumericIDHaveDistinctIdentifiers() {
         let clock = ContinuousClock()
         let rows: [HomeRow] = [
-            .live(LiveSegment(sessionId: 7, id: 4, seedDurMs: nil, anchor: clock.now)),
+            .live(LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: nil, anchor: clock.now))),
             .finished(CameraSamples.clip(id: 4)),
         ]
         let ids = rows.map(\.id)

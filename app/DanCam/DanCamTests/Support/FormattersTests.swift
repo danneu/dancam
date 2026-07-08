@@ -147,6 +147,20 @@ struct FormattersTests {
         }
     }
 
+    @Test func approximateDurationPrefixesFlooredMinutesAndSeconds() {
+        let cases: [(durMs: UInt64, text: String)] = [
+            (0, "~00:00"),
+            (999, "~00:00"),
+            (1_000, "~00:01"),
+            (94_000, "~01:34"),
+            (600_000, "~10:00"),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.approximateDuration(testCase.durMs) == testCase.text)
+        }
+    }
+
     private func clip(
         id: Int,
         startMs: UInt64?,

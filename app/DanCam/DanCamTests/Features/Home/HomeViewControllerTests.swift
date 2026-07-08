@@ -330,6 +330,67 @@ struct HomeViewControllerTests {
         #expect(controller.recordButtonForTesting.configuration?.image != nil)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func liveRecordingRowFreezesOfflineAndThawsOnReconnectSnapshot() async throws {
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 107_000)
+        )
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            world: world,
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.liveClipCellForTesting() != nil
+        }
+
+        let liveCell = try #require(controller.liveClipCellForTesting())
+        let initialElapsed = try #require(liveCell.elapsedTextForTesting)
+        #expect(colorMatches(liveCell.recBadgeForTesting.dotColorForTesting, .systemRed))
+        #expect(initialElapsed.hasPrefix("~") == false)
+        #expect(controller.isLiveTickTimerRunningForTesting)
+        #expect(controller.isRecPillVisibleForTesting)
+        #expect(controller.recordButtonForTesting.configuration?.title == "Stop")
+        #expect(controller.recordButtonForTesting.isEnabled)
+
+        store.send(.heartbeatTimedOut)
+
+        try await waitUntil {
+            self.colorMatches(liveCell.recBadgeForTesting.dotColorForTesting, .systemGray) &&
+                liveCell.elapsedTextForTesting?.hasPrefix("~") == true
+        }
+
+        let frozenCell = try #require(controller.liveClipCellForTesting())
+        let frozenElapsed = try #require(liveCell.elapsedTextForTesting)
+        #expect(frozenCell === liveCell)
+        #expect(liveCell.accessibilityLabel?.hasPrefix("seg_00024.ts, last known recording, ~") == true)
+        #expect(controller.isLiveTickTimerRunningForTesting == false)
+        controller.tickLiveElapsedForTesting()
+        #expect(liveCell.elapsedTextForTesting == frozenElapsed)
+        #expect(controller.isRecPillVisibleForTesting == false)
+        #expect(controller.recordButtonForTesting.configuration?.title == "Record")
+        #expect(controller.recordButtonForTesting.isEnabled == false)
+
+        store.send(.event(.snapshot(world)))
+
+        try await waitUntil {
+            self.colorMatches(liveCell.recBadgeForTesting.dotColorForTesting, .systemRed) &&
+                liveCell.elapsedTextForTesting?.hasPrefix("~") == false
+        }
+
+        let thawedCell = try #require(controller.liveClipCellForTesting())
+        #expect(thawedCell === liveCell)
+        #expect(controller.isLiveTickTimerRunningForTesting)
+        #expect(controller.isRecPillVisibleForTesting)
+        #expect(controller.recordButtonForTesting.configuration?.title == "Stop")
+        #expect(controller.recordButtonForTesting.isEnabled)
+    }
+
     @Test func recordButtonLivesBelowPreviewNotInToolbar() throws {
         let controller = makeController(clips: [], loader: .noop)
         controller.loadViewIfNeeded()
@@ -461,6 +522,7 @@ struct HomeViewControllerTests {
         clips: [Clip],
         loader: ThumbnailLoader,
         world: World? = nil,
+        recording: RecordingFeature.State = .unknown,
         clipsClient: ClipsClient = .noop,
         preview: PreviewClient = .noop
     ) -> HomeViewController {
@@ -468,6 +530,7 @@ struct HomeViewControllerTests {
             clips: clips,
             loader: loader,
             world: world,
+            recording: recording,
             clipsClient: clipsClient,
             preview: preview
         ).0
@@ -477,11 +540,13 @@ struct HomeViewControllerTests {
         clips: [Clip],
         loader: ThumbnailLoader,
         world: World? = nil,
+        recording: RecordingFeature.State = .unknown,
         clipsClient: ClipsClient = .noop,
         preview: PreviewClient = .noop
     ) -> (HomeViewController, AppStore) {
         var state = AppFeature.State()
         state.clips.clips = clips
+        state.recording = recording
         if let world {
             state.link = .online(world)
         }
@@ -490,6 +555,7 @@ struct HomeViewControllerTests {
             clips: clipsClient,
             thumbnailLoader: loader,
             preview: preview,
+            sleep: { _ in try? await Task.sleep(for: .seconds(3600)) },
             heartbeatTimeout: { throw CancellationError() }
         )
         let store = AppStore(initialState: state, dependencies: dependencies, reduce: AppFeature.reduce)
@@ -525,6 +591,25 @@ struct HomeViewControllerTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         Issue.record("Timed out waiting for condition.")
+    }
+
+    private func colorMatches(_ color: UIColor?, _ expected: UIColor) -> Bool {
+        colorComponents(color) == colorComponents(expected)
+    }
+
+    private func colorComponents(_ color: UIColor?) -> [Int]? {
+        guard let color else { return nil }
+
+        let resolved = color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+
+        return [red, green, blue, alpha].map { Int(($0 * 1_000).rounded()) }
     }
 }
 

@@ -335,4 +335,4 @@ below under Consequences. Validate with `just adr-check`.
 ## Commit progress
 
 - [x] 1. Add heartbeat-fresh recorder truth and offline folds
-- [ ] 2. Freeze and thaw the Home live recording row
+- [x] 2. Freeze and thaw the Home live recording row
