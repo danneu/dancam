@@ -83,6 +83,11 @@ final class StatusPillView: UIView {
         addSubview(effectView)
         addSubview(stackView)
 
+        let stackTrailingConstraint = stackView.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor)
+        stackTrailingConstraint.priority = UILayoutPriority(999)
+        let stackBottomConstraint = stackView.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor)
+        stackBottomConstraint.priority = UILayoutPriority(999)
+
         NSLayoutConstraint.activate([
             effectView.leadingAnchor.constraint(equalTo: leadingAnchor),
             effectView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -93,9 +98,9 @@ final class StatusPillView: UIView {
             dotView.heightAnchor.constraint(equalToConstant: 7),
 
             stackView.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
+            stackTrailingConstraint,
             stackView.topAnchor.constraint(equalTo: layoutMarginsGuide.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor),
+            stackBottomConstraint,
         ])
     }
 

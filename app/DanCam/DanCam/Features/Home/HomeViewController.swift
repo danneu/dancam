@@ -215,7 +215,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        sizeHeaderToFit()
+        installOrSizeHeaderIfPossible()
         updateClipsBottomInset()
     }
 
@@ -255,14 +255,19 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         headerStack.addArrangedSubview(clipsBodyPlaceholderView)
 
         headerContainer.addSubview(headerStack)
-        clipsTableView.tableHeaderView = headerContainer
 
         view.addSubview(clipsTableView)
         view.addSubview(clipsFailureBanner)
 
+        let recPillTrailingConstraint = recPill.trailingAnchor.constraint(
+            equalTo: previewViewController.view.trailingAnchor,
+            constant: -10
+        )
+        recPillTrailingConstraint.priority = UILayoutPriority(999)
+
         NSLayoutConstraint.activate([
             recPill.topAnchor.constraint(equalTo: previewViewController.view.topAnchor, constant: 10),
-            recPill.trailingAnchor.constraint(equalTo: previewViewController.view.trailingAnchor, constant: -10),
+            recPillTrailingConstraint,
 
             recordButton.topAnchor.constraint(equalTo: recordButtonRow.topAnchor),
             recordButton.bottomAnchor.constraint(equalTo: recordButtonRow.bottomAnchor),
@@ -301,20 +306,23 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         clipsFailureBanner.translatesAutoresizingMaskIntoConstraints = false
     }
 
-    private func sizeHeaderToFit() {
-        guard let header = clipsTableView.tableHeaderView else { return }
-
+    private func installOrSizeHeaderIfPossible() {
         let fittingWidth = clipsTableView.bounds.width
-        guard fittingWidth > 0 else { return }
+        guard fittingWidth > 0, clipsTableView.window != nil else {
+            needsHeaderRefit = true
+            return
+        }
 
-        if let lastFittedHeaderWidth,
+        let isHeaderInstalled = clipsTableView.tableHeaderView === headerContainer
+        if isHeaderInstalled,
+           let lastFittedHeaderWidth,
            abs(lastFittedHeaderWidth - fittingWidth) <= 0.5,
            needsHeaderRefit == false {
             return
         }
 
-        header.frame.size.width = fittingWidth
-        let fittingSize = header.systemLayoutSizeFitting(
+        headerContainer.frame.size.width = fittingWidth
+        let fittingSize = headerContainer.systemLayoutSizeFitting(
             CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
@@ -322,12 +330,15 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         lastFittedHeaderWidth = fittingWidth
         needsHeaderRefit = false
 
-        guard abs(header.frame.height - fittingSize.height) > 0.5 else { return }
+        let shouldInstallOrUpdate = isHeaderInstalled == false ||
+            abs(headerContainer.frame.height - fittingSize.height) > 0.5
+        guard shouldInstallOrUpdate else { return }
 
-        var frame = header.frame
+        var frame = headerContainer.frame
+        frame.size.width = fittingWidth
         frame.size.height = fittingSize.height
-        header.frame = frame
-        clipsTableView.tableHeaderView = header
+        headerContainer.frame = frame
+        clipsTableView.tableHeaderView = headerContainer
     }
 
     private func updateClipsBottomInset() {
@@ -531,10 +542,14 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         snapshot.appendSections([.main])
         snapshot.appendItems(newRows.map(\.id), toSection: .main)
         snapshot.reconfigureItems(reconfigure)
-        dataSource.apply(snapshot, animatingDifferences: true)
+        dataSource.apply(snapshot, animatingDifferences: canAnimateTableUpdates)
 
         updateClipsPresentation()
         updateLiveTickTimer()
+    }
+
+    private var canAnimateTableUpdates: Bool {
+        isViewLoaded && view.window != nil && clipsTableView.window != nil
     }
 
     private func handleClipsStatus(_ status: ClipsFeature.State.Status) {
@@ -842,6 +857,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     var isShowingLoadingStateForTesting: Bool {
         clipsBodyPlaceholderView.isHidden == false && clipsLoadingIndicator.isAnimating
+    }
+
+    var isTableHeaderInstalledForTesting: Bool {
+        clipsTableView.tableHeaderView === headerContainer
     }
 
     func pullToRefreshForTesting() {

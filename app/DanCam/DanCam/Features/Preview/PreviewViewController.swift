@@ -98,6 +98,22 @@ final class PreviewViewController: UIViewController {
         placeholderView.addSubview(placeholderStack)
         view.addSubview(statusPill)
 
+        let placeholderLeadingConstraint = placeholderStack.leadingAnchor.constraint(
+            greaterThanOrEqualTo: placeholderView.leadingAnchor,
+            constant: 16
+        )
+        placeholderLeadingConstraint.priority = UILayoutPriority(999)
+        let placeholderTrailingConstraint = placeholderStack.trailingAnchor.constraint(
+            lessThanOrEqualTo: placeholderView.trailingAnchor,
+            constant: -16
+        )
+        placeholderTrailingConstraint.priority = UILayoutPriority(999)
+        let statusPillTrailingConstraint = statusPill.trailingAnchor.constraint(
+            lessThanOrEqualTo: view.trailingAnchor,
+            constant: -10
+        )
+        statusPillTrailingConstraint.priority = UILayoutPriority(999)
+
         NSLayoutConstraint.activate([
             imageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -114,11 +130,11 @@ final class PreviewViewController: UIViewController {
 
             placeholderStack.centerXAnchor.constraint(equalTo: placeholderView.centerXAnchor),
             placeholderStack.centerYAnchor.constraint(equalTo: placeholderView.centerYAnchor),
-            placeholderStack.leadingAnchor.constraint(greaterThanOrEqualTo: placeholderView.leadingAnchor, constant: 16),
-            placeholderStack.trailingAnchor.constraint(lessThanOrEqualTo: placeholderView.trailingAnchor, constant: -16),
+            placeholderLeadingConstraint,
+            placeholderTrailingConstraint,
 
             statusPill.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            statusPill.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -10),
+            statusPillTrailingConstraint,
             statusPill.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
         ])
     }

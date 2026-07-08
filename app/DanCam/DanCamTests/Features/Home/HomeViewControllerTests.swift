@@ -332,9 +332,14 @@ struct HomeViewControllerTests {
 
     @Test func recordButtonLivesBelowPreviewNotInToolbar() throws {
         let controller = makeController(clips: [], loader: .noop)
+        controller.loadViewIfNeeded()
+
+        #expect(controller.isTableHeaderInstalledForTesting == false)
+
         let (window, navigationController) = try embedInNavigationController(controller)
         defer { window.isHidden = true }
 
+        #expect(controller.isTableHeaderInstalledForTesting)
         #expect(controller.recordButtonForTesting.isDescendant(of: controller.view))
         #expect(navigationController.isToolbarHidden == true)
     }
