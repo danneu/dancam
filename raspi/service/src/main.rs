@@ -35,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     config.rec_dir().to_path_buf(),
                     required_rec_mountpoint.as_deref(),
                 ));
+                scrub_unrecoverable_leftovers(storage.as_ref());
                 let (backend, supervisor) = CameraProcess::spawn(config, storage.clone());
                 (
                     AppState::new(boot_id, backend).with_storage(storage),
@@ -48,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     rec_dir,
                     required_rec_mountpoint.as_deref(),
                 ));
+                scrub_unrecoverable_leftovers(storage.as_ref());
                 let roll_interval = mock_segment_interval();
                 (
                     AppState::new(
@@ -83,6 +85,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn scrub_unrecoverable_leftovers(storage: &StorageCoordinator) {
+    match storage.scrub_unrecoverable_segments() {
+        Ok(report) if !report.deleted_ids.is_empty() => {
+            tracing::info!(
+                deleted = ?report.deleted_ids,
+                repaired = report.repaired_paths.len(),
+                "scrubbed unrecoverable zero-byte segments left by power loss"
+            );
+        }
+        Ok(report) if !report.repaired_paths.is_empty() => {
+            tracing::info!(
+                repaired = report.repaired_paths.len(),
+                "removed zero-byte duplicate paths; preserved recoverable footage"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::error!(
+                %error,
+                "boot scrub of unrecoverable segments failed; continuing startup"
+            );
+        }
+    }
 }
 
 fn storage_coordinator(rec_dir: PathBuf, required_mountpoint: Option<&Path>) -> StorageCoordinator {

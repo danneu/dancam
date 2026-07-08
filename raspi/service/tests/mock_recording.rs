@@ -15,7 +15,7 @@ use tower::ServiceExt;
 
 use dancam::{
     backend::{Backend, BackendError, MockBackend},
-    recorder::parse_segment_filename,
+    recorder::{parse_segment_filename, segment_filename, stamped_segment_filename, SegmentFacts},
     storage::StorageCoordinator,
     AppState,
 };
@@ -186,6 +186,95 @@ async fn writer_mock_start_fails_closed_when_required_mountpoint_is_plain_dir() 
     assert!(!rec_dir.exists());
 }
 
+#[tokio::test]
+async fn writer_mock_scrubs_zero_byte_leftover_and_records_above_it() {
+    let rec_dir = TempRecDir::new();
+    fs::write(rec_dir.path.join(segment_filename(23)), b"previous").unwrap();
+    fs::write(rec_dir.path.join(segment_filename(24)), b"").unwrap();
+    let storage = storage_for(&rec_dir.path);
+
+    let report = storage.scrub_unrecoverable_segments().unwrap();
+
+    assert_eq!(report.deleted_ids, [24]);
+    assert!(!rec_dir.path.join(segment_filename(24)).exists());
+    assert_eq!(read_high_water_seq(&rec_dir.path), 24);
+
+    let app = dancam::app(
+        AppState::new(
+            BOOT_ID.to_string(),
+            MockBackend::recording_to(storage.clone(), Duration::from_secs(30)),
+        )
+        .with_storage(storage),
+    );
+    let clips_response = app.clone().oneshot(get_request("/v1/clips")).await.unwrap();
+    assert_eq!(clips_response.status(), StatusCode::OK);
+    let clips_json = response_json(clips_response).await;
+    assert_eq!(clip_ids(&clips_json), [23]);
+
+    let start = app
+        .clone()
+        .oneshot(recording_request(
+            "/v1/recording/start",
+            "start-after-scrub",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+
+    let first_segment = poll_status_for_segment(app.clone(), None, Duration::from_secs(2)).await;
+    assert_eq!(first_segment, 25);
+    assert!(!rec_dir.path.join(segment_filename(24)).exists());
+
+    let stop = app
+        .oneshot(recording_request("/v1/recording/stop", "stop-after-scrub"))
+        .await
+        .unwrap();
+    assert_eq!(stop.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn writer_mock_preserves_nonzero_footage_in_mixed_duplicate_group() {
+    let rec_dir = TempRecDir::new();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/clips/seg_00000.ts");
+    let fixture_bytes = fs::read(fixture).unwrap();
+    fs::write(rec_dir.path.join(segment_filename(24)), &fixture_bytes).unwrap();
+    let stamped = rec_dir.path.join(stamped_name(24));
+    fs::write(&stamped, b"").unwrap();
+    let storage = storage_for(&rec_dir.path);
+
+    let report = storage.scrub_unrecoverable_segments().unwrap();
+
+    assert!(report.deleted_ids.is_empty());
+    assert_eq!(
+        report.repaired_paths.as_slice(),
+        std::slice::from_ref(&stamped)
+    );
+    assert!(!stamped.exists());
+
+    let app = dancam::app(
+        AppState::new(
+            BOOT_ID.to_string(),
+            MockBackend::recording_to(storage.clone(), Duration::from_secs(30)),
+        )
+        .with_storage(storage),
+    );
+    let clips_response = app.clone().oneshot(get_request("/v1/clips")).await.unwrap();
+    assert_eq!(clips_response.status(), StatusCode::OK);
+    let clips_json = response_json(clips_response).await;
+    let clip = clips_json["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|clip| clip["id"].as_u64() == Some(24))
+        .unwrap_or_else(|| panic!("clips were {clips_json}"));
+    assert_eq!(clip["bytes"], fixture_bytes.len() as u64);
+
+    let pull = app.oneshot(get_request("/v1/clips/24")).await.unwrap();
+    assert_eq!(pull.status(), StatusCode::OK);
+    let body = pull.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body.as_ref(), fixture_bytes.as_slice());
+}
+
 async fn poll_status_for_segment(
     app: axum::Router,
     previous: Option<u32>,
@@ -283,6 +372,15 @@ fn segment_ids(rec_dir: &Path) -> Vec<u32> {
     ids
 }
 
+fn clip_ids(json: &Value) -> Vec<u64> {
+    json["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|clip| clip["id"].as_u64().unwrap())
+        .collect()
+}
+
 fn storage_for(rec_dir: &Path) -> Arc<StorageCoordinator> {
     Arc::new(StorageCoordinator::new(rec_dir.to_path_buf()))
 }
@@ -310,6 +408,16 @@ fn assert_new_segments_are_stamped(rec_dir: &Path, expected_ids: &[u32]) {
             "segment {expected} was not stamped in {stamped:?}"
         );
     }
+}
+
+fn stamped_name(seq: u32) -> String {
+    stamped_segment_filename(
+        seq,
+        &SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            mono_ms: 123456789,
+        },
+    )
 }
 
 struct TempRecDir {

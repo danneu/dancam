@@ -55,6 +55,12 @@ pub(crate) struct SegmentCandidate {
     pub(crate) facts: Option<SegmentFacts>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ZeroByteRepair {
+    pub(crate) fully_empty_ids: Vec<SegmentId>,
+    pub(crate) stale_empty_paths: Vec<PathBuf>,
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct ClipsQuery {
     limit: Option<usize>,
@@ -392,6 +398,40 @@ pub(crate) fn resolve_segment(
 }
 
 fn segment_candidates(rec_dir: &Path) -> io::Result<Vec<SegmentCandidate>> {
+    Ok(dedupe_candidates(raw_segment_candidates(rec_dir)?))
+}
+
+pub(crate) fn zero_byte_repair(rec_dir: &Path) -> io::Result<ZeroByteRepair> {
+    let mut by_seq = BTreeMap::<SegmentId, Vec<SegmentCandidate>>::new();
+    for candidate in raw_segment_candidates(rec_dir)? {
+        by_seq.entry(candidate.seq).or_default().push(candidate);
+    }
+
+    let mut repair = ZeroByteRepair {
+        fully_empty_ids: Vec::new(),
+        stale_empty_paths: Vec::new(),
+    };
+
+    for (seq, mut candidates) in by_seq {
+        candidates.sort_by(|left, right| left.path.cmp(&right.path));
+        if candidates.iter().all(|candidate| candidate.bytes == 0) {
+            repair.fully_empty_ids.push(seq);
+            continue;
+        }
+
+        repair.stale_empty_paths.extend(
+            candidates
+                .into_iter()
+                .filter(|candidate| candidate.bytes == 0)
+                .map(|candidate| candidate.path),
+        );
+    }
+
+    repair.stale_empty_paths.sort();
+    Ok(repair)
+}
+
+fn raw_segment_candidates(rec_dir: &Path) -> io::Result<Vec<SegmentCandidate>> {
     let entries = match std::fs::read_dir(rec_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -420,7 +460,7 @@ fn segment_candidates(rec_dir: &Path) -> io::Result<Vec<SegmentCandidate>> {
         }
     }
 
-    Ok(dedupe_candidates(parsed))
+    Ok(parsed)
 }
 
 pub(crate) fn segment_paths_for_id(rec_dir: &Path, id: SegmentId) -> io::Result<Vec<PathBuf>> {
@@ -570,15 +610,18 @@ fn segment_delete_to_clip_error(error: SegmentDeleteError) -> ClipError {
 mod tests {
     use super::{
         http_etag, io_error_to_clip_error, max_clip_seq, read_finished_clips, resolve_limit,
-        resolve_range, resolve_segment, segment_paths_for_id, ClipError, RangeResolution,
-        DEFAULT_LIMIT, MAX_LIMIT,
+        resolve_range, resolve_segment, segment_paths_for_id, zero_byte_repair, ClipError,
+        RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
     };
     use crate::recorder::{stamped_segment_filename, SegmentFacts};
     use crate::time_sync::{OffsetRecord, TimeStore};
     use crate::ts_duration::DurationCache;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-    use std::{fs, io, path::Path};
+    use std::{
+        fs, io,
+        path::{Path, PathBuf},
+    };
 
     const BOOT_ABC: &str = "abc123de-f456-4000-8000-000000000001";
     const BOOT_DEF: &str = "def456ab-c123-4000-8000-000000000001";
@@ -818,6 +861,79 @@ mod tests {
     }
 
     #[test]
+    fn zero_byte_repair_marks_bare_only_zero_byte_segment_fully_empty() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"");
+
+        let repair = zero_byte_repair(&rec_dir.path).unwrap();
+
+        assert_eq!(repair.fully_empty_ids, [7]);
+        assert!(repair.stale_empty_paths.is_empty());
+    }
+
+    #[test]
+    fn zero_byte_repair_ignores_bare_only_nonzero_segment() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"video");
+
+        let repair = zero_byte_repair(&rec_dir.path).unwrap();
+
+        assert!(repair.fully_empty_ids.is_empty());
+        assert!(repair.stale_empty_paths.is_empty());
+    }
+
+    #[test]
+    fn zero_byte_repair_marks_all_zero_duplicates_fully_empty() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"");
+        write_file(&rec_dir.path, &stamped_name(7), b"");
+
+        let repair = zero_byte_repair(&rec_dir.path).unwrap();
+
+        assert_eq!(repair.fully_empty_ids, [7]);
+        assert!(repair.stale_empty_paths.is_empty());
+    }
+
+    #[test]
+    fn zero_byte_repair_preserves_nonzero_bare_twin_when_stamped_is_empty() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"video");
+        let stamped = stamped_name(7);
+        write_file(&rec_dir.path, &stamped, b"");
+
+        let repair = zero_byte_repair(&rec_dir.path).unwrap();
+
+        assert!(repair.fully_empty_ids.is_empty());
+        assert_eq!(path_names(&repair.stale_empty_paths), [stamped]);
+    }
+
+    #[test]
+    fn zero_byte_repair_preserves_nonzero_stamped_twin_when_bare_is_empty() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"");
+        write_file(&rec_dir.path, &stamped_name(7), b"video");
+
+        let repair = zero_byte_repair(&rec_dir.path).unwrap();
+
+        assert!(repair.fully_empty_ids.is_empty());
+        assert_eq!(
+            path_names(&repair.stale_empty_paths),
+            ["seg_00007.ts".to_string()]
+        );
+    }
+
+    #[test]
+    fn zero_byte_repair_returns_empty_for_missing_rec_dir() {
+        let rec_dir = temp_rec_dir();
+        let missing = rec_dir.path.join("missing");
+
+        let repair = zero_byte_repair(&missing).unwrap();
+
+        assert!(repair.fully_empty_ids.is_empty());
+        assert!(repair.stale_empty_paths.is_empty());
+    }
+
+    #[test]
     fn read_finished_clips_dedupes_same_seq_segments() {
         let rec_dir = temp_rec_dir();
         write_file(&rec_dir.path, "seg_00007.ts", b"bare");
@@ -1042,6 +1158,13 @@ mod tests {
 
     fn write_file(dir: &Path, name: &str, bytes: &[u8]) {
         fs::write(dir.join(name), bytes).unwrap();
+    }
+
+    fn path_names(paths: &[PathBuf]) -> Vec<String> {
+        paths
+            .iter()
+            .map(|path| path.file_name().unwrap().to_str().unwrap().to_string())
+            .collect()
     }
 
     fn stamped_name(seq: u32) -> String {
