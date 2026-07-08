@@ -9,6 +9,7 @@ struct HomeRowTests {
 
         #expect(HomeRow.compose(
             clips: [clip],
+            recording: .idle,
             recorder: .unknown,
             previousLive: nil,
             now: now
@@ -16,13 +17,15 @@ struct HomeRowTests {
 
         #expect(HomeRow.compose(
             clips: [clip],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: nil)),
             previousLive: nil,
             now: now
-        ) == [.finished(clip)])
+        ) == [.pending, .finished(clip)])
 
         #expect(HomeRow.compose(
             clips: [clip],
+            recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: nil)),
             previousLive: ticking(sessionId: 7, id: 7, seedDurMs: 1_000, anchor: now),
             now: now
@@ -30,6 +33,7 @@ struct HomeRowTests {
 
         let rows = HomeRow.compose(
             clips: [clip],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 1_000))),
             previousLive: nil,
             now: now
@@ -50,6 +54,7 @@ struct HomeRowTests {
 
         let rows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: nil))),
             previousLive: previous,
             now: anchor.advanced(by: .seconds(3))
@@ -69,6 +74,7 @@ struct HomeRowTests {
 
         let rows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 8, durMs: 400))),
             previousLive: previous,
             now: now
@@ -88,6 +94,7 @@ struct HomeRowTests {
 
         let rows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .live(recorder(session: 8, currentSegment: RecorderSegment(id: 7, durMs: 200))),
             previousLive: previous,
             now: now
@@ -107,6 +114,7 @@ struct HomeRowTests {
 
         let clampedRows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 12_000))),
             previousLive: previous,
             now: now
@@ -116,6 +124,7 @@ struct HomeRowTests {
 
         let advancedRows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 15_000))),
             previousLive: previous,
             now: now
@@ -132,6 +141,7 @@ struct HomeRowTests {
 
         let rows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: RecorderSegment(id: 7, durMs: 6_000))),
             previousLive: previous,
             now: now
@@ -149,6 +159,7 @@ struct HomeRowTests {
 
         let rows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: RecorderSegment(id: 7, durMs: 12_000))),
             previousLive: previous,
             now: now
@@ -165,6 +176,7 @@ struct HomeRowTests {
 
         let explicitRows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: RecorderSegment(id: 7, durMs: 12_000))),
             previousLive: nil,
             now: now
@@ -174,6 +186,7 @@ struct HomeRowTests {
 
         let missingRows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: RecorderSegment(id: 8, durMs: nil))),
             previousLive: nil,
             now: now
@@ -189,6 +202,7 @@ struct HomeRowTests {
 
         let clampedRows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 9_000))),
             previousLive: previous,
             now: now
@@ -199,6 +213,7 @@ struct HomeRowTests {
 
         let advancedRows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 12_000))),
             previousLive: previous,
             now: now
@@ -215,6 +230,7 @@ struct HomeRowTests {
 
         let rows = HomeRow.compose(
             clips: [],
+            recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: nil))),
             previousLive: previous,
             now: now
@@ -223,6 +239,152 @@ struct HomeRowTests {
         let live = try #require(rows.first?.liveSegment)
         #expect(live.elapsed == .ticking(seedDurMs: 10_000, anchor: now))
         #expect(live.isTicking)
+    }
+
+    @Test func composeShowsPendingRowWhileCommandStartsBeforeWorldReacts() {
+        let clock = ContinuousClock()
+        let clip = CameraSamples.clip(id: 4)
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .starting,
+            recorder: .live(recorder(phase: .idle, currentSegment: nil)),
+            previousLive: nil,
+            now: clock.now
+        ) == [.pending, .finished(clip)])
+    }
+
+    @Test func composeShowsPendingRowWhenStartSucceedsBeforeEventsFold() {
+        let clock = ContinuousClock()
+        let clip = CameraSamples.clip(id: 4)
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .recording,
+            recorder: .live(recorder(phase: .idle, currentSegment: nil)),
+            previousLive: nil,
+            now: clock.now
+        ) == [.pending, .finished(clip)])
+    }
+
+    @Test func composeShowsPendingRowForWorldStartGapWithoutLocalCommand() {
+        let clock = ContinuousClock()
+        let clip = CameraSamples.clip(id: 4)
+        let now = clock.now
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .idle,
+            recorder: .live(recorder(phase: .starting, currentSegment: nil)),
+            previousLive: nil,
+            now: now
+        ) == [.pending, .finished(clip)])
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .unknown,
+            recorder: .live(recorder(phase: .recording, currentSegment: nil)),
+            previousLive: nil,
+            now: now
+        ) == [.pending, .finished(clip)])
+    }
+
+    @Test func composeHidesPendingRowWhenOffline() throws {
+        let clock = ContinuousClock()
+        let clip = CameraSamples.clip(id: 4)
+        let now = clock.now
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .starting,
+            recorder: .lastKnown(recorder(phase: .recording, currentSegment: nil)),
+            previousLive: nil,
+            now: now
+        ) == [.finished(clip)])
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .starting,
+            recorder: .unknown,
+            previousLive: nil,
+            now: now
+        ) == [.finished(clip)])
+
+        let rows = HomeRow.compose(
+            clips: [clip],
+            recording: .starting,
+            recorder: .lastKnown(recorder(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 7, durMs: 1_000)
+            )),
+            previousLive: nil,
+            now: now
+        )
+
+        let live = try #require(rows.first?.liveSegment)
+        #expect(live.elapsed == .frozen(durMs: 1_000))
+        #expect(Array(rows.dropFirst()) == [.finished(clip)])
+    }
+
+    @Test func composeHidesPendingRowOnFailedStart() {
+        let clock = ContinuousClock()
+        let clip = CameraSamples.clip(id: 4)
+        let now = clock.now
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .failed("HTTP 503"),
+            recorder: .live(recorder(phase: .idle, currentSegment: nil)),
+            previousLive: nil,
+            now: now
+        ) == [.finished(clip)])
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .failed("Recorder failed"),
+            recorder: .live(recorder(phase: .error, currentSegment: nil)),
+            previousLive: nil,
+            now: now
+        ) == [.finished(clip)])
+    }
+
+    @Test func composeHidesPendingRowDuringStopFlow() {
+        let clock = ContinuousClock()
+        let clip = CameraSamples.clip(id: 4)
+        let now = clock.now
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .stopping,
+            recorder: .live(recorder(phase: .stopping, currentSegment: nil)),
+            previousLive: nil,
+            now: now
+        ) == [.finished(clip)])
+
+        #expect(HomeRow.compose(
+            clips: [clip],
+            recording: .idle,
+            recorder: .live(recorder(phase: .idle, currentSegment: nil)),
+            previousLive: nil,
+            now: now
+        ) == [.finished(clip)])
+    }
+
+    @Test func composeNeverShowsPendingAndLiveTogether() throws {
+        let clock = ContinuousClock()
+        let rows = HomeRow.compose(
+            clips: [CameraSamples.clip(id: 4)],
+            recording: .starting,
+            recorder: .live(recorder(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 7, durMs: 1_000)
+            )),
+            previousLive: nil,
+            now: clock.now
+        )
+
+        _ = try #require(rows.first?.liveSegment)
+        #expect(rows.contains(.pending) == false)
     }
 
     private func recorder(

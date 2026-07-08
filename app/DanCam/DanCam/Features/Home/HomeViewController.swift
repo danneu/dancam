@@ -39,11 +39,13 @@ nonisolated struct LiveSegment: Equatable, Sendable {
 }
 
 nonisolated enum HomeRow: Equatable, Sendable {
+    case pending
     case live(LiveSegment)
     case finished(Clip)
 
     static func compose(
         clips: [Clip],
+        recording: RecordingFeature.State,
         recorder: RecorderTruth,
         previousLive: LiveSegment?,
         now: ContinuousClock.Instant
@@ -61,11 +63,33 @@ nonisolated enum HomeRow: Equatable, Sendable {
         }
 
         guard let live else {
+            if shouldShowPendingRow(recording: recording, recorder: recorder) {
+                rows.insert(.pending, at: 0)
+            }
             return rows
         }
 
         rows.insert(.live(live), at: 0)
         return rows
+    }
+
+    static func shouldShowPendingRow(
+        recording: RecordingFeature.State,
+        recorder: RecorderTruth
+    ) -> Bool {
+        guard case .live(let snapshot) = recorder,
+              snapshot.currentSegment == nil else { return false }
+
+        let commandWantsRecording: Bool
+        switch recording {
+        case .starting, .recording:
+            commandWantsRecording = true
+        case .unknown, .idle, .stopping, .failed:
+            commandWantsRecording = false
+        }
+
+        let worldStartGap = snapshot.phase == .starting || snapshot.phase == .recording
+        return commandWantsRecording || worldStartGap
     }
 
     private static func tickingLiveSegment(
@@ -137,6 +161,8 @@ nonisolated enum HomeRow: Equatable, Sendable {
 
     var id: HomeRowID {
         switch self {
+        case .pending:
+            .pending
         case .live(let segment):
             .live(session: segment.sessionId, id: segment.id)
         case .finished(let clip):
@@ -241,6 +267,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         recordingObservation = store.observe(\.recording) { [weak self] state in
             self?.recordingState = state
             self?.renderRecording(state)
+            self?.renderRows()
         }
         statusPillsObservation = store.observe(select: { HomeStatusPills.from($0.link.world) }) { [weak self] pills in
             self?.renderStatusPills(pills)
@@ -501,6 +528,16 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             }
 
             switch row {
+            case .pending:
+                guard let cell = tableView.dequeueReusableCell(
+                    withIdentifier: "liveClip",
+                    for: indexPath
+                ) as? LiveClipCell else {
+                    return UITableViewCell(style: .default, reuseIdentifier: nil)
+                }
+                cell.configurePending()
+                return cell
+
             case .live(let segment):
                 guard let cell = tableView.dequeueReusableCell(
                     withIdentifier: "liveClip",
@@ -594,6 +631,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         let previousLive = rows.first?.liveSegment
         let newRows = HomeRow.compose(
             clips: finishedClips,
+            recording: recordingState,
             recorder: recorderTruth,
             previousLive: previousLive,
             now: now
@@ -747,7 +785,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         guard let row = row(at: indexPath) else { return }
 
         switch row {
-        case .live:
+        case .live, .pending:
             return
         case .finished(let clip):
             tableView.deselectRow(at: indexPath, animated: true)
@@ -904,6 +942,15 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         return clipsTableView.cellForRow(at: indexPath) as? LiveClipCell
     }
 
+    var isShowingPendingRowForTesting: Bool {
+        dataSource.indexPath(for: .pending) != nil
+    }
+
+    var pendingCellForTesting: LiveClipCell? {
+        guard let indexPath = dataSource.indexPath(for: .pending) else { return nil }
+        return clipsTableView.cellForRow(at: indexPath) as? LiveClipCell
+    }
+
     var recordButtonForTesting: RecordButton {
         recordButton
     }
@@ -994,6 +1041,17 @@ final class LiveClipCell: UITableViewCell {
         case .frozen:
             accessibilityLabel = "\(titleLabel.text ?? ""), last known recording, \(elapsedLabel.text ?? "")"
         }
+    }
+
+    func configurePending() {
+        titleLabel.text = "Starting..."
+        elapsedLabel.text = Formatters.countUpDuration(0)
+        recBadge.configure(
+            caption: "REC",
+            dotColor: .systemRed,
+            backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.14))
+        )
+        accessibilityLabel = "Starting recording"
     }
 
     func updateElapsed(segment: LiveSegment, now: ContinuousClock.Instant) {

@@ -383,4 +383,4 @@ before sending `.recordTapped`.
 ## Commit progress
 
 - [x] 1. snapshot reprojects recording state on online re-snapshot
-- [ ] 2. show optimistic pending row in Recent clips
+- [x] 2. show optimistic pending row in Recent clips

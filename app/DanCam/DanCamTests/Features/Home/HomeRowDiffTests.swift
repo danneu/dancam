@@ -82,4 +82,26 @@ struct HomeRowDiffTests {
         #expect(ids.contains(.live(session: 7, id: 4)))
         #expect(ids.contains(.finished(4)))
     }
+
+    @Test func pendingRowHasDistinctStableIdentity() {
+        let clock = ContinuousClock()
+        let live = LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: nil, anchor: clock.now))
+        let rows: [HomeRow] = [
+            .pending,
+            .live(live),
+            .finished(CameraSamples.clip(id: 4)),
+        ]
+        let ids = rows.map(\.id)
+
+        #expect(Set(ids).count == ids.count)
+        #expect(ids.contains(.pending))
+        #expect(HomeRowDiff.reconfiguredIDs(old: [.pending], new: [.pending]) == [])
+    }
+
+    @Test func pendingToLiveTransitionIsInsertRemoveNotReconfigure() {
+        let clock = ContinuousClock()
+        let live = LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: nil, anchor: clock.now))
+
+        #expect(HomeRowDiff.reconfiguredIDs(old: [.pending], new: [.live(live)]) == [])
+    }
 }

@@ -391,6 +391,181 @@ struct HomeViewControllerTests {
         #expect(controller.recordButtonForTesting.isEnabled)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func tappingRecordShowsPendingRowImmediatelyWithoutTickTimer() async throws {
+        let releaseStart = AsyncSignal()
+        let (controller, _) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            world: CameraSamples.world(phase: .idle, currentSegment: nil),
+            recording: .idle,
+            recordingClient: RecordingClient(
+                start: {
+                    await releaseStart.wait()
+                },
+                stop: {}
+            )
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        controller.recordButtonForTesting.sendActions(for: .touchUpInside)
+
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting
+        }
+        let pendingCell = try #require(controller.pendingCellForTesting)
+        #expect(pendingCell.accessibilityLabel == "Starting recording")
+        #expect(colorMatches(pendingCell.recBadgeForTesting.dotColorForTesting, .systemRed))
+        #expect(controller.isLiveTickTimerRunningForTesting == false)
+
+        await releaseStart.signal()
+        try await waitUntil {
+            controller.recordButtonForTesting.configuration?.title == "Stop"
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func segmentOpenedReplacesPendingWithLiveRow() async throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            world: CameraSamples.world(phase: .idle, currentSegment: nil),
+            recording: .idle
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        controller.recordButtonForTesting.sendActions(for: .touchUpInside)
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting
+        }
+
+        store.send(.event(.segmentOpened(session: 7, id: 43, atMs: 5_400)))
+
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting == false &&
+                controller.liveClipCellForTesting() != nil
+        }
+        #expect(controller.pendingCellForTesting == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func failedStartRemovesPendingRowSilently() async throws {
+        let releaseStart = AsyncSignal()
+        let (controller, _) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            world: CameraSamples.world(phase: .idle, currentSegment: nil),
+            recording: .idle,
+            recordingClient: RecordingClient(
+                start: {
+                    await releaseStart.wait()
+                    throw RecordingError.http(503)
+                },
+                stop: {}
+            )
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        controller.recordButtonForTesting.sendActions(for: .touchUpInside)
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting
+        }
+
+        await releaseStart.signal()
+
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting == false
+        }
+        #expect(controller.liveClipCellForTesting() == nil)
+        #expect(controller.clipsFailureMessageForTesting == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func recorderFailedEventClearsPendingViaProjection() async throws {
+        let releaseStart = AsyncSignal()
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            world: CameraSamples.world(phase: .idle, currentSegment: nil),
+            recording: .idle,
+            recordingClient: RecordingClient(
+                start: {
+                    await releaseStart.wait()
+                    throw CancellationError()
+                },
+                stop: {}
+            )
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        controller.recordButtonForTesting.sendActions(for: .touchUpInside)
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting
+        }
+
+        store.send(.event(.recorderFailed(session: 7, detail: "sensor lost", atMs: 1)))
+
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting == false
+        }
+        #expect(controller.liveClipCellForTesting() == nil)
+        #expect(controller.recordButtonForTesting.isEnabled)
+
+        await releaseStart.signal()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func heartbeatTimeoutHidesPendingRow() async throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            world: CameraSamples.world(phase: .idle, currentSegment: nil),
+            recording: .idle,
+            recordingClient: RecordingClient(
+                start: {
+                    try await Task.sleep(for: .seconds(60))
+                },
+                stop: {}
+            )
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        controller.recordButtonForTesting.sendActions(for: .touchUpInside)
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting
+        }
+
+        store.send(.heartbeatTimedOut)
+
+        try await waitUntil {
+            controller.isShowingPendingRowForTesting == false
+        }
+        store.send(.streamStopped)
+    }
+
+    @Test func configurePendingResetsGrayFrozenBadgeToRed() {
+        let clock = ContinuousClock()
+        let cell = LiveClipCell(style: .default, reuseIdentifier: "liveClip")
+        let segment = LiveSegment(
+            sessionId: 7,
+            id: 43,
+            elapsed: .frozen(durMs: 1_000)
+        )
+
+        cell.configure(segment: segment, now: clock.now)
+        #expect(colorMatches(cell.recBadgeForTesting.dotColorForTesting, .systemGray))
+
+        cell.configurePending()
+
+        #expect(colorMatches(cell.recBadgeForTesting.dotColorForTesting, .systemRed))
+        #expect(cell.elapsedTextForTesting == "00:00")
+    }
+
     @Test func recordButtonLivesBelowPreviewNotInToolbar() throws {
         let controller = makeController(clips: [], loader: .noop)
         controller.loadViewIfNeeded()
@@ -524,7 +699,8 @@ struct HomeViewControllerTests {
         world: World? = nil,
         recording: RecordingFeature.State = .unknown,
         clipsClient: ClipsClient = .noop,
-        preview: PreviewClient = .noop
+        preview: PreviewClient = .noop,
+        recordingClient: RecordingClient = .noop
     ) -> HomeViewController {
         makeControllerAndStore(
             clips: clips,
@@ -532,7 +708,8 @@ struct HomeViewControllerTests {
             world: world,
             recording: recording,
             clipsClient: clipsClient,
-            preview: preview
+            preview: preview,
+            recordingClient: recordingClient
         ).0
     }
 
@@ -542,7 +719,8 @@ struct HomeViewControllerTests {
         world: World? = nil,
         recording: RecordingFeature.State = .unknown,
         clipsClient: ClipsClient = .noop,
-        preview: PreviewClient = .noop
+        preview: PreviewClient = .noop,
+        recordingClient: RecordingClient = .noop
     ) -> (HomeViewController, AppStore) {
         var state = AppFeature.State()
         state.clips.clips = clips
@@ -555,6 +733,7 @@ struct HomeViewControllerTests {
             clips: clipsClient,
             thumbnailLoader: loader,
             preview: preview,
+            recording: recordingClient,
             sleep: { _ in try? await Task.sleep(for: .seconds(3600)) },
             heartbeatTimeout: { throw CancellationError() }
         )
