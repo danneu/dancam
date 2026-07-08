@@ -324,6 +324,10 @@ any Pi/contract changes -- recorded in the roadmap `sift` entry, not built here.
 ## Commit progress
 
 - [x] 1. feat(app): add day-header and time-of-day formatters
-- [ ] 2. feat(app): compose home rows into day sections
+- [x] 2. feat(app): compose home rows into day sections
 - [ ] 3. feat(app): render home clips in sticky day sections
 - [ ] 4. docs: add sift clip-finding swoop to roadmap
+
+## Implementation notes
+
+- Commit 2 keeps the existing flat Home table wired through one section until commit 3 replaces rendering; that temporary section uses `.dateUnknown(occurrence: 0)` because `.main` was removed with the new two-case `HomeSection`.

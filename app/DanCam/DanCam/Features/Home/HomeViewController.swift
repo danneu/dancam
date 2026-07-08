@@ -643,8 +643,9 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         prunePrefetches(surviving: Set(newRows.compactMap(\.finishedIdentity)))
 
         var snapshot = NSDiffableDataSourceSnapshot<HomeSection, HomeRowID>()
-        snapshot.appendSections([.main])
-        snapshot.appendItems(newRows.map(\.id), toSection: .main)
+        let flatSection = HomeSection.dateUnknown(occurrence: 0)
+        snapshot.appendSections([flatSection])
+        snapshot.appendItems(newRows.map(\.id), toSection: flatSection)
         snapshot.reconfigureItems(reconfigure)
         dataSource.apply(snapshot, animatingDifferences: canAnimateTableUpdates)
 

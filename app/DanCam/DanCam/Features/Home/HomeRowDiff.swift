@@ -1,9 +1,5 @@
 import Foundation
 
-nonisolated enum HomeSection: Hashable, Sendable {
-    case main
-}
-
 nonisolated enum HomeRowID: Hashable, Sendable {
     case pending
     case live(session: UInt64, id: Int)
