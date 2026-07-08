@@ -113,10 +113,59 @@ struct ClipThumbnailCellTests {
         #expect(probe.callCount() == 2)  // no third load
     }
 
+    @Test func configureDropsByteSizeFromSubtitle() throws {
+        let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
+        let clip = clip(
+            id: 7,
+            startMs: 1_767_225_600_000,
+            durMs: 30_000,
+            bytes: 1_234_567,
+            etag: "7-100",
+            timeApproximate: false
+        )
+
+        cell.configure(clip: clip, loader: .noop)
+
+        let subtitle = try #require(cell.subtitleTextForTesting)
+        #expect(subtitle.contains("00:30"))
+        #expect(subtitle.contains(Formatters.byteSize(clip.bytes)) == false)
+    }
+
+    @Test func configureOmitsEmptySubtitleFromAccessibilityLabel() {
+        let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
+
+        cell.configure(
+            clip: clip(id: 8, startMs: nil, durMs: nil, bytes: 1, etag: "8-100", timeApproximate: false),
+            loader: .noop
+        )
+
+        #expect(cell.subtitleTextForTesting?.isEmpty == true)
+        #expect(cell.accessibilityLabel == "seg_00008.ts")
+    }
+
     // MARK: - Helpers
 
     private func clip(id: Int, etag: String) -> Clip {
-        Clip(id: id, startMs: nil, durMs: 30_000, bytes: 1, locked: false, etag: etag, timeApproximate: false)
+        clip(id: id, startMs: nil, durMs: 30_000, bytes: 1, etag: etag, timeApproximate: false)
+    }
+
+    private func clip(
+        id: Int,
+        startMs: UInt64?,
+        durMs: UInt64?,
+        bytes: UInt64,
+        etag: String,
+        timeApproximate: Bool
+    ) -> Clip {
+        Clip(
+            id: id,
+            startMs: startMs,
+            durMs: durMs,
+            bytes: bytes,
+            locked: false,
+            etag: etag,
+            timeApproximate: timeApproximate
+        )
     }
 
     private func settle() async throws {

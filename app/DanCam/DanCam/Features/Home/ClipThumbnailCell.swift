@@ -49,7 +49,7 @@ nonisolated struct ThumbnailDisplayState {
 }
 
 /// A finished-clip row: a leading first-frame thumbnail plus the segment filename and
-/// duration/size metadata. Modeled on `LiveClipCell` (programmatic, unavailable
+/// time/duration metadata. Modeled on `LiveClipCell` (programmatic, unavailable
 /// `init?(coder:)`). Thumbnail resolution is view-driven through an injected
 /// `ThumbnailLoader`; the cell owns exactly one in-flight `loadTask` and a monotonic load
 /// token so reconfigure churn (a full `reloadData()` or an in-place visible-row refresh)
@@ -82,8 +82,12 @@ final class ClipThumbnailCell: UITableViewCell {
 
     func configure(clip: Clip, loader: ThumbnailLoader) {
         titleLabel.text = String(format: "seg_%05d.ts", clip.id)
-        subtitleLabel.text = Formatters.clipDetailLine(clip)
-        accessibilityLabel = "\(titleLabel.text ?? ""), \(subtitleLabel.text ?? "")"
+        let subtitle = Formatters.clipListLine(clip)
+        subtitleLabel.text = subtitle
+        subtitleLabel.isHidden = subtitle.isEmpty
+        accessibilityLabel = [titleLabel.text, subtitle.isEmpty ? nil : subtitle]
+            .compactMap { $0 }
+            .joined(separator: ", ")
 
         if displayState.show(ClipThumbnailIdentity(clip)) {
             // (b) different identity: a reused cell or a same-id/new-etag update. Cancel the
@@ -178,7 +182,8 @@ final class ClipThumbnailCell: UITableViewCell {
         subtitleLabel.font = .preferredFont(forTextStyle: .subheadline)
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = .secondaryLabel
-        subtitleLabel.numberOfLines = 1
+        subtitleLabel.numberOfLines = 0
+        subtitleLabel.lineBreakMode = .byWordWrapping
 
         let labels = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
         labels.axis = .vertical

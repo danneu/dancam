@@ -80,6 +80,13 @@ nonisolated enum Formatters {
         return "\(durationText) · \(byteText)"
     }
 
+    /// Home list-row subtitle: recording time plus duration, without filesize.
+    static func clipListLine(_ clip: Clip, timeZone: TimeZone = .current) -> String {
+        let created = clipCreatedTime(clip, timeZone: timeZone)
+        let duration = clipDuration(clip.durMs)
+        return [created, duration].compactMap { $0 }.joined(separator: " · ")
+    }
+
     static func clipDetailLine(_ clip: Clip, timeZone: TimeZone = .current) -> String {
         let metadata = clipMetadata(durMs: clip.durMs, bytes: clip.bytes)
         guard let created = clipCreatedTime(clip, timeZone: timeZone) else {
