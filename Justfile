@@ -142,8 +142,10 @@ raspi-mock:
     cd raspi/service && DANCAM_REC_DIR=.mock-rec DANCAM_MOCK_SEGMENT_SECS=5 cargo run
 
 # Run the mock Pi service with a sample finished clip available from /v1/clips.
+# Seeds a throwaway scratch dir with the committed seg_00000.ts fixture so the
+# recorder serves it as a finished clip without polluting the tracked assets dir.
 raspi-mock-clips:
-    cd raspi/service && DANCAM_REC_DIR=assets/clips cargo run
+    cd raspi/service && mkdir -p .mock-rec-clips && cp assets/clips/seg_00000.ts .mock-rec-clips/ && DANCAM_REC_DIR=.mock-rec-clips cargo run
 
 # Run the mock Pi service on [::]:9000 for LAN device testing.
 raspi-mock-lan:
