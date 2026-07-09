@@ -342,7 +342,7 @@ root-store/scoped-observation architecture (app ADRs 06/17). New
 
 - [x] 1. feat(raspi): expose boot_tag in /v1/clips and clip_finalized
 - [x] 2. feat(app): decode clip boot_tag
-- [ ] 3. feat(app): drive time-span and duration formatters
+- [x] 3. feat(app): drive time-span and duration formatters
 - [ ] 4. feat(app): drive detail screen for a boottag's clips
 - [ ] 5. feat(app): group Home clips into per-drive cards
 - [ ] 6. docs: record drive-grouped clip browsing

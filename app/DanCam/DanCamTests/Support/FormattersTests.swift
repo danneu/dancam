@@ -145,6 +145,26 @@ struct FormattersTests {
         }
     }
 
+    @Test func timeOfDayShortFormatsHourAndMinuteOnly() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let calendar = gregorianCalendar(timeZone: utc)
+        let start = try date(2026, 1, 1, hour: 14, minute: 2, second: 31, calendar: calendar)
+
+        #expect(Formatters.timeOfDayShort(start, timeZone: utc) == "14:02")
+    }
+
+    @Test func timeSpanFormatsSameDayAndCrossMidnightRanges() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let calendar = gregorianCalendar(timeZone: utc)
+        let sameDayStart = try date(2026, 1, 1, hour: 14, minute: 2, calendar: calendar)
+        let sameDayEnd = try date(2026, 1, 1, hour: 15, minute: 37, calendar: calendar)
+        let crossMidnightStart = try date(2026, 1, 1, hour: 23, minute: 58, calendar: calendar)
+        let crossMidnightEnd = try date(2026, 1, 2, hour: 0, minute: 2, calendar: calendar)
+
+        #expect(Formatters.timeSpan(start: sameDayStart, end: sameDayEnd, timeZone: utc) == "14:02 - 15:37")
+        #expect(Formatters.timeSpan(start: crossMidnightStart, end: crossMidnightEnd, timeZone: utc) == "23:58 - 00:02")
+    }
+
     @Test func dayHeaderFormatsRelativeAndCalendarDates() throws {
         let utc = try #require(TimeZone(secondsFromGMT: 0))
         let calendar = gregorianCalendar(timeZone: utc)
@@ -207,6 +227,51 @@ struct FormattersTests {
         for testCase in cases {
             #expect(Formatters.approximateDuration(testCase.durMs) == testCase.text)
         }
+    }
+
+    @Test func compactDurationFormatsSecondsMinutesAndHours() {
+        let cases: [(durMs: UInt64, text: String)] = [
+            (0, "0s"),
+            (59_000, "59s"),
+            (60_000, "1m"),
+            (3_599_000, "59m"),
+            (3_600_000, "1h"),
+            (4_860_000, "1h 21m"),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.compactDuration(testCase.durMs) == testCase.text)
+        }
+    }
+
+    @Test func clipCountFormatsSingularAndPluralCounts() {
+        let cases: [(count: Int, text: String)] = [
+            (0, "0 clips"),
+            (1, "1 clip"),
+            (2, "2 clips"),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.clipCount(testCase.count) == testCase.text)
+        }
+    }
+
+    @Test func driveCardTitleUsesSpanOrUndatedFallback() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let calendar = gregorianCalendar(timeZone: utc)
+        let start = try date(2026, 1, 1, hour: 14, minute: 2, calendar: calendar)
+        let end = try date(2026, 1, 1, hour: 15, minute: 37, calendar: calendar)
+
+        #expect(Formatters.driveCardTitle(start: start, end: end, timeZone: utc) == "14:02 - 15:37")
+        #expect(Formatters.driveCardTitle(start: nil, end: end, timeZone: utc) == "Drive")
+        #expect(Formatters.driveCardTitle(start: start, end: nil, timeZone: utc) == "Drive")
+        #expect(Formatters.driveCardTitle(start: nil, end: nil, timeZone: utc) == "Drive")
+    }
+
+    @Test func driveCardSubtitleOmitsUnknownDurationAndFormatsClipCount() {
+        #expect(Formatters.driveCardSubtitle(durationMs: 4_860_000, clipCount: 163) == "1h 21m · 163 clips")
+        #expect(Formatters.driveCardSubtitle(durationMs: nil, clipCount: 3) == "3 clips")
+        #expect(Formatters.driveCardSubtitle(durationMs: 30_000, clipCount: 1) == "30s · 1 clip")
     }
 
     private func clip(

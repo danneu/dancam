@@ -74,6 +74,18 @@ nonisolated enum Formatters {
         return formatter.string(from: date)
     }
 
+    static func timeOfDayShort(_ date: Date, timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    static func timeSpan(start: Date, end: Date, timeZone: TimeZone = .current) -> String {
+        "\(timeOfDayShort(start, timeZone: timeZone)) - \(timeOfDayShort(end, timeZone: timeZone))"
+    }
+
     static func dayHeader(_ dayStart: Date, now: Date, calendar: Calendar = .current) -> String {
         if calendar.isDate(dayStart, inSameDayAs: now) {
             return "Today"
@@ -110,6 +122,40 @@ nonisolated enum Formatters {
         guard let durationText = clipDuration(durMs) else { return byteText }
 
         return "\(durationText) · \(byteText)"
+    }
+
+    static func compactDuration(_ durMs: UInt64) -> String {
+        let totalSeconds = durMs / 1_000
+
+        if totalSeconds < 60 {
+            return "\(totalSeconds)s"
+        }
+
+        let totalMinutes = totalSeconds / 60
+        if totalMinutes < 60 {
+            return "\(totalMinutes)m"
+        }
+
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        guard minutes > 0 else { return "\(hours)h" }
+
+        return "\(hours)h \(minutes)m"
+    }
+
+    static func clipCount(_ count: Int) -> String {
+        count == 1 ? "1 clip" : "\(count) clips"
+    }
+
+    static func driveCardTitle(start: Date?, end: Date?, timeZone: TimeZone = .current) -> String {
+        guard let start, let end else { return "Drive" }
+
+        return timeSpan(start: start, end: end, timeZone: timeZone)
+    }
+
+    static func driveCardSubtitle(durationMs: UInt64?, clipCount count: Int) -> String {
+        let duration = durationMs.map(compactDuration)
+        return [duration, clipCount(count)].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// Home list-row subtitle: recording time plus duration, without filesize.
