@@ -19,10 +19,24 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         Log.reducer.notice("snapshot \(appStore.state.logSnapshot, privacy: .public)")
 
         let window = UIWindow(windowScene: windowScene)
-        let rootViewController = HomeViewController(dependencies: dependencies, store: appStore)
-        let navigationController = UINavigationController(rootViewController: rootViewController)
+        let homeViewController = HomeViewController(dependencies: dependencies, store: appStore)
+        let homeNavigationController = UINavigationController(rootViewController: homeViewController)
+        homeNavigationController.tabBarItem = UITabBarItem(
+            title: "Home",
+            image: UIImage(systemName: "house"),
+            tag: 0
+        )
+
+        let settingsViewController = SettingsViewController(dependencies: dependencies, store: appStore)
+        let settingsNavigationController = UINavigationController(rootViewController: settingsViewController)
+        settingsNavigationController.tabBarItem = UITabBarItem(
+            title: "Settings",
+            image: UIImage(systemName: "gearshape"),
+            tag: 1
+        )
+
         let shell = AppShellViewController(
-            navigationController: navigationController,
+            tabs: [homeNavigationController, settingsNavigationController],
             store: appStore
         )
 
@@ -31,7 +45,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.appStore = appStore
         self.shell = shell
         window.makeKeyAndVisible()
-        rootViewController.loadViewIfNeeded()
+        homeViewController.loadViewIfNeeded()
         appStore.send(.streamStarted)
     }
 

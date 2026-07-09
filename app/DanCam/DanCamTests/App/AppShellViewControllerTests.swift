@@ -7,7 +7,7 @@ struct AppShellViewControllerTests {
     @Test func stripHidesRecordingPillWhileConnecting() {
         let store = makeStore()
         let shell = AppShellViewController(
-            navigationController: UINavigationController(rootViewController: UIViewController()),
+            tabs: [UINavigationController(rootViewController: UIViewController())],
             store: store
         )
         shell.loadViewIfNeeded()
@@ -19,7 +19,7 @@ struct AppShellViewControllerTests {
     @Test func stripShowsRedRecordingPillForLiveRecordingSnapshot() {
         let store = makeStore()
         let shell = AppShellViewController(
-            navigationController: UINavigationController(rootViewController: UIViewController()),
+            tabs: [UINavigationController(rootViewController: UIViewController())],
             store: store
         )
         shell.loadViewIfNeeded()
@@ -40,7 +40,7 @@ struct AppShellViewControllerTests {
     @Test func stripKeepsGrayRecordingPillAfterHeartbeatTimeout() {
         let store = makeStore()
         let shell = AppShellViewController(
-            navigationController: UINavigationController(rootViewController: UIViewController()),
+            tabs: [UINavigationController(rootViewController: UIViewController())],
             store: store
         )
         shell.loadViewIfNeeded()
@@ -62,7 +62,7 @@ struct AppShellViewControllerTests {
     @Test func stripShowsNotRecordingForAffirmativeIdleSnapshot() {
         let store = makeStore()
         let shell = AppShellViewController(
-            navigationController: UINavigationController(rootViewController: UIViewController()),
+            tabs: [UINavigationController(rootViewController: UIViewController())],
             store: store
         )
         shell.loadViewIfNeeded()
@@ -99,7 +99,7 @@ struct AppShellViewControllerTests {
         let store = makeStore()
         let spy = ResumeSpy()
         let shell = AppShellViewController(
-            navigationController: UINavigationController(rootViewController: spy),
+            tabs: [UINavigationController(rootViewController: spy)],
             store: store
         )
         let world = CameraSamples.world()
@@ -118,7 +118,7 @@ struct AppShellViewControllerTests {
         let store = makeStore()
         let spy = ResumeSpy()
         let shell = AppShellViewController(
-            navigationController: UINavigationController(rootViewController: spy),
+            tabs: [UINavigationController(rootViewController: spy)],
             store: store
         )
         shell.loadViewIfNeeded()
@@ -127,6 +127,46 @@ struct AppShellViewControllerTests {
         #expect(spy.resumeCount == 0)
 
         store.send(.streamStopped)
+    }
+
+    @Test func reconnectResumeTargetsSelectedTab() {
+        let store = makeStore()
+        let firstSpy = ResumeSpy()
+        let secondSpy = ResumeSpy()
+        let shell = AppShellViewController(
+            tabs: [
+                UINavigationController(rootViewController: firstSpy),
+                UINavigationController(rootViewController: secondSpy),
+            ],
+            store: store
+        )
+        shell.loadViewIfNeeded()
+        shell.selectTabForTesting(1)
+
+        store.send(.streamFailed)
+        store.send(.event(.snapshot(CameraSamples.world())))
+
+        #expect(firstSpy.resumeCount == 0)
+        #expect(secondSpy.resumeCount == 1)
+
+        store.send(.streamStopped)
+    }
+
+    @Test func navigationStackSurvivesTabSwitch() {
+        let homeNavigationController = UINavigationController(rootViewController: UIViewController())
+        let settingsNavigationController = UINavigationController(rootViewController: UIViewController())
+        let shell = AppShellViewController(
+            tabs: [homeNavigationController, settingsNavigationController],
+            store: makeStore()
+        )
+        shell.loadViewIfNeeded()
+
+        let pushed = UIViewController()
+        homeNavigationController.pushViewController(pushed, animated: false)
+        shell.selectTabForTesting(1)
+        shell.selectTabForTesting(0)
+
+        #expect(shell.topViewController === pushed)
     }
 
     private func laidOutStrip(

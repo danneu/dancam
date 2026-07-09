@@ -157,3 +157,7 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   recorder state to a widget under the Record button, a REC marker on the recording
   drive's card, and a live row atop that drive's detail; snapshot-level nullable
   `boot_tag` is the drive identity, read with recorder truth through one projection.
+- `21-2026-07-09-status-strip-recording-pill.md` -- show connection and recording state
+  together in the shell-owned dual-pill status strip.
+- `22-2026-07-09-tab-based-top-level-navigation.md` -- embed Home and Settings as
+  independently navigable tabs below the global status strip.

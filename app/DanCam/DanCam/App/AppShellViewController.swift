@@ -2,7 +2,7 @@ import OSLog
 import UIKit
 
 final class AppShellViewController: UIViewController {
-    private let embeddedNavigationController: UINavigationController
+    private let embeddedTabBarController: UITabBarController
     private let store: AppStore
     private let strip = StatusStripView()
 
@@ -10,13 +10,17 @@ final class AppShellViewController: UIViewController {
     private var previousLinkPhase: StripCoordination.LinkPhase?
 
     init(
-        navigationController: UINavigationController,
+        tabs: [UINavigationController],
         store: AppStore
     ) {
-        embeddedNavigationController = navigationController
+        embeddedTabBarController = UITabBarController()
+        embeddedTabBarController.setViewControllers(tabs, animated: false)
         self.store = store
         super.init(nibName: nil, bundle: nil)
-        embeddedNavigationController.delegate = self
+        embeddedTabBarController.delegate = self
+        for tab in tabs {
+            tab.delegate = self
+        }
     }
 
     @available(*, unavailable)
@@ -25,28 +29,28 @@ final class AppShellViewController: UIViewController {
     }
 
     var topViewController: UIViewController? {
-        embeddedNavigationController.topViewController
+        (embeddedTabBarController.selectedViewController as? UINavigationController)?.topViewController
     }
 
     override var childForStatusBarStyle: UIViewController? {
-        embeddedNavigationController
+        embeddedTabBarController
     }
 
     override var childForStatusBarHidden: UIViewController? {
-        embeddedNavigationController
+        embeddedTabBarController
     }
 
     override var childForHomeIndicatorAutoHidden: UIViewController? {
-        embeddedNavigationController
+        embeddedTabBarController
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
         view.backgroundColor = .systemBackground
-        addChild(embeddedNavigationController)
+        addChild(embeddedTabBarController)
         configureViews()
-        embeddedNavigationController.didMove(toParent: self)
+        embeddedTabBarController.didMove(toParent: self)
 
         observation = store.observe(select: StripCoordination.project) { [weak self] projection in
             self?.render(projection)
@@ -54,10 +58,10 @@ final class AppShellViewController: UIViewController {
     }
 
     private func configureViews() {
-        embeddedNavigationController.view.translatesAutoresizingMaskIntoConstraints = false
+        embeddedTabBarController.view.translatesAutoresizingMaskIntoConstraints = false
         strip.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(embeddedNavigationController.view)
+        view.addSubview(embeddedTabBarController.view)
         view.addSubview(strip)
 
         NSLayoutConstraint.activate([
@@ -65,10 +69,10 @@ final class AppShellViewController: UIViewController {
             strip.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             strip.topAnchor.constraint(equalTo: view.topAnchor),
 
-            embeddedNavigationController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            embeddedNavigationController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            embeddedNavigationController.view.topAnchor.constraint(equalTo: strip.bottomAnchor),
-            embeddedNavigationController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            embeddedTabBarController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            embeddedTabBarController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            embeddedTabBarController.view.topAnchor.constraint(equalTo: strip.bottomAnchor),
+            embeddedTabBarController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
@@ -83,7 +87,7 @@ final class AppShellViewController: UIViewController {
                from: previousLinkPhase,
                to: projection.linkPhase
            ) {
-            (embeddedNavigationController.topViewController as? ConnectionResumable)?.resumeLiveWork()
+            (topViewController as? ConnectionResumable)?.resumeLiveWork()
         }
 
         previousLinkPhase = projection.linkPhase
@@ -91,6 +95,10 @@ final class AppShellViewController: UIViewController {
 
     var stripForTesting: StatusStripView {
         strip
+    }
+
+    func selectTabForTesting(_ index: Int) {
+        embeddedTabBarController.selectedIndex = index
     }
 }
 
@@ -102,5 +110,15 @@ extension AppShellViewController: UINavigationControllerDelegate {
     ) {
         let name = String(describing: type(of: viewController))
         Log.nav.notice("screen=\(name, privacy: .public)")
+    }
+}
+
+extension AppShellViewController: UITabBarControllerDelegate {
+    func tabBarController(
+        _ tabBarController: UITabBarController,
+        didSelect viewController: UIViewController
+    ) {
+        let screen = (viewController as? UINavigationController)?.topViewController ?? viewController
+        Log.nav.notice("tab=\(viewController.tabBarItem.title ?? "?", privacy: .public) screen=\(String(describing: type(of: screen)), privacy: .public)")
     }
 }
