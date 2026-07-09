@@ -100,50 +100,6 @@ struct HomeRowDiffTests {
         #expect(HomeRowDiff.reconfiguredIDs(old: old, new: new) == [])
     }
 
-    @Test func stableLiveRowDoesNotReconfigureAndSegmentChangeIsInsertRemove() {
-        let clock = ContinuousClock()
-        let live = LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: 1_000, anchor: clock.now))
-        let nextLive = LiveSegment(sessionId: 7, id: 5, elapsed: .ticking(seedDurMs: 1_000, anchor: clock.now))
-
-        #expect(HomeRowDiff.reconfiguredIDs(old: [.live(live)], new: [.live(live)]) == [])
-        #expect(HomeRowDiff.reconfiguredIDs(old: [.live(live)], new: [.live(nextLive)]) == [])
-    }
-
-    @Test func liveAndFinishedRowsWithSameNumericIDHaveDistinctIdentifiers() {
-        let clock = ContinuousClock()
-        let rows: [HomeRow] = [
-            .live(LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: nil, anchor: clock.now))),
-            .finished(CameraSamples.clip(id: 4)),
-        ]
-        let ids = rows.map(\.id)
-
-        #expect(Set(ids).count == ids.count)
-        #expect(ids.contains(.live(session: 7, id: 4)))
-        #expect(ids.contains(.finished(4)))
-    }
-
-    @Test func pendingRowHasDistinctStableIdentity() {
-        let clock = ContinuousClock()
-        let live = LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: nil, anchor: clock.now))
-        let rows: [HomeRow] = [
-            .pending,
-            .live(live),
-            .finished(CameraSamples.clip(id: 4)),
-        ]
-        let ids = rows.map(\.id)
-
-        #expect(Set(ids).count == ids.count)
-        #expect(ids.contains(.pending))
-        #expect(HomeRowDiff.reconfiguredIDs(old: [.pending], new: [.pending]) == [])
-    }
-
-    @Test func pendingToLiveTransitionIsInsertRemoveNotReconfigure() {
-        let clock = ContinuousClock()
-        let live = LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: nil, anchor: clock.now))
-
-        #expect(HomeRowDiff.reconfiguredIDs(old: [.pending], new: [.live(live)]) == [])
-    }
-
     private func drive(_ bootTag: String, clips: [Clip], occurrence: Int = 0) -> DriveGroup {
         DriveGroup(bootTag: bootTag, occurrence: occurrence, clips: clips)
     }

@@ -58,21 +58,11 @@ private nonisolated enum HomeSectionBase: Hashable, Sendable {
 extension HomeRow {
     nonisolated static func composeSections(
         clips: [Clip],
-        recording: RecordingFeature.State,
-        recorder: RecorderTruth,
-        previousLive: LiveSegment?,
-        now: ContinuousClock.Instant,
-        today: Date,
+        recordingDrive _: RecordingDrive?,
+        today _: Date,
         calendar: Calendar
     ) -> [HomeSectionModel] {
-        let rows = compose(
-            clips: clips,
-            recording: recording,
-            recorder: recorder,
-            previousLive: previousLive,
-            now: now
-        )
-        let todayStart = calendar.startOfDay(for: today)
+        let rows = clips.map(HomeRow.finished)
         var occurrenceCounts: [HomeSectionBase: Int] = [:]
         var driveOccurrenceCounts: [String: Int] = [:]
         var sections: [HomeSectionModel] = []
@@ -96,8 +86,6 @@ extension HomeRow {
         for row in rows {
             let base: HomeSectionBase
             switch row {
-            case .pending, .live:
-                base = .day(todayStart)
             case .finished(let clip):
                 if let resolvedStartDate = clip.resolvedStartDate {
                     base = .day(calendar.startOfDay(for: resolvedStartDate))

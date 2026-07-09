@@ -216,20 +216,14 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func dayRolloverMovesLiveRowAndRefreshesVisibleHeaders() async throws {
+    func dayRolloverRefreshesVisibleHeaders() async throws {
         let utc = try #require(TimeZone(secondsFromGMT: 0))
         let calendar = gregorianCalendar(timeZone: utc)
         var now = try date(2026, 1, 3, hour: 23, minute: 59, calendar: calendar)
         let finishedClip = datedClip(id: 21, start: try date(2026, 1, 3, hour: 12, calendar: calendar))
-        let world = CameraSamples.world(
-            phase: .recording,
-            currentSegment: RecorderSegment(id: 24, durMs: 107_000)
-        )
         let controller = makeController(
             clips: [finishedClip],
             loader: .noop,
-            world: world,
-            recording: .recording,
             wallNow: { now },
             currentCalendar: { calendar }
         )
@@ -239,7 +233,6 @@ struct HomeViewControllerTests {
         try await waitUntil {
             controller.layoutClipsTableForTesting()
             return controller.sectionHeaderTitlesForTesting == ["Today"] &&
-                controller.indexPathForTesting(rowID: .live(session: 7, id: 24))?.section == 0 &&
                 controller.indexPathForTesting(rowID: .finished(finishedClip.id))?.section == 0
         }
         let todayHeader = try #require(controller.dayHeaderViewForTesting(section: 0))
@@ -250,10 +243,9 @@ struct HomeViewControllerTests {
 
         try await waitUntil {
             controller.layoutClipsTableForTesting()
-            return controller.sectionHeaderTitlesForTesting == ["Today", "Yesterday"] &&
-                controller.indexPathForTesting(rowID: .live(session: 7, id: 24))?.section == 0 &&
-                controller.indexPathForTesting(rowID: .finished(finishedClip.id))?.section == 1 &&
-                controller.dayHeaderViewForTesting(section: 1)?.titleTextForTesting == "Yesterday"
+            return controller.sectionHeaderTitlesForTesting == ["Yesterday"] &&
+                controller.indexPathForTesting(rowID: .finished(finishedClip.id))?.section == 0 &&
+                controller.dayHeaderViewForTesting(section: 0)?.titleTextForTesting == "Yesterday"
         }
     }
 
@@ -540,7 +532,7 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func liveRecordingRowFreezesOfflineAndThawsOnReconnectSnapshot() async throws {
+    func liveRecordingWidgetFreezesOfflineAndThawsOnReconnectSnapshot() async throws {
         let world = CameraSamples.world(
             phase: .recording,
             currentSegment: RecorderSegment(id: 24, durMs: 107_000)
@@ -555,14 +547,15 @@ struct HomeViewControllerTests {
         defer { window.isHidden = true }
 
         try await waitUntil {
-            controller.liveClipCellForTesting() != nil
+            controller.liveRecordingWidgetForTesting.isHidden == false &&
+                controller.liveRecordingWidgetForTesting.titleTextForTesting == "seg_00024.ts"
         }
 
-        let liveCell = try #require(controller.liveClipCellForTesting())
-        let initialElapsed = try #require(liveCell.elapsedTextForTesting)
-        #expect(colorMatches(liveCell.recBadgeForTesting.dotColorForTesting, .systemRed))
+        let widget = controller.liveRecordingWidgetForTesting
+        let initialElapsed = try #require(widget.elapsedTextForTesting)
+        #expect(colorMatches(widget.recBadgeForTesting.dotColorForTesting, .systemRed))
         #expect(initialElapsed.hasPrefix("~") == false)
-        #expect(controller.isLiveTickTimerRunningForTesting)
+        #expect(controller.isLiveRecordingWidgetTickTimerRunningForTesting)
         #expect(controller.isRecPillVisibleForTesting)
         #expect(controller.recordButtonForTesting.configuration?.title == "Stop")
         #expect(controller.recordButtonForTesting.isEnabled)
@@ -570,17 +563,15 @@ struct HomeViewControllerTests {
         store.send(.heartbeatTimedOut)
 
         try await waitUntil {
-            self.colorMatches(liveCell.recBadgeForTesting.dotColorForTesting, .systemGray) &&
-                liveCell.elapsedTextForTesting?.hasPrefix("~") == true
+            self.colorMatches(widget.recBadgeForTesting.dotColorForTesting, .systemGray) &&
+                widget.elapsedTextForTesting?.hasPrefix("~") == true
         }
 
-        let frozenCell = try #require(controller.liveClipCellForTesting())
-        let frozenElapsed = try #require(liveCell.elapsedTextForTesting)
-        #expect(frozenCell === liveCell)
-        #expect(liveCell.accessibilityLabel?.hasPrefix("seg_00024.ts, last known recording, ~") == true)
-        #expect(controller.isLiveTickTimerRunningForTesting == false)
-        controller.tickLiveElapsedForTesting()
-        #expect(liveCell.elapsedTextForTesting == frozenElapsed)
+        let frozenElapsed = try #require(widget.elapsedTextForTesting)
+        #expect(widget.accessibilityLabel?.hasPrefix("seg_00024.ts, last known recording, ~") == true)
+        #expect(controller.isLiveRecordingWidgetTickTimerRunningForTesting == false)
+        controller.tickLiveRecordingWidgetForTesting()
+        #expect(widget.elapsedTextForTesting == frozenElapsed)
         #expect(controller.isRecPillVisibleForTesting == false)
         #expect(controller.recordButtonForTesting.configuration?.title == "Record")
         #expect(controller.recordButtonForTesting.isEnabled == false)
@@ -588,20 +579,19 @@ struct HomeViewControllerTests {
         store.send(.event(.snapshot(world)))
 
         try await waitUntil {
-            self.colorMatches(liveCell.recBadgeForTesting.dotColorForTesting, .systemRed) &&
-                liveCell.elapsedTextForTesting?.hasPrefix("~") == false
+            self.colorMatches(widget.recBadgeForTesting.dotColorForTesting, .systemRed) &&
+                widget.elapsedTextForTesting?.hasPrefix("~") == false
         }
 
-        let thawedCell = try #require(controller.liveClipCellForTesting())
-        #expect(thawedCell === liveCell)
-        #expect(controller.isLiveTickTimerRunningForTesting)
+        #expect(controller.liveRecordingWidgetForTesting === widget)
+        #expect(controller.isLiveRecordingWidgetTickTimerRunningForTesting)
         #expect(controller.isRecPillVisibleForTesting)
         #expect(controller.recordButtonForTesting.configuration?.title == "Stop")
         #expect(controller.recordButtonForTesting.isEnabled)
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func tappingRecordShowsPendingRowImmediatelyWithoutTickTimer() async throws {
+    func tappingRecordShowsPendingWidgetImmediatelyWithoutTickTimer() async throws {
         let releaseStart = AsyncSignal()
         let (controller, _) = makeControllerAndStore(
             clips: [],
@@ -621,12 +611,13 @@ struct HomeViewControllerTests {
         controller.recordButtonForTesting.sendActions(for: .touchUpInside)
 
         try await waitUntil {
-            controller.isShowingPendingRowForTesting
+            controller.isShowingPendingWidgetForTesting
         }
-        let pendingCell = try #require(controller.pendingCellForTesting)
-        #expect(pendingCell.accessibilityLabel == "Starting recording")
-        #expect(colorMatches(pendingCell.recBadgeForTesting.dotColorForTesting, .systemRed))
-        #expect(controller.isLiveTickTimerRunningForTesting == false)
+        let widget = controller.liveRecordingWidgetForTesting
+        #expect(widget.accessibilityLabel == "Starting recording")
+        #expect(widget.elapsedTextForTesting == "00:00")
+        #expect(colorMatches(widget.recBadgeForTesting.dotColorForTesting, .systemRed))
+        #expect(controller.isLiveRecordingWidgetTickTimerRunningForTesting == false)
 
         await releaseStart.signal()
         try await waitUntil {
@@ -635,7 +626,7 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func segmentOpenedReplacesPendingWithLiveRow() async throws {
+    func segmentOpenedReplacesPendingWithLiveWidget() async throws {
         let (controller, store) = makeControllerAndStore(
             clips: [],
             loader: .noop,
@@ -647,20 +638,20 @@ struct HomeViewControllerTests {
 
         controller.recordButtonForTesting.sendActions(for: .touchUpInside)
         try await waitUntil {
-            controller.isShowingPendingRowForTesting
+            controller.isShowingPendingWidgetForTesting
         }
 
         store.send(.event(.segmentOpened(session: 7, id: 43, atMs: 5_400)))
 
         try await waitUntil {
-            controller.isShowingPendingRowForTesting == false &&
-                controller.liveClipCellForTesting() != nil
+            controller.isShowingPendingWidgetForTesting == false &&
+                controller.liveRecordingWidgetForTesting.titleTextForTesting == "seg_00043.ts"
         }
-        #expect(controller.pendingCellForTesting == nil)
+        #expect(controller.liveRecordingWidgetForTesting.isHidden == false)
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func failedStartRemovesPendingRowSilently() async throws {
+    func failedStartRemovesPendingWidgetSilently() async throws {
         let releaseStart = AsyncSignal()
         let (controller, _) = makeControllerAndStore(
             clips: [],
@@ -680,15 +671,15 @@ struct HomeViewControllerTests {
 
         controller.recordButtonForTesting.sendActions(for: .touchUpInside)
         try await waitUntil {
-            controller.isShowingPendingRowForTesting
+            controller.isShowingPendingWidgetForTesting
         }
 
         await releaseStart.signal()
 
         try await waitUntil {
-            controller.isShowingPendingRowForTesting == false
+            controller.isShowingPendingWidgetForTesting == false
         }
-        #expect(controller.liveClipCellForTesting() == nil)
+        #expect(controller.liveRecordingWidgetForTesting.isHidden)
         #expect(controller.clipsFailureMessageForTesting == nil)
     }
 
@@ -713,22 +704,22 @@ struct HomeViewControllerTests {
 
         controller.recordButtonForTesting.sendActions(for: .touchUpInside)
         try await waitUntil {
-            controller.isShowingPendingRowForTesting
+            controller.isShowingPendingWidgetForTesting
         }
 
         store.send(.event(.recorderFailed(session: 7, detail: "sensor lost", atMs: 1)))
 
         try await waitUntil {
-            controller.isShowingPendingRowForTesting == false
+            controller.isShowingPendingWidgetForTesting == false
         }
-        #expect(controller.liveClipCellForTesting() == nil)
+        #expect(controller.liveRecordingWidgetForTesting.isHidden)
         #expect(controller.recordButtonForTesting.isEnabled)
 
         await releaseStart.signal()
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func heartbeatTimeoutHidesPendingRow() async throws {
+    func heartbeatTimeoutHidesPendingWidget() async throws {
         let (controller, store) = makeControllerAndStore(
             clips: [],
             loader: .noop,
@@ -746,33 +737,33 @@ struct HomeViewControllerTests {
 
         controller.recordButtonForTesting.sendActions(for: .touchUpInside)
         try await waitUntil {
-            controller.isShowingPendingRowForTesting
+            controller.isShowingPendingWidgetForTesting
         }
 
         store.send(.heartbeatTimedOut)
 
         try await waitUntil {
-            controller.isShowingPendingRowForTesting == false
+            controller.isShowingPendingWidgetForTesting == false
         }
         store.send(.streamStopped)
     }
 
-    @Test func configurePendingResetsGrayFrozenBadgeToRed() {
+    @Test func configurePendingWidgetResetsGrayFrozenBadgeToRed() {
         let clock = ContinuousClock()
-        let cell = LiveClipCell(style: .default, reuseIdentifier: "liveClip")
+        let widget = LiveRecordingStatusView()
         let segment = LiveSegment(
             sessionId: 7,
             id: 43,
             elapsed: .frozen(durMs: 1_000)
         )
 
-        cell.configure(segment: segment, now: clock.now)
-        #expect(colorMatches(cell.recBadgeForTesting.dotColorForTesting, .systemGray))
+        widget.configure(status: .live(segment), now: clock.now)
+        #expect(colorMatches(widget.recBadgeForTesting.dotColorForTesting, .systemGray))
 
-        cell.configurePending()
+        widget.configure(status: .pending, now: clock.now)
 
-        #expect(colorMatches(cell.recBadgeForTesting.dotColorForTesting, .systemRed))
-        #expect(cell.elapsedTextForTesting == "00:00")
+        #expect(colorMatches(widget.recBadgeForTesting.dotColorForTesting, .systemRed))
+        #expect(widget.elapsedTextForTesting == "00:00")
     }
 
     @Test func recordButtonLivesBelowPreviewNotInToolbar() throws {
@@ -793,6 +784,11 @@ struct HomeViewControllerTests {
         let (controller, store) = makeControllerAndStore(
             clips: [],
             loader: .noop,
+            world: CameraSamples.world(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 24, durMs: nil)
+            ),
+            recording: .recording,
             clipsClient: parkedClipsClient()
         )
         let window = try embed(controller)
@@ -831,6 +827,11 @@ struct HomeViewControllerTests {
         let (controller, store) = makeControllerAndStore(
             clips: [],
             loader: .noop,
+            world: CameraSamples.world(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 24, durMs: nil)
+            ),
+            recording: .recording,
             clipsClient: parkedClipsClient()
         )
         let window = try embed(controller)
@@ -852,6 +853,7 @@ struct HomeViewControllerTests {
 
         #expect(controller.isShowingEmptyStateForTesting)
         #expect(controller.isShowingLoadingStateForTesting == false)
+        #expect(controller.liveRecordingWidgetForTesting.isHidden == false)
 
         store.send(.clips(.refresh))
 

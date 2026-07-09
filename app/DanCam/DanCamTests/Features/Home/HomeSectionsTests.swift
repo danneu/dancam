@@ -5,8 +5,6 @@ import Testing
 struct HomeSectionsTests {
     @Test func datedClipsGroupByDayWithoutSorting() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
-        let now = clock.now
         let jan3Morning = try date(year: 2026, month: 1, day: 3, hour: 10, calendar: calendar)
         let jan3Earlier = try date(year: 2026, month: 1, day: 3, hour: 9, calendar: calendar)
         let jan2Night = try date(year: 2026, month: 1, day: 2, hour: 23, calendar: calendar)
@@ -19,7 +17,6 @@ struct HomeSectionsTests {
                 datedClip(id: 4, date: jan3Earlier),
                 datedClip(id: 3, date: jan2Night),
             ],
-            now: now,
             today: jan3Morning,
             calendar: calendar
         )
@@ -36,7 +33,6 @@ struct HomeSectionsTests {
 
     @Test func undatedRunsStayInPlaceBetweenDatedRuns() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
         let yesterday = try date(year: 2026, month: 1, day: 2, hour: 12, calendar: calendar)
 
@@ -47,7 +43,6 @@ struct HomeSectionsTests {
                 undatedClip(id: 3),
                 datedClip(id: 2, date: yesterday),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         )
@@ -66,7 +61,6 @@ struct HomeSectionsTests {
 
     @Test func stampedRunCollapsesToOneDriveCardWithNewestFirstClips() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
         let sections = compose(
@@ -74,7 +68,6 @@ struct HomeSectionsTests {
                 stampedDatedClip(id: 5, date: today, bootTag: "boot-a"),
                 stampedDatedClip(id: 4, date: today, bootTag: "boot-a"),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         )
@@ -88,12 +81,10 @@ struct HomeSectionsTests {
 
     @Test func singleStampedClipIsStillADriveCard() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
         let sections = compose(
             clips: [stampedDatedClip(id: 5, date: today, bootTag: "boot-a")],
-            now: clock.now,
             today: today,
             calendar: calendar
         )
@@ -103,7 +94,6 @@ struct HomeSectionsTests {
 
     @Test func bareClipsStayFlatBetweenStampedDriveCards() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
         let sections = compose(
@@ -112,7 +102,6 @@ struct HomeSectionsTests {
                 datedClip(id: 5, date: today),
                 stampedDatedClip(id: 4, date: today, bootTag: "boot-a"),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         )
@@ -126,7 +115,6 @@ struct HomeSectionsTests {
 
     @Test func adjacentDifferentBootTagsBecomeDistinctCards() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
         let sections = compose(
@@ -134,7 +122,6 @@ struct HomeSectionsTests {
                 stampedDatedClip(id: 6, date: today, bootTag: "boot-b"),
                 stampedDatedClip(id: 5, date: today, bootTag: "boot-a"),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         )
@@ -147,7 +134,6 @@ struct HomeSectionsTests {
 
     @Test func midnightSpanningDriveUsesDistinctOccurrencesAcrossDaySections() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let jan3 = try date(year: 2026, month: 1, day: 3, hour: 0, minute: 1, calendar: calendar)
         let jan2 = try date(year: 2026, month: 1, day: 2, hour: 23, minute: 59, calendar: calendar)
 
@@ -156,7 +142,6 @@ struct HomeSectionsTests {
                 stampedDatedClip(id: 6, date: jan3, bootTag: "boot-a"),
                 stampedDatedClip(id: 5, date: jan2, bootTag: "boot-a"),
             ],
-            now: clock.now,
             today: jan3,
             calendar: calendar
         )
@@ -173,7 +158,6 @@ struct HomeSectionsTests {
 
     @Test func undatedStampedDriveGroupsInDateUnknown() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
         let sections = compose(
@@ -181,7 +165,6 @@ struct HomeSectionsTests {
                 stampedUndatedClip(id: 6, bootTag: "boot-a"),
                 stampedUndatedClip(id: 5, bootTag: "boot-a"),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         )
@@ -192,7 +175,6 @@ struct HomeSectionsTests {
 
     @Test func splitRunsUseDistinctOccurrences() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let todayMorning = try date(year: 2026, month: 1, day: 3, hour: 9, calendar: calendar)
         let todayAfternoon = try date(year: 2026, month: 1, day: 3, hour: 15, calendar: calendar)
         let todayStart = calendar.startOfDay(for: todayMorning)
@@ -204,7 +186,6 @@ struct HomeSectionsTests {
                 datedClip(id: 4, date: todayAfternoon),
                 undatedClip(id: 3),
             ],
-            now: clock.now,
             today: todayMorning,
             calendar: calendar
         )
@@ -219,158 +200,8 @@ struct HomeSectionsTests {
         #expect(Set(ids).count == ids.count)
     }
 
-    @Test func liveAndPendingRowsStayStandaloneAboveDriveCards() throws {
-        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
-        let now = clock.now
-        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
-        let clips = [
-            stampedDatedClip(id: 6, date: today, bootTag: "boot-a"),
-            stampedDatedClip(id: 5, date: today, bootTag: "boot-a"),
-        ]
-
-        let liveSections = compose(
-            clips: clips,
-            recorder: .live(recorder(currentSegment: RecorderSegment(id: 99, durMs: nil))),
-            now: now,
-            today: today,
-            calendar: calendar
-        )
-        #expect(liveSections.map(rowIDs) == [[
-            .live(session: 7, id: 99),
-            .drive(bootTag: "boot-a", occurrence: 0),
-        ]])
-
-        let pendingSections = compose(
-            clips: clips,
-            recording: .recording,
-            recorder: .live(recorder(phase: .recording, currentSegment: nil)),
-            now: now,
-            today: today,
-            calendar: calendar
-        )
-        #expect(pendingSections.map(rowIDs) == [[
-            .pending,
-            .drive(bootTag: "boot-a", occurrence: 0),
-        ]])
-    }
-
-    @Test func liveRowUsesTodaySection() throws {
-        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
-        let now = clock.now
-        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
-        let yesterday = try date(year: 2026, month: 1, day: 2, hour: 12, calendar: calendar)
-        let live = LiveSegment(sessionId: 7, id: 99, elapsed: .ticking(seedDurMs: nil, anchor: now))
-        let recorderTruth = RecorderTruth.live(recorder(currentSegment: RecorderSegment(id: 99, durMs: nil)))
-
-        let existingToday = compose(
-            clips: [datedClip(id: 5, date: today)],
-            recorder: recorderTruth,
-            now: now,
-            today: today,
-            calendar: calendar
-        )
-        #expect(existingToday.map(\.id) == [
-            .day(startOfDay: calendar.startOfDay(for: today), occurrence: 0),
-        ])
-        #expect(existingToday.map(rowIDs) == [
-            [.live(session: live.sessionId, id: live.id), .finished(5)],
-        ])
-
-        let olderNewest = compose(
-            clips: [datedClip(id: 4, date: yesterday)],
-            recorder: recorderTruth,
-            now: now,
-            today: today,
-            calendar: calendar
-        )
-        #expect(olderNewest.map(\.id) == [
-            .day(startOfDay: calendar.startOfDay(for: today), occurrence: 0),
-            .day(startOfDay: calendar.startOfDay(for: yesterday), occurrence: 0),
-        ])
-        #expect(olderNewest.map(rowIDs) == [
-            [.live(session: live.sessionId, id: live.id)],
-            [.finished(4)],
-        ])
-
-        let undatedNewest = compose(
-            clips: [undatedClip(id: 3)],
-            recorder: recorderTruth,
-            now: now,
-            today: today,
-            calendar: calendar
-        )
-        #expect(undatedNewest.map(\.id) == [
-            .day(startOfDay: calendar.startOfDay(for: today), occurrence: 0),
-            .dateUnknown(occurrence: 0),
-        ])
-        #expect(undatedNewest.map(rowIDs) == [
-            [.live(session: live.sessionId, id: live.id)],
-            [.finished(3)],
-        ])
-    }
-
-    @Test func pendingRowUsesTodaySection() throws {
-        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
-        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
-        let yesterday = try date(year: 2026, month: 1, day: 2, hour: 12, calendar: calendar)
-        let recorderTruth = RecorderTruth.live(recorder(phase: .recording, currentSegment: nil))
-
-        let existingToday = compose(
-            clips: [datedClip(id: 5, date: today)],
-            recording: .recording,
-            recorder: recorderTruth,
-            now: clock.now,
-            today: today,
-            calendar: calendar
-        )
-        #expect(existingToday.map(\.id) == [
-            .day(startOfDay: calendar.startOfDay(for: today), occurrence: 0),
-        ])
-        #expect(existingToday.map(rowIDs) == [
-            [.pending, .finished(5)],
-        ])
-
-        let olderNewest = compose(
-            clips: [datedClip(id: 4, date: yesterday)],
-            recording: .recording,
-            recorder: recorderTruth,
-            now: clock.now,
-            today: today,
-            calendar: calendar
-        )
-        #expect(olderNewest.map(\.id) == [
-            .day(startOfDay: calendar.startOfDay(for: today), occurrence: 0),
-            .day(startOfDay: calendar.startOfDay(for: yesterday), occurrence: 0),
-        ])
-        #expect(olderNewest.map(rowIDs) == [
-            [.pending],
-            [.finished(4)],
-        ])
-
-        let undatedNewest = compose(
-            clips: [undatedClip(id: 3)],
-            recording: .recording,
-            recorder: recorderTruth,
-            now: clock.now,
-            today: today,
-            calendar: calendar
-        )
-        #expect(undatedNewest.map(\.id) == [
-            .day(startOfDay: calendar.startOfDay(for: today), occurrence: 0),
-            .dateUnknown(occurrence: 0),
-        ])
-        #expect(undatedNewest.map(rowIDs) == [
-            [.pending],
-            [.finished(3)],
-        ])
-    }
-
     @Test func runOccurrencesAreStableForTopPrependsAndBottomAppends() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
         let todayEarlier = try date(year: 2026, month: 1, day: 3, hour: 8, calendar: calendar)
         let yesterday = try date(year: 2026, month: 1, day: 2, hour: 12, calendar: calendar)
@@ -378,7 +209,6 @@ struct HomeSectionsTests {
 
         let oldTopIDs = compose(
             clips: [datedClip(id: 4, date: today), undatedClip(id: 3), datedClip(id: 2, date: yesterday)],
-            now: clock.now,
             today: today,
             calendar: calendar
         ).map(\.id)
@@ -389,7 +219,6 @@ struct HomeSectionsTests {
                 undatedClip(id: 3),
                 datedClip(id: 2, date: yesterday),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         ).map(\.id)
@@ -397,7 +226,6 @@ struct HomeSectionsTests {
 
         let oldBottomIDs = compose(
             clips: [datedClip(id: 4, date: today), datedClip(id: 3, date: yesterday)],
-            now: clock.now,
             today: today,
             calendar: calendar
         ).map(\.id)
@@ -407,7 +235,6 @@ struct HomeSectionsTests {
                 datedClip(id: 3, date: yesterday),
                 datedClip(id: 2, date: yesterdayEarlier),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         ).map(\.id)
@@ -416,13 +243,11 @@ struct HomeSectionsTests {
 
     @Test func driveOccurrencesAreStableAcrossSameDrivePrependAndAppend() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
         let earlier = try date(year: 2026, month: 1, day: 3, hour: 11, calendar: calendar)
 
         let oldTopIDs = compose(
             clips: [stampedDatedClip(id: 4, date: today, bootTag: "boot-a")],
-            now: clock.now,
             today: today,
             calendar: calendar
         ).flatMap(rowIDs)
@@ -431,7 +256,6 @@ struct HomeSectionsTests {
                 stampedDatedClip(id: 5, date: today, bootTag: "boot-a"),
                 stampedDatedClip(id: 4, date: earlier, bootTag: "boot-a"),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         ).flatMap(rowIDs)
@@ -439,7 +263,6 @@ struct HomeSectionsTests {
 
         let oldBottomIDs = compose(
             clips: [stampedDatedClip(id: 4, date: today, bootTag: "boot-a")],
-            now: clock.now,
             today: today,
             calendar: calendar
         ).flatMap(rowIDs)
@@ -448,7 +271,6 @@ struct HomeSectionsTests {
                 stampedDatedClip(id: 4, date: today, bootTag: "boot-a"),
                 stampedDatedClip(id: 3, date: earlier, bootTag: "boot-a"),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         ).flatMap(rowIDs)
@@ -457,7 +279,6 @@ struct HomeSectionsTests {
 
     @Test func mixedDurationDriveOmitsAggregateDuration() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
         let sections = compose(
@@ -465,7 +286,6 @@ struct HomeSectionsTests {
                 stampedDatedClip(id: 6, date: today, durMs: 30_000, bootTag: "boot-a"),
                 stampedDatedClip(id: 5, date: today, durMs: nil, bootTag: "boot-a"),
             ],
-            now: clock.now,
             today: today,
             calendar: calendar
         )
@@ -478,19 +298,16 @@ struct HomeSectionsTests {
     @Test func calendarTimeZoneControlsDayBoundaries() throws {
         let utcCalendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let plusTwoCalendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 2 * 60 * 60))
-        let clock = ContinuousClock()
         let instant = try date(year: 2026, month: 1, day: 1, hour: 23, minute: 30, calendar: utcCalendar)
         let clip = datedClip(id: 7, date: instant)
 
         let utcSections = compose(
             clips: [clip],
-            now: clock.now,
             today: instant,
             calendar: utcCalendar
         )
         let plusTwoSections = compose(
             clips: [clip],
-            now: clock.now,
             today: instant,
             calendar: plusTwoCalendar
         )
@@ -506,14 +323,10 @@ struct HomeSectionsTests {
 
     @Test func emptyClipsWithoutLiveRowsReturnNoSections() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
-        let clock = ContinuousClock()
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
         #expect(compose(
             clips: [],
-            recording: .idle,
-            recorder: .unknown,
-            now: clock.now,
             today: today,
             calendar: calendar
         ) == [])
@@ -521,19 +334,13 @@ struct HomeSectionsTests {
 
     private func compose(
         clips: [Clip],
-        recording: RecordingFeature.State = .idle,
-        recorder: RecorderTruth = .unknown,
-        previousLive: LiveSegment? = nil,
-        now: ContinuousClock.Instant,
+        recordingDrive: RecordingDrive? = nil,
         today: Date,
         calendar: Calendar
     ) -> [HomeSectionModel] {
         HomeRow.composeSections(
             clips: clips,
-            recording: recording,
-            recorder: recorder,
-            previousLive: previousLive,
-            now: now,
+            recordingDrive: recordingDrive,
             today: today,
             calendar: calendar
         )
@@ -589,19 +396,6 @@ struct HomeSectionsTests {
             return DriveGroup(bootTag: "", occurrence: -1, clips: [])
         }
         return drive
-    }
-
-    private func recorder(
-        phase: RecorderPhase = .recording,
-        session: UInt64 = 7,
-        currentSegment: RecorderSegment?
-    ) -> RecorderSnapshot {
-        RecorderSnapshot(
-            phase: phase,
-            session: session,
-            currentSegment: currentSegment,
-            detail: nil
-        )
     }
 
     private func gregorianCalendar(timeZone: TimeZone) -> Calendar {

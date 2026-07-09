@@ -413,7 +413,7 @@ Manual simulator + mock walkthrough (`just raspi-mock`, 5 s segments; scheme env
 
 - [x] 1. `feat(contract): expose per-boot boot_tag in the events snapshot`
 - [x] 2. `refactor(app): extract LiveRecordingStatus from HomeRow composition`
-- [ ] 3. `feat(app): move live recording out of Recent clips into a widget under the record button`
+- [x] 3. `feat(app): move live recording out of Recent clips into a widget under the record button`
 - [ ] 4. `feat(app): mark the recording drive's card with a REC pill`
 - [ ] 5. `feat(app): show the live recording row atop the recorded drive's detail`
 - [ ] 6. `docs(app): record the live-recording surfaces decision`

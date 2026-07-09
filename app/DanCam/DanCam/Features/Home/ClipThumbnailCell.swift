@@ -49,8 +49,8 @@ nonisolated struct ThumbnailDisplayState {
 }
 
 /// A finished-clip row: a leading first-frame thumbnail plus the segment filename and
-/// time/duration metadata. Modeled on `LiveClipCell` (programmatic, unavailable
-/// `init?(coder:)`). Thumbnail resolution is view-driven through an injected
+/// time/duration metadata. Programmatic, with unavailable `init?(coder:)`.
+/// Thumbnail resolution is view-driven through an injected
 /// `ThumbnailLoader`; the cell owns exactly one in-flight `loadTask` and a monotonic load
 /// token so reconfigure churn (a full `reloadData()` or an in-place visible-row refresh)
 /// never stacks a second load or lets a stale completion null a fresh handle.

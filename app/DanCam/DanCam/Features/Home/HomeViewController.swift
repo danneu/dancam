@@ -1,51 +1,11 @@
 import UIKit
 
 nonisolated enum HomeRow: Equatable, Sendable {
-    case pending
-    case live(LiveSegment)
     case finished(Clip)
     case drive(DriveGroup)
 
-    static func compose(
-        clips: [Clip],
-        recording: RecordingFeature.State,
-        recorder: RecorderTruth,
-        previousLive: LiveSegment?,
-        now: ContinuousClock.Instant
-    ) -> [HomeRow] {
-        var rows = clips.map(HomeRow.finished)
-        let status = LiveRecordingStatus.from(
-            recording: recording,
-            recorder: recorder,
-            previous: previousLive,
-            now: now
-        )
-
-        switch status {
-        case .none:
-            break
-        case .pending:
-            rows.insert(.pending, at: 0)
-        case .live(let live):
-            rows.insert(.live(live), at: 0)
-        }
-
-        return rows
-    }
-
-    var liveSegment: LiveSegment? {
-        if case .live(let segment) = self {
-            return segment
-        }
-        return nil
-    }
-
     var id: HomeRowID {
         switch self {
-        case .pending:
-            .pending
-        case .live(let segment):
-            .live(session: segment.sessionId, id: segment.id)
         case .finished(let clip):
             .finished(clip.id)
         case .drive(let drive):
@@ -55,8 +15,6 @@ nonisolated enum HomeRow: Equatable, Sendable {
 
     var thumbnailClip: Clip? {
         switch self {
-        case .pending, .live:
-            return nil
         case .finished(let clip):
             return clip
         case .drive(let drive):
@@ -67,15 +25,6 @@ nonisolated enum HomeRow: Equatable, Sendable {
     var thumbnailIdentity: ClipThumbnailIdentity? {
         thumbnailClip.map(ClipThumbnailIdentity.init)
     }
-
-    var triggersPagination: Bool {
-        switch self {
-        case .finished, .drive:
-            true
-        case .pending, .live:
-            false
-        }
-    }
 }
 
 final class HomeViewController: UIViewController, UITableViewDelegate, UITableViewDataSourcePrefetching, ConnectionResumable {
@@ -85,9 +34,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let wallNow: () -> Date
     private let currentCalendar: () -> Calendar
 
-    private var recordingObservation: StoreObservation?
+    private var liveRecordingObservation: StoreObservation?
     private var statusPillsObservation: StoreObservation?
-    private var recorderObservation: StoreObservation?
     private var clipsObservation: StoreObservation?
     private var clipsStatusObservation: StoreObservation?
     private var clipsLoadedObservation: StoreObservation?
@@ -103,6 +51,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let timeUnverifiedPill = StatusPillView()
     private let recordButton = RecordButton(frame: .zero)
     private let recordButtonRow = UIView()
+    private let liveRecordingWidget = LiveRecordingStatusView()
     private let recPill = StatusPillView(caption: "REC", dotColor: .systemRed)
     private let clipsHeaderLabel = UILabel()
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
@@ -117,8 +66,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let paginationThreshold = 4
     private var dataSource: UITableViewDiffableDataSource<HomeSection, HomeRowID>!
 
-    private var recordingState: RecordingFeature.State = .unknown
-    private var recorderTruth: RecorderTruth = .unknown
+    private var liveRecordingStatus: LiveRecordingStatus = .none
     private var finishedClips: [Clip] = []
     private var clipsStatus: ClipsFeature.State.Status = .idle
     private var clipsNextCursor: String?
@@ -129,8 +77,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var paginationTailIDs: Set<HomeRowID> = []
     private var preservedVisibleThumbnails: [ClipThumbnailIdentity: UIImage] = [:]
     private var preservedThumbnailGeneration = 0
-    private var liveTickTimer: Timer?
-    private var isVisible = false
     private var isManualRefreshing = false
     private var lastFittedHeaderWidth: CGFloat?
     private var needsHeaderRefit = true
@@ -179,17 +125,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             viewController.view.setNeedsLayout()
         }
 
-        recordingObservation = store.observe(\.recording) { [weak self] state in
-            self?.recordingState = state
-            self?.renderRecording(state)
+        liveRecordingObservation = store.observe(select: LiveRecordingInputs.from) { [weak self] inputs in
+            self?.renderLiveRecording(inputs)
             self?.renderRows()
         }
         statusPillsObservation = store.observe(select: { HomeStatusPills.from($0.link.world) }) { [weak self] pills in
             self?.renderStatusPills(pills)
-        }
-        recorderObservation = store.observe(select: { $0.link.recorderTruth }) { [weak self] recorderTruth in
-            self?.recorderTruth = recorderTruth
-            self?.renderRows()
         }
         clipsObservation = store.observe(\.clips.clips) { [weak self] clips in
             self?.renderClips(clips)
@@ -209,18 +150,14 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        isVisible = true
-        updateLiveTickTimer()
         reconfigureVisibleThumbnails()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        isVisible = false
         store.send(.clips(.onDisappear))
         refreshControl.endRefreshing()
         isManualRefreshing = false
-        stopLiveTickTimer()
         cancelAllPrefetches()
         quietVisibleThumbnailLoads()
     }
@@ -232,7 +169,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     isolated deinit {
-        stopLiveTickTimer()
         cancelAllPrefetches()
         if let calendarDayChangedObserver {
             NotificationCenter.default.removeObserver(calendarDayChangedObserver)
@@ -255,6 +191,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         recordButton.addTarget(self, action: #selector(recordTapped), for: .touchUpInside)
         recordButton.apply(.unknown)
         recordButton.translatesAutoresizingMaskIntoConstraints = false
+        liveRecordingWidget.isHidden = true
         recordButtonRow.addSubview(recordButton)
 
         headerContainer.directionalLayoutMargins = NSDirectionalEdgeInsets(
@@ -268,6 +205,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         headerStack.translatesAutoresizingMaskIntoConstraints = false
         headerStack.addArrangedSubview(previewViewController.view)
         headerStack.addArrangedSubview(recordButtonRow)
+        headerStack.addArrangedSubview(liveRecordingWidget)
         headerStack.addArrangedSubview(statusPillsStack)
         headerStack.addArrangedSubview(clipsHeaderLabel)
         headerStack.addArrangedSubview(clipsBodyPlaceholderView)
@@ -448,7 +386,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             forHeaderFooterViewReuseIdentifier: HomeDayHeaderView.reuseIdentifier
         )
         clipsTableView.register(ClipThumbnailCell.self, forCellReuseIdentifier: "clipThumbnail")
-        clipsTableView.register(LiveClipCell.self, forCellReuseIdentifier: "liveClip")
         dataSource = UITableViewDiffableDataSource<HomeSection, HomeRowID>(
             tableView: clipsTableView
         ) { [weak self] tableView, indexPath, id in
@@ -457,26 +394,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             }
 
             switch row {
-            case .pending:
-                guard let cell = tableView.dequeueReusableCell(
-                    withIdentifier: "liveClip",
-                    for: indexPath
-                ) as? LiveClipCell else {
-                    return UITableViewCell(style: .default, reuseIdentifier: nil)
-                }
-                cell.configurePending()
-                return cell
-
-            case .live(let segment):
-                guard let cell = tableView.dequeueReusableCell(
-                    withIdentifier: "liveClip",
-                    for: indexPath
-                ) as? LiveClipCell else {
-                    return UITableViewCell(style: .default, reuseIdentifier: nil)
-                }
-                cell.configure(segment: segment, now: self.clock.now)
-                return cell
-
             case .finished(let clip):
                 guard let cell = tableView.dequeueReusableCell(
                     withIdentifier: "clipThumbnail",
@@ -573,21 +490,40 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         recordButton.apply(state)
     }
 
+    private func renderLiveRecording(
+        _ inputs: LiveRecordingInputs,
+        now: ContinuousClock.Instant? = nil
+    ) {
+        let now = now ?? clock.now
+        let status = LiveRecordingStatus.from(
+            recording: inputs.recording,
+            recorder: inputs.recorder,
+            previous: liveRecordingStatus.liveSegment,
+            now: now
+        )
+        liveRecordingStatus = status
+        liveRecordingWidget.configure(status: status, now: now)
+
+        let shouldHide = status == .none
+        if liveRecordingWidget.isHidden != shouldHide {
+            liveRecordingWidget.isHidden = shouldHide
+            needsHeaderRefit = true
+        }
+
+        renderRecording(inputs.recording)
+        view.setNeedsLayout()
+    }
+
     private func renderClips(_ clips: [Clip]) {
         finishedClips = clips
         renderRows()
     }
 
-    private func renderRows(now: ContinuousClock.Instant? = nil, completion: (() -> Void)? = nil) {
-        let now = now ?? clock.now
-        let previousLive = rows.first?.liveSegment
+    private func renderRows(completion: (() -> Void)? = nil) {
         let visibleThumbnails = visibleThumbnailImages()
         let newSections = HomeRow.composeSections(
             clips: finishedClips,
-            recording: recordingState,
-            recorder: recorderTruth,
-            previousLive: previousLive,
-            now: now,
+            recordingDrive: nil,
             today: wallNow(),
             calendar: currentCalendar()
         )
@@ -624,7 +560,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         )
 
         updateClipsPresentation()
-        updateLiveTickTimer()
     }
 
     private var canAnimateTableUpdates: Bool {
@@ -708,26 +643,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         }
     }
 
-    private func updateLiveTickTimer() {
-        let hasTickingLiveRow = rows.contains { $0.liveSegment?.isTicking == true }
-        if hasTickingLiveRow, isVisible {
-            guard liveTickTimer == nil else { return }
-
-            liveTickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.updateVisibleLiveElapsed()
-                }
-            }
-        } else {
-            stopLiveTickTimer()
-        }
-    }
-
-    private func stopLiveTickTimer() {
-        liveTickTimer?.invalidate()
-        liveTickTimer = nil
-    }
-
     private func observeDayRolloverNotifications() {
         calendarDayChangedObserver = NotificationCenter.default.addObserver(
             forName: .NSCalendarDayChanged,
@@ -776,17 +691,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         }
     }
 
-    private func updateVisibleLiveElapsed() {
-        guard let segment = rows.first?.liveSegment,
-              segment.isTicking,
-              let indexPath = dataSource.indexPath(for: .live(session: segment.sessionId, id: segment.id)),
-              let cell = clipsTableView.cellForRow(at: indexPath) as? LiveClipCell else {
-            return
-        }
-
-        cell.updateElapsed(segment: segment, now: clock.now)
-    }
-
     @objc private func recordTapped() {
         store.send(.recordTapped)
     }
@@ -808,8 +712,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         guard let row = row(at: indexPath) else { return }
 
         switch row {
-        case .live, .pending:
-            return
         case .finished(let clip):
             tableView.deselectRow(at: indexPath, animated: true)
             navigationController?.pushViewController(
@@ -848,8 +750,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     ) {
         guard let id = dataSource.itemIdentifier(for: indexPath),
               paginationTailIDs.contains(id),
-              let row = rowsByID[id],
-              row.triggersPagination,
               clipsNextCursor != nil else {
             return
         }
@@ -934,8 +834,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
         for indexPath in visibleRows {
             guard let id = dataSource.itemIdentifier(for: indexPath),
-                  paginationTailIDs.contains(id),
-                  rowsByID[id]?.triggersPagination == true else {
+                  paginationTailIDs.contains(id) else {
                 continue
             }
 
@@ -989,8 +888,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                 cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
             case .drive(let drive):
                 cell.configure(drive: drive, loader: dependencies.thumbnailLoader)
-            case .pending, .live:
-                continue
             }
         }
     }
@@ -1023,29 +920,20 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         clipsTableView.layoutIfNeeded()
     }
 
-    func liveClipCellForTesting() -> LiveClipCell? {
-        guard let segment = rows.first?.liveSegment,
-              let indexPath = dataSource.indexPath(for: .live(session: segment.sessionId, id: segment.id)) else {
-            return nil
-        }
-        return clipsTableView.cellForRow(at: indexPath) as? LiveClipCell
+    var liveRecordingWidgetForTesting: LiveRecordingStatusView {
+        liveRecordingWidget
     }
 
-    var isShowingPendingRowForTesting: Bool {
-        dataSource.indexPath(for: .pending) != nil
-    }
-
-    var pendingCellForTesting: LiveClipCell? {
-        guard let indexPath = dataSource.indexPath(for: .pending) else { return nil }
-        return clipsTableView.cellForRow(at: indexPath) as? LiveClipCell
+    var isShowingPendingWidgetForTesting: Bool {
+        liveRecordingStatus == .pending && liveRecordingWidget.isHidden == false
     }
 
     var recordButtonForTesting: RecordButton {
         recordButton
     }
 
-    var isLiveTickTimerRunningForTesting: Bool {
-        liveTickTimer != nil
+    var isLiveRecordingWidgetTickTimerRunningForTesting: Bool {
+        liveRecordingWidget.isTickTimerRunningForTesting
     }
 
     var isRecPillVisibleForTesting: Bool {
@@ -1087,117 +975,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         refreshPulled()
     }
 
-    func tickLiveElapsedForTesting() {
-        updateVisibleLiveElapsed()
-    }
-}
-
-final class LiveClipCell: UITableViewCell {
-    private let titleLabel = UILabel()
-    private let elapsedLabel = UILabel()
-    private let recBadge = StatusPillView(caption: "REC", dotColor: .systemRed)
-
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        configureViews()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("LiveClipCell is programmatic.")
-    }
-
-    func configure(segment: LiveSegment, now: ContinuousClock.Instant) {
-        titleLabel.text = String(format: "seg_%05d.ts", segment.id)
-        switch segment.elapsed {
-        case .ticking:
-            recBadge.configure(
-                caption: "REC",
-                dotColor: .systemRed,
-                backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.14))
-            )
-        case .frozen:
-            recBadge.configure(
-                caption: "REC",
-                dotColor: .systemGray,
-                backgroundStyle: .tinted(UIColor.systemGray.withAlphaComponent(0.14))
-            )
-        }
-        updateElapsed(segment: segment, now: now)
-        switch segment.elapsed {
-        case .ticking:
-            accessibilityLabel = "\(titleLabel.text ?? ""), recording, \(elapsedLabel.text ?? "")"
-        case .frozen:
-            accessibilityLabel = "\(titleLabel.text ?? ""), last known recording, \(elapsedLabel.text ?? "")"
-        }
-    }
-
-    func configurePending() {
-        titleLabel.text = "Starting..."
-        elapsedLabel.text = Formatters.countUpDuration(0)
-        recBadge.configure(
-            caption: "REC",
-            dotColor: .systemRed,
-            backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.14))
-        )
-        accessibilityLabel = "Starting recording"
-    }
-
-    func updateElapsed(segment: LiveSegment, now: ContinuousClock.Instant) {
-        switch segment.elapsed {
-        case .ticking:
-            elapsedLabel.text = Formatters.countUpDuration(segment.elapsedDurMs(at: now))
-        case .frozen(let durMs):
-            elapsedLabel.text = Formatters.approximateDuration(durMs)
-        }
-    }
-
-    var elapsedTextForTesting: String? {
-        elapsedLabel.text
-    }
-
-    var recBadgeForTesting: StatusPillView {
-        recBadge
-    }
-
-    private func configureViews() {
-        selectionStyle = .none
-
-        titleLabel.font = .preferredFont(forTextStyle: .body)
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.numberOfLines = 1
-        titleLabel.lineBreakMode = .byTruncatingMiddle
-
-        let elapsedBaseFont = UIFont.monospacedDigitSystemFont(
-            ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize,
-            weight: .regular
-        )
-        elapsedLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: elapsedBaseFont)
-        elapsedLabel.adjustsFontForContentSizeCategory = true
-        elapsedLabel.textColor = .secondaryLabel
-        elapsedLabel.textAlignment = .right
-        elapsedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        recBadge.configure(
-            caption: "REC",
-            dotColor: .systemRed,
-            backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.14))
-        )
-        recBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let stack = UIStackView(arrangedSubviews: [titleLabel, recBadge, elapsedLabel])
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = 10
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        contentView.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: contentView.layoutMarginsGuide.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: contentView.layoutMarginsGuide.bottomAnchor),
-        ])
+    func tickLiveRecordingWidgetForTesting(now: ContinuousClock.Instant? = nil) {
+        liveRecordingWidget.tickForTesting(now: now)
     }
 }
