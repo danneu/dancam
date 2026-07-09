@@ -1,7 +1,6 @@
 import Foundation
 
 struct AppDependencies {
-    var health: HealthClient
     var status: StatusClient
     var events: EventsClient
     var clips: ClipsClient
@@ -17,7 +16,6 @@ struct AppDependencies {
     var heartbeatTimeout: @Sendable () async throws -> Void
 
     init(
-        health: HealthClient,
         status: StatusClient = .noop,
         events: EventsClient = .noop,
         clips: ClipsClient = .noop,
@@ -36,7 +34,6 @@ struct AppDependencies {
             try await Task.sleep(for: .seconds(3600))
         }
     ) {
-        self.health = health
         self.status = status
         self.events = events
         self.clips = clips
@@ -52,13 +49,7 @@ struct AppDependencies {
         self.heartbeatTimeout = heartbeatTimeout
     }
 
-    init(configuration: AppConfiguration = .live()) {
-        health = .live(
-            baseURL: configuration.cameraAPIBaseURL,
-            pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout,
-            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
-        )
+    init(configuration: AppConfiguration) {
         status = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,

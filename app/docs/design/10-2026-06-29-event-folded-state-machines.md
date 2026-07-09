@@ -115,3 +115,8 @@ Hard or risky:
 > must not assume they are full-precision samples. The coarsening quanta are a Pi
 > service concern recorded in
 > `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`.
+
+> **Note (2026-07-09): Heartbeat-fresh uptime.** ADR 23 narrows this ADR's
+> "heartbeat does not mutate World" rule: while online, heartbeat now advances only
+> `World.uptimeS` from its `t_ms` value and leaves every other world field unchanged.
+> See `app/docs/design/23-2026-07-09-debug-tab-sse-only-telemetry.md`.

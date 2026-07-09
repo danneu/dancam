@@ -190,7 +190,9 @@ extension World {
             next.mem = Mem(total: total, available: available, swapTotal: swapTotal, swapUsed: swapUsed)
         case .timeSynced:
             next.time = TimeStatus(synced: true)
-        case .heartbeat, .unknown:
+        case .heartbeat(let tMs):
+            next.uptimeS = tMs / 1_000
+        case .unknown:
             break
         }
 

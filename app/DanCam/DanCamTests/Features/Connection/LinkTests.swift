@@ -65,14 +65,30 @@ struct LinkTests {
         #expect(failed.world?.recorder.currentSegment == nil)
     }
 
-    @Test func unknownAndHeartbeatAreWorldNoOps() {
+    @Test func unknownEventIsWorldNoOp() {
         let world = CameraSamples.world(phase: .recording)
         var link = Link.online(world)
 
         link.fold(.unknown(type: "future_event"))
-        link.fold(.heartbeat(tMs: 12_000))
 
         #expect(link == .online(world))
+    }
+
+    @Test func heartbeatAdvancesOnlyUptimeWhileOnline() {
+        let world = CameraSamples.world(
+            phase: .recording,
+            storage: Storage(used: 200, total: 1_000),
+            tempC: TempC(soc: 40, sensor: 45),
+            mem: Mem(total: 100, available: 50, swapTotal: 100, swapUsed: 25),
+            uptimeS: 1
+        )
+        var link = Link.online(world)
+
+        link.fold(.heartbeat(tMs: 12_000))
+
+        var expected = world
+        expected.uptimeS = 12
+        #expect(link == .online(expected))
     }
 
     @Test func wentOfflineCarriesLastWorld() {

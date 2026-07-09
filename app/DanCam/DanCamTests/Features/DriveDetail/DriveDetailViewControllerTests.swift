@@ -493,7 +493,6 @@ struct DriveDetailViewControllerTests {
             state.link = .online(world)
         }
         let dependencies = AppDependencies(
-            health: HealthClient(fetch: { fatalError("Health is not used by DriveDetailViewControllerTests.") }),
             clips: clipsClient,
             thumbnailLoader: thumbnailLoader,
             sleep: { _ in try? await Task.sleep(for: .seconds(3600)) },

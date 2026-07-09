@@ -349,7 +349,6 @@ struct ClipsFeatureTests {
                 headEpoch: 5
             ),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 clips: ClipsClient(fetch: { cursor in
                     if cursor == "401" {
                         await started.signal()
@@ -389,7 +388,6 @@ struct ClipsFeatureTests {
         let store = TestStore(
             initialState: ClipsFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 clips: ClipsClient(fetch: { _ in
                     await started.signal()
                     try await Task.sleep(for: .seconds(60))
@@ -415,7 +413,6 @@ struct ClipsFeatureTests {
         deleteProbe: ClipDeleteProbe? = nil
     ) -> AppDependencies {
         AppDependencies(
-            health: HealthClient(fetch: { fatalError() }),
             clips: ClipsClient(
                 fetch: { cursor in
                     guard let queue else {

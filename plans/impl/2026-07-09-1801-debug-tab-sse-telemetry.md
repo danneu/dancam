@@ -369,5 +369,5 @@ New/changed (Swift Testing; behavioral, structure-insensitive):
 ## Commit progress
 
 - [x] 1. `feat(app): add uptime and memory formatters`
-- [ ] 2. `feat(app): rebuild Debug as an SSE-driven top-level tab`
+- [x] 2. `feat(app): rebuild Debug as an SSE-driven top-level tab`
 - [ ] 3. `chore(app): delete unused StatusClient`

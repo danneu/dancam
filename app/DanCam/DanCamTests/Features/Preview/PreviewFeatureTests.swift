@@ -9,7 +9,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError("Health should not be called.") }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { continuation in
                         continuation.yield(frame)
@@ -43,7 +42,7 @@ struct PreviewFeatureTests {
         let f1 = PreviewFrame(sequence: 1, jpeg: Data("one".utf8))
         let store = TestStore(
             initialState: PreviewFeature.State(phase: .streaming(f0)),
-            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            dependencies: AppDependencies(),
             reduce: PreviewFeature.reduce
         )
 
@@ -56,7 +55,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { continuation in
                         continuation.finish(throwing: PreviewError.http(503))
@@ -85,7 +83,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { _ in }
                 })
@@ -108,7 +105,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { continuation in
                         continuation.finish(throwing: CancellationError())
@@ -133,7 +129,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { _ in }
                 }),
@@ -165,7 +160,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { _ in }
                 }),
@@ -198,7 +192,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { _ in }
                 }),
@@ -238,7 +231,6 @@ struct PreviewFeatureTests {
         let streamingStore = TestStore(
             initialState: PreviewFeature.State(phase: .streaming(frame)),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     fatalError("Streaming reconnectIfNeeded should not reconnect.")
                 })
@@ -253,7 +245,6 @@ struct PreviewFeatureTests {
         let connectingStore = TestStore(
             initialState: PreviewFeature.State(phase: .connecting, streamGeneration: 1),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     fatalError("Connecting reconnectIfNeeded should not reconnect.")
                 })
@@ -282,7 +273,6 @@ struct PreviewFeatureTests {
                     streamGeneration: 7
                 ),
                 dependencies: AppDependencies(
-                    health: HealthClient(fetch: { fatalError() }),
                     preview: PreviewClient(connect: {
                         AsyncThrowingStream { continuation in
                             continuation.yield(frame)
@@ -314,7 +304,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { _ in }
                 }),
@@ -353,7 +342,6 @@ struct PreviewFeatureTests {
         let store = TestStore(
             initialState: PreviewFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 preview: PreviewClient(connect: {
                     AsyncThrowingStream { _ in }
                 })

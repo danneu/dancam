@@ -388,11 +388,14 @@ struct AppFeatureTests {
             reduce: AppFeature.reduce
         )
 
-        await store.send(.event(.heartbeat(tMs: 12_000)))
+        await store.send(.event(.heartbeat(tMs: 12_000))) {
+            var expectedWorld = world
+            expectedWorld.uptimeS = 12
+            $0.link = .online(expectedWorld)
+        }
         await store.finishEffects()
 
         #expect(store.state.recording == .starting)
-        #expect(store.state.link == .online(world))
     }
 
     @Test func clipFinalizedPrependsAndSurvivesStaleLoadResponse() async {
@@ -777,7 +780,6 @@ struct AppFeatureTests {
         heartbeatTimeout: @escaping @Sendable () async throws -> Void = { throw CancellationError() }
     ) -> AppDependencies {
         AppDependencies(
-            health: HealthClient(fetch: { fatalError("Health should not be called.") }),
             events: events,
             clips: clips,
             recording: recording,

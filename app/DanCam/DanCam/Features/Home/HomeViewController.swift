@@ -106,14 +106,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
         title = "DanCam"
         view.backgroundColor = .systemBackground
-        let debugItem = UIBarButtonItem(
-            image: UIImage(systemName: "chart.bar"),
-            style: .plain,
-            target: self,
-            action: #selector(debugTapped)
-        )
-        debugItem.accessibilityLabel = "Status detail"
-        navigationItem.rightBarButtonItem = debugItem
 
         addChild(previewViewController)
         configureViews()
@@ -668,13 +660,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     @objc private func recordTapped() {
         store.send(.recordTapped)
-    }
-
-    @objc private func debugTapped() {
-        navigationController?.pushViewController(
-            HealthViewController(dependencies: dependencies, store: store),
-            animated: true
-        )
     }
 
     @objc private func refreshPulled() {

@@ -665,7 +665,6 @@ struct ClipViewerViewControllerTests {
         )
     ) -> ClipViewerViewController {
         let dependencies = AppDependencies(
-            health: HealthClient(fetch: { fatalError("Health is not used by ClipViewerViewControllerTests.") }),
             clips: clipsClient,
             clipPull: clipPull,
             clipRemuxer: remuxer,

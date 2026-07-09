@@ -185,7 +185,6 @@ struct AppShellViewControllerTests {
         AppStore(
             initialState: AppFeature.State(),
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError("Health is not used by AppShellViewControllerTests.") }),
                 events: .noop,
                 clips: .noop,
                 sleep: { _ in

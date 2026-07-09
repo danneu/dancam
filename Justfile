@@ -132,6 +132,10 @@ app-lint:
 app-test:
     xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' -only-testing:DanCamTests test
 
+# Run the iPhone app's XCUITest suite.
+app-test-ui:
+    xcodebuild -project app/DanCam/DanCam.xcodeproj -scheme DanCam -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' -only-testing:DanCamUITests test
+
 # For a physical device, use Console.app and filter subsystem == "com.danneu.dancam".
 # Stream DanCam unified logs from the booted simulator.
 app-logs:

@@ -27,16 +27,24 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             tag: 0
         )
 
+        let debugViewController = DebugViewController(dependencies: dependencies, store: appStore)
+        let debugNavigationController = UINavigationController(rootViewController: debugViewController)
+        debugNavigationController.tabBarItem = UITabBarItem(
+            title: "Debug",
+            image: UIImage(systemName: "waveform.path.ecg"),
+            tag: 1
+        )
+
         let settingsViewController = SettingsViewController(dependencies: dependencies, store: appStore)
         let settingsNavigationController = UINavigationController(rootViewController: settingsViewController)
         settingsNavigationController.tabBarItem = UITabBarItem(
             title: "Settings",
             image: UIImage(systemName: "gearshape"),
-            tag: 1
+            tag: 2
         )
 
         let shell = AppShellViewController(
-            tabs: [homeNavigationController, settingsNavigationController],
+            tabs: [homeNavigationController, debugNavigationController, settingsNavigationController],
             store: appStore
         )
 

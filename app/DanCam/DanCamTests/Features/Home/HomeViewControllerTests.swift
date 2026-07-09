@@ -1050,7 +1050,6 @@ struct HomeViewControllerTests {
             state.link = .online(world)
         }
         let dependencies = AppDependencies(
-            health: HealthClient(fetch: { fatalError("Health is not used by HomeViewControllerTests.") }),
             clips: clipsClient,
             thumbnailLoader: loader,
             preview: preview,

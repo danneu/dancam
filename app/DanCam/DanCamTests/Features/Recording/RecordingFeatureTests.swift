@@ -8,7 +8,6 @@ struct RecordingFeatureTests {
         let store = TestStore(
             initialState: RecordingFeature.State.unknown,
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: { fatalError() }, stop: { fatalError() })
             ),
             reduce: RecordingFeature.reduce
@@ -22,7 +21,7 @@ struct RecordingFeatureTests {
     @Test func commandPhasesMoveNonCommandingClient() async {
         let store = TestStore(
             initialState: RecordingFeature.State.idle,
-            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            dependencies: AppDependencies(),
             reduce: RecordingFeature.reduce
         )
 
@@ -43,7 +42,7 @@ struct RecordingFeatureTests {
     @Test func optimisticStartingIgnoresStaleIdleButAcceptsRecording() async {
         let store = TestStore(
             initialState: RecordingFeature.State.starting,
-            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            dependencies: AppDependencies(),
             reduce: RecordingFeature.reduce
         )
 
@@ -58,7 +57,7 @@ struct RecordingFeatureTests {
     @Test func optimisticStoppingIgnoresStaleRecordingButAcceptsIdle() async {
         let store = TestStore(
             initialState: RecordingFeature.State.stopping,
-            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            dependencies: AppDependencies(),
             reduce: RecordingFeature.reduce
         )
 
@@ -78,7 +77,7 @@ struct RecordingFeatureTests {
     func linkWentOfflineResetsPresentTenseStates(state: RecordingFeature.State) async {
         let store = TestStore(
             initialState: state,
-            dependencies: AppDependencies(health: HealthClient(fetch: { fatalError() })),
+            dependencies: AppDependencies(),
             reduce: RecordingFeature.reduce
         )
 
@@ -91,7 +90,6 @@ struct RecordingFeatureTests {
         let store = TestStore(
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: {}, stop: { fatalError() })
             ),
             reduce: RecordingFeature.reduce
@@ -109,7 +107,6 @@ struct RecordingFeatureTests {
         let store = TestStore(
             initialState: RecordingFeature.State.recording,
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: { fatalError() }, stop: {})
             ),
             reduce: RecordingFeature.reduce
@@ -127,7 +124,6 @@ struct RecordingFeatureTests {
         let store = TestStore(
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 status: StatusClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: { throw RecordingError.http(503) }, stop: {})
             ),
@@ -146,7 +142,6 @@ struct RecordingFeatureTests {
         let store = TestStore(
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
-                health: HealthClient(fetch: { fatalError() }),
                 status: StatusClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: { throw CancellationError() }, stop: {})
             ),

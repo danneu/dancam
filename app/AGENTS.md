@@ -161,3 +161,5 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   together in the shell-owned dual-pill status strip.
 - `22-2026-07-09-tab-based-top-level-navigation.md` -- embed Home and Settings as
   independently navigable tabs below the global status strip.
+- `23-2026-07-09-debug-tab-sse-only-telemetry.md` -- add Debug as the middle tab,
+  render it solely from the folded SSE world, and keep uptime heartbeat-fresh.

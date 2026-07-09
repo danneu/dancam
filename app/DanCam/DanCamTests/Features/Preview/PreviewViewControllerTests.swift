@@ -57,9 +57,7 @@ struct PreviewViewControllerTests {
     }
 
     private func makeController() -> PreviewViewController {
-        PreviewViewController(dependencies: AppDependencies(
-            health: HealthClient(fetch: { fatalError("Health should not be called.") })
-        ))
+        PreviewViewController(dependencies: AppDependencies())
     }
 
     private func testImage() -> UIImage {
