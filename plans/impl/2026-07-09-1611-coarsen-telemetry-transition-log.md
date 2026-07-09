@@ -300,4 +300,4 @@ confirmation can wait for the next deploy.
 ## Commit progress
 
 - [x] 1. raspi coarsen telemetry change-detection quanta
-- [ ] 2. app honest three-tier transition log
+- [x] 2. app honest three-tier transition log

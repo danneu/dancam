@@ -109,3 +109,9 @@ Hard or risky:
   rows.
 - **Replace clips on every `/v1/clips` success.** Rejected. A stale one-shot response can
   arrive after a `clip_finalized` event; union-by-id preserves the ordered stream fact.
+
+> **Note (2026-07-09): Telemetry precision.** The app folds `storage_changed`,
+> `temp_changed`, and `mem_changed` as opaque service-coarsened observed values; it
+> must not assume they are full-precision samples. The coarsening quanta are a Pi
+> service concern recorded in
+> `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`.

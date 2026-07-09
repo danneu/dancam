@@ -410,6 +410,10 @@ extension AppFeature.State {
             }
             fields.append("temp_soc_c=\(world.tempC.soc.map(String.init(describing:)) ?? "nil")")
             fields.append("temp_sensor_c=\(world.tempC.sensor.map(String.init(describing:)) ?? "nil")")
+            if let mem = world.mem {
+                fields.append("mem_available=\(mem.available)")
+            }
+            fields.append("time_synced=\(world.time.map { String($0.synced) } ?? "nil")")
         }
 
         return fields.joined(separator: " ")
@@ -417,16 +421,59 @@ extension AppFeature.State {
 }
 
 extension AppFeature {
-    static func logTransition(_ action: Action, _ old: State, _ new: State) {
+    enum TransitionLog: Equatable {
+        case notice(String)
+        case debug(String)
+    }
+
+    static func transitionLog(action: Action, old: State, new: State) -> TransitionLog {
         let oldSummary = old.logSummary
         let newSummary = new.logSummary
 
-        if oldSummary == newSummary {
-            Log.reducer.debug("action=\(action.logLabel, privacy: .public) (no change)")
-        } else {
-            Log.reducer.notice(
-                "action=\(action.logLabel, privacy: .public) \(oldSummary, privacy: .public) -> \(newSummary, privacy: .public)"
-            )
+        if oldSummary != newSummary {
+            return .notice("action=\(action.logLabel) \(oldSummary) -> \(newSummary)")
+        }
+        if old != new {
+            let diff = tokenDiff(old: old.logSnapshot, new: new.logSnapshot)
+            return .debug("action=\(action.logLabel) \(diff.isEmpty ? "(state changed)" : diff)")
+        }
+        return .debug("action=\(action.logLabel) (no change)")
+    }
+
+    static func tokenDiff(old: String, new: String) -> String {
+        func parse(_ snapshot: String) -> [(key: String, value: String)] {
+            snapshot.split(separator: " ").compactMap { token in
+                let parts = token.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard parts.count == 2 else { return nil }
+                return (String(parts[0]), String(parts[1]))
+            }
+        }
+
+        let oldPairs = parse(old)
+        let newPairs = parse(new)
+        let oldValues = Dictionary(uniqueKeysWithValues: oldPairs.map { ($0.key, $0.value) })
+        let newValues = Dictionary(uniqueKeysWithValues: newPairs.map { ($0.key, $0.value) })
+
+        var changes = newPairs.compactMap { key, newValue -> String? in
+            guard let oldValue = oldValues[key] else {
+                return "\(key)=absent->\(newValue)"
+            }
+            guard oldValue != newValue else { return nil }
+            return "\(key)=\(oldValue)->\(newValue)"
+        }
+        changes.append(contentsOf: oldPairs.compactMap { key, oldValue in
+            guard newValues[key] == nil else { return nil }
+            return "\(key)=\(oldValue)->absent"
+        })
+        return changes.joined(separator: " ")
+    }
+
+    static func logTransition(_ action: Action, _ old: State, _ new: State) {
+        switch transitionLog(action: action, old: old, new: new) {
+        case .notice(let message):
+            Log.reducer.notice("\(message, privacy: .public)")
+        case .debug(let message):
+            Log.reducer.debug("\(message, privacy: .public)")
         }
     }
 }
