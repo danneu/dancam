@@ -361,6 +361,12 @@ private final class DebugGaugeContentView: UIView, UIContentView {
     }
 
     private func configureViews() {
+        // Custom UIContentViews don't inherit the list cell's grouped-style
+        // content insets the way UIListContentConfiguration views do; preserve
+        // the cell's margins so gauge rows align with the system value cells.
+        preservesSuperviewLayoutMargins = true
+        directionalLayoutMargins = UIListContentConfiguration.valueCell().directionalLayoutMargins
+
         isAccessibilityElement = true
         titleLabel.font = .preferredFont(forTextStyle: .body)
         titleLabel.adjustsFontForContentSizeCategory = true
