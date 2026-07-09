@@ -153,3 +153,7 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `19-2026-07-08-drive-grouped-clip-browsing.md` -- treat a drive boottag as the Home
   browse unit for finished clips, with app-side drive cards, detail projections, stable
   representative thumbnails, and per-clip deletion.
+- `20-2026-07-09-live-recording-surfaces-and-drive-attribution.md` -- move live/pending
+  recorder state to a widget under the Record button, a REC marker on the recording
+  drive's card, and a live row atop that drive's detail; snapshot-level nullable
+  `boot_tag` is the drive identity, read with recorder truth through one projection.

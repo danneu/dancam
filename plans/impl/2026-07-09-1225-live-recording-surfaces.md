@@ -416,7 +416,7 @@ Manual simulator + mock walkthrough (`just raspi-mock`, 5 s segments; scheme env
 - [x] 3. `feat(app): move live recording out of Recent clips into a widget under the record button`
 - [x] 4. `feat(app): mark the recording drive's card with a REC pill`
 - [x] 5. `feat(app): show the live recording row atop the recorded drive's detail`
-- [ ] 6. `docs(app): record the live-recording surfaces decision`
+- [x] 6. `docs(app): record the live-recording surfaces decision`
 
 ## Implementation notes
 

@@ -10,6 +10,13 @@
   `../../../docs/roadmap.md` (swoop `sift`);
   `../../../raspi/docs/design/15-2026-07-02-segment-fact-stamping-and-boot-offset.md`
 
+> **Amended (2026-07-09):** ADR 20
+> (`20-2026-07-09-live-recording-surfaces-and-drive-attribution.md`) changes where
+> recorder state renders. Live and pending rows no longer render standalone in the
+> Recent list; drive detail additionally renders a live row at top when its boottag
+> is the one being recorded into, and drive cards carry a REC marker on the
+> recording drive's newest card. The core drive-grouping decisions here still stand.
+
 ## Context
 
 Home originally showed finished footage as one row per segment. That is usable for a

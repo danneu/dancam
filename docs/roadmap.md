@@ -268,6 +268,9 @@ mock first.
       - [x] Group Recent clips under sticky day headers, with undated footage kept in
             in-place "Date unknown" runs.
       - [x] Group clips by drive using a boottag exposed in `/v1/clips`.
+      - [x] Attribute the active recording to its drive: snapshot `boot_tag`, a live
+            widget under the record button, a REC marker on the recording drive's card,
+            and a live row atop that drive's detail (ADR 20).
       - [ ] Add a calendar jump backed by the reserved `from`/`to` window params.
       - [ ] Add a locked/incidents filter after `nova` defines incident state.
 - [ ] **Swoop `nova` -- Incident lock (manual).** A "save this moment" button: Pi
