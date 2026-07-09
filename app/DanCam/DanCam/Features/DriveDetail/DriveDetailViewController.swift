@@ -4,28 +4,46 @@ private nonisolated enum DriveDetailSection: Hashable, Sendable {
     case clips
 }
 
+private nonisolated enum DriveDetailRow: Hashable, Sendable {
+    case liveRecording
+    case clip(Int)
+}
+
 final class DriveDetailViewController: UIViewController, UITableViewDelegate, UITableViewDataSourcePrefetching {
     private let dependencies: AppDependencies
     private let store: AppStore
     private let bootTag: String
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let clock = ContinuousClock()
 
+    private var liveRecordingObservation: StoreObservation?
     private var stateObservation: StoreObservation?
-    private var dataSource: UITableViewDiffableDataSource<DriveDetailSection, Int>!
+    private var dataSource: UITableViewDiffableDataSource<DriveDetailSection, DriveDetailRow>!
     private var state: DriveDetailState
     private var clips: [Clip] = []
     private var clipsByID: [Int: Clip] = [:]
     private var paginationTailID: Int?
+    private var hasLoadedClips = false
+    private var liveRecordingStatus: LiveRecordingStatus
+    private var showsLiveRow = false
     private var preservedVisibleThumbnails: [ClipThumbnailIdentity: UIImage] = [:]
     private var preservedThumbnailGeneration = 0
     private var prefetchHandles: [ClipThumbnailIdentity: ThumbnailLoader.PrefetchHandle] = [:]
     private var didRemoveFromNavigationStack = false
 
-    init(dependencies: AppDependencies, store: AppStore, bootTag: String) {
+    init(
+        dependencies: AppDependencies,
+        store: AppStore,
+        bootTag: String,
+        initialLiveSegment: LiveSegment? = nil
+    ) {
         self.dependencies = dependencies
         self.store = store
         self.bootTag = bootTag
         state = DriveDetailState(allClips: [], nextCursor: nil, bootTag: bootTag)
+        // Seed the threaded `previous` so a detail pushed mid-segment counts elapsed up from
+        // Home's running total instead of anchoring at 00:00 (segment_opened folds durMs: nil).
+        liveRecordingStatus = initialLiveSegment.map(LiveRecordingStatus.live) ?? .none
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -40,6 +58,13 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         title = "Drive"
         view.backgroundColor = .systemBackground
         configureTable()
+
+        // Register the live observation before the clips projection: `showsLiveRow` must be
+        // known before `handlePostApplyState` can decide an empty drive should pop, so a drive
+        // we are actively recording into with zero finished clips stays on screen.
+        liveRecordingObservation = store.observe(select: LiveRecordingInputs.from) { [weak self] inputs in
+            self?.renderLiveRecording(inputs)
+        }
 
         let bootTag = bootTag
         stateObservation = store.observe(
@@ -74,27 +99,44 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         tableView.delegate = self
         tableView.prefetchDataSource = self
         tableView.register(ClipThumbnailCell.self, forCellReuseIdentifier: "clipThumbnail")
+        tableView.register(LiveRecordingCell.self, forCellReuseIdentifier: "liveRecording")
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 72
         tableView.tableFooterView = UIView()
         tableView.alwaysBounceVertical = true
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
-        dataSource = UITableViewDiffableDataSource<DriveDetailSection, Int>(tableView: tableView) { [weak self] tableView, indexPath, id in
-            guard let self, let clip = self.clipsByID[id],
-                  let cell = tableView.dequeueReusableCell(
-                      withIdentifier: "clipThumbnail",
-                      for: indexPath
-                  ) as? ClipThumbnailCell else {
+        dataSource = UITableViewDiffableDataSource<DriveDetailSection, DriveDetailRow>(tableView: tableView) { [weak self] tableView, indexPath, row in
+            guard let self else {
                 return UITableViewCell(style: .default, reuseIdentifier: nil)
             }
 
-            cell.configure(
-                clip: clip,
-                loader: self.dependencies.thumbnailLoader,
-                preservedThumbnail: self.preservedVisibleThumbnails[ClipThumbnailIdentity(clip)]
-            )
-            return cell
+            switch row {
+            case .liveRecording:
+                guard let cell = tableView.dequeueReusableCell(
+                    withIdentifier: "liveRecording",
+                    for: indexPath
+                ) as? LiveRecordingCell else {
+                    return UITableViewCell(style: .default, reuseIdentifier: nil)
+                }
+                cell.configure(status: self.liveRecordingStatus, now: self.clock.now)
+                return cell
+
+            case .clip(let id):
+                guard let clip = self.clipsByID[id],
+                      let cell = tableView.dequeueReusableCell(
+                          withIdentifier: "clipThumbnail",
+                          for: indexPath
+                      ) as? ClipThumbnailCell else {
+                    return UITableViewCell(style: .default, reuseIdentifier: nil)
+                }
+                cell.configure(
+                    clip: clip,
+                    loader: self.dependencies.thumbnailLoader,
+                    preservedThumbnail: self.preservedVisibleThumbnails[ClipThumbnailIdentity(clip)]
+                )
+                return cell
+            }
         }
 
         view.addSubview(tableView)
@@ -109,8 +151,9 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
     private func render(_ newState: DriveDetailState) {
         let oldClips = clips
         let visibleThumbnails = visibleThumbnailImages()
-        let reconfigure = changedClipIDs(old: oldClips, new: newState.clips)
+        let reconfigure = changedClipIDs(old: oldClips, new: newState.clips).map(DriveDetailRow.clip)
 
+        hasLoadedClips = true
         state = newState
         clips = newState.clips
         clipsByID = Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0) })
@@ -121,12 +164,8 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         let thumbnailGeneration = preservedThumbnailGeneration
         preservedVisibleThumbnails = visibleThumbnails
 
-        var snapshot = NSDiffableDataSourceSnapshot<DriveDetailSection, Int>()
-        snapshot.appendSections([.clips])
-        snapshot.appendItems(clips.map(\.id), toSection: .clips)
-        snapshot.reconfigureItems(reconfigure)
         dataSource.apply(
-            snapshot,
+            makeSnapshot(reconfigure: reconfigure),
             animatingDifferences: canAnimateTableUpdates,
             completion: { [weak self] in
                 MainActor.assumeIsolated {
@@ -137,6 +176,54 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
                 }
             }
         )
+    }
+
+    private func renderLiveRecording(
+        _ inputs: LiveRecordingInputs,
+        now: ContinuousClock.Instant? = nil
+    ) {
+        let now = now ?? clock.now
+        let status = LiveRecordingStatus.from(
+            recording: inputs.recording,
+            recorder: inputs.recorder,
+            previous: liveRecordingStatus.liveSegment,
+            now: now
+        )
+        let showsLiveRow = RecordingDrive.from(status: status, worldBootTag: inputs.worldBootTag)?.bootTag == bootTag
+
+        // The stable `.liveRecording` identity means pending -> live, freeze/thaw, and segment
+        // rolls are in-place reconfigures rather than row churn; force one whenever the rendered
+        // status changed and the row is present in both the old and new snapshots.
+        let wasShowing = self.showsLiveRow
+        let statusChanged = liveRecordingStatus != status
+        liveRecordingStatus = status
+        self.showsLiveRow = showsLiveRow
+
+        let reconfigure: [DriveDetailRow] = wasShowing && showsLiveRow && statusChanged
+            ? [.liveRecording]
+            : []
+        dataSource.apply(
+            makeSnapshot(reconfigure: reconfigure),
+            animatingDifferences: canAnimateTableUpdates,
+            completion: { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.handlePostApplyState()
+                }
+            }
+        )
+    }
+
+    private func makeSnapshot(
+        reconfigure: [DriveDetailRow]
+    ) -> NSDiffableDataSourceSnapshot<DriveDetailSection, DriveDetailRow> {
+        var snapshot = NSDiffableDataSourceSnapshot<DriveDetailSection, DriveDetailRow>()
+        snapshot.appendSections([.clips])
+        if showsLiveRow {
+            snapshot.appendItems([.liveRecording], toSection: .clips)
+        }
+        snapshot.appendItems(clips.map { DriveDetailRow.clip($0.id) }, toSection: .clips)
+        snapshot.reconfigureItems(reconfigure)
+        return snapshot
     }
 
     private var canAnimateTableUpdates: Bool {
@@ -152,10 +239,14 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
     }
 
     private func handlePostApplyState() {
+        guard hasLoadedClips else { return }
+
         if clips.isEmpty {
             if state.canLoadMore {
                 store.send(.clips(.loadMore))
-            } else {
+            } else if showsLiveRow == false {
+                // A live/pending row with zero finished clips is legitimate (fresh boot, or the
+                // user deleted everything mid-drive); only pop once recording stops.
                 removeFromNavigationStack()
             }
             return
@@ -186,7 +277,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        guard let clip = row(at: indexPath) else { return }
+        guard let clip = clip(at: indexPath) else { return }
 
         tableView.deselectRow(at: indexPath, animated: true)
         navigationController?.pushViewController(
@@ -199,7 +290,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
-        guard let clip = row(at: indexPath) else { return nil }
+        guard let clip = clip(at: indexPath) else { return nil }
 
         return UISwipeActionsConfiguration(actions: [
             ClipDeleteConfirmation.swipeAction(presenting: self) { [weak self] in
@@ -214,7 +305,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         forRowAt indexPath: IndexPath
     ) {
         guard state.canLoadMore,
-              let id = dataSource.itemIdentifier(for: indexPath),
+              case .clip(let id)? = dataSource.itemIdentifier(for: indexPath),
               id == paginationTailID else {
             return
         }
@@ -232,7 +323,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
 
     func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
         for indexPath in indexPaths {
-            guard let clip = row(at: indexPath) else { continue }
+            guard let clip = clip(at: indexPath) else { continue }
 
             let identity = ClipThumbnailIdentity(clip)
             prefetchHandles[identity]?.cancel()
@@ -242,14 +333,14 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
 
     func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
         for indexPath in indexPaths {
-            guard let clip = row(at: indexPath) else { continue }
+            guard let clip = clip(at: indexPath) else { continue }
 
             prefetchHandles.removeValue(forKey: ClipThumbnailIdentity(clip))?.cancel()
         }
     }
 
-    private func row(at indexPath: IndexPath) -> Clip? {
-        guard let id = dataSource.itemIdentifier(for: indexPath) else { return nil }
+    private func clip(at indexPath: IndexPath) -> Clip? {
+        guard case .clip(let id)? = dataSource.itemIdentifier(for: indexPath) else { return nil }
         return clipsByID[id]
     }
 
@@ -265,7 +356,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         }
 
         let visibleIDs = visibleRows.compactMap { dataSource.itemIdentifier(for: $0) }
-        guard visibleIDs.contains(paginationTailID) else { return }
+        guard visibleIDs.contains(.clip(paginationTailID)) else { return }
 
         store.send(.clips(.loadMore))
     }
@@ -275,7 +366,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
 
         var images: [ClipThumbnailIdentity: UIImage] = [:]
         for indexPath in visibleRows {
-            guard let clip = row(at: indexPath),
+            guard let clip = clip(at: indexPath),
                   let cell = tableView.cellForRow(at: indexPath) as? ClipThumbnailCell,
                   let image = cell.currentThumbnailImage else {
                 continue
@@ -288,7 +379,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
     private func reconfigureVisibleThumbnails() {
         guard let visibleRows = tableView.indexPathsForVisibleRows else { return }
         for indexPath in visibleRows {
-            guard let clip = row(at: indexPath),
+            guard let clip = clip(at: indexPath),
                   let cell = tableView.cellForRow(at: indexPath) as? ClipThumbnailCell else {
                 continue
             }
@@ -321,11 +412,11 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
     }
 
     func indexPathForTesting(clipID: Int) -> IndexPath? {
-        dataSource.indexPath(for: clipID)
+        dataSource.indexPath(for: .clip(clipID))
     }
 
     func clipThumbnailCellForTesting(clipID: Int) -> ClipThumbnailCell? {
-        guard let indexPath = dataSource.indexPath(for: clipID) else { return nil }
+        guard let indexPath = dataSource.indexPath(for: .clip(clipID)) else { return nil }
         return tableView.cellForRow(at: indexPath) as? ClipThumbnailCell
     }
 
@@ -336,5 +427,18 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
 
     func layoutTableForTesting() {
         tableView.layoutIfNeeded()
+    }
+
+    var isShowingLiveRowForTesting: Bool {
+        showsLiveRow
+    }
+
+    func liveRecordingCellForTesting() -> LiveRecordingCell? {
+        guard let indexPath = dataSource.indexPath(for: .liveRecording) else { return nil }
+        return tableView.cellForRow(at: indexPath) as? LiveRecordingCell
+    }
+
+    func tickLiveRecordingCellForTesting(now: ContinuousClock.Instant? = nil) {
+        liveRecordingCellForTesting()?.statusViewForTesting.tickForTesting(now: now)
     }
 }

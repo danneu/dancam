@@ -415,9 +415,10 @@ Manual simulator + mock walkthrough (`just raspi-mock`, 5 s segments; scheme env
 - [x] 2. `refactor(app): extract LiveRecordingStatus from HomeRow composition`
 - [x] 3. `feat(app): move live recording out of Recent clips into a widget under the record button`
 - [x] 4. `feat(app): mark the recording drive's card with a REC pill`
-- [ ] 5. `feat(app): show the live recording row atop the recorded drive's detail`
+- [x] 5. `feat(app): show the live recording row atop the recorded drive's detail`
 - [ ] 6. `docs(app): record the live-recording surfaces decision`
 
 ## Implementation notes
 
 - Commit 2 made `RecordingFeature.State` explicitly `nonisolated` and `Sendable` so `LiveRecordingInputs` can stay a nonisolated `Equatable, Sendable` projection under the app target's default main-actor isolation.
+- Commit 5: `DriveDetailViewController` registers the live `LiveRecordingInputs` observation *before* the clips projection and guards `handlePostApplyState` on a `hasLoadedClips` flag. Both observers fire synchronously on registration and the empty-drive pop needs both `showsLiveRow` (from the live observer) and the real clips (from the clips observer); without the ordering + guard, a drive being recorded into with zero finished clips would flash-pop on the first render before `showsLiveRow` was known.

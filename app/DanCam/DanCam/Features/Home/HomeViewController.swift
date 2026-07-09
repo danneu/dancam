@@ -723,7 +723,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         case .drive(let drive):
             tableView.deselectRow(at: indexPath, animated: true)
             navigationController?.pushViewController(
-                DriveDetailViewController(dependencies: dependencies, store: store, bootTag: drive.bootTag),
+                DriveDetailViewController(
+                    dependencies: dependencies,
+                    store: store,
+                    bootTag: drive.bootTag,
+                    initialLiveSegment: liveRecordingStatus.liveSegment
+                ),
                 animated: true
             )
         }

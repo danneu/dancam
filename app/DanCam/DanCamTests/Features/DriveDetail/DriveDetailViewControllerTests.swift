@@ -250,17 +250,229 @@ struct DriveDetailViewControllerTests {
         }
     }
 
+    // MARK: Live recording row
+
+    @Test(.timeLimit(.minutes(1)))
+    func currentDriveShowsLiveRowAtTop() async throws {
+        let controller = makeController(
+            clips: [clip(id: 10, bootTag: "target")],
+            world: CameraSamples.world(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+                bootTag: "target"
+            ),
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        let cell = try await liveCell(in: controller)
+        #expect(controller.isShowingLiveRowForTesting)
+        #expect(cell.statusViewForTesting.titleTextForTesting == "seg_00024.ts")
+        #expect(colorMatches(cell.statusViewForTesting.recBadgeForTesting.dotColorForTesting, .systemRed))
+        #expect(controller.indexPathForTesting(clipID: 10) == IndexPath(row: 1, section: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func otherDriveShowsNoLiveRow() async throws {
+        let controller = makeController(
+            clips: [clip(id: 10, bootTag: "target")],
+            world: CameraSamples.world(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+                bootTag: "other"
+            ),
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.layoutTableForTesting()
+            return controller.clipThumbnailCellForTesting(clipID: 10) != nil
+        }
+
+        #expect(controller.isShowingLiveRowForTesting == false)
+        #expect(controller.liveRecordingCellForTesting() == nil)
+        #expect(controller.indexPathForTesting(clipID: 10) == IndexPath(row: 0, section: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func liveRowFreezesWhenLinkDropsAndThawsOnReconnect() async throws {
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+            bootTag: "target"
+        )
+        let (controller, store) = makeControllerAndStore(
+            clips: [clip(id: 10, bootTag: "target")],
+            clipsClient: parkedClipsClient(),
+            world: world,
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer {
+            store.send(.clips(.onDisappear))
+            window.isHidden = true
+        }
+
+        let cell = try await liveCell(in: controller)
+        #expect(colorMatches(cell.statusViewForTesting.recBadgeForTesting.dotColorForTesting, .systemRed))
+        #expect(cell.statusViewForTesting.elapsedTextForTesting?.hasPrefix("~") == false)
+
+        store.send(.heartbeatTimedOut)
+
+        try await waitUntil {
+            guard let view = controller.liveRecordingCellForTesting()?.statusViewForTesting else { return false }
+            return self.colorMatches(view.recBadgeForTesting.dotColorForTesting, .systemGray) &&
+                view.elapsedTextForTesting?.hasPrefix("~") == true
+        }
+        #expect(controller.liveRecordingCellForTesting() === cell)
+
+        store.send(.event(.snapshot(world)))
+
+        try await waitUntil {
+            guard let view = controller.liveRecordingCellForTesting()?.statusViewForTesting else { return false }
+            return self.colorMatches(view.recBadgeForTesting.dotColorForTesting, .systemRed) &&
+                view.elapsedTextForTesting?.hasPrefix("~") == false
+        }
+        #expect(controller.liveRecordingCellForTesting() === cell)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func pendingRowShowsForCurrentBootBeforeFirstSegment() async throws {
+        let controller = makeController(
+            clips: [],
+            world: CameraSamples.world(phase: .starting, currentSegment: nil, bootTag: "target"),
+            recording: .starting
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        let cell = try await liveCell(in: controller)
+        #expect(controller.isShowingLiveRowForTesting)
+        #expect(cell.statusViewForTesting.titleTextForTesting == "Starting...")
+        #expect(cell.statusViewForTesting.elapsedTextForTesting == "00:00")
+        #expect(colorMatches(cell.statusViewForTesting.recBadgeForTesting.dotColorForTesting, .systemRed))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func pendingToLiveReconfiguresTheStableLiveRow() async throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            world: CameraSamples.world(phase: .starting, currentSegment: nil, bootTag: "target"),
+            recording: .starting
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        let cell = try await liveCell(in: controller)
+        #expect(cell.statusViewForTesting.titleTextForTesting == "Starting...")
+
+        store.send(.event(.segmentOpened(session: 7, id: 43, atMs: 5_400)))
+
+        try await waitUntil {
+            controller.liveRecordingCellForTesting()?.statusViewForTesting.titleTextForTesting == "seg_00043.ts"
+        }
+        #expect(controller.liveRecordingCellForTesting() === cell)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func segmentRollReconfiguresLiveRowTitleInPlace() async throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            world: CameraSamples.world(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+                bootTag: "target"
+            ),
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        let cell = try await liveCell(in: controller)
+        #expect(cell.statusViewForTesting.titleTextForTesting == "seg_00024.ts")
+
+        store.send(.event(.segmentOpened(session: 7, id: 25, atMs: 137_000)))
+
+        try await waitUntil {
+            controller.liveRecordingCellForTesting()?.statusViewForTesting.titleTextForTesting == "seg_00025.ts"
+        }
+        #expect(controller.liveRecordingCellForTesting() === cell)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openingCurrentDriveMidSegmentSeedsElapsedFromInitialLiveSegment() async throws {
+        let seed = LiveSegment(
+            sessionId: 7,
+            id: 24,
+            elapsed: .ticking(seedDurMs: 100_000, anchor: ContinuousClock().now)
+        )
+        let controller = makeController(
+            clips: [],
+            world: CameraSamples.world(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 24, durMs: nil),
+                bootTag: "target"
+            ),
+            recording: .recording,
+            initialLiveSegment: seed
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        let cell = try await liveCell(in: controller)
+        let elapsed = try #require(cell.statusViewForTesting.elapsedTextForTesting)
+        #expect(elapsed != "00:00")
+        #expect(elapsed.hasPrefix("01:"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func exhaustedEmptyDriveStaysWhileRecordingIntoItThenPopsAfterStop() async throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            nextCursor: nil,
+            world: CameraSamples.world(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+                bootTag: "target"
+            ),
+            recording: .recording
+        )
+        let root = UIViewController()
+        let navigationController = UINavigationController(rootViewController: root)
+        navigationController.pushViewController(controller, animated: false)
+        controller.loadViewIfNeeded()
+
+        #expect(controller.isShowingLiveRowForTesting)
+        #expect(navigationController.viewControllers.contains(controller))
+
+        store.send(.event(.recordingStopped(session: 7, atMs: 62_000)))
+
+        try await waitUntil {
+            navigationController.viewControllers.contains(controller) == false
+        }
+        #expect(navigationController.topViewController === root)
+    }
+
     private func makeController(
         clips: [Clip],
         clipsClient: ClipsClient = .noop,
         nextCursor: String? = nil,
-        thumbnailLoader: ThumbnailLoader = .noop
+        thumbnailLoader: ThumbnailLoader = .noop,
+        world: World? = nil,
+        recording: RecordingFeature.State = .unknown,
+        initialLiveSegment: LiveSegment? = nil
     ) -> DriveDetailViewController {
         makeControllerAndStore(
             clips: clips,
             clipsClient: clipsClient,
             nextCursor: nextCursor,
-            thumbnailLoader: thumbnailLoader
+            thumbnailLoader: thumbnailLoader,
+            world: world,
+            recording: recording,
+            initialLiveSegment: initialLiveSegment
         ).0
     }
 
@@ -268,11 +480,18 @@ struct DriveDetailViewControllerTests {
         clips: [Clip],
         clipsClient: ClipsClient = .noop,
         nextCursor: String? = nil,
-        thumbnailLoader: ThumbnailLoader = .noop
+        thumbnailLoader: ThumbnailLoader = .noop,
+        world: World? = nil,
+        recording: RecordingFeature.State = .unknown,
+        initialLiveSegment: LiveSegment? = nil
     ) -> (DriveDetailViewController, AppStore) {
         var state = AppFeature.State()
         state.clips.clips = clips
         state.clips.nextCursor = nextCursor
+        state.recording = recording
+        if let world {
+            state.link = .online(world)
+        }
         let dependencies = AppDependencies(
             health: HealthClient(fetch: { fatalError("Health is not used by DriveDetailViewControllerTests.") }),
             clips: clipsClient,
@@ -282,9 +501,48 @@ struct DriveDetailViewControllerTests {
         )
         let store = AppStore(initialState: state, dependencies: dependencies, reduce: AppFeature.reduce)
         return (
-            DriveDetailViewController(dependencies: dependencies, store: store, bootTag: "target"),
+            DriveDetailViewController(
+                dependencies: dependencies,
+                store: store,
+                bootTag: "target",
+                initialLiveSegment: initialLiveSegment
+            ),
             store
         )
+    }
+
+    private func parkedClipsClient() -> ClipsClient {
+        ClipsClient { _ in
+            try await Task.sleep(for: .seconds(60))
+            throw CancellationError()
+        }
+    }
+
+    private func liveCell(in controller: DriveDetailViewController) async throws -> LiveRecordingCell {
+        try await waitUntil {
+            controller.layoutTableForTesting()
+            return controller.liveRecordingCellForTesting() != nil
+        }
+        return try #require(controller.liveRecordingCellForTesting())
+    }
+
+    private func colorMatches(_ color: UIColor?, _ expected: UIColor) -> Bool {
+        colorComponents(color) == colorComponents(expected)
+    }
+
+    private func colorComponents(_ color: UIColor?) -> [Int]? {
+        guard let color else { return nil }
+
+        let resolved = color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+
+        return [red, green, blue, alpha].map { Int(($0 * 1_000).rounded()) }
     }
 
     private func clip(
