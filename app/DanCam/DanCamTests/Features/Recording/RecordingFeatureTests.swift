@@ -124,7 +124,6 @@ struct RecordingFeatureTests {
         let store = TestStore(
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
-                status: StatusClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: { throw RecordingError.http(503) }, stop: {})
             ),
             reduce: RecordingFeature.reduce
@@ -142,7 +141,6 @@ struct RecordingFeatureTests {
         let store = TestStore(
             initialState: RecordingFeature.State.idle,
             dependencies: AppDependencies(
-                status: StatusClient(fetch: { fatalError() }),
                 recording: RecordingClient(start: { throw CancellationError() }, stop: {})
             ),
             reduce: RecordingFeature.reduce

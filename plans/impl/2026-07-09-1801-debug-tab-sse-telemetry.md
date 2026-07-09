@@ -370,4 +370,4 @@ New/changed (Swift Testing; behavioral, structure-insensitive):
 
 - [x] 1. `feat(app): add uptime and memory formatters`
 - [x] 2. `feat(app): rebuild Debug as an SSE-driven top-level tab`
-- [ ] 3. `chore(app): delete unused StatusClient`
+- [x] 3. `chore(app): delete unused StatusClient`
