@@ -8,6 +8,10 @@ nonisolated enum TempWarning: Equatable {
 nonisolated enum Formatters {
     static let sensorWarnThreshold = 50.0
     static let sensorCriticalThreshold = 55.0
+    static let memoryWarnThreshold = 0.80
+    static let memoryCriticalThreshold = 0.90
+    static let swapWarnThreshold = 0.50
+    static let swapCriticalThreshold = 0.80
 
     static func storageDisplay(_ storage: Storage) -> (freeText: String, usedFraction: Double) {
         let free = storage.total >= storage.used ? storage.total - storage.used : 0
@@ -17,6 +21,15 @@ nonisolated enum Formatters {
             freeText: byteSize(free),
             usedFraction: min(max(fraction, 0), 1)
         )
+    }
+
+    static func memoryDisplay(_ mem: Mem) -> (detailText: String, usedFraction: Double)? {
+        let used = mem.available < mem.total ? mem.total - mem.available : 0
+        return usageDisplay(used: used, total: mem.total)
+    }
+
+    static func swapDisplay(_ mem: Mem) -> (detailText: String, usedFraction: Double)? {
+        usageDisplay(used: mem.swapUsed, total: mem.swapTotal)
     }
 
     static func byteSize(_ bytes: UInt64) -> String {
@@ -125,8 +138,14 @@ nonisolated enum Formatters {
     }
 
     static func compactDuration(_ durMs: UInt64) -> String {
-        let totalSeconds = durMs / 1_000
+        compactDurationSeconds(durMs / 1_000)
+    }
 
+    static func uptime(_ seconds: UInt64) -> String {
+        compactDurationSeconds(seconds)
+    }
+
+    private static func compactDurationSeconds(_ totalSeconds: UInt64) -> String {
         if totalSeconds < 60 {
             return "\(totalSeconds)s"
         }
@@ -136,11 +155,23 @@ nonisolated enum Formatters {
             return "\(totalMinutes)m"
         }
 
-        let hours = totalMinutes / 60
+        let totalHours = totalMinutes / 60
         let minutes = totalMinutes % 60
-        guard minutes > 0 else { return "\(hours)h" }
+        guard totalHours >= 24 else {
+            guard minutes > 0 else { return "\(totalHours)h" }
 
-        return "\(hours)h \(minutes)m"
+            return "\(totalHours)h \(minutes)m"
+        }
+
+        let days = totalHours / 24
+        let hours = totalHours % 24
+        return [
+            "\(days)d",
+            hours > 0 ? "\(hours)h" : nil,
+            minutes > 0 ? "\(minutes)m" : nil,
+        ]
+        .compactMap { $0 }
+        .joined(separator: " ")
     }
 
     static func clipCount(_ count: Int) -> String {
@@ -194,5 +225,18 @@ nonisolated enum Formatters {
         }
 
         return nil
+    }
+
+    private static func usageDisplay(
+        used: UInt64,
+        total: UInt64
+    ) -> (detailText: String, usedFraction: Double)? {
+        guard total > 0 else { return nil }
+
+        let clampedUsed = min(used, total)
+        return (
+            detailText: "\(byteSize(clampedUsed)) of \(byteSize(total))",
+            usedFraction: Double(clampedUsed) / Double(total)
+        )
     }
 }

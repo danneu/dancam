@@ -24,6 +24,67 @@ struct FormattersTests {
         #expect(display.usedFraction == 1)
     }
 
+    @Test func memoryDisplayFormatsUsedMemoryAndFraction() throws {
+        let display = try #require(
+            Formatters.memoryDisplay(
+                Mem(total: 512_000_000, available: 100_000_000, swapTotal: 0, swapUsed: 0)
+            )
+        )
+
+        #expect(display.detailText == "412 MB of 512 MB")
+        #expect(abs(display.usedFraction - 0.804_687_5) < 0.000_000_1)
+    }
+
+    @Test func memoryDisplayClampsAvailableGreaterThanTotal() throws {
+        let display = try #require(
+            Formatters.memoryDisplay(
+                Mem(total: 512_000_000, available: 600_000_000, swapTotal: 0, swapUsed: 0)
+            )
+        )
+
+        #expect(display.detailText == "Zero KB of 512 MB")
+        #expect(display.usedFraction == 0)
+    }
+
+    @Test func memoryDisplayGuardsZeroTotal() {
+        let display = Formatters.memoryDisplay(
+            Mem(total: 0, available: 0, swapTotal: 0, swapUsed: 0)
+        )
+
+        #expect(display == nil)
+    }
+
+    @Test func swapDisplayFormatsAndClampsUsage() throws {
+        let cases: [(swapUsed: UInt64, detailText: String, usedFraction: Double)] = [
+            (128_000_000, "128 MB of 256 MB", 0.5),
+            (300_000_000, "256 MB of 256 MB", 1),
+        ]
+
+        for testCase in cases {
+            let display = try #require(
+                Formatters.swapDisplay(
+                    Mem(
+                        total: 512_000_000,
+                        available: 100_000_000,
+                        swapTotal: 256_000_000,
+                        swapUsed: testCase.swapUsed
+                    )
+                )
+            )
+
+            #expect(display.detailText == testCase.detailText)
+            #expect(display.usedFraction == testCase.usedFraction)
+        }
+    }
+
+    @Test func swapDisplayGuardsZeroTotal() {
+        let display = Formatters.swapDisplay(
+            Mem(total: 512_000_000, available: 100_000_000, swapTotal: 0, swapUsed: 0)
+        )
+
+        #expect(display == nil)
+    }
+
     @Test func sensorWarningUsesSensorThresholdsOnly() {
         let cases: [(sensor: Double?, warning: TempWarning?)] = [
             (nil, nil),
@@ -229,7 +290,7 @@ struct FormattersTests {
         }
     }
 
-    @Test func compactDurationFormatsSecondsMinutesAndHours() {
+    @Test func compactDurationFormatsSecondsMinutesHoursAndDays() {
         let cases: [(durMs: UInt64, text: String)] = [
             (0, "0s"),
             (59_000, "59s"),
@@ -237,10 +298,23 @@ struct FormattersTests {
             (3_599_000, "59m"),
             (3_600_000, "1h"),
             (4_860_000, "1h 21m"),
+            (200_000_000, "2d 7h 33m"),
         ]
 
         for testCase in cases {
             #expect(Formatters.compactDuration(testCase.durMs) == testCase.text)
+        }
+    }
+
+    @Test func uptimeFormatsElapsedSeconds() {
+        let cases: [(seconds: UInt64, text: String)] = [
+            (45, "45s"),
+            (3_725, "1h 2m"),
+            (200_000, "2d 7h 33m"),
+        ]
+
+        for testCase in cases {
+            #expect(Formatters.uptime(testCase.seconds) == testCase.text)
         }
     }
 
