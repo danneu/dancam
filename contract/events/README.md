@@ -27,6 +27,8 @@ SSE framing.
 - `seq` is not in JSON. It is carried only by the SSE `id:` line.
 - `at_ms` and `t_ms` are milliseconds since Pi boot, paired with `boot_id`.
   They are display and ordering aids, not wall-clock evidence.
+- The snapshot-level nullable `boot_tag` is the per-boot drive identity,
+  matching clip `boot_tag`.
 - Authoritative event order is the SSE `id:` sequence.
 - `segment_opened` and `clip_finalized` are separate events. Rollover emits
   `clip_finalized` for the old segment and `segment_opened` for the new one.

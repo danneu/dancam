@@ -79,6 +79,7 @@ pub struct Snapshot {
     pub recorder: RecorderSnapshot,
     pub camera_state: CameraState,
     pub boot_id: String,
+    pub boot_tag: Option<String>,
     pub uptime_s: u64,
     pub storage: Option<DiskUsage>,
     pub temp_c: TempC,
@@ -220,7 +221,8 @@ mod tests {
                     detail: None,
                 },
                 camera_state: CameraState::Running,
-                boot_id: "boot-7f3a91c2".to_string(),
+                boot_id: "7f3a91c2-b0d4-4e15-b196-20e0416af749".to_string(),
+                boot_tag: Some("7f3a91c2b0d4".to_string()),
                 uptime_s: 120,
                 storage: Some(DiskUsage {
                     used: 1_000_000_000,

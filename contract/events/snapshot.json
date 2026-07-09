@@ -10,7 +10,8 @@
     "detail": null
   },
   "camera_state": "running",
-  "boot_id": "boot-7f3a91c2",
+  "boot_id": "7f3a91c2-b0d4-4e15-b196-20e0416af749",
+  "boot_tag": "7f3a91c2b0d4",
   "uptime_s": 120,
   "storage": {
     "used": 1000000000,

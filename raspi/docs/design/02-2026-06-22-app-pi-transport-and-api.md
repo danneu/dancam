@@ -128,6 +128,13 @@
 > with `503` on recording-directory scan errors rather than returning an empty `200` or
 > a fail-open `404`; a missing recording directory remains a truthful empty list.
 
+> **Note (2026-07-09): Snapshot boot tag.** Swoop `sift` adds nullable `boot_tag` to
+> the snapshot body served by `GET /v1/status` and as the first frame of
+> `GET /v1/events`. The value is the per-boot drive identity derived from `boot_id`
+> using ADR 15's boottag canon, matching clip `boot_tag`; underivable boot ids carry
+> null. This supports the app-side live-recording drive attribution decision without
+> making the current segment carry a repeated boot-level fact.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --

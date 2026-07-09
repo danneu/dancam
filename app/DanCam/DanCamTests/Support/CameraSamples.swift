@@ -12,6 +12,7 @@ enum CameraSamples {
         tempC: TempC = TempC(soc: nil, sensor: nil),
         mem: Mem? = nil,
         uptimeS: UInt64 = 1,
+        bootTag: String? = nil,
         time: TimeStatus? = TimeStatus(synced: true)
     ) -> World {
         World(
@@ -23,6 +24,7 @@ enum CameraSamples {
             ),
             cameraState: cameraState,
             bootId: "boot-123",
+            bootTag: bootTag,
             uptimeS: uptimeS,
             storage: storage,
             tempC: tempC,

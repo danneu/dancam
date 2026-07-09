@@ -14,7 +14,8 @@ struct StatusClientTests {
             "detail": null
           },
           "camera_state": "running",
-          "boot_id": "boot-123",
+          "boot_id": "7f3a91c2-b0d4-4e15-b196-20e0416af749",
+          "boot_tag": "7f3a91c2b0d4",
           "uptime_s": 42,
           "storage": { "used": 100, "total": 1000 },
           "temp_c": { "soc": 51.2, "sensor": null },
@@ -53,7 +54,8 @@ struct StatusClientTests {
                 detail: nil
             ),
             cameraState: .running,
-            bootId: "boot-123",
+            bootId: "7f3a91c2-b0d4-4e15-b196-20e0416af749",
+            bootTag: "7f3a91c2b0d4",
             uptimeS: 42,
             storage: Storage(used: 100, total: 1000),
             tempC: TempC(soc: 51.2, sensor: nil),

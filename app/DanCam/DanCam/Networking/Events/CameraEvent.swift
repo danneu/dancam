@@ -136,6 +136,7 @@ nonisolated struct World: Codable, Equatable, Sendable {
     var recorder: RecorderSnapshot
     var cameraState: CameraState
     var bootId: String
+    var bootTag: String? = nil
     var uptimeS: UInt64
     var storage: Storage?
     var tempC: TempC

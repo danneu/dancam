@@ -56,6 +56,7 @@ impl World {
             recorder: self.recorder.snapshot(),
             camera_state: self.camera_state,
             boot_id: boot_id.to_string(),
+            boot_tag: crate::recorder::boot_tag(boot_id),
             uptime_s,
             storage: self.storage.clone(),
             temp_c: self.temp_c.clone(),
@@ -576,9 +577,13 @@ mod tests {
         let snapshot = world.snapshot("boot", 12);
 
         assert_eq!(snapshot.boot_id, "boot");
+        assert_eq!(snapshot.boot_tag.as_deref(), None);
         assert_eq!(snapshot.uptime_s, 12);
         assert_eq!(snapshot.recorder.phase, RecorderPhase::Recording);
-        assert_eq!(snapshot.recorder.current_segment.unwrap().id, 43);
+        assert_eq!(snapshot.recorder.current_segment.as_ref().unwrap().id, 43);
+
+        let tagged_snapshot = world.snapshot("7f3a91c2-b0d4-4e15-b196-20e0416af749", 12);
+        assert_eq!(tagged_snapshot.boot_tag.as_deref(), Some("7f3a91c2b0d4"));
     }
 
     fn clip(id: u32) -> ClipMeta {

@@ -51,7 +51,8 @@ struct CameraEventCorpusTests {
                 detail: nil
             ),
             cameraState: .running,
-            bootId: "boot-7f3a91c2",
+            bootId: "7f3a91c2-b0d4-4e15-b196-20e0416af749",
+            bootTag: "7f3a91c2b0d4",
             uptimeS: 120,
             storage: Storage(used: 1_000_000_000, total: 32_000_000_000),
             tempC: TempC(soc: 51.5, sensor: nil),
