@@ -1,135 +1,107 @@
 import Testing
 @testable import DanCam
 
-struct HomeRowTests {
-    @Test func composeShowsLiveRowOnlyWhenRecorderTruthHasCurrentSegment() throws {
+struct LiveRecordingStatusTests {
+    @Test func fromDerivesNonePendingAndLiveFromRecorderTruth() throws {
         let clock = ContinuousClock()
-        let clip = CameraSamples.clip(id: 4)
         let now = clock.now
 
-        #expect(HomeRow.compose(
-            clips: [clip],
-            recording: .idle,
-            recorder: .unknown,
-            previousLive: nil,
-            now: now
-        ) == [.finished(clip)])
-
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(recording: .idle, recorder: .unknown, now: now) == .none)
+        #expect(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: nil)),
-            previousLive: nil,
             now: now
-        ) == [.pending, .finished(clip)])
-
-        #expect(HomeRow.compose(
-            clips: [clip],
+        ) == .pending)
+        #expect(status(
             recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: nil)),
-            previousLive: ticking(sessionId: 7, id: 7, seedDurMs: 1_000, anchor: now),
+            previous: ticking(sessionId: 7, id: 7, seedDurMs: 1_000, anchor: now),
             now: now
-        ) == [.finished(clip)])
+        ) == .none)
 
-        let rows = HomeRow.compose(
-            clips: [clip],
+        let live = try #require(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 1_000))),
-            previousLive: nil,
             now: now
-        )
-
-        #expect(rows.count == 2)
-        let live = try #require(rows.first?.liveSegment)
+        ).liveSegment)
         #expect(live.sessionId == 7)
         #expect(live.id == 7)
         #expect(live.elapsed == .ticking(seedDurMs: 1_000, anchor: now))
-        #expect(Array(rows.dropFirst()) == [.finished(clip)])
     }
 
-    @Test func composePreservesAnchorWhenSameTickingSegmentHasNoPiDuration() throws {
+    @Test func fromPreservesAnchorWhenSameTickingSegmentHasNoPiDuration() throws {
         let clock = ContinuousClock()
         let anchor = clock.now
         let previous = ticking(sessionId: 7, id: 7, seedDurMs: 5_000, anchor: anchor)
 
-        let rows = HomeRow.compose(
-            clips: [],
+        let live = try #require(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: nil))),
-            previousLive: previous,
+            previous: previous,
             now: anchor.advanced(by: .seconds(3))
-        )
+        ).liveSegment)
 
-        let live = try #require(rows.first?.liveSegment)
         #expect(live.sessionId == 7)
         #expect(live.id == 7)
         #expect(live.elapsed == .ticking(seedDurMs: 5_000, anchor: anchor))
     }
 
-    @Test func composeReseedsWhenSegmentIdChanges() throws {
+    @Test func fromReseedsWhenSegmentIdChanges() throws {
         let clock = ContinuousClock()
         let anchor = clock.now
         let previous = ticking(sessionId: 7, id: 7, seedDurMs: 5_000, anchor: anchor)
         let now = anchor.advanced(by: .seconds(3))
 
-        let rows = HomeRow.compose(
-            clips: [],
+        let live = try #require(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 8, durMs: 400))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
+        ).liveSegment)
 
-        let live = try #require(rows.first?.liveSegment)
         #expect(live.sessionId == 7)
         #expect(live.id == 8)
         #expect(live.elapsed == .ticking(seedDurMs: 400, anchor: now))
     }
 
-    @Test func composeReseedsWhenSessionChanges() throws {
+    @Test func fromReseedsWhenSessionChanges() throws {
         let clock = ContinuousClock()
         let anchor = clock.now
         let previous = ticking(sessionId: 7, id: 7, seedDurMs: 5_000, anchor: anchor)
         let now = anchor.advanced(by: .seconds(3))
 
-        let rows = HomeRow.compose(
-            clips: [],
+        let live = try #require(status(
             recording: .idle,
             recorder: .live(recorder(session: 8, currentSegment: RecorderSegment(id: 7, durMs: 200))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
+        ).liveSegment)
 
-        let live = try #require(rows.first?.liveSegment)
         #expect(live.sessionId == 8)
         #expect(live.id == 7)
         #expect(live.elapsed == .ticking(seedDurMs: 200, anchor: now))
     }
 
-    @Test func composeReseedsSameTickingSegmentFromPiDurationWithoutTickingBackward() throws {
+    @Test func fromReseedsSameTickingSegmentFromPiDurationWithoutTickingBackward() throws {
         let clock = ContinuousClock()
         let anchor = clock.now
         let previous = ticking(sessionId: 7, id: 7, seedDurMs: 10_000, anchor: anchor)
         let now = anchor.advanced(by: .seconds(3))
 
-        let clampedRows = HomeRow.compose(
-            clips: [],
+        let clamped = try #require(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 12_000))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
-        let clamped = try #require(clampedRows.first?.liveSegment)
+        ).liveSegment)
         #expect(clamped.elapsed == .ticking(seedDurMs: 13_000, anchor: now))
 
-        let advancedRows = HomeRow.compose(
-            clips: [],
+        let advanced = try #require(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 15_000))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
-        let advanced = try #require(advancedRows.first?.liveSegment)
+        ).liveSegment)
         #expect(advanced.elapsed == .ticking(seedDurMs: 15_000, anchor: now))
     }
 
@@ -139,33 +111,29 @@ struct HomeRowTests {
         let now = anchor.advanced(by: .seconds(3))
         let previous = ticking(sessionId: 7, id: 7, seedDurMs: 5_000, anchor: anchor)
 
-        let rows = HomeRow.compose(
-            clips: [],
+        let live = try #require(status(
             recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: RecorderSegment(id: 7, durMs: 6_000))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
+        ).liveSegment)
 
-        let live = try #require(rows.first?.liveSegment)
         #expect(live.elapsed == .frozen(durMs: 8_000))
         #expect(live.isTicking == false)
     }
 
-    @Test func frozenLiveRowStaysFrozenAcrossRepeatedLastKnownComposes() throws {
+    @Test func frozenStatusStaysFrozenAcrossRepeatedLastKnownDerivations() throws {
         let clock = ContinuousClock()
         let now = clock.now.advanced(by: .seconds(3))
         let previous = frozen(sessionId: 7, id: 7, durMs: 8_000)
 
-        let rows = HomeRow.compose(
-            clips: [],
+        let live = try #require(status(
             recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: RecorderSegment(id: 7, durMs: 12_000))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
+        ).liveSegment)
 
-        let live = try #require(rows.first?.liveSegment)
         #expect(live.elapsed == .frozen(durMs: 8_000))
         #expect(live.isTicking == false)
     }
@@ -174,24 +142,18 @@ struct HomeRowTests {
         let clock = ContinuousClock()
         let now = clock.now
 
-        let explicitRows = HomeRow.compose(
-            clips: [],
+        let explicit = try #require(status(
             recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: RecorderSegment(id: 7, durMs: 12_000))),
-            previousLive: nil,
             now: now
-        )
-        let explicit = try #require(explicitRows.first?.liveSegment)
+        ).liveSegment)
         #expect(explicit.elapsed == .frozen(durMs: 12_000))
 
-        let missingRows = HomeRow.compose(
-            clips: [],
+        let missing = try #require(status(
             recording: .idle,
             recorder: .lastKnown(recorder(currentSegment: RecorderSegment(id: 8, durMs: nil))),
-            previousLive: nil,
             now: now
-        )
-        let missing = try #require(missingRows.first?.liveSegment)
+        ).liveSegment)
         #expect(missing.elapsed == .frozen(durMs: 0))
     }
 
@@ -200,25 +162,21 @@ struct HomeRowTests {
         let now = clock.now
         let previous = frozen(sessionId: 7, id: 7, durMs: 10_000)
 
-        let clampedRows = HomeRow.compose(
-            clips: [],
+        let clamped = try #require(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 9_000))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
-        let clamped = try #require(clampedRows.first?.liveSegment)
+        ).liveSegment)
         #expect(clamped.elapsed == .ticking(seedDurMs: 10_000, anchor: now))
         #expect(clamped.isTicking)
 
-        let advancedRows = HomeRow.compose(
-            clips: [],
+        let advanced = try #require(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: 12_000))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
-        let advanced = try #require(advancedRows.first?.liveSegment)
+        ).liveSegment)
         #expect(advanced.elapsed == .ticking(seedDurMs: 12_000, anchor: now))
         #expect(advanced.isTicking)
     }
@@ -228,163 +186,177 @@ struct HomeRowTests {
         let now = clock.now
         let previous = frozen(sessionId: 7, id: 7, durMs: 10_000)
 
-        let rows = HomeRow.compose(
-            clips: [],
+        let live = try #require(status(
             recording: .idle,
             recorder: .live(recorder(currentSegment: RecorderSegment(id: 7, durMs: nil))),
-            previousLive: previous,
+            previous: previous,
             now: now
-        )
+        ).liveSegment)
 
-        let live = try #require(rows.first?.liveSegment)
         #expect(live.elapsed == .ticking(seedDurMs: 10_000, anchor: now))
         #expect(live.isTicking)
     }
 
-    @Test func composeShowsPendingRowWhileCommandStartsBeforeWorldReacts() {
+    @Test func fromShowsPendingWhileCommandStartsBeforeWorldReacts() {
         let clock = ContinuousClock()
-        let clip = CameraSamples.clip(id: 4)
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .starting,
             recorder: .live(recorder(phase: .idle, currentSegment: nil)),
-            previousLive: nil,
             now: clock.now
-        ) == [.pending, .finished(clip)])
+        ) == .pending)
     }
 
-    @Test func composeShowsPendingRowWhenStartSucceedsBeforeEventsFold() {
+    @Test func fromShowsPendingWhenStartSucceedsBeforeEventsFold() {
         let clock = ContinuousClock()
-        let clip = CameraSamples.clip(id: 4)
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .recording,
             recorder: .live(recorder(phase: .idle, currentSegment: nil)),
-            previousLive: nil,
             now: clock.now
-        ) == [.pending, .finished(clip)])
+        ) == .pending)
     }
 
-    @Test func composeShowsPendingRowForWorldStartGapWithoutLocalCommand() {
+    @Test func fromShowsPendingForWorldStartGapWithoutLocalCommand() {
         let clock = ContinuousClock()
-        let clip = CameraSamples.clip(id: 4)
         let now = clock.now
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .idle,
             recorder: .live(recorder(phase: .starting, currentSegment: nil)),
-            previousLive: nil,
             now: now
-        ) == [.pending, .finished(clip)])
+        ) == .pending)
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .unknown,
             recorder: .live(recorder(phase: .recording, currentSegment: nil)),
-            previousLive: nil,
             now: now
-        ) == [.pending, .finished(clip)])
+        ) == .pending)
     }
 
-    @Test func composeHidesPendingRowWhenOffline() throws {
+    @Test func fromHidesPendingWhenOffline() throws {
         let clock = ContinuousClock()
-        let clip = CameraSamples.clip(id: 4)
         let now = clock.now
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .starting,
             recorder: .lastKnown(recorder(phase: .recording, currentSegment: nil)),
-            previousLive: nil,
             now: now
-        ) == [.finished(clip)])
+        ) == .none)
 
-        #expect(HomeRow.compose(
-            clips: [clip],
-            recording: .starting,
-            recorder: .unknown,
-            previousLive: nil,
-            now: now
-        ) == [.finished(clip)])
+        #expect(status(recording: .starting, recorder: .unknown, now: now) == .none)
 
-        let rows = HomeRow.compose(
-            clips: [clip],
+        let live = try #require(status(
             recording: .starting,
             recorder: .lastKnown(recorder(
                 phase: .recording,
                 currentSegment: RecorderSegment(id: 7, durMs: 1_000)
             )),
-            previousLive: nil,
             now: now
-        )
+        ).liveSegment)
 
-        let live = try #require(rows.first?.liveSegment)
         #expect(live.elapsed == .frozen(durMs: 1_000))
-        #expect(Array(rows.dropFirst()) == [.finished(clip)])
     }
 
-    @Test func composeHidesPendingRowOnFailedStart() {
+    @Test func fromHidesPendingOnFailedStart() {
         let clock = ContinuousClock()
-        let clip = CameraSamples.clip(id: 4)
         let now = clock.now
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .failed("HTTP 503"),
             recorder: .live(recorder(phase: .idle, currentSegment: nil)),
-            previousLive: nil,
             now: now
-        ) == [.finished(clip)])
+        ) == .none)
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .failed("Recorder failed"),
             recorder: .live(recorder(phase: .error, currentSegment: nil)),
-            previousLive: nil,
             now: now
-        ) == [.finished(clip)])
+        ) == .none)
     }
 
-    @Test func composeHidesPendingRowDuringStopFlow() {
+    @Test func fromHidesPendingDuringStopFlow() {
         let clock = ContinuousClock()
-        let clip = CameraSamples.clip(id: 4)
         let now = clock.now
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .stopping,
             recorder: .live(recorder(phase: .stopping, currentSegment: nil)),
-            previousLive: nil,
             now: now
-        ) == [.finished(clip)])
+        ) == .none)
 
-        #expect(HomeRow.compose(
-            clips: [clip],
+        #expect(status(
             recording: .idle,
             recorder: .live(recorder(phase: .idle, currentSegment: nil)),
-            previousLive: nil,
             now: now
-        ) == [.finished(clip)])
+        ) == .none)
     }
 
-    @Test func composeNeverShowsPendingAndLiveTogether() throws {
+    @Test func fromPrefersLiveOverPending() throws {
         let clock = ContinuousClock()
-        let rows = HomeRow.compose(
-            clips: [CameraSamples.clip(id: 4)],
+        let live = try #require(status(
             recording: .starting,
             recorder: .live(recorder(
                 phase: .recording,
                 currentSegment: RecorderSegment(id: 7, durMs: 1_000)
             )),
-            previousLive: nil,
             now: clock.now
+        ).liveSegment)
+
+        #expect(live.id == 7)
+    }
+
+    @Test func recordingDriveDerivesFreshnessFromStatusAndBootTag() {
+        let clock = ContinuousClock()
+        let tickingSegment = ticking(sessionId: 7, id: 7, seedDurMs: 1_000, anchor: clock.now)
+        let frozenSegment = frozen(sessionId: 7, id: 7, durMs: 1_000)
+
+        #expect(RecordingDrive.from(status: .pending, worldBootTag: nil) == nil)
+        #expect(RecordingDrive.from(status: .none, worldBootTag: "7f3a91c2b0d4") == nil)
+        #expect(RecordingDrive.from(
+            status: .pending,
+            worldBootTag: "7f3a91c2b0d4"
+        ) == RecordingDrive(bootTag: "7f3a91c2b0d4", freshness: .live))
+        #expect(RecordingDrive.from(
+            status: .live(tickingSegment),
+            worldBootTag: "7f3a91c2b0d4"
+        ) == RecordingDrive(bootTag: "7f3a91c2b0d4", freshness: .live))
+        #expect(RecordingDrive.from(
+            status: .live(frozenSegment),
+            worldBootTag: "7f3a91c2b0d4"
+        ) == RecordingDrive(bootTag: "7f3a91c2b0d4", freshness: .lastKnown))
+    }
+
+    @Test func liveRecordingInputsUseLastKnownWorldBootTag() {
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 7, durMs: 1_000),
+            bootTag: "7f3a91c2b0d4"
+        )
+        let state = AppFeature.State(
+            link: .offline(last: world),
+            recording: .recording
         )
 
-        _ = try #require(rows.first?.liveSegment)
-        #expect(rows.contains(.pending) == false)
+        #expect(LiveRecordingInputs.from(state) == LiveRecordingInputs(
+            recording: .recording,
+            recorder: .lastKnown(world.recorder),
+            worldBootTag: "7f3a91c2b0d4"
+        ))
+    }
+
+    private func status(
+        recording: RecordingFeature.State,
+        recorder: RecorderTruth,
+        previous: LiveSegment? = nil,
+        now: ContinuousClock.Instant
+    ) -> LiveRecordingStatus {
+        LiveRecordingStatus.from(
+            recording: recording,
+            recorder: recorder,
+            previous: previous,
+            now: now
+        )
     }
 
     private func recorder(

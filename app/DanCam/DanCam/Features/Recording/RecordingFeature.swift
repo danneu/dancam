@@ -1,7 +1,7 @@
 import Foundation
 
 enum RecordingFeature {
-    enum State: Equatable {
+    nonisolated enum State: Equatable, Sendable {
         case unknown
         case idle
         case starting

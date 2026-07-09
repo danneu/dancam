@@ -1,43 +1,5 @@
 import UIKit
 
-nonisolated struct LiveSegment: Equatable, Sendable {
-    enum Elapsed: Equatable, Sendable {
-        case ticking(seedDurMs: UInt64?, anchor: ContinuousClock.Instant)
-        case frozen(durMs: UInt64)
-    }
-
-    var sessionId: UInt64
-    var id: Int
-    var elapsed: Elapsed
-
-    func elapsedDurMs(at now: ContinuousClock.Instant) -> UInt64 {
-        switch elapsed {
-        case .ticking(let seedDurMs, let anchor):
-            (seedDurMs ?? 0) + Self.milliseconds(from: anchor.duration(to: now))
-        case .frozen(let durMs):
-            durMs
-        }
-    }
-
-    var isTicking: Bool {
-        switch elapsed {
-        case .ticking:
-            true
-        case .frozen:
-            false
-        }
-    }
-
-    private static func milliseconds(from duration: Duration) -> UInt64 {
-        let components = duration.components
-        guard components.seconds > 0 || components.attoseconds > 0 else { return 0 }
-
-        let seconds = UInt64(max(components.seconds, 0))
-        let attoseconds = UInt64(max(components.attoseconds, 0))
-        return seconds * 1_000 + attoseconds / 1_000_000_000_000_000
-    }
-}
-
 nonisolated enum HomeRow: Equatable, Sendable {
     case pending
     case live(LiveSegment)
@@ -52,105 +14,23 @@ nonisolated enum HomeRow: Equatable, Sendable {
         now: ContinuousClock.Instant
     ) -> [HomeRow] {
         var rows = clips.map(HomeRow.finished)
+        let status = LiveRecordingStatus.from(
+            recording: recording,
+            recorder: recorder,
+            previous: previousLive,
+            now: now
+        )
 
-        let live: LiveSegment?
-        switch recorder {
-        case .unknown:
-            live = nil
-        case .live(let snapshot):
-            live = tickingLiveSegment(from: snapshot, previousLive: previousLive, now: now)
-        case .lastKnown(let snapshot):
-            live = frozenLiveSegment(from: snapshot, previousLive: previousLive, now: now)
+        switch status {
+        case .none:
+            break
+        case .pending:
+            rows.insert(.pending, at: 0)
+        case .live(let live):
+            rows.insert(.live(live), at: 0)
         }
 
-        guard let live else {
-            if shouldShowPendingRow(recording: recording, recorder: recorder) {
-                rows.insert(.pending, at: 0)
-            }
-            return rows
-        }
-
-        rows.insert(.live(live), at: 0)
         return rows
-    }
-
-    static func shouldShowPendingRow(
-        recording: RecordingFeature.State,
-        recorder: RecorderTruth
-    ) -> Bool {
-        guard case .live(let snapshot) = recorder,
-              snapshot.currentSegment == nil else { return false }
-
-        let commandWantsRecording: Bool
-        switch recording {
-        case .starting, .recording:
-            commandWantsRecording = true
-        case .unknown, .idle, .stopping, .failed:
-            commandWantsRecording = false
-        }
-
-        let worldStartGap = snapshot.phase == .starting || snapshot.phase == .recording
-        return commandWantsRecording || worldStartGap
-    }
-
-    private static func tickingLiveSegment(
-        from recorder: RecorderSnapshot,
-        previousLive: LiveSegment?,
-        now: ContinuousClock.Instant
-    ) -> LiveSegment? {
-        guard let currentSegment = recorder.currentSegment else { return nil }
-
-        if let previousLive,
-           previousLive.sessionId == recorder.session,
-           previousLive.id == currentSegment.id {
-            let previousDurMs = previousLive.elapsedDurMs(at: now)
-            if let durMs = currentSegment.durMs {
-                return LiveSegment(
-                    sessionId: recorder.session,
-                    id: currentSegment.id,
-                    elapsed: .ticking(seedDurMs: max(durMs, previousDurMs), anchor: now)
-                )
-            }
-
-            if previousLive.isTicking {
-                return previousLive
-            }
-
-            return LiveSegment(
-                sessionId: recorder.session,
-                id: currentSegment.id,
-                elapsed: .ticking(seedDurMs: previousDurMs, anchor: now)
-            )
-        }
-
-        return LiveSegment(
-            sessionId: recorder.session,
-            id: currentSegment.id,
-            elapsed: .ticking(seedDurMs: currentSegment.durMs, anchor: now)
-        )
-    }
-
-    private static func frozenLiveSegment(
-        from recorder: RecorderSnapshot,
-        previousLive: LiveSegment?,
-        now: ContinuousClock.Instant
-    ) -> LiveSegment? {
-        guard let currentSegment = recorder.currentSegment else { return nil }
-
-        let durMs: UInt64
-        if let previousLive,
-           previousLive.sessionId == recorder.session,
-           previousLive.id == currentSegment.id {
-            durMs = previousLive.elapsedDurMs(at: now)
-        } else {
-            durMs = currentSegment.durMs ?? 0
-        }
-
-        return LiveSegment(
-            sessionId: recorder.session,
-            id: currentSegment.id,
-            elapsed: .frozen(durMs: durMs)
-        )
     }
 
     var liveSegment: LiveSegment? {
