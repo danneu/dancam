@@ -67,6 +67,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var dataSource: UITableViewDiffableDataSource<HomeSection, HomeRowID>!
 
     private var liveRecordingStatus: LiveRecordingStatus = .none
+    private var recordingDrive: RecordingDrive?
     private var finishedClips: [Clip] = []
     private var clipsStatus: ClipsFeature.State.Status = .idle
     private var clipsNextCursor: String?
@@ -502,6 +503,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             now: now
         )
         liveRecordingStatus = status
+        recordingDrive = RecordingDrive.from(status: status, worldBootTag: inputs.worldBootTag)
         liveRecordingWidget.configure(status: status, now: now)
 
         let shouldHide = status == .none
@@ -523,7 +525,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         let visibleThumbnails = visibleThumbnailImages()
         let newSections = HomeRow.composeSections(
             clips: finishedClips,
-            recordingDrive: nil,
+            recordingDrive: recordingDrive,
             today: wallNow(),
             calendar: currentCalendar()
         )

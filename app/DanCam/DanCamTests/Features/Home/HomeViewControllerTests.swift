@@ -591,6 +591,109 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func recordingDriveCardShowsRedPillAndClearsOnStop() async throws {
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+            bootTag: "boot-a"
+        )
+        let (controller, store) = makeControllerAndStore(
+            clips: [driveClip(id: 10, bootTag: "boot-a")],
+            loader: .noop,
+            world: world,
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            guard let cell = controller.driveThumbnailCellForTesting(bootTag: "boot-a") else { return false }
+            return cell.isRecordingPillVisibleForTesting &&
+                self.colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemRed)
+        }
+
+        store.send(.event(.recordingStopped(session: 7, atMs: 62_000)))
+
+        try await waitUntil {
+            guard let cell = controller.driveThumbnailCellForTesting(bootTag: "boot-a") else { return false }
+            return cell.isRecordingPillVisibleForTesting == false
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func recordingDriveCardGraysWhenLinkDrops() async throws {
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+            bootTag: "boot-a"
+        )
+        let (controller, store) = makeControllerAndStore(
+            clips: [driveClip(id: 10, bootTag: "boot-a")],
+            loader: .noop,
+            world: world,
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            guard let cell = controller.driveThumbnailCellForTesting(bootTag: "boot-a") else { return false }
+            return self.colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemRed)
+        }
+
+        store.send(.heartbeatTimedOut)
+
+        try await waitUntil {
+            guard let cell = controller.driveThumbnailCellForTesting(bootTag: "boot-a") else { return false }
+            return cell.isRecordingPillVisibleForTesting &&
+                self.colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemGray)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func reconnectSnapshotWithNewBootTagMarksOnlyNewDriveCard() async throws {
+        let oldWorld = CameraSamples.world(phase: .idle, currentSegment: nil, bootTag: "old-boot")
+        let newWorld = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+            bootTag: "new-boot"
+        )
+        let (controller, store) = makeControllerAndStore(
+            clips: [
+                driveClip(id: 11, bootTag: "new-boot"),
+                driveClip(id: 10, bootTag: "old-boot"),
+            ],
+            loader: .noop,
+            world: oldWorld,
+            recording: .idle,
+            clipsClient: parkedClipsClient()
+        )
+        let window = try embed(controller)
+        defer {
+            store.send(.clips(.onDisappear))
+            window.isHidden = true
+        }
+
+        try await waitUntil {
+            controller.driveThumbnailCellForTesting(bootTag: "new-boot") != nil &&
+                controller.driveThumbnailCellForTesting(bootTag: "old-boot") != nil
+        }
+
+        store.send(.event(.snapshot(newWorld)))
+
+        try await waitUntil {
+            guard let newCell = controller.driveThumbnailCellForTesting(bootTag: "new-boot"),
+                  let oldCell = controller.driveThumbnailCellForTesting(bootTag: "old-boot") else {
+                return false
+            }
+
+            return newCell.isRecordingPillVisibleForTesting &&
+                self.colorMatches(newCell.recordingPillForTesting.dotColorForTesting, .systemRed) &&
+                oldCell.isRecordingPillVisibleForTesting == false
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func tappingRecordShowsPendingWidgetImmediatelyWithoutTickTimer() async throws {
         let releaseStart = AsyncSignal()
         let (controller, _) = makeControllerAndStore(

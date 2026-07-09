@@ -58,6 +58,7 @@ final class ClipThumbnailCell: UITableViewCell {
     private let thumbnailView = UIImageView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
+    private let recordingPill = StatusPillView(caption: "REC", dotColor: .systemRed)
 
     private var displayState = ThumbnailDisplayState()
     private var loadTask: Task<Void, Never>?
@@ -82,26 +83,32 @@ final class ClipThumbnailCell: UITableViewCell {
 
     func configure(clip: Clip, loader: ThumbnailLoader, preservedThumbnail: UIImage? = nil) {
         accessoryType = .none
+        configureRecordingPill(nil)
         titleLabel.text = String(format: "seg_%05d.ts", clip.id)
         let subtitle = Formatters.clipListLine(clip)
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle.isEmpty
-        accessibilityLabel = [titleLabel.text, subtitle.isEmpty ? nil : subtitle]
-            .compactMap { $0 }
-            .joined(separator: ", ")
+        accessibilityLabel = cellAccessibilityLabel(
+            title: titleLabel.text,
+            subtitle: subtitle,
+            recording: nil
+        )
 
         configureThumbnail(clip: clip, loader: loader, preservedThumbnail: preservedThumbnail)
     }
 
     func configure(drive: DriveGroup, loader: ThumbnailLoader, preservedThumbnail: UIImage? = nil) {
         accessoryType = .disclosureIndicator
+        configureRecordingPill(drive.recording)
         titleLabel.text = Formatters.driveCardTitle(start: drive.startDate, end: drive.endDate)
         let subtitle = Formatters.driveCardSubtitle(durationMs: drive.totalDurMs, clipCount: drive.clipCount)
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle.isEmpty
-        accessibilityLabel = [titleLabel.text, subtitle.isEmpty ? nil : subtitle]
-            .compactMap { $0 }
-            .joined(separator: ", ")
+        accessibilityLabel = cellAccessibilityLabel(
+            title: titleLabel.text,
+            subtitle: subtitle,
+            recording: drive.recording
+        )
 
         guard let representative = drive.representative else {
             cancelLoad()
@@ -157,6 +164,7 @@ final class ClipThumbnailCell: UITableViewCell {
         cancelLoad()
         displayState.clear()
         resetToPlaceholder()
+        configureRecordingPill(nil)
         accessoryType = .none
     }
 
@@ -178,6 +186,14 @@ final class ClipThumbnailCell: UITableViewCell {
 
     var titleTextForTesting: String? {
         titleLabel.text
+    }
+
+    var recordingPillForTesting: StatusPillView {
+        recordingPill
+    }
+
+    var isRecordingPillVisibleForTesting: Bool {
+        recordingPill.isHidden == false
     }
 
     private func startLoad(clip: Clip, loader: ThumbnailLoader) {
@@ -209,6 +225,49 @@ final class ClipThumbnailCell: UITableViewCell {
         thumbnailView.image = nil
     }
 
+    private func configureRecordingPill(_ freshness: RecordingDrive.Freshness?) {
+        guard let freshness else {
+            recordingPill.configure(caption: "REC", dotColor: nil)
+            recordingPill.isHidden = true
+            return
+        }
+
+        let color: UIColor
+        switch freshness {
+        case .live:
+            color = .systemRed
+        case .lastKnown:
+            color = .systemGray
+        }
+
+        recordingPill.configure(
+            caption: "REC",
+            dotColor: color,
+            backgroundStyle: .tinted(color.withAlphaComponent(0.14))
+        )
+        recordingPill.isHidden = false
+    }
+
+    private func cellAccessibilityLabel(
+        title: String?,
+        subtitle: String,
+        recording: RecordingDrive.Freshness?
+    ) -> String {
+        let recordingLabel: String?
+        switch recording {
+        case .live:
+            recordingLabel = "Recording"
+        case .lastKnown:
+            recordingLabel = "Last known recording"
+        case nil:
+            recordingLabel = nil
+        }
+
+        return [title, subtitle.isEmpty ? nil : subtitle, recordingLabel]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+    }
+
     private func configureViews() {
         selectionStyle = .default
 
@@ -226,6 +285,7 @@ final class ClipThumbnailCell: UITableViewCell {
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         subtitleLabel.font = .preferredFont(forTextStyle: .subheadline)
         subtitleLabel.adjustsFontForContentSizeCategory = true
@@ -233,7 +293,16 @@ final class ClipThumbnailCell: UITableViewCell {
         subtitleLabel.numberOfLines = 0
         subtitleLabel.lineBreakMode = .byWordWrapping
 
-        let labels = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+        recordingPill.isHidden = true
+        recordingPill.setContentHuggingPriority(.required, for: .horizontal)
+        recordingPill.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let titleRow = UIStackView(arrangedSubviews: [titleLabel, recordingPill])
+        titleRow.axis = .horizontal
+        titleRow.alignment = .center
+        titleRow.spacing = 8
+
+        let labels = UIStackView(arrangedSubviews: [titleRow, subtitleLabel])
         labels.axis = .vertical
         labels.alignment = .fill
         labels.spacing = 2

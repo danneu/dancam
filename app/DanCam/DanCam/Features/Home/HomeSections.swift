@@ -14,6 +14,7 @@ nonisolated struct DriveGroup: Equatable, Sendable {
     var bootTag: String
     var occurrence: Int
     var clips: [Clip]
+    var recording: RecordingDrive.Freshness? = nil
 
     var representative: Clip? {
         clips.last
@@ -58,7 +59,7 @@ private nonisolated enum HomeSectionBase: Hashable, Sendable {
 extension HomeRow {
     nonisolated static func composeSections(
         clips: [Clip],
-        recordingDrive _: RecordingDrive?,
+        recordingDrive: RecordingDrive?,
         today _: Date,
         calendar: Calendar
     ) -> [HomeSectionModel] {
@@ -78,6 +79,7 @@ extension HomeRow {
                 id: currentBase.section(occurrence: occurrence),
                 rows: coalescedDriveRows(
                     currentRows,
+                    recordingDrive: recordingDrive,
                     driveOccurrenceCounts: &driveOccurrenceCounts
                 )
             ))
@@ -115,6 +117,7 @@ extension HomeRow {
 
     private nonisolated static func coalescedDriveRows(
         _ rows: [HomeRow],
+        recordingDrive: RecordingDrive?,
         driveOccurrenceCounts: inout [String: Int]
     ) -> [HomeRow] {
         var output: [HomeRow] = []
@@ -142,10 +145,14 @@ extension HomeRow {
 
             let occurrence = driveOccurrenceCounts[bootTag, default: 0]
             driveOccurrenceCounts[bootTag] = occurrence + 1
+            let recording = bootTag == recordingDrive?.bootTag && occurrence == 0
+                ? recordingDrive?.freshness
+                : nil
             output.append(.drive(DriveGroup(
                 bootTag: bootTag,
                 occurrence: occurrence,
-                clips: clips
+                clips: clips,
+                recording: recording
             )))
             index = scan
         }

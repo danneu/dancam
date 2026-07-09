@@ -156,6 +156,50 @@ struct HomeSectionsTests {
         ])
     }
 
+    @Test func recordingDriveMarksOnlyNewestOccurrence() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let jan3 = try date(year: 2026, month: 1, day: 3, hour: 0, minute: 1, calendar: calendar)
+        let jan2 = try date(year: 2026, month: 1, day: 2, hour: 23, minute: 59, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 6, date: jan3, bootTag: "boot-a"),
+                stampedDatedClip(id: 5, date: jan2, bootTag: "boot-a"),
+            ],
+            recordingDrive: RecordingDrive(bootTag: "boot-a", freshness: .live),
+            today: jan3,
+            calendar: calendar
+        )
+
+        let newestDrive = try requireDrive(sections.first?.rows.first)
+        let olderDrive = try requireDrive(sections.last?.rows.first)
+        #expect(newestDrive.recording == .live)
+        #expect(olderDrive.recording == nil)
+    }
+
+    @Test func recordingDriveDoesNotMarkTagMismatchOrNilAttribution() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let mismatch = compose(
+            clips: [stampedDatedClip(id: 5, date: today, bootTag: "boot-a")],
+            recordingDrive: RecordingDrive(bootTag: "boot-b", freshness: .live),
+            today: today,
+            calendar: calendar
+        )
+        let nilAttribution = compose(
+            clips: [stampedDatedClip(id: 5, date: today, bootTag: "boot-a")],
+            recordingDrive: nil,
+            today: today,
+            calendar: calendar
+        )
+        let mismatchDrive = try requireDrive(mismatch.first?.rows.first)
+        let nilAttributionDrive = try requireDrive(nilAttribution.first?.rows.first)
+
+        #expect(mismatchDrive.recording == nil)
+        #expect(nilAttributionDrive.recording == nil)
+    }
+
     @Test func undatedStampedDriveGroupsInDateUnknown() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)

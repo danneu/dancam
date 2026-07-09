@@ -199,7 +199,61 @@ struct ClipThumbnailCellTests {
         #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips")
     }
 
+    @Test func configureDriveShowsLiveRecordingPill() {
+        let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
+
+        cell.configure(drive: drive(recording: .live), loader: .noop)
+
+        #expect(cell.isRecordingPillVisibleForTesting)
+        #expect(colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemRed))
+        #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips, Recording")
+    }
+
+    @Test func configureDriveShowsLastKnownRecordingPill() {
+        let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
+
+        cell.configure(drive: drive(recording: .lastKnown), loader: .noop)
+
+        #expect(cell.isRecordingPillVisibleForTesting)
+        #expect(colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemGray))
+        #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips, Last known recording")
+    }
+
+    @Test func clipConfigureAndReuseHideRecordingPill() {
+        let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
+
+        cell.configure(drive: drive(recording: .live), loader: .noop)
+        #expect(cell.isRecordingPillVisibleForTesting)
+
+        cell.configure(
+            clip: clip(id: 9, startMs: nil, durMs: nil, bytes: 9, etag: "9-100", timeApproximate: false),
+            loader: .noop
+        )
+
+        #expect(cell.isRecordingPillVisibleForTesting == false)
+        #expect(cell.recordingPillForTesting.dotColorForTesting == nil)
+
+        cell.configure(drive: drive(recording: .live), loader: .noop)
+        cell.prepareForReuse()
+
+        #expect(cell.isRecordingPillVisibleForTesting == false)
+        #expect(cell.recordingPillForTesting.dotColorForTesting == nil)
+        #expect(cell.accessoryType == .none)
+    }
+
     // MARK: - Helpers
+
+    private func drive(recording: RecordingDrive.Freshness?) -> DriveGroup {
+        DriveGroup(
+            bootTag: "boot-a",
+            occurrence: 0,
+            clips: [
+                clip(id: 8, startMs: nil, durMs: 30_000, bytes: 8, etag: "8-100", timeApproximate: true, bootTag: "boot-a"),
+                clip(id: 7, startMs: nil, durMs: 30_000, bytes: 7, etag: "7-100", timeApproximate: true, bootTag: "boot-a"),
+            ],
+            recording: recording
+        )
+    }
 
     private func clip(id: Int, etag: String) -> Clip {
         clip(id: id, startMs: nil, durMs: 30_000, bytes: 1, etag: etag, timeApproximate: false)
@@ -236,6 +290,25 @@ struct ClipThumbnailCellTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         Issue.record("Timed out waiting for condition.")
+    }
+
+    private func colorMatches(_ color: UIColor?, _ expected: UIColor) -> Bool {
+        colorComponents(color) == colorComponents(expected)
+    }
+
+    private func colorComponents(_ color: UIColor?) -> [Int]? {
+        guard let color else { return nil }
+
+        let resolved = color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+
+        return [red, green, blue, alpha].map { Int(($0 * 1_000).rounded()) }
     }
 }
 

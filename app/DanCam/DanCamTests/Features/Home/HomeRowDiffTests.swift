@@ -63,6 +63,20 @@ struct HomeRowDiffTests {
         #expect(HomeRowDiff.reconfiguredIDs(old: old, new: new) == [.drive(bootTag: "boot-a", occurrence: 0)])
     }
 
+    @Test func recordingFreshnessFlipReconfiguresStableDriveID() {
+        let clips = [
+            CameraSamples.clip(id: 4, durMs: 1_000, bootTag: "boot-a"),
+        ]
+        let old: [HomeRow] = [
+            .drive(drive("boot-a", clips: clips, recording: .live)),
+        ]
+        let new: [HomeRow] = [
+            .drive(drive("boot-a", clips: clips, recording: .lastKnown)),
+        ]
+
+        #expect(HomeRowDiff.reconfiguredIDs(old: old, new: new) == [.drive(bootTag: "boot-a", occurrence: 0)])
+    }
+
     @Test func appendedFinishedClipIsAnInsertNotAReconfigure() {
         let old: [HomeRow] = [
             .finished(CameraSamples.clip(id: 4, durMs: 1_000)),
@@ -100,7 +114,12 @@ struct HomeRowDiffTests {
         #expect(HomeRowDiff.reconfiguredIDs(old: old, new: new) == [])
     }
 
-    private func drive(_ bootTag: String, clips: [Clip], occurrence: Int = 0) -> DriveGroup {
-        DriveGroup(bootTag: bootTag, occurrence: occurrence, clips: clips)
+    private func drive(
+        _ bootTag: String,
+        clips: [Clip],
+        occurrence: Int = 0,
+        recording: RecordingDrive.Freshness? = nil
+    ) -> DriveGroup {
+        DriveGroup(bootTag: bootTag, occurrence: occurrence, clips: clips, recording: recording)
     }
 }
