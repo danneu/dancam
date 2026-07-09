@@ -4,6 +4,41 @@ import Testing
 
 struct ClipsClientTests {
     @Test(.tags(.networking))
+    func clipsResponseDecodesBootTagFromSnakeCase() throws {
+        let response = try decodeClipsResponse("""
+        {
+          "clips": [
+            { "id": 7, "boot_tag": "7f3a91c2b0d4", "start_ms": null, "dur_ms": null,
+              "bytes": 39123456, "locked": false, "etag": "7-39123456",
+              "time_approximate": true }
+          ],
+          "server_time_ms": 1719338400000,
+          "next_cursor": "7"
+        }
+        """)
+
+        let clip = try #require(response.clips.first)
+        #expect(clip.bootTag == "7f3a91c2b0d4")
+    }
+
+    @Test(.tags(.networking))
+    func clipsResponseDecodesMissingBootTagAsNil() throws {
+        let response = try decodeClipsResponse("""
+        {
+          "clips": [
+            { "id": 7, "start_ms": null, "dur_ms": null, "bytes": 39123456,
+              "locked": false, "etag": "7-39123456", "time_approximate": true }
+          ],
+          "server_time_ms": 1719338400000,
+          "next_cursor": "7"
+        }
+        """)
+
+        let clip = try #require(response.clips.first)
+        #expect(clip.bootTag == nil)
+    }
+
+    @Test(.tags(.networking))
     func liveClientBuildsBareRequestAndDecodesClipsResponse() async throws {
         let payload = Data("""
         {
@@ -184,5 +219,11 @@ struct ClipsClientTests {
         } catch {
             Issue.record("Expected URLError.cancelled, got \(error).")
         }
+    }
+
+    private func decodeClipsResponse(_ json: String) throws -> ClipsResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(ClipsResponse.self, from: Data(json.utf8))
     }
 }
