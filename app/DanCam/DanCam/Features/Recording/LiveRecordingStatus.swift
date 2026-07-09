@@ -73,7 +73,7 @@ nonisolated enum LiveRecordingStatus: Equatable, Sendable {
         return nil
     }
 
-    private static func shouldShowPending(
+    static func shouldShowPending(
         recording: RecordingFeature.State,
         recorder: RecorderTruth
     ) -> Bool {
@@ -88,7 +88,7 @@ nonisolated enum LiveRecordingStatus: Equatable, Sendable {
             commandWantsRecording = false
         }
 
-        let worldStartGap = snapshot.phase == .starting || snapshot.phase == .recording
+        let worldStartGap = snapshot.phase.claimsRecording
         return commandWantsRecording || worldStartGap
     }
 

@@ -10,6 +10,11 @@
   `../../../raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
   `../../../raspi/docs/design/15-2026-07-02-segment-fact-stamping-and-boot-offset.md`
 
+> **Note (2026-07-09):** Decision point 6 is superseded by
+> `21-2026-07-09-status-strip-recording-pill.md`: the preview REC overlay is
+> deleted, and recording status moves to the shell status strip. The widget,
+> drive-card marker, and drive-detail row decisions stand.
+
 ## Context
 
 ADR 19 made a drive boottag the browse unit for finished footage and collapsed

@@ -4,10 +4,10 @@ import UIKit
 final class AppShellViewController: UIViewController {
     private let embeddedNavigationController: UINavigationController
     private let store: AppStore
-    private let strip = ConnectionStatusStripView()
+    private let strip = StatusStripView()
 
     private var observation: StoreObservation?
-    private var previousLink: Link?
+    private var previousLinkPhase: StripCoordination.LinkPhase?
 
     init(
         navigationController: UINavigationController,
@@ -48,8 +48,8 @@ final class AppShellViewController: UIViewController {
         configureViews()
         embeddedNavigationController.didMove(toParent: self)
 
-        observation = store.observe(\.link) { [weak self] link in
-            self?.render(link)
+        observation = store.observe(select: StripCoordination.project) { [weak self] projection in
+            self?.render(projection)
         }
     }
 
@@ -72,18 +72,25 @@ final class AppShellViewController: UIViewController {
         ])
     }
 
-    private func render(_ link: Link) {
-        strip.configure(ConnectionCoordination.presentation(for: link))
+    private func render(_ projection: StripCoordination.Projection) {
+        strip.configure(
+            connection: projection.connection,
+            recording: projection.recording
+        )
 
-        if let previousLink,
-           ConnectionCoordination.shouldResumeLiveWork(
-               from: previousLink,
-               to: link
+        if let previousLinkPhase,
+           StripCoordination.shouldResumeLiveWork(
+               from: previousLinkPhase,
+               to: projection.linkPhase
            ) {
             (embeddedNavigationController.topViewController as? ConnectionResumable)?.resumeLiveWork()
         }
 
-        previousLink = link
+        previousLinkPhase = projection.linkPhase
+    }
+
+    var stripForTesting: StatusStripView {
+        strip
     }
 }
 

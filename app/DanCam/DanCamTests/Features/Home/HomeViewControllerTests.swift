@@ -556,7 +556,6 @@ struct HomeViewControllerTests {
         #expect(colorMatches(widget.recBadgeForTesting.dotColorForTesting, .systemRed))
         #expect(initialElapsed.hasPrefix("~") == false)
         #expect(controller.isLiveRecordingWidgetTickTimerRunningForTesting)
-        #expect(controller.isRecPillVisibleForTesting)
         #expect(controller.recordButtonForTesting.configuration?.title == "Stop")
         #expect(controller.recordButtonForTesting.isEnabled)
 
@@ -572,7 +571,6 @@ struct HomeViewControllerTests {
         #expect(controller.isLiveRecordingWidgetTickTimerRunningForTesting == false)
         controller.tickLiveRecordingWidgetForTesting()
         #expect(widget.elapsedTextForTesting == frozenElapsed)
-        #expect(controller.isRecPillVisibleForTesting == false)
         #expect(controller.recordButtonForTesting.configuration?.title == "Record")
         #expect(controller.recordButtonForTesting.isEnabled == false)
 
@@ -585,7 +583,6 @@ struct HomeViewControllerTests {
 
         #expect(controller.liveRecordingWidgetForTesting === widget)
         #expect(controller.isLiveRecordingWidgetTickTimerRunningForTesting)
-        #expect(controller.isRecPillVisibleForTesting)
         #expect(controller.recordButtonForTesting.configuration?.title == "Stop")
         #expect(controller.recordButtonForTesting.isEnabled)
     }

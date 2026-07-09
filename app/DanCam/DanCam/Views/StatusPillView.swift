@@ -51,6 +51,17 @@ final class StatusPillView: UIView {
         }
     }
 
+    func setCaptionCompressionResistancePriority(
+        _ priority: UILayoutPriority,
+        for axis: NSLayoutConstraint.Axis
+    ) {
+        captionLabel.setContentCompressionResistancePriority(priority, for: axis)
+    }
+
+    var captionForTesting: String? {
+        captionLabel.text
+    }
+
     var dotColorForTesting: UIColor? {
         dotView.isHidden ? nil : dotView.backgroundColor
     }

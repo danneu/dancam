@@ -52,7 +52,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let recordButton = RecordButton(frame: .zero)
     private let recordButtonRow = UIView()
     private let liveRecordingWidget = LiveRecordingStatusView()
-    private let recPill = StatusPillView(caption: "REC", dotColor: .systemRed)
     private let clipsHeaderLabel = UILabel()
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
     private let refreshControl = UIRefreshControl()
@@ -216,16 +215,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         view.addSubview(clipsTableView)
         view.addSubview(clipsFailureBanner)
 
-        let recPillTrailingConstraint = recPill.trailingAnchor.constraint(
-            equalTo: previewViewController.view.trailingAnchor,
-            constant: -10
-        )
-        recPillTrailingConstraint.priority = UILayoutPriority(999)
-
         NSLayoutConstraint.activate([
-            recPill.topAnchor.constraint(equalTo: previewViewController.view.topAnchor, constant: 10),
-            recPillTrailingConstraint,
-
             recordButton.topAnchor.constraint(equalTo: recordButtonRow.topAnchor),
             recordButton.bottomAnchor.constraint(equalTo: recordButtonRow.bottomAnchor),
             recordButton.centerXAnchor.constraint(equalTo: recordButtonRow.centerXAnchor),
@@ -319,12 +309,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         previewViewController.view.layer.cornerCurve = .continuous
         previewViewController.view.layer.masksToBounds = true
         previewViewController.view.translatesAutoresizingMaskIntoConstraints = false
-
-        recPill.configure(caption: "REC", dotColor: .systemRed, backgroundStyle: .material)
-        recPill.accessibilityLabel = "Recording"
-        recPill.isHidden = true
-        recPill.translatesAutoresizingMaskIntoConstraints = false
-        previewViewController.view.addSubview(recPill)
     }
 
     private func configureStatusPills() {
@@ -480,17 +464,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         view.setNeedsLayout()
     }
 
-    private func renderRecording(_ state: RecordingFeature.State) {
-        switch state {
-        case .starting, .recording, .stopping:
-            recPill.isHidden = false
-        case .unknown, .idle, .failed:
-            recPill.isHidden = true
-        }
-
-        recordButton.apply(state)
-    }
-
     private func renderLiveRecording(
         _ inputs: LiveRecordingInputs,
         now: ContinuousClock.Instant? = nil
@@ -512,7 +485,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             needsHeaderRefit = true
         }
 
-        renderRecording(inputs.recording)
+        recordButton.apply(inputs.recording)
         view.setNeedsLayout()
     }
 
@@ -941,10 +914,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     var isLiveRecordingWidgetTickTimerRunningForTesting: Bool {
         liveRecordingWidget.isTickTimerRunningForTesting
-    }
-
-    var isRecPillVisibleForTesting: Bool {
-        recPill.isHidden == false
     }
 
     var isTimeUnverifiedPillVisibleForTesting: Bool {

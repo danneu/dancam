@@ -220,6 +220,15 @@ nonisolated enum RecorderPhase: String, Codable, Equatable, Sendable {
             return false
         }
     }
+
+    var claimsRecording: Bool {
+        switch self {
+        case .starting, .recording:
+            return true
+        case .idle, .stopping, .error:
+            return false
+        }
+    }
 }
 
 nonisolated struct RecorderSegment: Codable, Equatable, Sendable {
