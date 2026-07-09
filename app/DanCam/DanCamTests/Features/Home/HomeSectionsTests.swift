@@ -64,6 +64,132 @@ struct HomeSectionsTests {
         ])
     }
 
+    @Test func stampedRunCollapsesToOneDriveCardWithNewestFirstClips() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 5, date: today, bootTag: "boot-a"),
+                stampedDatedClip(id: 4, date: today, bootTag: "boot-a"),
+            ],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        )
+        let drive = try requireDrive(sections.first?.rows.first)
+
+        #expect(sections.map(rowIDs) == [[.drive(bootTag: "boot-a", occurrence: 0)]])
+        #expect(drive.bootTag == "boot-a")
+        #expect(drive.clips.map(\.id) == [5, 4])
+        #expect(drive.representative?.id == 4)
+    }
+
+    @Test func singleStampedClipIsStillADriveCard() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let sections = compose(
+            clips: [stampedDatedClip(id: 5, date: today, bootTag: "boot-a")],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        )
+
+        #expect(sections.map(rowIDs) == [[.drive(bootTag: "boot-a", occurrence: 0)]])
+    }
+
+    @Test func bareClipsStayFlatBetweenStampedDriveCards() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 6, date: today, bootTag: "boot-a"),
+                datedClip(id: 5, date: today),
+                stampedDatedClip(id: 4, date: today, bootTag: "boot-a"),
+            ],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        )
+
+        #expect(sections.map(rowIDs) == [[
+            .drive(bootTag: "boot-a", occurrence: 0),
+            .finished(5),
+            .drive(bootTag: "boot-a", occurrence: 1),
+        ]])
+    }
+
+    @Test func adjacentDifferentBootTagsBecomeDistinctCards() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 6, date: today, bootTag: "boot-b"),
+                stampedDatedClip(id: 5, date: today, bootTag: "boot-a"),
+            ],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        )
+
+        #expect(sections.map(rowIDs) == [[
+            .drive(bootTag: "boot-b", occurrence: 0),
+            .drive(bootTag: "boot-a", occurrence: 0),
+        ]])
+    }
+
+    @Test func midnightSpanningDriveUsesDistinctOccurrencesAcrossDaySections() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let jan3 = try date(year: 2026, month: 1, day: 3, hour: 0, minute: 1, calendar: calendar)
+        let jan2 = try date(year: 2026, month: 1, day: 2, hour: 23, minute: 59, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 6, date: jan3, bootTag: "boot-a"),
+                stampedDatedClip(id: 5, date: jan2, bootTag: "boot-a"),
+            ],
+            now: clock.now,
+            today: jan3,
+            calendar: calendar
+        )
+
+        #expect(sections.map(\.id) == [
+            .day(startOfDay: calendar.startOfDay(for: jan3), occurrence: 0),
+            .day(startOfDay: calendar.startOfDay(for: jan2), occurrence: 0),
+        ])
+        #expect(sections.map(rowIDs) == [
+            [.drive(bootTag: "boot-a", occurrence: 0)],
+            [.drive(bootTag: "boot-a", occurrence: 1)],
+        ])
+    }
+
+    @Test func undatedStampedDriveGroupsInDateUnknown() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedUndatedClip(id: 6, bootTag: "boot-a"),
+                stampedUndatedClip(id: 5, bootTag: "boot-a"),
+            ],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        )
+
+        #expect(sections.map(\.id) == [.dateUnknown(occurrence: 0)])
+        #expect(sections.map(rowIDs) == [[.drive(bootTag: "boot-a", occurrence: 0)]])
+    }
+
     @Test func splitRunsUseDistinctOccurrences() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let clock = ContinuousClock()
@@ -91,6 +217,42 @@ struct HomeSectionsTests {
             .dateUnknown(occurrence: 1),
         ])
         #expect(Set(ids).count == ids.count)
+    }
+
+    @Test func liveAndPendingRowsStayStandaloneAboveDriveCards() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let now = clock.now
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+        let clips = [
+            stampedDatedClip(id: 6, date: today, bootTag: "boot-a"),
+            stampedDatedClip(id: 5, date: today, bootTag: "boot-a"),
+        ]
+
+        let liveSections = compose(
+            clips: clips,
+            recorder: .live(recorder(currentSegment: RecorderSegment(id: 99, durMs: nil))),
+            now: now,
+            today: today,
+            calendar: calendar
+        )
+        #expect(liveSections.map(rowIDs) == [[
+            .live(session: 7, id: 99),
+            .drive(bootTag: "boot-a", occurrence: 0),
+        ]])
+
+        let pendingSections = compose(
+            clips: clips,
+            recording: .recording,
+            recorder: .live(recorder(phase: .recording, currentSegment: nil)),
+            now: now,
+            today: today,
+            calendar: calendar
+        )
+        #expect(pendingSections.map(rowIDs) == [[
+            .pending,
+            .drive(bootTag: "boot-a", occurrence: 0),
+        ]])
     }
 
     @Test func liveRowUsesTodaySection() throws {
@@ -252,6 +414,67 @@ struct HomeSectionsTests {
         #expect(newBottomIDs == oldBottomIDs)
     }
 
+    @Test func driveOccurrencesAreStableAcrossSameDrivePrependAndAppend() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+        let earlier = try date(year: 2026, month: 1, day: 3, hour: 11, calendar: calendar)
+
+        let oldTopIDs = compose(
+            clips: [stampedDatedClip(id: 4, date: today, bootTag: "boot-a")],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        ).flatMap(rowIDs)
+        let newTopIDs = compose(
+            clips: [
+                stampedDatedClip(id: 5, date: today, bootTag: "boot-a"),
+                stampedDatedClip(id: 4, date: earlier, bootTag: "boot-a"),
+            ],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        ).flatMap(rowIDs)
+        #expect(newTopIDs == oldTopIDs)
+
+        let oldBottomIDs = compose(
+            clips: [stampedDatedClip(id: 4, date: today, bootTag: "boot-a")],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        ).flatMap(rowIDs)
+        let newBottomIDs = compose(
+            clips: [
+                stampedDatedClip(id: 4, date: today, bootTag: "boot-a"),
+                stampedDatedClip(id: 3, date: earlier, bootTag: "boot-a"),
+            ],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        ).flatMap(rowIDs)
+        #expect(newBottomIDs == oldBottomIDs)
+    }
+
+    @Test func mixedDurationDriveOmitsAggregateDuration() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let clock = ContinuousClock()
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 6, date: today, durMs: 30_000, bootTag: "boot-a"),
+                stampedDatedClip(id: 5, date: today, durMs: nil, bootTag: "boot-a"),
+            ],
+            now: clock.now,
+            today: today,
+            calendar: calendar
+        )
+        let drive = try requireDrive(sections.first?.rows.first)
+
+        #expect(drive.totalDurMs == nil)
+        #expect(Formatters.driveCardSubtitle(durationMs: drive.totalDurMs, clipCount: drive.clipCount) == "2 clips")
+    }
+
     @Test func calendarTimeZoneControlsDayBoundaries() throws {
         let utcCalendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let plusTwoCalendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 2 * 60 * 60))
@@ -338,6 +561,34 @@ struct HomeSectionsTests {
             startMs: UInt64((date.timeIntervalSince1970 * 1_000).rounded()),
             timeApproximate: true
         )
+    }
+
+    private func stampedDatedClip(
+        id: Int,
+        date: Date,
+        durMs: UInt64? = 30_000,
+        bootTag: String
+    ) -> Clip {
+        CameraSamples.clip(
+            id: id,
+            startMs: UInt64((date.timeIntervalSince1970 * 1_000).rounded()),
+            durMs: durMs,
+            timeApproximate: false,
+            bootTag: bootTag
+        )
+    }
+
+    private func stampedUndatedClip(id: Int, bootTag: String) -> Clip {
+        CameraSamples.clip(id: id, durMs: 30_000, bootTag: bootTag)
+    }
+
+    private func requireDrive(_ row: HomeRow?) throws -> DriveGroup {
+        let row = try #require(row)
+        guard case .drive(let drive) = row else {
+            Issue.record("Expected a drive row.")
+            return DriveGroup(bootTag: "", occurrence: -1, clips: [])
+        }
+        return drive
     }
 
     private func recorder(

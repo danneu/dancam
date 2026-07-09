@@ -4,6 +4,7 @@ nonisolated enum HomeRowID: Hashable, Sendable {
     case pending
     case live(session: UInt64, id: Int)
     case finished(Int)
+    case drive(bootTag: String, occurrence: Int)
 }
 
 nonisolated enum HomeRowDiff {

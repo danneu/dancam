@@ -24,6 +24,45 @@ struct HomeRowDiffTests {
         #expect(HomeRowDiff.reconfiguredIDs(old: old, new: new) == [.finished(4)])
     }
 
+    @Test func joinedDriveClipReconfiguresStableDriveID() {
+        let old: [HomeRow] = [
+            .drive(drive("boot-a", clips: [
+                CameraSamples.clip(id: 4, durMs: 1_000, bootTag: "boot-a"),
+            ])),
+        ]
+        let new: [HomeRow] = [
+            .drive(drive("boot-a", clips: [
+                CameraSamples.clip(id: 5, durMs: 1_000, bootTag: "boot-a"),
+                CameraSamples.clip(id: 4, durMs: 1_000, bootTag: "boot-a"),
+            ])),
+        ]
+
+        #expect(HomeRowDiff.reconfiguredIDs(old: old, new: new) == [.drive(bootTag: "boot-a", occurrence: 0)])
+    }
+
+    @Test func changedDriveClipEtagReconfiguresStableDriveID() {
+        let old: [HomeRow] = [
+            .drive(drive("boot-a", clips: [
+                CameraSamples.clip(id: 4, durMs: 1_000, bootTag: "boot-a"),
+            ])),
+        ]
+        let newClip = Clip(
+            id: 4,
+            startMs: nil,
+            durMs: 1_000,
+            bytes: 400,
+            locked: false,
+            etag: "4-updated",
+            timeApproximate: true,
+            bootTag: "boot-a"
+        )
+        let new: [HomeRow] = [
+            .drive(drive("boot-a", clips: [newClip])),
+        ]
+
+        #expect(HomeRowDiff.reconfiguredIDs(old: old, new: new) == [.drive(bootTag: "boot-a", occurrence: 0)])
+    }
+
     @Test func appendedFinishedClipIsAnInsertNotAReconfigure() {
         let old: [HomeRow] = [
             .finished(CameraSamples.clip(id: 4, durMs: 1_000)),
@@ -103,5 +142,9 @@ struct HomeRowDiffTests {
         let live = LiveSegment(sessionId: 7, id: 4, elapsed: .ticking(seedDurMs: nil, anchor: clock.now))
 
         #expect(HomeRowDiff.reconfiguredIDs(old: [.pending], new: [.live(live)]) == [])
+    }
+
+    private func drive(_ bootTag: String, clips: [Clip], occurrence: Int = 0) -> DriveGroup {
+        DriveGroup(bootTag: bootTag, occurrence: occurrence, clips: clips)
     }
 }

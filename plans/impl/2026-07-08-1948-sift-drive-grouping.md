@@ -344,5 +344,9 @@ root-store/scoped-observation architecture (app ADRs 06/17). New
 - [x] 2. feat(app): decode clip boot_tag
 - [x] 3. feat(app): drive time-span and duration formatters
 - [x] 4. feat(app): drive detail screen for a boottag's clips
-- [ ] 5. feat(app): group Home clips into per-drive cards
+- [x] 5. feat(app): group Home clips into per-drive cards
 - [ ] 6. docs: record drive-grouped clip browsing
+
+## Implementation notes
+
+- `DriveGroup` carries the per-bootTag occurrence assigned by the Home section coalescing pass, so `HomeRow.id` can produce the required `.drive(bootTag:occurrence:)` without a parent row scan.

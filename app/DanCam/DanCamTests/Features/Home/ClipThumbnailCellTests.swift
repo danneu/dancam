@@ -144,6 +144,61 @@ struct ClipThumbnailCellTests {
         #expect(cell.accessibilityLabel == "seg_00008.ts")
     }
 
+    @Test func configureClipResetsDriveAccessoryAndLabels() {
+        let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
+        let drive = DriveGroup(
+            bootTag: "boot-a",
+            occurrence: 0,
+            clips: [
+                clip(id: 8, startMs: nil, durMs: 30_000, bytes: 8, etag: "8-100", timeApproximate: true, bootTag: "boot-a"),
+                clip(id: 7, startMs: nil, durMs: 30_000, bytes: 7, etag: "7-100", timeApproximate: true, bootTag: "boot-a"),
+            ]
+        )
+
+        cell.configure(drive: drive, loader: .noop)
+        #expect(cell.accessoryType == .disclosureIndicator)
+        #expect(cell.titleTextForTesting == "Drive")
+        #expect(cell.subtitleTextForTesting == "1m · 2 clips")
+        #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips")
+
+        cell.configure(
+            clip: clip(id: 9, startMs: nil, durMs: nil, bytes: 9, etag: "9-100", timeApproximate: false),
+            loader: .noop
+        )
+
+        #expect(cell.accessoryType == .none)
+        #expect(cell.titleTextForTesting == "seg_00009.ts")
+        #expect(cell.subtitleTextForTesting?.isEmpty == true)
+        #expect(cell.accessibilityLabel == "seg_00009.ts")
+    }
+
+    @Test func configureDriveResetsClipAccessoryAndLabels() {
+        let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
+        let drive = DriveGroup(
+            bootTag: "boot-a",
+            occurrence: 0,
+            clips: [
+                clip(id: 8, startMs: nil, durMs: 30_000, bytes: 8, etag: "8-100", timeApproximate: true, bootTag: "boot-a"),
+                clip(id: 7, startMs: nil, durMs: 30_000, bytes: 7, etag: "7-100", timeApproximate: true, bootTag: "boot-a"),
+            ]
+        )
+
+        cell.configure(
+            clip: clip(id: 9, startMs: nil, durMs: nil, bytes: 9, etag: "9-100", timeApproximate: false),
+            loader: .noop
+        )
+        #expect(cell.accessoryType == .none)
+        #expect(cell.titleTextForTesting == "seg_00009.ts")
+        #expect(cell.subtitleTextForTesting?.isEmpty == true)
+
+        cell.configure(drive: drive, loader: .noop)
+
+        #expect(cell.accessoryType == .disclosureIndicator)
+        #expect(cell.titleTextForTesting == "Drive")
+        #expect(cell.subtitleTextForTesting == "1m · 2 clips")
+        #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips")
+    }
+
     // MARK: - Helpers
 
     private func clip(id: Int, etag: String) -> Clip {
@@ -156,7 +211,8 @@ struct ClipThumbnailCellTests {
         durMs: UInt64?,
         bytes: UInt64,
         etag: String,
-        timeApproximate: Bool
+        timeApproximate: Bool,
+        bootTag: String? = nil
     ) -> Clip {
         Clip(
             id: id,
@@ -165,7 +221,8 @@ struct ClipThumbnailCellTests {
             bytes: bytes,
             locked: false,
             etag: etag,
-            timeApproximate: timeApproximate
+            timeApproximate: timeApproximate,
+            bootTag: bootTag
         )
     }
 

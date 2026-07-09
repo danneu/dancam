@@ -42,6 +42,7 @@ nonisolated enum HomeRow: Equatable, Sendable {
     case pending
     case live(LiveSegment)
     case finished(Clip)
+    case drive(DriveGroup)
 
     static func compose(
         clips: [Clip],
@@ -167,14 +168,33 @@ nonisolated enum HomeRow: Equatable, Sendable {
             .live(session: segment.sessionId, id: segment.id)
         case .finished(let clip):
             .finished(clip.id)
+        case .drive(let drive):
+            .drive(bootTag: drive.bootTag, occurrence: drive.occurrence)
         }
     }
 
-    var finishedIdentity: ClipThumbnailIdentity? {
-        if case .finished(let clip) = self {
-            return ClipThumbnailIdentity(clip)
+    var thumbnailClip: Clip? {
+        switch self {
+        case .pending, .live:
+            return nil
+        case .finished(let clip):
+            return clip
+        case .drive(let drive):
+            return drive.representative
         }
-        return nil
+    }
+
+    var thumbnailIdentity: ClipThumbnailIdentity? {
+        thumbnailClip.map(ClipThumbnailIdentity.init)
+    }
+
+    var triggersPagination: Bool {
+        switch self {
+        case .finished, .drive:
+            true
+        case .pending, .live:
+            false
+        }
     }
 }
 
@@ -191,6 +211,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var clipsObservation: StoreObservation?
     private var clipsStatusObservation: StoreObservation?
     private var clipsLoadedObservation: StoreObservation?
+    private var clipsNextCursorObservation: StoreObservation?
     private var calendarDayChangedObserver: NSObjectProtocol?
     private var significantTimeChangedObserver: NSObjectProtocol?
 
@@ -220,6 +241,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var recorderTruth: RecorderTruth = .unknown
     private var finishedClips: [Clip] = []
     private var clipsStatus: ClipsFeature.State.Status = .idle
+    private var clipsNextCursor: String?
     private var clipsHasLoadedOnce = false
     private var sections: [HomeSectionModel] = []
     private var rows: [HomeRow] = []
@@ -298,6 +320,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         clipsLoadedObservation = store.observe(\.clips.hasLoadedOnce) { [weak self] hasLoadedOnce in
             self?.clipsHasLoadedOnce = hasLoadedOnce
             self?.updateClipsPresentation()
+        }
+        clipsNextCursorObservation = store.observe(\.clips.nextCursor) { [weak self] nextCursor in
+            self?.clipsNextCursor = nextCursor
+            self?.loadMoreIfVisibleTail()
         }
     }
 
@@ -584,6 +610,22 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                     preservedThumbnail: self.preservedVisibleThumbnails[ClipThumbnailIdentity(clip)]
                 )
                 return cell
+
+            case .drive(let drive):
+                guard let cell = tableView.dequeueReusableCell(
+                    withIdentifier: "clipThumbnail",
+                    for: indexPath
+                ) as? ClipThumbnailCell else {
+                    return UITableViewCell(style: .default, reuseIdentifier: nil)
+                }
+                cell.configure(
+                    drive: drive,
+                    loader: self.dependencies.thumbnailLoader,
+                    preservedThumbnail: drive.representative
+                        .map(ClipThumbnailIdentity.init)
+                        .flatMap { self.preservedVisibleThumbnails[$0] }
+                )
+                return cell
             }
         }
         clipsTableView.rowHeight = UITableView.automaticDimension
@@ -676,7 +718,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         rows = newRows
         rowsByID = Dictionary(uniqueKeysWithValues: newRows.map { ($0.id, $0) })
         paginationTailIDs = Set(newRows.suffix(paginationThreshold).map(\.id))
-        prunePrefetches(surviving: Set(newRows.compactMap(\.finishedIdentity)))
+        prunePrefetches(surviving: Set(newRows.compactMap(\.thumbnailIdentity)))
         preservedThumbnailGeneration += 1
         let thumbnailGeneration = preservedThumbnailGeneration
         preservedVisibleThumbnails = visibleThumbnails
@@ -695,6 +737,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                     if self?.preservedThumbnailGeneration == thumbnailGeneration {
                         self?.preservedVisibleThumbnails.removeAll()
                     }
+                    self?.loadMoreIfVisibleTail()
                     completion?()
                 }
             }
@@ -893,6 +936,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                 ClipViewerViewController(dependencies: dependencies, store: store, clip: clip),
                 animated: true
             )
+        case .drive(let drive):
+            tableView.deselectRow(at: indexPath, animated: true)
+            navigationController?.pushViewController(
+                DriveDetailViewController(dependencies: dependencies, store: store, bootTag: drive.bootTag),
+                animated: true
+            )
         }
     }
 
@@ -920,7 +969,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         guard let id = dataSource.itemIdentifier(for: indexPath),
               paginationTailIDs.contains(id),
               let row = rowsByID[id],
-              case .finished = row else {
+              row.triggersPagination,
+              clipsNextCursor != nil else {
             return
         }
 
@@ -953,7 +1003,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
         for indexPath in indexPaths {
             guard let row = row(at: indexPath),
-                  case .finished(let clip) = row else {
+                  let clip = row.thumbnailClip else {
                 continue
             }
             let identity = ClipThumbnailIdentity(clip)
@@ -968,7 +1018,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
         for indexPath in indexPaths {
             guard let row = row(at: indexPath),
-                  let identity = row.finishedIdentity else {
+                  let identity = row.thumbnailIdentity else {
                 continue
             }
             prefetchHandles.removeValue(forKey: identity)?.cancel()
@@ -996,6 +1046,24 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         }
     }
 
+    private func loadMoreIfVisibleTail() {
+        guard clipsNextCursor != nil,
+              let visibleRows = clipsTableView.indexPathsForVisibleRows else {
+            return
+        }
+
+        for indexPath in visibleRows {
+            guard let id = dataSource.itemIdentifier(for: indexPath),
+                  paginationTailIDs.contains(id),
+                  rowsByID[id]?.triggersPagination == true else {
+                continue
+            }
+
+            store.send(.clips(.loadMore))
+            return
+        }
+    }
+
     private func cancelAllPrefetches() {
         for handle in prefetchHandles.values {
             handle.cancel()
@@ -1015,12 +1083,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         var images: [ClipThumbnailIdentity: UIImage] = [:]
         for indexPath in visibleRows {
             guard let row = row(at: indexPath),
-                  case .finished(let clip) = row,
+                  let identity = row.thumbnailIdentity,
                   let cell = clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell,
                   let image = cell.currentThumbnailImage else {
                 continue
             }
-            images[ClipThumbnailIdentity(clip)] = image
+            images[identity] = image
         }
         return images
     }
@@ -1032,16 +1100,30 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         guard let visibleRows = clipsTableView.indexPathsForVisibleRows else { return }
         for indexPath in visibleRows {
             guard let row = row(at: indexPath),
-                  case .finished(let clip) = row,
                   let cell = clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell else {
                 continue
             }
-            cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
+
+            switch row {
+            case .finished(let clip):
+                cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
+            case .drive(let drive):
+                cell.configure(drive: drive, loader: dependencies.thumbnailLoader)
+            case .pending, .live:
+                continue
+            }
         }
     }
 
     func clipThumbnailCellForTesting(clipID: Int) -> ClipThumbnailCell? {
         guard let indexPath = dataSource.indexPath(for: .finished(clipID)) else { return nil }
+        return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell
+    }
+
+    func driveThumbnailCellForTesting(bootTag: String, occurrence: Int = 0) -> ClipThumbnailCell? {
+        guard let indexPath = dataSource.indexPath(for: .drive(bootTag: bootTag, occurrence: occurrence)) else {
+            return nil
+        }
         return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell
     }
 

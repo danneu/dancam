@@ -81,6 +81,7 @@ final class ClipThumbnailCell: UITableViewCell {
     }
 
     func configure(clip: Clip, loader: ThumbnailLoader, preservedThumbnail: UIImage? = nil) {
+        accessoryType = .none
         titleLabel.text = String(format: "seg_%05d.ts", clip.id)
         let subtitle = Formatters.clipListLine(clip)
         subtitleLabel.text = subtitle
@@ -89,6 +90,34 @@ final class ClipThumbnailCell: UITableViewCell {
             .compactMap { $0 }
             .joined(separator: ", ")
 
+        configureThumbnail(clip: clip, loader: loader, preservedThumbnail: preservedThumbnail)
+    }
+
+    func configure(drive: DriveGroup, loader: ThumbnailLoader, preservedThumbnail: UIImage? = nil) {
+        accessoryType = .disclosureIndicator
+        titleLabel.text = Formatters.driveCardTitle(start: drive.startDate, end: drive.endDate)
+        let subtitle = Formatters.driveCardSubtitle(durationMs: drive.totalDurMs, clipCount: drive.clipCount)
+        subtitleLabel.text = subtitle
+        subtitleLabel.isHidden = subtitle.isEmpty
+        accessibilityLabel = [titleLabel.text, subtitle.isEmpty ? nil : subtitle]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+
+        guard let representative = drive.representative else {
+            cancelLoad()
+            displayState.clear()
+            resetToPlaceholder()
+            return
+        }
+
+        configureThumbnail(clip: representative, loader: loader, preservedThumbnail: preservedThumbnail)
+    }
+
+    private func configureThumbnail(
+        clip: Clip,
+        loader: ThumbnailLoader,
+        preservedThumbnail: UIImage?
+    ) {
         if displayState.show(ClipThumbnailIdentity(clip)) {
             // (b) different identity: a reused cell or a same-id/new-etag update. Cancel the
             // in-flight load, blank to the placeholder, and start exactly one fresh load.
@@ -128,6 +157,7 @@ final class ClipThumbnailCell: UITableViewCell {
         cancelLoad()
         displayState.clear()
         resetToPlaceholder()
+        accessoryType = .none
     }
 
     var currentThumbnailImage: UIImage? {
@@ -144,6 +174,10 @@ final class ClipThumbnailCell: UITableViewCell {
 
     var subtitleTextForTesting: String? {
         subtitleLabel.text
+    }
+
+    var titleTextForTesting: String? {
+        titleLabel.text
     }
 
     private func startLoad(clip: Clip, loader: ThumbnailLoader) {

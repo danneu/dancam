@@ -20,6 +20,35 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func driveCardUsesOnlyRepresentativeThumbnailForDisplayAndPrefetch() async throws {
+        let probe = HomeLoaderProbe()
+        let oldest = driveClip(id: 1, bootTag: "boot-a")
+        let middle = driveClip(id: 2, bootTag: "boot-a")
+        let newest = driveClip(id: 3, bootTag: "boot-a")
+        let (controller, store) = makeControllerAndStore(
+            clips: [newest, middle, oldest],
+            loader: probe.loader()
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            probe.thumbnailIdentities() == [ClipThumbnailIdentity(oldest)]
+        }
+
+        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
+        controller.tableView(UITableView(), prefetchRowsAt: [driveIndexPath])
+
+        #expect(probe.prefetchIdentities() == [ClipThumbnailIdentity(oldest)])
+
+        store.send(.clips(.clipFinalized(driveClip(id: 4, bootTag: "boot-a"))))
+        try await Task.sleep(for: .milliseconds(40))
+
+        #expect(probe.thumbnailIdentities() == [ClipThumbnailIdentity(oldest)])
+        #expect(probe.prefetchIdentities() == [ClipThumbnailIdentity(oldest)])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func cancelPrefetchingCancelsTheStoredHandle() async throws {
         let probe = HomeLoaderProbe()
         let controller = makeController(clips: [clipA, clipB], loader: probe.loader())
@@ -104,6 +133,86 @@ struct HomeViewControllerTests {
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: lastIndexPath)
 
         try await waitForCursors(fetchSpy, [Optional("5")])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func paginationTriggersFromTailDriveRows() async throws {
+        let fetchSpy = HomeFetchSpy()
+        let controller = makeController(
+            clips: [
+                driveClip(id: 10, bootTag: "boot-a"),
+                driveClip(id: 9, bootTag: "boot-a"),
+            ],
+            loader: .noop,
+            clipsClient: fetchSpy.client(),
+            nextCursor: "8"
+        )
+        controller.loadViewIfNeeded()
+
+        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
+        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: driveIndexPath)
+
+        try await waitForCursors(fetchSpy, [Optional("8")])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func pageAbsorbedByVisibleBottomDriveIssuesNextFetch() async throws {
+        let fetchSpy = HomeFetchSpy(responses: [
+            ClipsResponse(clips: [driveClip(id: 8, bootTag: "boot-a")], serverTimeMs: nil, nextCursor: "7"),
+            ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil),
+        ])
+        let controller = makeController(
+            clips: [
+                driveClip(id: 10, bootTag: "boot-a"),
+                driveClip(id: 9, bootTag: "boot-a"),
+            ],
+            loader: .noop,
+            clipsClient: fetchSpy.client(),
+            nextCursor: "8"
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
+        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: driveIndexPath)
+
+        try await waitForCursors(fetchSpy, [Optional("8"), Optional("7")])
+    }
+
+    @Test func tappingDriveCardPushesDriveDetail() throws {
+        let controller = makeController(
+            clips: [
+                driveClip(id: 10, bootTag: "boot-a"),
+                driveClip(id: 9, bootTag: "boot-a"),
+            ],
+            loader: .noop
+        )
+        let (window, navigationController) = try embedInNavigationController(controller)
+        defer { window.isHidden = true }
+
+        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
+        controller.tableView(UITableView(), didSelectRowAt: driveIndexPath)
+
+        #expect(navigationController.topViewController is DriveDetailViewController)
+        #expect(navigationController.viewControllers.count == 2)
+    }
+
+    @Test func driveCardSwipeHasNoActions() throws {
+        let controller = makeController(
+            clips: [
+                driveClip(id: 10, bootTag: "boot-a"),
+                driveClip(id: 9, bootTag: "boot-a"),
+            ],
+            loader: .noop
+        )
+        controller.loadViewIfNeeded()
+
+        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
+
+        #expect(controller.tableView(
+            UITableView(),
+            trailingSwipeActionsConfigurationForRowAt: driveIndexPath
+        ) == nil)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -898,7 +1007,7 @@ struct HomeViewControllerTests {
         Issue.record("Timed out waiting for cursor requests.")
     }
 
-    private func datedClip(id: Int, start: Date) -> Clip {
+    private func datedClip(id: Int, start: Date, bootTag: String? = nil) -> Clip {
         Clip(
             id: id,
             startMs: epochMs(start),
@@ -906,7 +1015,21 @@ struct HomeViewControllerTests {
             bytes: UInt64(id * 100),
             locked: false,
             etag: "\(id)-\(id * 100)",
-            timeApproximate: false
+            timeApproximate: false,
+            bootTag: bootTag
+        )
+    }
+
+    private func driveClip(id: Int, bootTag: String) -> Clip {
+        Clip(
+            id: id,
+            startMs: nil,
+            durMs: 30_000,
+            bytes: UInt64(id * 100),
+            locked: false,
+            etag: "\(id)-\(id * 100)",
+            timeApproximate: true,
+            bootTag: bootTag
         )
     }
 
@@ -984,11 +1107,15 @@ private actor HomeDeleteSpy {
 
 private actor HomeFetchSpy {
     private var cursors: [String?] = []
+    private var responses: [ClipsResponse]
+
+    init(responses: [ClipsResponse] = [ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)]) {
+        self.responses = responses
+    }
 
     nonisolated func client() -> ClipsClient {
         ClipsClient { cursor in
-            await self.record(cursor)
-            return ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)
+            await self.response(cursor: cursor)
         }
     }
 
@@ -996,8 +1123,13 @@ private actor HomeFetchSpy {
         cursors
     }
 
-    private func record(_ cursor: String?) {
+    private func response(cursor: String?) -> ClipsResponse {
         cursors.append(cursor)
+        guard responses.isEmpty == false else {
+            return ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)
+        }
+
+        return responses.removeFirst()
     }
 }
 
@@ -1008,14 +1140,16 @@ private actor HomeFetchSpy {
 private final class HomeLoaderProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var prefetchCancels: [String: Int] = [:]
+    private var prefetchRequests: [ClipThumbnailIdentity] = []
+    private var thumbnailRequests: [ClipThumbnailIdentity] = []
     private var thumbnailCalls = 0
     private var thumbnailCancels = 0
     private let thumbnailSignal = AsyncSignal()
 
     func loader() -> ThumbnailLoader {
         ThumbnailLoader(
-            thumbnail: { [self] _ in
-                noteThumbnailCall()
+            thumbnail: { [self] clip in
+                noteThumbnailCall(ClipThumbnailIdentity(clip))
                 await withTaskCancellationHandler {
                     await thumbnailSignal.wait()
                 } onCancel: {
@@ -1025,6 +1159,7 @@ private final class HomeLoaderProbe: @unchecked Sendable {
             },
             prefetch: { [self] clip in
                 let key = key(clip)
+                notePrefetchRequest(ClipThumbnailIdentity(clip))
                 return ThumbnailLoader.PrefetchHandle { self.notePrefetchCancel(key) }
             }
         )
@@ -1045,8 +1180,23 @@ private final class HomeLoaderProbe: @unchecked Sendable {
         return thumbnailCancels
     }
 
+    func prefetchIdentities() -> [ClipThumbnailIdentity] {
+        lock.lock(); defer { lock.unlock() }
+        return prefetchRequests
+    }
+
+    func thumbnailIdentities() -> [ClipThumbnailIdentity] {
+        lock.lock(); defer { lock.unlock() }
+        return thumbnailRequests
+    }
+
     private func key(_ clip: Clip) -> String {
         "\(clip.id)-\(clip.etag)"
+    }
+
+    private func notePrefetchRequest(_ identity: ClipThumbnailIdentity) {
+        lock.lock(); defer { lock.unlock() }
+        prefetchRequests.append(identity)
     }
 
     private func notePrefetchCancel(_ key: String) {
@@ -1054,8 +1204,9 @@ private final class HomeLoaderProbe: @unchecked Sendable {
         prefetchCancels[key, default: 0] += 1
     }
 
-    private func noteThumbnailCall() {
+    private func noteThumbnailCall(_ identity: ClipThumbnailIdentity) {
         lock.lock(); defer { lock.unlock() }
+        thumbnailRequests.append(identity)
         thumbnailCalls += 1
     }
 
