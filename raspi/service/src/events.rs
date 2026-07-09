@@ -253,6 +253,7 @@ mod tests {
             },
             Event::ClipFinalized(ClipMeta {
                 id: 42,
+                boot_tag: Some("7f3a91c2b0d4".into()),
                 start_ms: None,
                 dur_ms: Some(30000),
                 bytes: 1_048_576,

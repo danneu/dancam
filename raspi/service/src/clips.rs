@@ -32,6 +32,7 @@ const MAX_LIMIT: usize = DEFAULT_LIMIT;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ClipMeta {
     pub id: u32,
+    pub boot_tag: Option<String>,
     pub start_ms: Option<u64>,
     pub dur_ms: Option<u64>,
     pub bytes: u64,
@@ -519,8 +520,10 @@ fn clip_meta_from_candidate(
     time_store: &TimeStore,
 ) -> ClipMeta {
     let start_ms = derive_start_ms(candidate.facts.as_ref(), time_store);
+    let boot_tag = candidate.facts.as_ref().map(|facts| facts.boot_tag.clone());
     ClipMeta {
         id: candidate.seq,
+        boot_tag,
         start_ms,
         dur_ms: duration_cache
             .and_then(|cache| cache.duration_ms(candidate.seq, &candidate.path, candidate.bytes)),
@@ -1051,8 +1054,31 @@ mod tests {
 
         assert_eq!(next_cursor, None);
         assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].boot_tag.as_deref(), Some("abc123def456"));
         assert_eq!(clips[0].start_ms, Some(10_000));
         assert!(!clips[0].time_approximate);
+    }
+
+    #[test]
+    fn read_finished_clips_reports_boot_tag_for_stamped_segments_only() {
+        let rec_dir = temp_rec_dir();
+        let time_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", b"bare");
+        write_file(
+            &rec_dir.path,
+            &stamped_name_with_mono(8, "abc123def456", 9000),
+            b"stamped",
+        );
+        let time_store = TimeStore::load(time_dir.path.clone());
+        let duration_cache = DurationCache::new();
+
+        let (clips, _) =
+            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
+                .unwrap();
+
+        assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [8, 7]);
+        assert_eq!(clips[0].boot_tag.as_deref(), Some("abc123def456"));
+        assert_eq!(clips[1].boot_tag, None);
     }
 
     #[test]

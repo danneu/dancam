@@ -374,6 +374,10 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > wall-clock filters and non-descending `order` values are modeled but rejected
   > with `400` until `moss` provides resolved timestamps, so lookup clients cannot
   > receive a silent unfiltered page.
+  > **Note (2026-07-08):** Swoop `sift` adds nullable `boot_tag` to clip metadata:
+  > the stamped segment boottag from ADR 15. It is an identity/grouping key for
+  > "one drive = one boot", not a sortable time field. Bare legacy segment names
+  > carry null. The flattened `clip_finalized` event carries the same field.
 - `GET /v1/clips/{id}` -- resumable pull; `Range`/`If-Range`, `Accept-Ranges`, `ETag`,
   `Content-Range`; `application/mp2t` (the `.ts` segment bytes).
 - `DELETE /v1/clips/{id}` -- delete a finished, below-floor clip. Requires the mutation

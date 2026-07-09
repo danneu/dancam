@@ -584,6 +584,7 @@ mod tests {
     fn clip(id: u32) -> ClipMeta {
         ClipMeta {
             id,
+            boot_tag: None,
             start_ms: None,
             dur_ms: None,
             bytes: 7,

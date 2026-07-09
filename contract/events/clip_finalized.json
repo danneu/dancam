@@ -1,6 +1,7 @@
 {
   "type": "clip_finalized",
   "id": 42,
+  "boot_tag": "7f3a91c2b0d4",
   "start_ms": null,
   "dur_ms": 30000,
   "bytes": 1048576,

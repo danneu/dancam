@@ -118,6 +118,7 @@ async fn clips_route_lists_finished_clips_and_headers() {
     assert_eq!(clips[0]["id"], 1);
     assert_eq!(clips[0]["bytes"], 7);
     assert_eq!(clips[0]["etag"], "1-7");
+    assert_eq!(clips[0]["boot_tag"], Value::Null);
     assert_eq!(clips[0]["start_ms"], Value::Null);
     assert_eq!(clips[0]["dur_ms"], Value::Null);
     assert_eq!(clips[0]["locked"], false);
@@ -245,6 +246,7 @@ async fn clips_route_derives_times_after_sync() {
     let clip = &json["clips"].as_array().unwrap()[0];
 
     assert!(clip["start_ms"].as_u64().is_some());
+    assert_eq!(clip["boot_tag"], BOOT_TAG);
     assert_eq!(clip["time_approximate"], false);
     assert!(json["server_time_ms"].as_u64().is_some());
 }
