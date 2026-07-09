@@ -8,6 +8,8 @@
 - **Amended:** 2026-07-02 -- ADR 17 adds `DELETE /v1/clips/{id}` and `clip_removed` as
   an off-record-path finished-clip mutation, and tightens clip list/serve scan errors to
   fail closed with `503`.
+- **Amended:** 2026-07-09 -- telemetry deltas and snapshot fields expose service-coarsened
+  observed values, not full-precision samples.
 - **Date:** 2026-06-22
 - **Owner:** raspi (the Pi serves the wire contract; the canonical copy lives here)
 - **Related:** root `AGENTS.md` (all five cross-cutting principles);
@@ -134,6 +136,16 @@
 > using ADR 15's boottag canon, matching clip `boot_tag`; underivable boot ids carry
 > null. This supports the app-side live-recording drive attribution decision without
 > making the current segment carry a repeated boot-level fact.
+
+> **Note (2026-07-09): Telemetry coarsening.** `storage_changed`, `temp_changed`, and
+> `mem_changed`, plus the matching `GET /v1/status` and `GET /v1/events` snapshot
+> fields, expose service-coarsened observed values rather than full-precision sensor
+> samples: temperature is rounded to the nearest 0.5 C, memory is rounded down to
+> 16 MiB buckets, and storage is rounded down to 64 MiB buckets. These are still
+> raw-state deltas rather than threshold alerts, which was the point of the original
+> "raw telemetry deltas" wording, but they deliberately do not promise exact sample
+> precision. Memory was already coarsened before this note; the change widens that
+> property to storage and temperature.
 
 ## Context
 

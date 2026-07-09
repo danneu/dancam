@@ -243,6 +243,8 @@ impl World {
         temp_c: TempC,
         mem: Option<MemInfo>,
     ) -> Vec<Event> {
+        let storage = storage.map(quantize_storage);
+        let temp_c = quantize_temp(temp_c);
         let mut events = Vec::new();
         if self.storage != storage {
             self.storage = storage.clone();
@@ -316,14 +318,33 @@ pub enum Input {
     Tick,
 }
 
-fn quantize_mem(mem: MemInfo) -> MemInfo {
-    const QUANTUM: u64 = 1024 * 1024;
+pub(crate) const MEM_QUANTUM: u64 = 16 * 1024 * 1024;
+pub(crate) const STORAGE_QUANTUM: u64 = 64 * 1024 * 1024;
 
+fn quantize_storage(storage: DiskUsage) -> DiskUsage {
+    DiskUsage {
+        used: round_down(storage.used, STORAGE_QUANTUM),
+        total: round_down(storage.total, STORAGE_QUANTUM),
+    }
+}
+
+fn quantize_temp(temp_c: TempC) -> TempC {
+    TempC {
+        soc: temp_c.soc.map(quantize_temp_value),
+        sensor: temp_c.sensor.map(quantize_temp_value),
+    }
+}
+
+fn quantize_temp_value(value: f32) -> f32 {
+    (value * 2.0).round() / 2.0
+}
+
+fn quantize_mem(mem: MemInfo) -> MemInfo {
     MemInfo {
-        total: round_down(mem.total, QUANTUM),
-        available: round_down(mem.available, QUANTUM),
-        swap_total: round_down(mem.swap_total, QUANTUM),
-        swap_used: round_down(mem.swap_used, QUANTUM),
+        total: round_down(mem.total, MEM_QUANTUM),
+        available: round_down(mem.available, MEM_QUANTUM),
+        swap_total: round_down(mem.swap_total, MEM_QUANTUM),
+        swap_used: round_down(mem.swap_used, MEM_QUANTUM),
     }
 }
 
@@ -333,7 +354,7 @@ fn round_down(value: u64, quantum: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CameraState, Input, TempC, World};
+    use super::{CameraState, Input, TempC, World, MEM_QUANTUM, STORAGE_QUANTUM};
     use crate::{
         clips::ClipMeta,
         events::Event,
@@ -496,53 +517,157 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_emits_only_changed_quantized_values_and_tick_never_mutates() {
+    fn telemetry_first_sample_emits_quantized_payloads() {
         let mut world = World::new(CameraState::Running);
-        let mem = MemInfo {
-            total: 512_000_123,
-            available: 256_999_999,
-            swap_total: 134_217_728,
-            swap_used: 1,
-        };
 
         let events = world.apply(
             Input::Telemetry {
-                storage: Some(DiskUsage {
-                    used: 1_000,
-                    total: 2_000,
-                }),
-                temp_c: TempC {
-                    soc: Some(51.5),
-                    sensor: None,
-                },
-                mem: Some(mem.clone()),
+                storage: Some(sample_storage()),
+                temp_c: sample_temp(),
+                mem: Some(sample_mem()),
             },
             1000,
         );
 
-        assert_eq!(events.len(), 3);
-        assert!(matches!(events[0], Event::StorageChanged { .. }));
-        assert!(matches!(events[1], Event::TempChanged { .. }));
-        assert!(matches!(events[2], Event::MemChanged { .. }));
+        assert_eq!(
+            events,
+            vec![
+                Event::StorageChanged {
+                    used: 149 * STORAGE_QUANTUM,
+                    total: 476 * STORAGE_QUANTUM,
+                },
+                Event::TempChanged {
+                    soc: Some(51.5),
+                    sensor: Some(40.5),
+                },
+                Event::MemChanged {
+                    total: 30 * MEM_QUANTUM,
+                    available: 15 * MEM_QUANTUM,
+                    swap_total: 8 * MEM_QUANTUM,
+                    swap_used: 0,
+                },
+            ]
+        );
+
+        let snapshot = world.snapshot("boot", 12);
+        assert_eq!(
+            snapshot.storage,
+            Some(DiskUsage {
+                used: 149 * STORAGE_QUANTUM,
+                total: 476 * STORAGE_QUANTUM,
+            })
+        );
+        assert_eq!(
+            snapshot.temp_c,
+            TempC {
+                soc: Some(51.5),
+                sensor: Some(40.5),
+            }
+        );
+        assert_eq!(
+            snapshot.mem,
+            Some(MemInfo {
+                total: 30 * MEM_QUANTUM,
+                available: 15 * MEM_QUANTUM,
+                swap_total: 8 * MEM_QUANTUM,
+                swap_used: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn telemetry_sub_quantum_jitter_emits_nothing() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::Telemetry {
+                storage: Some(sample_storage()),
+                temp_c: sample_temp(),
+                mem: Some(sample_mem()),
+            },
+            1000,
+        );
+
         assert!(world
             .apply(
                 Input::Telemetry {
                     storage: Some(DiskUsage {
-                        used: 1_000,
-                        total: 2_000,
+                        used: 149 * STORAGE_QUANTUM + 60_012_345,
+                        total: 476 * STORAGE_QUANTUM + 1,
                     }),
                     temp_c: TempC {
-                        soc: Some(51.5),
-                        sensor: None,
+                        soc: Some(51.7),
+                        sensor: Some(40.4),
                     },
                     mem: Some(MemInfo {
                         available: 256_999_500,
-                        ..mem
+                        ..sample_mem()
                     }),
                 },
                 1100,
             )
             .is_empty());
+    }
+
+    #[test]
+    fn telemetry_bucket_crossings_emit_quantized_values() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::Telemetry {
+                storage: Some(sample_storage()),
+                temp_c: sample_temp(),
+                mem: Some(sample_mem()),
+            },
+            1000,
+        );
+
+        assert_eq!(
+            world.apply(
+                Input::Telemetry {
+                    storage: Some(DiskUsage {
+                        used: 152 * STORAGE_QUANTUM + 7,
+                        total: 476 * STORAGE_QUANTUM + 1,
+                    }),
+                    temp_c: TempC {
+                        soc: Some(51.8),
+                        sensor: Some(40.3),
+                    },
+                    mem: Some(MemInfo {
+                        available: 17 * MEM_QUANTUM + 9,
+                        ..sample_mem()
+                    }),
+                },
+                1100,
+            ),
+            vec![
+                Event::StorageChanged {
+                    used: 152 * STORAGE_QUANTUM,
+                    total: 476 * STORAGE_QUANTUM,
+                },
+                Event::TempChanged {
+                    soc: Some(52.0),
+                    sensor: Some(40.5),
+                },
+                Event::MemChanged {
+                    total: 30 * MEM_QUANTUM,
+                    available: 17 * MEM_QUANTUM,
+                    swap_total: 8 * MEM_QUANTUM,
+                    swap_used: 0,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn tick_emits_heartbeat_and_never_mutates() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::Telemetry {
+                storage: Some(sample_storage()),
+                temp_c: sample_temp(),
+                mem: Some(sample_mem()),
+            },
+            1000,
+        );
 
         let before = world.clone();
         assert_eq!(
@@ -596,6 +721,29 @@ mod tests {
             locked: false,
             etag: format!("{id}-7"),
             time_approximate: true,
+        }
+    }
+
+    fn sample_storage() -> DiskUsage {
+        DiskUsage {
+            used: 149 * STORAGE_QUANTUM + 12_345,
+            total: 476 * STORAGE_QUANTUM + 1,
+        }
+    }
+
+    fn sample_temp() -> TempC {
+        TempC {
+            soc: Some(51.5),
+            sensor: Some(40.3),
+        }
+    }
+
+    fn sample_mem() -> MemInfo {
+        MemInfo {
+            total: 512_000_123,
+            available: 256_999_999,
+            swap_total: 134_217_728,
+            swap_used: 1,
         }
     }
 }

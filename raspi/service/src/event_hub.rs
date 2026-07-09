@@ -208,7 +208,7 @@ mod tests {
         events::Event,
         recorder::{RecorderEvent, RecorderPhase},
         sysfacts::DiskUsage,
-        world::{CameraState, Input, TempC},
+        world::{CameraState, Input, TempC, STORAGE_QUANTUM},
     };
 
     #[test]
@@ -259,12 +259,16 @@ mod tests {
     #[tokio::test]
     async fn concurrent_connects_fold_to_final_projection_without_duplicate_ids() {
         let hub = Arc::new(EventHub::new(CameraState::Running));
+        let mut pre = hub.connect();
         let driver_hub = hub.clone();
         let driver = tokio::spawn(async move {
             for used in 1..=100 {
                 driver_hub.drive(
                     Input::Telemetry {
-                        storage: Some(DiskUsage { used, total: 100 }),
+                        storage: Some(DiskUsage {
+                            used: used * STORAGE_QUANTUM,
+                            total: 100 * STORAGE_QUANTUM,
+                        }),
                         temp_c: TempC::empty(),
                         mem: None,
                     },
@@ -280,6 +284,14 @@ mod tests {
             tokio::task::yield_now().await;
         }
         driver.await.unwrap();
+
+        let mut pre_deltas = 0;
+        while let Ok(seq_event) = pre.rx.try_recv() {
+            if matches!(seq_event.event, Event::StorageChanged { .. }) {
+                pre_deltas += 1;
+            }
+        }
+        assert_eq!(pre_deltas, 100);
 
         let final_storage = hub.snapshot().storage;
         for mut connection in connections {
