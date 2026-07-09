@@ -905,29 +905,11 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             return nil
         }
 
-        let action = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, completion in
-            guard let self else {
-                completion(false)
-                return
-            }
-
-            let alert = UIAlertController(
-                title: "Delete clip?",
-                message: "This removes the clip from the camera unit.",
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
-                completion(false)
-            })
-            alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { _ in
-                self.performDelete(clip)
-                completion(true)
-            })
-            self.present(alert, animated: true)
-        }
-        action.image = UIImage(systemName: "trash")
-
-        return UISwipeActionsConfiguration(actions: [action])
+        return UISwipeActionsConfiguration(actions: [
+            ClipDeleteConfirmation.swipeAction(presenting: self) { [weak self] in
+                self?.performDelete(clip)
+            },
+        ])
     }
 
     func tableView(

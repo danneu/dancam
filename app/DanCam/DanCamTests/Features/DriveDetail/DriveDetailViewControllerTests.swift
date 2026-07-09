@@ -1,0 +1,447 @@
+import Foundation
+import Testing
+import UIKit
+@testable import DanCam
+
+@MainActor
+struct DriveDetailViewControllerTests {
+    @Test func rendersOnlyTheTargetDrive() {
+        let controller = makeController(clips: [
+            clip(id: 12, bootTag: "target"),
+            clip(id: 11, bootTag: "other"),
+            clip(id: 10, bootTag: "target"),
+            clip(id: 9, bootTag: nil),
+        ])
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.clipIDsForTesting() == [12, 10])
+    }
+
+    @Test func titleUsesFullDriveSpanAndUndatedFallback() {
+        let newestStart = UInt64(1_767_231_420_000)
+        let oldestStart = UInt64(1_767_225_720_000)
+        let datedController = makeController(clips: [
+            clip(id: 12, bootTag: "target", startMs: newestStart),
+            clip(id: 10, bootTag: "target", startMs: oldestStart),
+        ])
+
+        datedController.loadViewIfNeeded()
+
+        #expect(datedController.title == Formatters.driveCardTitle(
+            start: Date(timeIntervalSince1970: Double(oldestStart) / 1_000),
+            end: Date(timeIntervalSince1970: Double(newestStart) / 1_000)
+        ))
+
+        let undatedController = makeController(clips: [
+            clip(id: 12, bootTag: "target"),
+        ])
+
+        undatedController.loadViewIfNeeded()
+
+        #expect(undatedController.title == "Drive")
+    }
+
+    @Test func prefetchAndCancelRoutesThroughThumbnailLoader() throws {
+        let probe = DriveLoaderProbe()
+        let controller = makeController(
+            clips: [clip(id: 12, bootTag: "target")],
+            thumbnailLoader: probe.loader()
+        )
+        controller.loadViewIfNeeded()
+        let indexPath = try #require(controller.indexPathForTesting(clipID: 12))
+
+        controller.tableView(UITableView(), prefetchRowsAt: [indexPath])
+
+        #expect(probe.prefetchedIDs() == [12])
+
+        controller.tableView(UITableView(), cancelPrefetchingForRowsAt: [indexPath])
+
+        #expect(probe.cancelCount(clipID: 12) == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func tappingClipPushesViewer() async throws {
+        let controller = makeController(clips: [clip(id: 12, bootTag: "target")])
+        let root = UIViewController()
+        let navigationController = UINavigationController(rootViewController: root)
+        navigationController.pushViewController(controller, animated: false)
+        controller.loadViewIfNeeded()
+
+        let indexPath = try #require(controller.indexPathForTesting(clipID: 12))
+        controller.tableView(UITableView(), didSelectRowAt: indexPath)
+
+        try await waitUntil {
+            navigationController.topViewController is ClipViewerViewController
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func swipeDeleteConfigurationAndConfirmedDeleteSendDeleteTapped() async throws {
+        let deleteSpy = DriveDeleteSpy()
+        let controller = makeController(
+            clips: [clip(id: 12, bootTag: "target")],
+            clipsClient: deleteSpy.client()
+        )
+        controller.loadViewIfNeeded()
+
+        let indexPath = try #require(controller.indexPathForTesting(clipID: 12))
+        let configuration = try #require(controller.tableView(
+            UITableView(),
+            trailingSwipeActionsConfigurationForRowAt: indexPath
+        ))
+        #expect(configuration.actions.map(\.title) == ["Delete"])
+
+        controller.performDeleteForTesting(clipID: 12)
+
+        try await waitUntil {
+            await deleteSpy.deletedIDs() == [12]
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func tailWillDisplayLoadsMoreOnlyWhenDriveCanLoadMore() async throws {
+        let blockedSpy = DriveFetchSpy()
+        let blockedController = makeController(
+            clips: [
+                clip(id: 12, bootTag: "target"),
+                clip(id: 1, bootTag: "other"),
+            ],
+            clipsClient: blockedSpy.client(),
+            nextCursor: "1"
+        )
+        blockedController.loadViewIfNeeded()
+        let blockedTail = try #require(blockedController.indexPathForTesting(clipID: 12))
+
+        blockedController.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: blockedTail)
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(await blockedSpy.requestedCursors() == [])
+
+        let fetchSpy = DriveFetchSpy()
+        let loadingController = makeController(
+            clips: [
+                clip(id: 12, bootTag: "target"),
+                clip(id: 11, bootTag: nil),
+            ],
+            clipsClient: fetchSpy.client(),
+            nextCursor: "11"
+        )
+        loadingController.loadViewIfNeeded()
+        let loadingTail = try #require(loadingController.indexPathForTesting(clipID: 12))
+
+        loadingController.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: loadingTail)
+
+        try await waitForCursors(fetchSpy, [Optional("11")])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func nilOnlyPageAdvancesFrontierAndTriggersTheNextLoad() async throws {
+        let fetchSpy = DriveFetchSpy(responses: [
+            ClipsResponse(
+                clips: [clip(id: 11, bootTag: nil)],
+                serverTimeMs: nil,
+                nextCursor: "11"
+            ),
+            ClipsResponse(
+                clips: [clip(id: 10, bootTag: "target")],
+                serverTimeMs: nil,
+                nextCursor: nil
+            ),
+        ])
+        let controller = makeController(
+            clips: [clip(id: 12, bootTag: "target")],
+            clipsClient: fetchSpy.client(),
+            nextCursor: "12"
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.layoutTableForTesting()
+            return controller.clipThumbnailCellForTesting(clipID: 12) != nil
+        }
+
+        try await waitForCursors(fetchSpy, [Optional("12"), Optional("11")])
+        try await waitUntil {
+            controller.clipIDsForTesting() == [12, 10]
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func emptyButNotExhaustedKeepsControllerAndLoadsMore() async throws {
+        let fetchSpy = ParkedDriveFetchSpy()
+        defer {
+            Task {
+                await fetchSpy.releaseFetches()
+            }
+        }
+        let (controller, store) = makeControllerAndStore(
+            clips: [
+                clip(id: 12, bootTag: "target"),
+                clip(id: 11, bootTag: nil),
+            ],
+            clipsClient: fetchSpy.client(),
+            nextCursor: "11"
+        )
+        let root = UIViewController()
+        let navigationController = UINavigationController(rootViewController: root)
+        navigationController.pushViewController(controller, animated: false)
+        controller.loadViewIfNeeded()
+
+        store.send(.clips(.clipRemoved(id: 12)))
+
+        try await waitForCursors(fetchSpy, [Optional("11")])
+        #expect(navigationController.viewControllers.contains(controller))
+        await fetchSpy.releaseFetches()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func exhaustedEmptyDrivePopsWhenTopmost() async throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [clip(id: 12, bootTag: "target")],
+            nextCursor: nil
+        )
+        let root = UIViewController()
+        let navigationController = UINavigationController(rootViewController: root)
+        navigationController.pushViewController(controller, animated: false)
+        controller.loadViewIfNeeded()
+
+        store.send(.clips(.clipRemoved(id: 12)))
+
+        try await waitUntil {
+            navigationController.viewControllers.contains(controller) == false
+        }
+        #expect(navigationController.topViewController === root)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func exhaustedEmptyDriveSplicesOutWhenNotTopmost() async throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [clip(id: 12, bootTag: "target")],
+            nextCursor: nil
+        )
+        let root = UIViewController()
+        let above = UIViewController()
+        let navigationController = UINavigationController(rootViewController: root)
+        navigationController.pushViewController(controller, animated: false)
+        navigationController.pushViewController(above, animated: false)
+        controller.loadViewIfNeeded()
+
+        store.send(.clips(.clipRemoved(id: 12)))
+
+        try await waitUntil {
+            navigationController.viewControllers == [root, above]
+        }
+        #expect(navigationController.topViewController === above)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func finalizedClipForDriveAppearsAsNewTopRow() async throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [clip(id: 12, bootTag: "target")],
+            nextCursor: nil
+        )
+        controller.loadViewIfNeeded()
+
+        store.send(.clips(.clipFinalized(clip(id: 13, bootTag: "target"))))
+
+        try await waitUntil {
+            controller.clipIDsForTesting() == [13, 12]
+        }
+    }
+
+    private func makeController(
+        clips: [Clip],
+        clipsClient: ClipsClient = .noop,
+        nextCursor: String? = nil,
+        thumbnailLoader: ThumbnailLoader = .noop
+    ) -> DriveDetailViewController {
+        makeControllerAndStore(
+            clips: clips,
+            clipsClient: clipsClient,
+            nextCursor: nextCursor,
+            thumbnailLoader: thumbnailLoader
+        ).0
+    }
+
+    private func makeControllerAndStore(
+        clips: [Clip],
+        clipsClient: ClipsClient = .noop,
+        nextCursor: String? = nil,
+        thumbnailLoader: ThumbnailLoader = .noop
+    ) -> (DriveDetailViewController, AppStore) {
+        var state = AppFeature.State()
+        state.clips.clips = clips
+        state.clips.nextCursor = nextCursor
+        let dependencies = AppDependencies(
+            health: HealthClient(fetch: { fatalError("Health is not used by DriveDetailViewControllerTests.") }),
+            clips: clipsClient,
+            thumbnailLoader: thumbnailLoader,
+            sleep: { _ in try? await Task.sleep(for: .seconds(3600)) },
+            heartbeatTimeout: { throw CancellationError() }
+        )
+        let store = AppStore(initialState: state, dependencies: dependencies, reduce: AppFeature.reduce)
+        return (
+            DriveDetailViewController(dependencies: dependencies, store: store, bootTag: "target"),
+            store
+        )
+    }
+
+    private func clip(
+        id: Int,
+        bootTag: String?,
+        startMs: UInt64? = nil
+    ) -> Clip {
+        CameraSamples.clip(
+            id: id,
+            startMs: startMs,
+            durMs: 30_000,
+            timeApproximate: startMs == nil,
+            bootTag: bootTag
+        )
+    }
+
+    private func embed(_ controller: UIViewController) throws -> UIWindow {
+        let windowScene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: windowScene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        return window
+    }
+
+    private func waitUntil(_ condition: @escaping () async -> Bool) async throws {
+        for _ in 0..<200 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("Timed out waiting for condition.")
+    }
+
+    private func waitForCursors(_ spy: DriveFetchSpy, _ expected: [String?]) async throws {
+        try await waitUntil {
+            await spy.requestedCursors() == expected
+        }
+    }
+
+    private func waitForCursors(_ spy: ParkedDriveFetchSpy, _ expected: [String?]) async throws {
+        try await waitUntil {
+            await spy.requestedCursors() == expected
+        }
+    }
+}
+
+private actor DriveDeleteSpy {
+    private var ids: [Int] = []
+
+    nonisolated func client() -> ClipsClient {
+        ClipsClient(
+            fetch: { _ in ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil) },
+            delete: { id in await self.record(id) }
+        )
+    }
+
+    func deletedIDs() -> [Int] {
+        ids
+    }
+
+    private func record(_ id: Int) {
+        ids.append(id)
+    }
+}
+
+private actor DriveFetchSpy {
+    private var cursors: [String?] = []
+    private var responses: [ClipsResponse]
+
+    init(responses: [ClipsResponse] = [
+        ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil),
+    ]) {
+        self.responses = responses
+    }
+
+    nonisolated func client() -> ClipsClient {
+        ClipsClient { cursor in
+            await self.nextResponse(cursor: cursor)
+        }
+    }
+
+    func requestedCursors() -> [String?] {
+        cursors
+    }
+
+    private func nextResponse(cursor: String?) -> ClipsResponse {
+        cursors.append(cursor)
+        guard responses.isEmpty == false else {
+            return ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)
+        }
+
+        return responses.removeFirst()
+    }
+}
+
+private actor ParkedDriveFetchSpy {
+    private var cursors: [String?] = []
+    private let release = AsyncSignal()
+
+    nonisolated func client() -> ClipsClient {
+        ClipsClient { cursor in
+            await self.record(cursor)
+            await self.waitForRelease()
+            throw CancellationError()
+        }
+    }
+
+    func requestedCursors() -> [String?] {
+        cursors
+    }
+
+    func releaseFetches() async {
+        await release.signal()
+    }
+
+    private func record(_ cursor: String?) {
+        cursors.append(cursor)
+    }
+
+    private func waitForRelease() async {
+        await release.wait()
+    }
+}
+
+private final class DriveLoaderProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var prefetched: [Int] = []
+    private var cancels: [Int: Int] = [:]
+
+    func loader() -> ThumbnailLoader {
+        ThumbnailLoader(
+            thumbnail: { _ in nil },
+            prefetch: { [self] clip in
+                notePrefetch(clip.id)
+                return ThumbnailLoader.PrefetchHandle { self.noteCancel(clip.id) }
+            }
+        )
+    }
+
+    func prefetchedIDs() -> [Int] {
+        lock.lock(); defer { lock.unlock() }
+        return prefetched
+    }
+
+    func cancelCount(clipID: Int) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return cancels[clipID] ?? 0
+    }
+
+    private func notePrefetch(_ id: Int) {
+        lock.lock(); defer { lock.unlock() }
+        prefetched.append(id)
+    }
+
+    private func noteCancel(_ id: Int) {
+        lock.lock(); defer { lock.unlock() }
+        cancels[id, default: 0] += 1
+    }
+}
