@@ -150,3 +150,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `18-2026-07-08-heartbeat-fresh-present-tense.md` -- present-tense UI claims require
   heartbeat-fresh state; stale recorder state stays typed and visually last-known rather
   than being extrapolated as live.
+- `19-2026-07-08-drive-grouped-clip-browsing.md` -- treat a drive boottag as the Home
+  browse unit for finished clips, with app-side drive cards, detail projections, stable
+  representative thumbnails, and per-clip deletion.

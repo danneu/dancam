@@ -345,7 +345,7 @@ root-store/scoped-observation architecture (app ADRs 06/17). New
 - [x] 3. feat(app): drive time-span and duration formatters
 - [x] 4. feat(app): drive detail screen for a boottag's clips
 - [x] 5. feat(app): group Home clips into per-drive cards
-- [ ] 6. docs: record drive-grouped clip browsing
+- [x] 6. docs: record drive-grouped clip browsing
 
 ## Implementation notes
 

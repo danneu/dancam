@@ -267,7 +267,7 @@ mock first.
       new browsing surface.
       - [x] Group Recent clips under sticky day headers, with undated footage kept in
             in-place "Date unknown" runs.
-      - [ ] Group clips by drive using a boottag exposed in `/v1/clips`.
+      - [x] Group clips by drive using a boottag exposed in `/v1/clips`.
       - [ ] Add a calendar jump backed by the reserved `from`/`to` window params.
       - [ ] Add a locked/incidents filter after `nova` defines incident state.
 - [ ] **Swoop `nova` -- Incident lock (manual).** A "save this moment" button: Pi
