@@ -331,3 +331,10 @@ swoop can drop into the list above unchanged. Unordered.
       Parked until there is a
       production/car image to provision; the dev AP's WPA2-AES + manual PSK is
       sufficient for the dev loop.
+- [ ] **Swoop `moor` -- Persistent camera connections.** Reuse one kept-alive
+      HTTP/1.1 connection per plane instead of sending `Connection: close` on every
+      request, removing per-request SYN exposure on the congested link. Open questions:
+      connection ownership, staleness detection after Wi-Fi drops, and the Pi's
+      per-connection serve model. Parked until per-request connects measurably hurt
+      again -- the 4s deadline plus heartbeat-driven auto-retry already absorb one-off
+      SYN loss.
