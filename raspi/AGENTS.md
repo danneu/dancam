@@ -23,7 +23,10 @@ app, is documented in [`../app/AGENTS.md`](../app/AGENTS.md).
   - 40-pin header is unpopulated from the factory.
 - **Camera:** [Arducam 12MP IMX708 Autofocus Wide](https://www.amazon.com/gp/product/B0C5D97DRJ)
   (~30 USD; Camera Module 3 Wide equivalent).
-  - 120 deg diagonal FOV, HDR, PDAF autofocus, Sony IMX708, libcamera-native.
+  - ~120 deg diagonal FOV (Arducam's own specs disagree: the product page says
+    120 deg D, their wiki says 110 deg D x 100 deg H x 72 deg V; either way slightly
+    narrower than the official CM3 Wide's 120 D / 102 H / 67 V), HDR, PDAF autofocus,
+    Sony IMX708, libcamera-native.
   - Ships with a 15-22pin "Standard-Mini" FPC cable: 15-pin at the camera, 22-pin
     at the board. The 22-pin end plugs into the Zero 2 W's mini-CSI port (same
     connector as the Pi 5 and Compute Modules), and the 15-pin end plugs into the
