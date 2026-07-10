@@ -15,16 +15,48 @@ pub enum CameraState {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct TempReading {
+    pub current: Option<f32>,
+    pub max: Option<f32>,
+}
+
+impl TempReading {
+    pub fn empty() -> Self {
+        Self {
+            current: None,
+            max: None,
+        }
+    }
+
+    pub fn observe(&mut self, sample: Option<f32>) -> bool {
+        let current = sample.map(quantize_temp_value);
+        if self.current == current {
+            return false;
+        }
+
+        self.current = current;
+        if let Some(current) = current {
+            self.max = Some(self.max.map_or(current, |max| max.max(current)));
+        }
+        true
+    }
+
+    pub fn clear_current(&mut self) -> bool {
+        self.current.take().is_some()
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct TempC {
-    pub soc: Option<f32>,
-    pub sensor: Option<f32>,
+    pub soc: TempReading,
+    pub sensor: TempReading,
 }
 
 impl TempC {
     pub fn empty() -> Self {
         Self {
-            soc: None,
-            sensor: None,
+            soc: TempReading::empty(),
+            sensor: TempReading::empty(),
         }
     }
 }
@@ -113,11 +145,10 @@ impl World {
                 } else {
                     self.camera_state = state;
                     let mut events = vec![Event::CameraStateChanged { state }];
-                    if state != CameraState::Running && self.temp_c.sensor.is_some() {
-                        self.temp_c.sensor = None;
+                    if state != CameraState::Running && self.temp_c.sensor.clear_current() {
                         events.push(Event::TempChanged {
-                            soc: self.temp_c.soc,
-                            sensor: None,
+                            soc: self.temp_c.soc.clone(),
+                            sensor: self.temp_c.sensor.clone(),
                         });
                     }
                     events
@@ -253,7 +284,6 @@ impl World {
         mem: Option<MemInfo>,
     ) -> Vec<Event> {
         let storage = storage.map(quantize_storage);
-        let soc_temp_c = soc_temp_c.map(quantize_temp_value);
         let mut events = Vec::new();
         if self.storage != storage {
             self.storage = storage.clone();
@@ -264,11 +294,10 @@ impl World {
                 });
             }
         }
-        if self.temp_c.soc != soc_temp_c {
-            self.temp_c.soc = soc_temp_c;
+        if self.temp_c.soc.observe(soc_temp_c) {
             events.push(Event::TempChanged {
-                soc: self.temp_c.soc,
-                sensor: self.temp_c.sensor,
+                soc: self.temp_c.soc.clone(),
+                sensor: self.temp_c.sensor.clone(),
             });
         }
 
@@ -293,15 +322,13 @@ impl World {
             return Vec::new();
         }
 
-        let celsius = celsius.map(quantize_temp_value);
-        if self.temp_c.sensor == celsius {
+        if !self.temp_c.sensor.observe(celsius) {
             return Vec::new();
         }
 
-        self.temp_c.sensor = celsius;
         vec![Event::TempChanged {
-            soc: self.temp_c.soc,
-            sensor: self.temp_c.sensor,
+            soc: self.temp_c.soc.clone(),
+            sensor: self.temp_c.sensor.clone(),
         }]
     }
 }
@@ -376,7 +403,7 @@ fn round_down(value: u64, quantum: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CameraState, Input, TempC, World, MEM_QUANTUM, STORAGE_QUANTUM};
+    use super::{CameraState, Input, TempC, TempReading, World, MEM_QUANTUM, STORAGE_QUANTUM};
     use crate::{
         clips::ClipMeta,
         events::Event,
@@ -571,8 +598,8 @@ mod tests {
                     total: 476 * STORAGE_QUANTUM,
                 },
                 Event::TempChanged {
-                    soc: Some(51.5),
-                    sensor: None,
+                    soc: reading(Some(51.5), Some(51.5)),
+                    sensor: reading(None, None),
                 },
                 Event::MemChanged {
                     total: 30 * MEM_QUANTUM,
@@ -594,8 +621,8 @@ mod tests {
         assert_eq!(
             snapshot.temp_c,
             TempC {
-                soc: Some(51.5),
-                sensor: None,
+                soc: reading(Some(51.5), Some(51.5)),
+                sensor: reading(None, None),
             }
         );
         assert_eq!(
@@ -672,8 +699,8 @@ mod tests {
                     total: 476 * STORAGE_QUANTUM,
                 },
                 Event::TempChanged {
-                    soc: Some(52.0),
-                    sensor: None,
+                    soc: reading(Some(52.0), Some(52.0)),
+                    sensor: reading(None, None),
                 },
                 Event::MemChanged {
                     total: 30 * MEM_QUANTUM,
@@ -682,6 +709,40 @@ mod tests {
                     swap_used: 0,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn soc_max_rises_and_survives_a_current_drop() {
+        let mut world = World::new(CameraState::Running);
+        for current in [51.5, 62.0] {
+            world.apply(
+                Input::Telemetry {
+                    storage: None,
+                    soc_temp_c: Some(current),
+                    mem: None,
+                },
+                1000,
+            );
+        }
+
+        assert_eq!(
+            world.apply(
+                Input::Telemetry {
+                    storage: None,
+                    soc_temp_c: Some(51.5),
+                    mem: None,
+                },
+                1100,
+            ),
+            vec![Event::TempChanged {
+                soc: reading(Some(51.5), Some(62.0)),
+                sensor: reading(None, None),
+            }]
+        );
+        assert_eq!(
+            world.snapshot("boot", 12).temp_c.soc,
+            reading(Some(51.5), Some(62.0))
         );
     }
 
@@ -697,11 +758,14 @@ mod tests {
                 1000,
             ),
             vec![Event::TempChanged {
-                soc: None,
-                sensor: Some(40.5),
+                soc: reading(None, None),
+                sensor: reading(Some(40.5), Some(40.5)),
             }]
         );
-        assert_eq!(world.snapshot("boot", 12).temp_c.sensor, Some(40.5));
+        assert_eq!(
+            world.snapshot("boot", 12).temp_c.sensor,
+            reading(Some(40.5), Some(40.5))
+        );
     }
 
     #[test]
@@ -750,8 +814,8 @@ mod tests {
                 1100,
             ),
             vec![Event::TempChanged {
-                soc: Some(51.5),
-                sensor: Some(41.0),
+                soc: reading(Some(51.5), Some(51.5)),
+                sensor: reading(Some(41.0), Some(41.0)),
             }]
         );
     }
@@ -761,7 +825,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::SensorTemp {
-                celsius: Some(40.3),
+                celsius: Some(43.5),
             },
             1000,
         );
@@ -769,8 +833,8 @@ mod tests {
         assert_eq!(
             world.apply(Input::SensorTemp { celsius: None }, 1100),
             vec![Event::TempChanged {
-                soc: None,
-                sensor: None,
+                soc: reading(None, None),
+                sensor: reading(None, Some(43.5)),
             }]
         );
     }
@@ -787,7 +851,10 @@ mod tests {
                 1000,
             )
             .is_empty());
-        assert_eq!(world.snapshot("boot", 12).temp_c.sensor, None);
+        assert_eq!(
+            world.snapshot("boot", 12).temp_c.sensor,
+            reading(None, None)
+        );
     }
 
     #[test]
@@ -807,10 +874,52 @@ mod tests {
                     state: CameraState::Restarting,
                 },
                 Event::TempChanged {
-                    soc: None,
-                    sensor: None,
+                    soc: reading(None, None),
+                    sensor: reading(None, Some(40.5)),
                 },
             ]
+        );
+        assert_eq!(
+            world.snapshot("boot", 12).temp_c.sensor,
+            reading(None, Some(40.5))
+        );
+    }
+
+    #[test]
+    fn sensor_max_survives_camera_restart_and_resumed_samples() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::SensorTemp {
+                celsius: Some(43.5),
+            },
+            1000,
+        );
+        world.apply(Input::CameraState(CameraState::Restarting), 1100);
+        world.apply(Input::CameraState(CameraState::Running), 1200);
+
+        assert_eq!(
+            world.apply(
+                Input::SensorTemp {
+                    celsius: Some(41.0),
+                },
+                1300,
+            ),
+            vec![Event::TempChanged {
+                soc: reading(None, None),
+                sensor: reading(Some(41.0), Some(43.5)),
+            }]
+        );
+        assert_eq!(
+            world.apply(
+                Input::SensorTemp {
+                    celsius: Some(44.0),
+                },
+                1400,
+            ),
+            vec![Event::TempChanged {
+                soc: reading(None, None),
+                sensor: reading(Some(44.0), Some(44.0)),
+            }]
         );
     }
 
@@ -895,6 +1004,10 @@ mod tests {
             etag: format!("{id}-7"),
             time_approximate: true,
         }
+    }
+
+    fn reading(current: Option<f32>, max: Option<f32>) -> TempReading {
+        TempReading { current, max }
     }
 
     fn sample_storage() -> DiskUsage {

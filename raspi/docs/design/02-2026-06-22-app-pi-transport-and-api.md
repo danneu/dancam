@@ -147,6 +147,14 @@
 > precision. Memory was already coarsened before this note; the change widens that
 > property to storage and temperature.
 
+> **Note (2026-07-10): Max-since-service-start temperatures.** `temp_c.soc` and
+> `temp_c.sensor` in the snapshot/status body, and the `temp_changed` body's
+> `soc`/`sensor`, become nested `{current,max}` readings. `max` is the peak quantized
+> value observed since the service process started; sensor `max` persists while sensor
+> `current` reverts to null whenever the camera child leaves `running`, and only a
+> service restart (including a crash-restart via `Restart=on-failure`) resets either
+> max. Deepens `fern`.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --

@@ -548,7 +548,9 @@ async fn supervisor_clears_sensor_temp_after_crash() {
     wait_for_camera_state(&backend, CameraState::Running).await;
     wait_for_sensor_temp(&backend, 40.0).await;
     wait_for_camera_state(&backend, CameraState::Restarting).await;
-    assert_eq!(backend.snapshot().temp_c.sensor, None);
+    let sensor = backend.snapshot().temp_c.sensor;
+    assert_eq!(sensor.current, None);
+    assert!(sensor.max.is_some_and(|max| max >= 40.0));
 
     control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
@@ -671,7 +673,7 @@ async fn wait_for_camera_state(backend: &impl Backend, expected: CameraState) {
 async fn wait_for_sensor_temp(backend: &impl Backend, expected: f32) {
     tokio::time::timeout(Duration::from_secs(4), async {
         loop {
-            if backend.snapshot().temp_c.sensor == Some(expected) {
+            if backend.snapshot().temp_c.sensor.current == Some(expected) {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;

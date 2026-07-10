@@ -1,5 +1,11 @@
 {
   "type": "temp_changed",
-  "soc": 51.5,
-  "sensor": 43.5
+  "soc": {
+    "current": 51.5,
+    "max": 62.5
+  },
+  "sensor": {
+    "current": 43.5,
+    "max": 49.0
+  }
 }

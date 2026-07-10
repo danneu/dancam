@@ -819,13 +819,13 @@ mod tests {
         assert_eq!(hub.snapshot().camera_state, CameraState::Running);
 
         drive_stderr_line(hub.clone(), r#"{"event":"sensor_temp","celsius":1e39}"#).await;
-        assert_eq!(hub.snapshot().temp_c.sensor, None);
+        assert_eq!(hub.snapshot().temp_c.sensor.current, None);
 
         drive_stderr_line(hub.clone(), r#"{"event":"sensor_temp","celsius":43.2}"#).await;
-        assert_eq!(hub.snapshot().temp_c.sensor, Some(43.0));
+        assert_eq!(hub.snapshot().temp_c.sensor.current, Some(43.0));
 
         drive_stderr_line(hub.clone(), r#"{"event":"sensor_temp","celsius":null}"#).await;
-        assert_eq!(hub.snapshot().temp_c.sensor, None);
+        assert_eq!(hub.snapshot().temp_c.sensor.current, None);
     }
 
     async fn drive_stderr_line(hub: Arc<EventHub>, line: &str) {

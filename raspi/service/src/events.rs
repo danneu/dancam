@@ -11,7 +11,7 @@ use crate::{
     clips::{resolve_segment, ClipMeta},
     recorder::{CurrentSegment, RecorderSnapshot},
     sysfacts::{DiskUsage, MemInfo},
-    world::{CameraState, TempC},
+    world::{CameraState, TempC, TempReading},
     AppState,
 };
 
@@ -57,8 +57,8 @@ pub enum Event {
         total: u64,
     },
     TempChanged {
-        soc: Option<f32>,
-        sensor: Option<f32>,
+        soc: TempReading,
+        sensor: TempReading,
     },
     MemChanged {
         total: u64,
@@ -189,7 +189,7 @@ mod tests {
         clips::ClipMeta,
         recorder::{CurrentSegment, RecorderPhase, RecorderSnapshot},
         sysfacts::{DiskUsage, MemInfo},
-        world::{CameraState, TempC},
+        world::{CameraState, TempC, TempReading},
     };
 
     #[test]
@@ -226,8 +226,14 @@ mod tests {
                     total: 32_000_000_000,
                 }),
                 temp_c: TempC {
-                    soc: Some(51.5),
-                    sensor: None,
+                    soc: TempReading {
+                        current: Some(51.5),
+                        max: Some(62.5),
+                    },
+                    sensor: TempReading {
+                        current: None,
+                        max: Some(49.0),
+                    },
                 },
                 mem: Some(MemInfo {
                     total: 512_000_000,
@@ -283,8 +289,14 @@ mod tests {
                 total: 32_000_000_000,
             },
             Event::TempChanged {
-                soc: Some(51.5),
-                sensor: Some(43.5),
+                soc: TempReading {
+                    current: Some(51.5),
+                    max: Some(62.5),
+                },
+                sensor: TempReading {
+                    current: Some(43.5),
+                    max: Some(49.0),
+                },
             },
             Event::MemChanged {
                 total: 512_000_000,

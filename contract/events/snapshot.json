@@ -18,8 +18,14 @@
     "total": 32000000000
   },
   "temp_c": {
-    "soc": 51.5,
-    "sensor": null
+    "soc": {
+      "current": 51.5,
+      "max": 62.5
+    },
+    "sensor": {
+      "current": null,
+      "max": 49.0
+    }
   },
   "mem": {
     "total": 512000000,

@@ -104,8 +104,17 @@ async fn status_returns_snapshot_wire_contract() {
     assert_eq!(json["boot_id"], BOOT_ID);
     assert!(json["uptime_s"].as_u64().is_some());
     assert!(json["storage"].is_object() || json["storage"].is_null());
-    assert!(json["temp_c"]["soc"].is_number() || json["temp_c"]["soc"].is_null());
-    assert!(json["temp_c"]["sensor"].is_null());
+    assert!(
+        json["temp_c"]["soc"]["current"].is_number() || json["temp_c"]["soc"]["current"].is_null()
+    );
+    assert!(json["temp_c"]["soc"]["max"].is_number() || json["temp_c"]["soc"]["max"].is_null());
+    assert!(
+        json["temp_c"]["sensor"]["current"].is_number()
+            || json["temp_c"]["sensor"]["current"].is_null()
+    );
+    assert!(
+        json["temp_c"]["sensor"]["max"].is_number() || json["temp_c"]["sensor"]["max"].is_null()
+    );
     assert!(json["mem"].is_object() || json["mem"].is_null());
     assert_eq!(json["time"]["synced"], false);
 }
