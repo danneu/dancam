@@ -55,7 +55,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = "Recording"
+        navigationItem.title = "Recording"
         view.backgroundColor = .systemBackground
         configureTable()
 
@@ -158,7 +158,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         clips = newState.clips
         clipsByID = Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0) })
         paginationTailID = clips.last?.id
-        title = recordingTitle(for: clips)
+        navigationItem.title = recordingTitle(for: clips)
         prunePrefetches(surviving: Set(clips.map(ClipThumbnailIdentity.init)))
         preservedThumbnailGeneration += 1
         let thumbnailGeneration = preservedThumbnailGeneration

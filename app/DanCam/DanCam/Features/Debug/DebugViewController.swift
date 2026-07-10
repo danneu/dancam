@@ -33,7 +33,7 @@ final class DebugViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = "Debug"
+        navigationItem.title = "Debug"
         view.backgroundColor = .systemBackground
         configureCollectionView()
         observation = appStore.observe(select: \.link) { [weak self] _ in

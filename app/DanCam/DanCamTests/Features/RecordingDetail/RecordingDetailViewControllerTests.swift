@@ -30,7 +30,7 @@ struct RecordingDetailViewControllerTests {
 
         datedController.loadViewIfNeeded()
 
-        #expect(datedController.title == Formatters.recordingCardTitle(
+        #expect(datedController.navigationItem.title == Formatters.recordingCardTitle(
             start: Date(timeIntervalSince1970: Double(oldestStart) / 1_000),
             end: Date(timeIntervalSince1970: Double(newestStart) / 1_000)
         ))
@@ -41,7 +41,7 @@ struct RecordingDetailViewControllerTests {
 
         undatedController.loadViewIfNeeded()
 
-        #expect(undatedController.title == "Recording")
+        #expect(undatedController.navigationItem.title == "Recording")
     }
 
     @Test func prefetchAndCancelRoutesThroughThumbnailLoader() throws {

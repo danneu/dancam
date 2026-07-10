@@ -104,7 +104,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = "DanCam"
+        navigationItem.title = "DanCam"
         view.backgroundColor = .systemBackground
 
         addChild(previewViewController)

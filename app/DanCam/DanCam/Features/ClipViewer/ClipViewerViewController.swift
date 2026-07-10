@@ -62,7 +62,7 @@ final class ClipViewerViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = String(format: "seg_%05d.ts", clip.id)
+        navigationItem.title = String(format: "seg_%05d.ts", clip.id)
         view.backgroundColor = .systemBackground
         configureViews()
         configureShareButton()

@@ -37,7 +37,7 @@ final class PreviewViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = "Live Preview"
+        navigationItem.title = "Live Preview"
         view.backgroundColor = .systemBackground
         configureViews()
         observation = store.observe { [weak self] state in

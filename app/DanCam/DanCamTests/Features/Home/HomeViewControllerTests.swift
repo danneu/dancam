@@ -5,6 +5,21 @@ import UIKit
 
 @MainActor
 struct HomeViewControllerTests {
+    @Test func loadingHomePreservesSceneOwnedTabTitle() {
+        let controller = makeController(clips: [], loader: .noop)
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.tabBarItem = UITabBarItem(
+            title: "Home",
+            image: UIImage(systemName: "house"),
+            tag: 0
+        )
+
+        controller.loadViewIfNeeded()
+
+        #expect(navigationController.tabBarItem.title == "Home")
+        #expect(controller.navigationItem.title == "DanCam")
+    }
+
     // MARK: Prefetch glue (observable cancels)
 
     @Test(.timeLimit(.minutes(1)))

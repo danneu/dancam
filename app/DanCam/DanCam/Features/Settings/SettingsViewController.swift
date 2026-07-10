@@ -17,7 +17,7 @@ final class SettingsViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Settings"
+        navigationItem.title = "Settings"
         view.backgroundColor = .systemBackground
 
         // TODO: Real Settings screen (recording controls, resolution, retention, time sync).
