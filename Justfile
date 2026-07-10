@@ -106,6 +106,27 @@ raspi-partition:
     scp -i "$SSH_KEY" raspi/scripts/partition-card.sh "$HOST:/tmp/dancam-partition-card.sh"
     ssh -t -i "$SSH_KEY" "$HOST" "sudo bash /tmp/dancam-partition-card.sh"
 
+# Toggle IMX708 on-sensor HDR while the camera is closed, then restart dancam and
+# wait for camera_state: running. HDR caps the sensor at 2304x1296@30 (still enough
+# for 1080p30) and resets off on reboot. Override the host with DANCAM_HOST=...
+raspi-hdr mode:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mode={{quote(mode)}}
+    HOST="${DANCAM_HOST:-pi@dancam.local}"
+    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+    SSH_KEY="${SSH_KEY/#\~/$HOME}"
+    PORT="${DANCAM_PORT:-8080}"
+    HEALTH_TIMEOUT="${DANCAM_HEALTH_TIMEOUT:-60}"
+    REMOTE_SCRIPT=/tmp/dancam-hdr-set.sh
+    scp -i "$SSH_KEY" raspi/scripts/hdr-set.sh "${HOST}:${REMOTE_SCRIPT}"
+    remote_command="sudo DANCAM_PORT=$(printf %q "$PORT") DANCAM_HEALTH_TIMEOUT=$(printf %q "$HEALTH_TIMEOUT") bash $(printf %q "$REMOTE_SCRIPT") $(printf %q "$mode")"
+    ssh -t -i "$SSH_KEY" "$HOST" "$remote_command"
+
+# Hardware-free behavioral regression for the IMX708 HDR toggle.
+raspi-hdr-test:
+    bash raspi/scripts/hdr-set-test.sh
+
 # Provision the Pi's system layer with Ansible over home Wi-Fi (apt, camera overlay,
 # mDNS, locale, AP profile, video group). Override the address with host=192.168.1.50
 # when mDNS is flaky. Prompts once for your sudo password.

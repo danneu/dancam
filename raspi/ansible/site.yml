@@ -45,15 +45,17 @@
     - name: Install the camera process runtime dependencies
       # LOAD-BEARING runtime deps of jet's camera owner: raspi/camera/camera.py
       # imports picamera2 and shells out to ffmpeg (FfmpegOutput) to mux the H.264
-      # MPEG-TS recording segments, and the deployed DANCAM_BACKEND=camera service
-      # spawns it. Without these the Pi converges clean yet the camera dies at
+      # MPEG-TS recording segments, while v4l2-ctl from v4l-utils backs the
+      # development-time `just raspi-hdr` sensor toggle. The deployed
+      # DANCAM_BACKEND=camera service spawns the owner. Without these the Pi converges
+      # clean yet the camera dies at
       # runtime (ImportError: picamera2 / ffmpeg-not-found) -- exactly the silent,
       # image-dependent drift this migration exists to kill. libcamera, numpy,
       # simplejpeg arrive transitively. install_recommends: false == the README's
       # --no-install-recommends, keeping the desktop GUI stack off Lite. No reboot
       # notify (no kernel/boot change). See ADR 07 (jet's Picamera2 owner).
       ansible.builtin.apt:
-        name: [python3-picamera2, ffmpeg]
+        name: [python3-picamera2, ffmpeg, v4l-utils]
         state: present
         install_recommends: false
 

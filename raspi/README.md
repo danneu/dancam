@@ -479,6 +479,14 @@ Leaving old-format segments in place is harmless -- the service ignores names it
 parse and the seq witness stays monotonic -- so this reset reclaims space and clears
 stale footage; it is not required for correctness.
 
+For an A/B picture comparison, `just raspi-hdr on` enables the IMX708's on-sensor
+HDR and `just raspi-hdr off` disables it. The command stops `dancam` because the
+sensor accepts `wide_dynamic_range` changes only while the camera is closed, writes
+the control on the sensor subdevice, restarts the service, and waits until
+`/v1/status` reports `camera_state: running`. HDR caps the sensor mode at
+2304x1296@30, which still covers the 1080p30 recording ceiling. The setting resets
+to off when the Pi reboots.
+
 ## 9. Smoke-test the AP path
 
 With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, join
