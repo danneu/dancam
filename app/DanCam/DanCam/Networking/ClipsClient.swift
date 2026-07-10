@@ -17,6 +17,19 @@ nonisolated enum ClipsError: Error, Equatable {
     }
 }
 
+extension ClipsError {
+    var isRetryable: Bool {
+        switch self {
+        case .transport:
+            true
+        case .http(let code):
+            (500...599).contains(code)
+        case .decoding:
+            false
+        }
+    }
+}
+
 nonisolated struct ClipsClient {
     typealias OpenByteStream = @Sendable (URL, Data) async throws -> AsyncThrowingStream<Data, Error>
 

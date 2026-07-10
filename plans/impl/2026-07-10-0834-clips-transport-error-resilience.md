@@ -306,6 +306,8 @@ starts a time sync nor triggers an unrelated `.load`.
   and cannot drain an empty queue.
 - `heartbeatDoesNotReloadWhenClipsHealthy` -- clips `.idle`; `.event(.heartbeat)` -> no
   `.load`, `headEpoch` unchanged.
+- `heartbeatDoesNotReloadWhileClipsLoading` -- clips `.loading`; `.event(.heartbeat)` ->
+  no second `.load`, `headEpoch` unchanged.
 - `deleteFailureThenHeartbeatReloadsHead` -- online world, a retryable `.deleteResponse`
   failure sets `.failed`; `.event(.heartbeat)` -> head `.load` fires (documents the intended
   uniform recovery from a delete-failure banner).
@@ -410,7 +412,7 @@ End-to-end after commit 2 (or all five), in the simulator against the real Pi:
 ## Commit progress
 
 - [x] 1. Replace stringly transport errors with typed human-readable failures
-- [ ] 2. Retry the clips head fetch on heartbeats while the camera is online
+- [x] 2. Retry the clips head fetch on heartbeats while the camera is online
 - [ ] 3. Keep clips head fetch alive across Home disappear
 - [ ] 4. Raise camera API connect timeout to 4s
 - [ ] 5. Add icebox swoop for persistent camera connections

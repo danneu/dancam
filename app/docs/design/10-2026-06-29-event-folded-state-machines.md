@@ -120,3 +120,14 @@ Hard or risky:
 > "heartbeat does not mutate World" rule: while online, heartbeat now advances only
 > `World.uptimeS` from its `t_ms` value and leaves every other world field unchanged.
 > See `app/docs/design/23-2026-07-09-debug-tab-sse-only-telemetry.md`.
+
+> **Note (2026-07-10): Failure-only heartbeat retry.** While online, a heartbeat
+> that finds the clips head in a retryable failed state starts exactly one
+> `/v1/clips` head load; a heartbeat that lands while the load is in flight does
+> nothing. This reload belongs to `ClipsFeature` and does not otherwise mutate
+> `World`, composing with ADR 23's uptime update. Transport failures and HTTP 5xx
+> are retryable; HTTP 4xx and decoding failures remain terminal until a fresh
+> snapshot or manual refresh. Using the inbound heartbeat as the retry clock
+> inherits the event stream lifecycle without a separate timer, effect ID, or
+> cancellation path, so a retry cannot fire after the stream stops, fails, times
+> out, or the app backgrounds.

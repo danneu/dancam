@@ -65,6 +65,17 @@ enum AppFeature {
 
             state.link.fold(event)
 
+            if case .heartbeat = event, shouldReloadClipsOnHeartbeat(state) {
+                effects.append(
+                    ClipsFeature.reduce(
+                        state: &state.clips,
+                        action: .load,
+                        dependencies: dependencies
+                    )
+                    .map(Action.clips)
+                )
+            }
+
             if case .snapshot = event {
                 isSnapshot = true
                 state.streamReconnectAttempt = 0
@@ -231,6 +242,12 @@ enum AppFeature {
         case .timeSyncRetry:
             return timeSyncEffectIfNeeded(state: state, dependencies: dependencies)
         }
+    }
+
+    private static func shouldReloadClipsOnHeartbeat(_ state: State) -> Bool {
+        guard state.link.onlineWorld != nil else { return false }
+        guard case .failed(let error) = state.clips.status else { return false }
+        return error.isRetryable
     }
 
     private static func reduceRecording(

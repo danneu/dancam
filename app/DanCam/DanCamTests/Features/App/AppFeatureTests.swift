@@ -398,6 +398,237 @@ struct AppFeatureTests {
         #expect(store.state.recording == .starting)
     }
 
+    @Test func heartbeatReloadsClipsAfterRetryableFailureAndEventuallySucceeds() async {
+        let world = CameraSamples.world()
+        let response = CameraSamples.clipsResponse(ids: [42])
+        let queue = ClipsFetchQueue([.failure(.http(503)), .success(response)])
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
+                try await queue.fetch(cursor: cursor)
+            })),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+        }
+        await store.receive(.clips(.clipsResponse(epoch: 1, .failure(.http(503))))) {
+            $0.clips.status = .failed(.http(503))
+        }
+        await store.send(.event(.heartbeat(tMs: 12_000))) {
+            var heartbeatWorld = world
+            heartbeatWorld.uptimeS = 12
+            $0.link = .online(heartbeatWorld)
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 2
+        }
+        await store.receive(.clips(.clipsResponse(epoch: 2, .success(response)))) {
+            $0.clips.clips = response.clips
+            $0.clips.status = .idle
+            $0.clips.hasLoadedOnce = true
+        }
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+    }
+
+    @Test func heartbeatDoesNotReloadAfterTerminalHTTPFailure() async {
+        let world = CameraSamples.world()
+        let response = CameraSamples.clipsResponse(ids: [42])
+        let queue = ClipsFetchQueue([.failure(.http(404)), .success(response)])
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
+                try await queue.fetch(cursor: cursor)
+            })),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+        }
+        await store.receive(.clips(.clipsResponse(epoch: 1, .failure(.http(404))))) {
+            $0.clips.status = .failed(.http(404))
+        }
+        await store.send(.event(.heartbeat(tMs: 12_000))) {
+            var heartbeatWorld = world
+            heartbeatWorld.uptimeS = 12
+            $0.link = .online(heartbeatWorld)
+        }
+        store.expectNoReceivedActions()
+        #expect(store.state.clips.status == .failed(.http(404)))
+        #expect(store.state.clips.headEpoch == 1)
+        #expect(await queue.requestedCursors() == [nil])
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 2
+        }
+        await store.receive(.clips(.clipsResponse(epoch: 2, .success(response)))) {
+            $0.clips.clips = response.clips
+            $0.clips.status = .idle
+            $0.clips.hasLoadedOnce = true
+        }
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+        #expect(await queue.requestedCursors() == [nil, nil])
+    }
+
+    @Test func heartbeatDoesNotReloadAfterDecodingFailure() async {
+        let world = CameraSamples.world()
+        let error = ClipsError.decoding("invalid clips response")
+        let queue = ClipsFetchQueue([.failure(error)])
+        let store = TestStore(
+            initialState: AppFeature.State(),
+            dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
+                try await queue.fetch(cursor: cursor)
+            })),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+        }
+        await store.receive(.clips(.clipsResponse(epoch: 1, .failure(error)))) {
+            $0.clips.status = .failed(error)
+        }
+        await store.send(.event(.heartbeat(tMs: 12_000))) {
+            var heartbeatWorld = world
+            heartbeatWorld.uptimeS = 12
+            $0.link = .online(heartbeatWorld)
+        }
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+        #expect(store.state.clips.status == .failed(error))
+        #expect(store.state.clips.headEpoch == 1)
+        #expect(await queue.requestedCursors() == [nil])
+    }
+
+    @Test func heartbeatDoesNotReloadWhenClipsHealthy() async {
+        let world = CameraSamples.world()
+        let store = TestStore(
+            initialState: state(link: .online(world)),
+            dependencies: dependencies(
+                clips: ClipsClient(fetch: { _ in
+                    fatalError("Heartbeat should not reload healthy clips.")
+                })
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.heartbeat(tMs: 12_000))) {
+            var heartbeatWorld = world
+            heartbeatWorld.uptimeS = 12
+            $0.link = .online(heartbeatWorld)
+        }
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+        #expect(store.state.clips.status == .idle)
+        #expect(store.state.clips.headEpoch == 0)
+    }
+
+    @Test func heartbeatDoesNotReloadWhileClipsLoading() async {
+        let world = CameraSamples.world()
+        let store = TestStore(
+            initialState: state(
+                link: .online(world),
+                clips: ClipsFeature.State(status: .loading, headEpoch: 1)
+            ),
+            dependencies: dependencies(
+                clips: ClipsClient(fetch: { _ in
+                    fatalError("Heartbeat should not start a second clips load.")
+                })
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.heartbeat(tMs: 12_000))) {
+            var heartbeatWorld = world
+            heartbeatWorld.uptimeS = 12
+            $0.link = .online(heartbeatWorld)
+        }
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+        #expect(store.state.clips.status == .loading)
+        #expect(store.state.clips.headEpoch == 1)
+    }
+
+    @Test func deleteFailureThenHeartbeatReloadsHead() async {
+        let world = CameraSamples.world()
+        let clip = CameraSamples.clip(id: 7)
+        let response = CameraSamples.clipsResponse(ids: [9, 8])
+        let queue = ClipsFetchQueue([.success(response)])
+        let store = TestStore(
+            initialState: state(
+                link: .online(world),
+                clips: ClipsFeature.State(
+                    pendingDeleteIDs: [clip.id],
+                    suppressedClipIDs: [clip.id]
+                )
+            ),
+            dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
+                try await queue.fetch(cursor: cursor)
+            })),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(
+            .clips(.deleteResponse(clip: clip, .failure(.transport(.connectTimedOut))))
+        ) {
+            $0.clips.clips = [clip]
+            $0.clips.status = .failed(.transport(.connectTimedOut))
+            $0.clips.pendingDeleteIDs = []
+            $0.clips.suppressedClipIDs = []
+        }
+        await store.send(.event(.heartbeat(tMs: 12_000))) {
+            var heartbeatWorld = world
+            heartbeatWorld.uptimeS = 12
+            $0.link = .online(heartbeatWorld)
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+        }
+        await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
+            $0.clips.clips = response.clips
+            $0.clips.status = .idle
+            $0.clips.hasLoadedOnce = true
+            $0.clips.suppressedClipIDs = [clip.id]
+        }
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+        #expect(await queue.requestedCursors() == [nil])
+    }
+
+    @Test func heartbeatWhileOfflineDoesNotReloadClips() async {
+        let store = TestStore(
+            initialState: state(
+                link: .offline(last: CameraSamples.world()),
+                clips: ClipsFeature.State(status: .failed(.transport(.connectTimedOut)))
+            ),
+            dependencies: dependencies(
+                clips: ClipsClient(fetch: { _ in
+                    fatalError("Heartbeat should not reload clips while offline.")
+                })
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.event(.heartbeat(tMs: 12_000)))
+        await store.finishEffects()
+        store.expectNoReceivedActions()
+        #expect(store.state.clips.status == .failed(.transport(.connectTimedOut)))
+        #expect(store.state.clips.headEpoch == 0)
+    }
+
     @Test func clipFinalizedPrependsAndSurvivesStaleLoadResponse() async {
         let world = CameraSamples.world()
         let folded = CameraSamples.clip(id: 3)
