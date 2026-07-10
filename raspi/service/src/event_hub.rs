@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, watch};
 use crate::{
     events::{Event, Snapshot},
     recorder::{RecorderPhase, SegmentId, SessionId},
-    world::{CameraState, Input, LiveStatus, TempC, World},
+    world::{CameraState, Input, LiveStatus, World},
 };
 
 pub const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -155,12 +155,12 @@ impl EventHub {
     pub fn update_telemetry(
         &self,
         storage: Option<crate::sysfacts::DiskUsage>,
-        temp_c: TempC,
+        soc_temp_c: Option<f32>,
         mem: Option<crate::sysfacts::MemInfo>,
     ) {
         self.drive_now(Input::Telemetry {
             storage,
-            temp_c,
+            soc_temp_c,
             mem,
         });
     }
@@ -208,7 +208,7 @@ mod tests {
         events::Event,
         recorder::{RecorderEvent, RecorderPhase},
         sysfacts::DiskUsage,
-        world::{CameraState, Input, TempC, STORAGE_QUANTUM},
+        world::{CameraState, Input, STORAGE_QUANTUM},
     };
 
     #[test]
@@ -273,7 +273,7 @@ mod tests {
                             used: used * STORAGE_QUANTUM,
                             total: 100 * STORAGE_QUANTUM,
                         }),
-                        temp_c: TempC::empty(),
+                        soc_temp_c: None,
                         mem: None,
                     },
                     used,

@@ -112,14 +112,23 @@ impl World {
                     Vec::new()
                 } else {
                     self.camera_state = state;
-                    vec![Event::CameraStateChanged { state }]
+                    let mut events = vec![Event::CameraStateChanged { state }];
+                    if state != CameraState::Running && self.temp_c.sensor.is_some() {
+                        self.temp_c.sensor = None;
+                        events.push(Event::TempChanged {
+                            soc: self.temp_c.soc,
+                            sensor: None,
+                        });
+                    }
+                    events
                 }
             }
             Input::Telemetry {
                 storage,
-                temp_c,
+                soc_temp_c,
                 mem,
-            } => self.apply_telemetry(storage, temp_c, mem),
+            } => self.apply_telemetry(storage, soc_temp_c, mem),
+            Input::SensorTemp { celsius } => self.apply_sensor_temp(celsius),
             Input::TimeSynced => {
                 if self.time_synced {
                     Vec::new()
@@ -240,11 +249,11 @@ impl World {
     fn apply_telemetry(
         &mut self,
         storage: Option<DiskUsage>,
-        temp_c: TempC,
+        soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
     ) -> Vec<Event> {
         let storage = storage.map(quantize_storage);
-        let temp_c = quantize_temp(temp_c);
+        let soc_temp_c = soc_temp_c.map(quantize_temp_value);
         let mut events = Vec::new();
         if self.storage != storage {
             self.storage = storage.clone();
@@ -255,11 +264,11 @@ impl World {
                 });
             }
         }
-        if self.temp_c != temp_c {
-            self.temp_c = temp_c.clone();
+        if self.temp_c.soc != soc_temp_c {
+            self.temp_c.soc = soc_temp_c;
             events.push(Event::TempChanged {
-                soc: temp_c.soc,
-                sensor: temp_c.sensor,
+                soc: self.temp_c.soc,
+                sensor: self.temp_c.sensor,
             });
         }
 
@@ -277,6 +286,23 @@ impl World {
         }
 
         events
+    }
+
+    fn apply_sensor_temp(&mut self, celsius: Option<f32>) -> Vec<Event> {
+        if self.camera_state != CameraState::Running {
+            return Vec::new();
+        }
+
+        let celsius = celsius.map(quantize_temp_value);
+        if self.temp_c.sensor == celsius {
+            return Vec::new();
+        }
+
+        self.temp_c.sensor = celsius;
+        vec![Event::TempChanged {
+            soc: self.temp_c.soc,
+            sensor: self.temp_c.sensor,
+        }]
     }
 }
 
@@ -311,8 +337,11 @@ pub enum Input {
     CameraState(CameraState),
     Telemetry {
         storage: Option<DiskUsage>,
-        temp_c: TempC,
+        soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
+    },
+    SensorTemp {
+        celsius: Option<f32>,
     },
     TimeSynced,
     Tick,
@@ -325,13 +354,6 @@ fn quantize_storage(storage: DiskUsage) -> DiskUsage {
     DiskUsage {
         used: round_down(storage.used, STORAGE_QUANTUM),
         total: round_down(storage.total, STORAGE_QUANTUM),
-    }
-}
-
-fn quantize_temp(temp_c: TempC) -> TempC {
-    TempC {
-        soc: temp_c.soc.map(quantize_temp_value),
-        sensor: temp_c.sensor.map(quantize_temp_value),
     }
 }
 
@@ -535,7 +557,7 @@ mod tests {
         let events = world.apply(
             Input::Telemetry {
                 storage: Some(sample_storage()),
-                temp_c: sample_temp(),
+                soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
             },
             1000,
@@ -550,7 +572,7 @@ mod tests {
                 },
                 Event::TempChanged {
                     soc: Some(51.5),
-                    sensor: Some(40.5),
+                    sensor: None,
                 },
                 Event::MemChanged {
                     total: 30 * MEM_QUANTUM,
@@ -573,7 +595,7 @@ mod tests {
             snapshot.temp_c,
             TempC {
                 soc: Some(51.5),
-                sensor: Some(40.5),
+                sensor: None,
             }
         );
         assert_eq!(
@@ -593,7 +615,7 @@ mod tests {
         world.apply(
             Input::Telemetry {
                 storage: Some(sample_storage()),
-                temp_c: sample_temp(),
+                soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
             },
             1000,
@@ -606,10 +628,7 @@ mod tests {
                         used: 149 * STORAGE_QUANTUM + 60_012_345,
                         total: 476 * STORAGE_QUANTUM + 1,
                     }),
-                    temp_c: TempC {
-                        soc: Some(51.7),
-                        sensor: Some(40.4),
-                    },
+                    soc_temp_c: Some(51.7),
                     mem: Some(MemInfo {
                         available: 256_999_500,
                         ..sample_mem()
@@ -626,7 +645,7 @@ mod tests {
         world.apply(
             Input::Telemetry {
                 storage: Some(sample_storage()),
-                temp_c: sample_temp(),
+                soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
             },
             1000,
@@ -639,10 +658,7 @@ mod tests {
                         used: 152 * STORAGE_QUANTUM + 7,
                         total: 476 * STORAGE_QUANTUM + 1,
                     }),
-                    temp_c: TempC {
-                        soc: Some(51.8),
-                        sensor: Some(40.3),
-                    },
+                    soc_temp_c: Some(51.8),
                     mem: Some(MemInfo {
                         available: 17 * MEM_QUANTUM + 9,
                         ..sample_mem()
@@ -657,7 +673,7 @@ mod tests {
                 },
                 Event::TempChanged {
                     soc: Some(52.0),
-                    sensor: Some(40.5),
+                    sensor: None,
                 },
                 Event::MemChanged {
                     total: 30 * MEM_QUANTUM,
@@ -670,12 +686,153 @@ mod tests {
     }
 
     #[test]
+    fn first_sensor_sample_emits_and_projects_into_snapshot() {
+        let mut world = World::new(CameraState::Running);
+
+        assert_eq!(
+            world.apply(
+                Input::SensorTemp {
+                    celsius: Some(40.3),
+                },
+                1000,
+            ),
+            vec![Event::TempChanged {
+                soc: None,
+                sensor: Some(40.5),
+            }]
+        );
+        assert_eq!(world.snapshot("boot", 12).temp_c.sensor, Some(40.5));
+    }
+
+    #[test]
+    fn sensor_sub_quantum_jitter_emits_nothing() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::SensorTemp {
+                celsius: Some(40.3),
+            },
+            1000,
+        );
+
+        assert!(world
+            .apply(
+                Input::SensorTemp {
+                    celsius: Some(40.4),
+                },
+                1100,
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn sensor_bucket_crossing_emits_merged_pair_with_soc_preserved() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::Telemetry {
+                storage: None,
+                soc_temp_c: Some(51.5),
+                mem: None,
+            },
+            1000,
+        );
+        world.apply(
+            Input::SensorTemp {
+                celsius: Some(40.3),
+            },
+            1001,
+        );
+
+        assert_eq!(
+            world.apply(
+                Input::SensorTemp {
+                    celsius: Some(40.8),
+                },
+                1100,
+            ),
+            vec![Event::TempChanged {
+                soc: Some(51.5),
+                sensor: Some(41.0),
+            }]
+        );
+    }
+
+    #[test]
+    fn null_sensor_sample_clears_value() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::SensorTemp {
+                celsius: Some(40.3),
+            },
+            1000,
+        );
+
+        assert_eq!(
+            world.apply(Input::SensorTemp { celsius: None }, 1100),
+            vec![Event::TempChanged {
+                soc: None,
+                sensor: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn sensor_sample_while_camera_is_not_running_is_ignored() {
+        let mut world = World::new(CameraState::Starting);
+
+        assert!(world
+            .apply(
+                Input::SensorTemp {
+                    celsius: Some(40.3),
+                },
+                1000,
+            )
+            .is_empty());
+        assert_eq!(world.snapshot("boot", 12).temp_c.sensor, None);
+    }
+
+    #[test]
+    fn camera_leaving_running_clears_sensor_after_state_event() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::SensorTemp {
+                celsius: Some(40.3),
+            },
+            1000,
+        );
+
+        assert_eq!(
+            world.apply(Input::CameraState(CameraState::Restarting), 1100),
+            vec![
+                Event::CameraStateChanged {
+                    state: CameraState::Restarting,
+                },
+                Event::TempChanged {
+                    soc: None,
+                    sensor: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn camera_state_change_without_sensor_emits_no_temp_event() {
+        let mut world = World::new(CameraState::Running);
+
+        assert_eq!(
+            world.apply(Input::CameraState(CameraState::Restarting), 1100),
+            vec![Event::CameraStateChanged {
+                state: CameraState::Restarting,
+            }]
+        );
+    }
+
+    #[test]
     fn tick_emits_heartbeat_and_never_mutates() {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
                 storage: Some(sample_storage()),
-                temp_c: sample_temp(),
+                soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
             },
             1000,
@@ -747,11 +904,8 @@ mod tests {
         }
     }
 
-    fn sample_temp() -> TempC {
-        TempC {
-            soc: Some(51.5),
-            sensor: Some(40.3),
-        }
+    fn sample_soc_temp() -> f32 {
+        51.5
     }
 
     fn sample_mem() -> MemInfo {

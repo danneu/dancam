@@ -9,8 +9,8 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStderr, ChildStdout, Command as TokioCommand},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader},
+    process::{Child, ChildStdout, Command as TokioCommand},
     sync::{mpsc, oneshot, watch},
 };
 use tokio_stream::{wrappers::WatchStream, StreamExt};
@@ -27,7 +27,7 @@ use crate::{
     sysfacts::{DiskUsage, MemInfo},
     time_sync::TimeStore,
     ts_duration::DurationCache,
-    world::{CameraState, Input, LiveStatus, TempC},
+    world::{CameraState, Input, LiveStatus},
 };
 
 const COMMAND_CAPACITY: usize = 8;
@@ -265,8 +265,13 @@ impl Backend for CameraBackend {
         self.hub.tick();
     }
 
-    fn update_telemetry(&self, storage: Option<DiskUsage>, temp_c: TempC, mem: Option<MemInfo>) {
-        self.hub.update_telemetry(storage, temp_c, mem);
+    fn update_telemetry(
+        &self,
+        storage: Option<DiskUsage>,
+        soc_temp_c: Option<f32>,
+        mem: Option<MemInfo>,
+    ) {
+        self.hub.update_telemetry(storage, soc_temp_c, mem);
     }
 }
 
@@ -332,10 +337,14 @@ enum ChildCommand {
     Shutdown,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum ChildEvent {
     Ready,
+    SensorTemp {
+        #[serde(deserialize_with = "required_nullable_f32")]
+        celsius: Option<f32>,
+    },
     RecordingStarted {
         #[serde(rename = "session_id")]
         session: u64,
@@ -358,6 +367,13 @@ enum ChildEvent {
         #[serde(default)]
         detail: String,
     },
+}
+
+fn required_nullable_f32<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <Option<f32> as serde::Deserialize>::deserialize(deserializer)
 }
 
 async fn supervise(
@@ -565,7 +581,7 @@ async fn drain_stdout(mut stdout: ChildStdout, frames_tx: watch::Sender<Option<B
 }
 
 async fn parse_stderr(
-    stderr: ChildStderr,
+    stderr: impl AsyncRead + Unpin + Send + 'static,
     hub: Arc<EventHub>,
     rec_dir: Arc<Path>,
     clip_durations: Arc<DurationCache>,
@@ -579,6 +595,11 @@ async fn parse_stderr(
         match serde_json::from_str::<ChildEvent>(&line) {
             Ok(ChildEvent::Ready) => {
                 hub.drive_now(Input::CameraState(CameraState::Running));
+            }
+            Ok(ChildEvent::SensorTemp { celsius }) => {
+                hub.drive_now(Input::SensorTemp {
+                    celsius: celsius.filter(|value| value.is_finite()),
+                });
             }
             Ok(ChildEvent::RecordingStarted { session }) => {
                 hub.drive_now(Input::Recorder(RecorderEvent::RecordingStarted { session }));
@@ -722,7 +743,12 @@ async fn finalized_clip_meta(
 
 #[cfg(test)]
 mod tests {
-    use super::{ChildCommand, ChildEvent};
+    use std::{io::Cursor, path::Path, sync::Arc};
+
+    use super::{parse_stderr, ChildCommand, ChildEvent};
+    use crate::{
+        event_hub::EventHub, time_sync::TimeStore, ts_duration::DurationCache, world::CameraState,
+    };
 
     #[test]
     fn child_event_parses_stderr_contract() {
@@ -730,6 +756,28 @@ mod tests {
             serde_json::from_str::<ChildEvent>(r#"{"event":"ready"}"#).unwrap(),
             ChildEvent::Ready
         );
+        assert_eq!(
+            serde_json::from_str::<ChildEvent>(r#"{"event":"sensor_temp","celsius":43.2}"#)
+                .unwrap(),
+            ChildEvent::SensorTemp {
+                celsius: Some(43.2)
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<ChildEvent>(r#"{"event":"sensor_temp","celsius":null}"#)
+                .unwrap(),
+            ChildEvent::SensorTemp { celsius: None }
+        );
+        assert!(serde_json::from_str::<ChildEvent>(r#"{"event":"sensor_temp"}"#).is_err());
+        let overflow =
+            serde_json::from_str::<ChildEvent>(r#"{"event":"sensor_temp","celsius":1e39}"#)
+                .unwrap();
+        assert!(matches!(
+            overflow,
+            ChildEvent::SensorTemp {
+                celsius: Some(value)
+            } if !value.is_finite()
+        ));
         assert_eq!(
             serde_json::from_str::<ChildEvent>(r#"{"event":"recording_started","session_id":7}"#)
                 .unwrap(),
@@ -761,6 +809,34 @@ mod tests {
                 detail: "camera failed".to_string()
             }
         );
+    }
+
+    #[tokio::test]
+    async fn stderr_sensor_temp_filters_non_finite_and_projects_each_sample() {
+        let hub = Arc::new(EventHub::new(CameraState::Starting));
+
+        drive_stderr_line(hub.clone(), r#"{"event":"ready"}"#).await;
+        assert_eq!(hub.snapshot().camera_state, CameraState::Running);
+
+        drive_stderr_line(hub.clone(), r#"{"event":"sensor_temp","celsius":1e39}"#).await;
+        assert_eq!(hub.snapshot().temp_c.sensor, None);
+
+        drive_stderr_line(hub.clone(), r#"{"event":"sensor_temp","celsius":43.2}"#).await;
+        assert_eq!(hub.snapshot().temp_c.sensor, Some(43.0));
+
+        drive_stderr_line(hub.clone(), r#"{"event":"sensor_temp","celsius":null}"#).await;
+        assert_eq!(hub.snapshot().temp_c.sensor, None);
+    }
+
+    async fn drive_stderr_line(hub: Arc<EventHub>, line: &str) {
+        parse_stderr(
+            Cursor::new(format!("{line}\n").into_bytes()),
+            hub,
+            Arc::<Path>::from(Path::new(".").to_path_buf().into_boxed_path()),
+            Arc::new(DurationCache::new()),
+            Arc::new(TimeStore::in_memory()),
+        )
+        .await;
     }
 
     #[test]

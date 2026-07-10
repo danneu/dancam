@@ -140,10 +140,7 @@ pub fn spawn_telemetry(
             interval.tick().await;
             backend.update_telemetry(
                 crate::sysfacts::disk_usage(&rec_dir),
-                TempC {
-                    soc: crate::sysfacts::soc_temp_c(),
-                    sensor: None,
-                },
+                crate::sysfacts::soc_temp_c(),
                 crate::sysfacts::mem_info(),
             );
         }
@@ -287,7 +284,7 @@ mod tests {
             },
             Event::TempChanged {
                 soc: Some(51.5),
-                sensor: None,
+                sensor: Some(43.5),
             },
             Event::MemChanged {
                 total: 512_000_000,

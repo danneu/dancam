@@ -32,7 +32,7 @@ use crate::{
     sysfacts::{DiskUsage, MemInfo},
     time_sync::TimeStore,
     ts_duration::{ts_pts_packet, DurationCache},
-    world::{CameraState, Input, TempC},
+    world::{CameraState, Input},
 };
 
 pub type FrameStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
@@ -80,7 +80,12 @@ pub trait Backend: Send + Sync + 'static {
 
     fn tick(&self) {}
 
-    fn update_telemetry(&self, _storage: Option<DiskUsage>, _temp_c: TempC, _mem: Option<MemInfo>) {
+    fn update_telemetry(
+        &self,
+        _storage: Option<DiskUsage>,
+        _soc_temp_c: Option<f32>,
+        _mem: Option<MemInfo>,
+    ) {
     }
 }
 
@@ -269,8 +274,13 @@ impl Backend for MockBackend {
         self.hub.tick();
     }
 
-    fn update_telemetry(&self, storage: Option<DiskUsage>, temp_c: TempC, mem: Option<MemInfo>) {
-        self.hub.update_telemetry(storage, temp_c, mem);
+    fn update_telemetry(
+        &self,
+        storage: Option<DiskUsage>,
+        soc_temp_c: Option<f32>,
+        mem: Option<MemInfo>,
+    ) {
+        self.hub.update_telemetry(storage, soc_temp_c, mem);
     }
 }
 

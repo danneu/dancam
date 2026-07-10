@@ -85,6 +85,10 @@ mock first.
       - [x] Deepening: Recent clips now shows the Pi recorder state machine's open
             segment as a synthetic live status row with a `REC` badge and count-up,
             while the Pi keeps the open segment unlisted and unpullable.
+      - [x] Deepening: Surface the IMX708 sensor temperature end-to-end: the camera
+            owner samples Picamera2 metadata, sends `sensor_temp` to the service,
+            and the world merges it into `temp_changed` and snapshots for the app's
+            Debug screen.
       - [x] Started with polling `status`/`clips`; `pulse` replaced live state polling
             with snapshot-first `GET /v1/events`, while `/v1/status` and `/v1/clips`
             remain one-shot reads.

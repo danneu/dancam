@@ -523,6 +523,38 @@ async fn supervisor_marks_child_restarting_after_crash() {
 }
 
 #[tokio::test]
+async fn supervisor_clears_sensor_temp_after_crash() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("sensor-temp-restart");
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "10".to_string(),
+            "--fake-crash-after".to_string(),
+            "4".to_string(),
+        ],
+    );
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    wait_for_sensor_temp(&backend, 40.0).await;
+    wait_for_camera_state(&backend, CameraState::Restarting).await;
+    assert_eq!(backend.snapshot().temp_c.sensor, None);
+
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
 async fn preview_subscriber_gets_cached_latest_frame_on_connect() {
     if !python3_available().await {
         return;
@@ -634,6 +666,19 @@ async fn wait_for_camera_state(backend: &impl Backend, expected: CameraState) {
     })
     .await
     .unwrap_or_else(|_| panic!("timed out waiting for camera state {expected:?}"));
+}
+
+async fn wait_for_sensor_temp(backend: &impl Backend, expected: f32) {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            if backend.snapshot().temp_c.sensor == Some(expected) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for sensor temperature {expected}"));
 }
 
 async fn wait_for_recorder_phase(backend: &impl Backend, expected: RecorderPhase) {

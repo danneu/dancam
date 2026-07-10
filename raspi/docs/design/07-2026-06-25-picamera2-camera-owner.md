@@ -94,3 +94,18 @@ The final segment of a session intentionally has no `segment_closed`; Rust treat
 `recording_stopped` as the finalization signal and builds `ClipMeta` for the last
 `segment_opened` cursor. The fake driver adds `--fake-segment-secs` for lifecycle
 tests, while `--fake-crash-after` remains the crash-path test hook.
+
+## 2026-07-09 update: sensor temperature telemetry
+
+The stderr contract adds a `sensor_temp` event at roughly 2 s cadence for both the
+real and fake drivers. Its `celsius` field is required but nullable: an unreadable or
+non-finite sample is sent as null, while an omitted field is a protocol violation the
+supervisor logs and drops.
+
+The real driver samples without blocking the camera event loop. A Picamera2
+`pre_callback` caches each completed request's `SensorTemperature` metadata, and the
+telemetry thread reads only that cache -- it never calls `capture_metadata` or creates
+a per-sample Picamera2 job. The fake driver supplies a deterministic 40.0 to 48.0 C
+sawtooth through the same sampler. Shutdown signals and joins the sampler before
+Picamera2 teardown, and the Rust world projects the value only while the child is
+`running`, clearing it on every transition away from that state.

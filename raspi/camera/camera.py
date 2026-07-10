@@ -26,6 +26,11 @@ from typing import Any, Callable
 
 SEGMENT_WIDTH = 5
 INFLIGHT_FLUSH_INTERVAL_SECS = 2.0
+SENSOR_TEMP_INTERVAL_SECS = 2.0
+SENSOR_TEMP_JOIN_TIMEOUT = 1.0
+FAKE_SENSOR_TEMP_BASE_C = 40.0
+FAKE_SENSOR_TEMP_STEP_C = 0.25
+FAKE_SENSOR_TEMP_SPAN_C = 8.0
 U32_MAX = 0xFFFF_FFFF
 U64_MAX = 0xFFFF_FFFF_FFFF_FFFF
 BOOT_TAG_WIDTH = 12
@@ -78,6 +83,18 @@ FAKE_SEGMENT = ts_pts_packet(0) + ts_pts_packet(9000) + ts_pts_packet(18000)
 
 def compute_skip(sensor_fps: float, preview_fps: float) -> int:
     return max(1, math.ceil(sensor_fps / preview_fps))
+
+
+def sensor_temp_payload(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def fake_sensor_temp_c(sample_index: int) -> float:
+    sample_count = int(FAKE_SENSOR_TEMP_SPAN_C / FAKE_SENSOR_TEMP_STEP_C) + 1
+    return FAKE_SENSOR_TEMP_BASE_C + (sample_index % sample_count) * FAKE_SENSOR_TEMP_STEP_C
 
 
 def ensure_rec_dir(rec_dir: Path) -> None:
@@ -321,6 +338,40 @@ class InflightFlusher:
         )
 
 
+class SensorTempSampler:
+    def __init__(
+        self,
+        read: Callable[[], Any],
+        shutdown: threading.Event,
+        interval: float = SENSOR_TEMP_INTERVAL_SECS,
+        emit: Callable[..., None] = emit_event,
+    ):
+        self.read = read
+        self.shutdown = shutdown
+        self.interval = interval
+        self.emit = emit
+        self.thread = threading.Thread(target=self._run, name="sensor-temp", daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def join(self, timeout: float | None = None) -> bool:
+        self.thread.join(timeout)
+        return not self.thread.is_alive()
+
+    def _run(self) -> None:
+        self._sample()
+        while not self.shutdown.wait(self.interval):
+            self._sample()
+
+    def _sample(self) -> None:
+        try:
+            celsius = sensor_temp_payload(self.read())
+        except Exception:
+            celsius = None
+        self.emit("sensor_temp", celsius=celsius)
+
+
 def watch_segment_events(
     rec_dir: Path,
     session_id: int,
@@ -366,6 +417,54 @@ def run_self_test() -> int:
     assert compute_skip(30, 15) == 2
     assert compute_skip(30, 30) == 1
     assert compute_skip(30, 60) == 1
+    assert sensor_temp_payload(43.2) == 43.2
+    assert sensor_temp_payload(43) == 43.0
+    for invalid in [math.nan, math.inf, -math.inf, None, True, False, "43.2"]:
+        assert sensor_temp_payload(invalid) is None
+    assert fake_sensor_temp_c(0) == 40.0
+    assert fake_sensor_temp_c(1) == 40.25
+    assert fake_sensor_temp_c(32) == 48.0
+    assert fake_sensor_temp_c(33) == 40.0
+
+    emitted: list[tuple[str, float | None]] = []
+
+    def capture_temp(event: str, **fields: Any) -> None:
+        emitted.append((event, fields["celsius"]))
+
+    stopped = threading.Event()
+    stopped.set()
+
+    def raise_read() -> Any:
+        raise RuntimeError("unreadable")
+
+    failing_sampler = SensorTempSampler(raise_read, stopped, interval=0, emit=capture_temp)
+    failing_sampler.start()
+    assert failing_sampler.join(SENSOR_TEMP_JOIN_TIMEOUT)
+    assert emitted == [("sensor_temp", None)]
+
+    emitted.clear()
+    value_sampler = SensorTempSampler(lambda: 43.2, stopped, interval=0, emit=capture_temp)
+    value_sampler.start()
+    assert value_sampler.join(SENSOR_TEMP_JOIN_TIMEOUT)
+    assert emitted == [("sensor_temp", 43.2)]
+
+    shutdown = threading.Event()
+    read_entered = threading.Event()
+    release_read = threading.Event()
+
+    def blocking_read() -> float:
+        read_entered.set()
+        release_read.wait()
+        return 44.0
+
+    blocking_sampler = SensorTempSampler(blocking_read, shutdown, interval=60, emit=capture_temp)
+    blocking_sampler.start()
+    assert read_entered.wait(SENSOR_TEMP_JOIN_TIMEOUT)
+    shutdown.set()
+    release_read.set()
+    assert blocking_sampler.join(SENSOR_TEMP_JOIN_TIMEOUT)
+    assert not blocking_sampler.thread.is_alive()
+
     output = recording_ffmpeg_output(Path("/rec"), 7)
     assert output.split() == [
         "-bsf:v",
@@ -662,11 +761,21 @@ class FakeCameraDriver:
         self.current_segment_index: int | None = None
         self.current_session_id: int | None = None
         self.segment_started_at: float | None = None
+        sample_index = 0
+
+        def read_sensor_temp() -> float:
+            nonlocal sample_index
+            value = fake_sensor_temp_c(sample_index)
+            sample_index += 1
+            return value
+
+        self.sensor_sampler = SensorTempSampler(read_sensor_temp, shutdown)
 
     def start(self) -> None:
         self.preview_thread = threading.Thread(target=self._preview_loop, name="fake-preview", daemon=True)
         self.preview_thread.start()
         emit_event("ready")
+        self.sensor_sampler.start()
 
     def start_recording(self, session_id: int, start_segment_index: int) -> None:
         ensure_rec_dir(self.rec_dir)
@@ -729,8 +838,10 @@ class FakeCameraDriver:
             emit_event("recording_stopped", session_id=session_id)
 
     def shutdown_driver(self) -> None:
-        self.stop_recording()
         self.shutdown.set()
+        if not self.sensor_sampler.join(SENSOR_TEMP_JOIN_TIMEOUT):
+            print("sensor temperature sampler did not stop", file=sys.stderr, flush=True)
+        self.stop_recording()
         if self.preview_thread is not None:
             self.preview_thread.join(timeout=1)
 
@@ -811,6 +922,8 @@ class RealCameraDriver:
         self.current_session_id: int | None = None
         self.segment_watcher_shutdown: threading.Event | None = None
         self.segment_watcher_thread: threading.Thread | None = None
+        self._latest_sensor_temp: Any = None
+        self.sensor_sampler = SensorTempSampler(lambda: self._latest_sensor_temp, shutdown)
 
     def start(self) -> None:
         from picamera2 import Picamera2
@@ -842,6 +955,11 @@ class RealCameraDriver:
             queue=False,
         )
         self.picam2.configure(config)
+
+        def cache_sensor_temp(request: Any) -> None:
+            self._latest_sensor_temp = request.get_metadata().get("SensorTemperature")
+
+        self.picam2.pre_callback = cache_sensor_temp
         self.picam2.start()
 
         self.preview_encoder = MJPEGEncoder()
@@ -852,6 +970,7 @@ class RealCameraDriver:
             name="lores",
         )
         emit_event("ready")
+        self.sensor_sampler.start()
 
     def start_recording(self, session_id: int, start_segment_index: int) -> None:
         ensure_rec_dir(self.rec_dir)
@@ -907,13 +1026,13 @@ class RealCameraDriver:
             emit_event("recording_stopped", session_id=session_id)
 
     def shutdown_driver(self) -> None:
-        try:
-            self.stop_recording()
-            if self.picam2 is not None:
-                self.picam2.stop_encoder()
-                self.picam2.stop()
-        finally:
-            self.shutdown.set()
+        self.shutdown.set()
+        if not self.sensor_sampler.join(SENSOR_TEMP_JOIN_TIMEOUT):
+            print("sensor temperature sampler did not stop", file=sys.stderr, flush=True)
+        self.stop_recording()
+        if self.picam2 is not None:
+            self.picam2.stop_encoder()
+            self.picam2.stop()
 
 
 def run(args: argparse.Namespace) -> int:

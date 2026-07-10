@@ -354,6 +354,7 @@ Verify from the Mac over the LAN:
 
 ```sh
 curl -i http://dancam.local:8080/v1/health   # expect: 200 OK + x-dancam-proto: 1
+curl -s http://dancam.local:8080/v1/status | jq .temp_c.sensor  # real IMX708 reading
 ```
 
 Smoke-test live preview from the Mac:

@@ -251,6 +251,9 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > provenance remains owned by `moss`. The open segment stays unlisted by
   > `GET /v1/clips` and unpullable by `GET /v1/clips/{id}`; these fields are status
   > metadata only, so ADR 03's listing rule is unchanged.
+  > **Note (2026-07-09):** `temp_c.sensor` now carries the quantized IMX708
+  > `SensorTemperature` while the camera child is `running` and reverts to null
+  > whenever the child leaves that state.
 - `GET /v1/health` -- tiny liveness `{boot_id, uptime_s, recording, t_ms}`. (Unauth.)
 - `POST /v1/recording/start` / `POST /v1/recording/stop` (idempotent; stop finalizes
   the current segment).
