@@ -383,15 +383,17 @@ struct ClipsFeatureTests {
         store.expectNoReceivedActions()
     }
 
-    @Test func onDisappearCancelsInFlightFetch() async {
+    @Test func headFetchSurvivesDisappearAndItsResponseStillApplies() async {
         let started = AsyncSignal()
+        let release = AsyncSignal()
+        let response = CameraSamples.clipsResponse(ids: [1])
         let store = TestStore(
             initialState: ClipsFeature.State(),
             dependencies: AppDependencies(
                 clips: ClipsClient(fetch: { _ in
                     await started.signal()
-                    try await Task.sleep(for: .seconds(60))
-                    return CameraSamples.clipsResponse(ids: [1])
+                    await release.wait()
+                    return response
                 })
             ),
             reduce: ClipsFeature.reduce
@@ -403,8 +405,37 @@ struct ClipsFeatureTests {
         }
         await started.wait()
         await store.send(.onDisappear)
+        await release.signal()
+        await store.receive(.clipsResponse(epoch: 1, .success(response))) {
+            $0.clips = response.clips
+            $0.status = .idle
+            $0.hasLoadedOnce = true
+        }
         await store.finishEffects()
+    }
 
+    @Test func onDisappearCancelsInFlightPaging() async {
+        let started = AsyncSignal()
+        let store = TestStore(
+            initialState: ClipsFeature.State(nextCursor: "2"),
+            dependencies: AppDependencies(
+                clips: ClipsClient(fetch: { _ in
+                    await started.signal()
+                    try await Task.sleep(for: .seconds(60))
+                    return CameraSamples.clipsResponse(ids: [1])
+                })
+            ),
+            reduce: ClipsFeature.reduce
+        )
+
+        await store.send(.loadMore) {
+            $0.isPaging = true
+        }
+        await started.wait()
+        await store.send(.onDisappear) {
+            $0.isPaging = false
+        }
+        await store.finishCanceledEffects()
         store.expectNoReceivedActions()
     }
 

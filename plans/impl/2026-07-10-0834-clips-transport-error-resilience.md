@@ -413,6 +413,6 @@ End-to-end after commit 2 (or all five), in the simulator against the real Pi:
 
 - [x] 1. Replace stringly transport errors with typed human-readable failures
 - [x] 2. Retry the clips head fetch on heartbeats while the camera is online
-- [ ] 3. Keep clips head fetch alive across Home disappear
+- [x] 3. Keep clips head fetch alive across Home disappear
 - [ ] 4. Raise camera API connect timeout to 4s
 - [ ] 5. Add icebox swoop for persistent camera connections

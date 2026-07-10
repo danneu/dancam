@@ -48,10 +48,7 @@ enum ClipsFeature {
 
         case .onDisappear:
             state.isPaging = false
-            return .merge([
-                .cancel(id: fetchID),
-                .cancel(id: pageID),
-            ])
+            return .cancel(id: pageID)
 
         case .clipFinalized(let clip):
             state.clipFinalizeEpoch[clip.id] = state.headEpoch
