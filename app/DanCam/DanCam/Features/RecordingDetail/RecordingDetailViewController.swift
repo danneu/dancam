@@ -164,9 +164,9 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         let thumbnailGeneration = preservedThumbnailGeneration
         preservedVisibleThumbnails = visibleThumbnails
 
-        dataSource.apply(
+        dataSource.applyDetachedAware(
             makeSnapshot(reconfigure: reconfigure),
-            animatingDifferences: canAnimateTableUpdates,
+            tableView: tableView,
             completion: { [weak self] in
                 MainActor.assumeIsolated {
                     if self?.preservedThumbnailGeneration == thumbnailGeneration {
@@ -206,9 +206,9 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         let reconfigure: [RecordingDetailRow] = wasShowing && showsLiveRow && statusChanged
             ? [.liveRecording]
             : []
-        dataSource.apply(
+        dataSource.applyDetachedAware(
             makeSnapshot(reconfigure: reconfigure),
-            animatingDifferences: canAnimateTableUpdates,
+            tableView: tableView,
             completion: { [weak self] in
                 MainActor.assumeIsolated {
                     self?.handlePostApplyState()
@@ -228,10 +228,6 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         snapshot.appendItems(clips.map { RecordingDetailRow.clip($0.id) }, toSection: .clips)
         snapshot.reconfigureItems(reconfigure)
         return snapshot
-    }
-
-    private var canAnimateTableUpdates: Bool {
-        isViewLoaded && view.window != nil && tableView.window != nil
     }
 
     private func changedClipIDs(old: [Clip], new: [Clip]) -> [Int] {

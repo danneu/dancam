@@ -516,9 +516,9 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             snapshot.appendItems(section.rows.map(\.id), toSection: section.id)
         }
         snapshot.reconfigureItems(reconfigure)
-        dataSource.apply(
+        dataSource.applyDetachedAware(
             snapshot,
-            animatingDifferences: canAnimateTableUpdates,
+            tableView: clipsTableView,
             completion: { [weak self] in
                 MainActor.assumeIsolated {
                     if self?.preservedThumbnailGeneration == thumbnailGeneration {
@@ -531,10 +531,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         )
 
         updateClipsPresentation()
-    }
-
-    private var canAnimateTableUpdates: Bool {
-        isViewLoaded && view.window != nil && clipsTableView.window != nil
     }
 
     private func handleClipsStatus(_ status: ClipsFeature.State.Status) {

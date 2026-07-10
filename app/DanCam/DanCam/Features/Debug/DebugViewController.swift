@@ -201,7 +201,11 @@ final class DebugViewController: UIViewController {
 
             var snapshot = dataSource.snapshot()
             snapshot.reconfigureItems(changed)
-            dataSource.apply(snapshot, animatingDifferences: false)
+            dataSource.applyDetachedAware(
+                snapshot,
+                collectionView: collectionView,
+                animatedWhenAttached: false
+            )
             return
         }
 
@@ -212,7 +216,11 @@ final class DebugViewController: UIViewController {
             snapshot.appendSections([section.id])
             snapshot.appendItems(section.rows.map(\.id), toSection: section.id)
         }
-        dataSource.apply(snapshot, animatingDifferences: false)
+        dataSource.applyDetachedAware(
+            snapshot,
+            collectionView: collectionView,
+            animatedWhenAttached: false
+        )
     }
 
     @objc private func refreshPulled() {

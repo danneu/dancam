@@ -212,6 +212,24 @@ struct HomeViewControllerTests {
         #expect(navigationController.viewControllers.count == 2)
     }
 
+    @Test func coveredUpdateStaysCurrentAndRendersAfterReattachment() throws {
+        let (controller, store) = makeControllerAndStore(clips: [clipA], loader: .noop)
+        let (window, navigationController) = try embedInNavigationController(controller)
+        defer { window.isHidden = true }
+        let cover = UIViewController()
+        navigationController.pushViewController(cover, animated: false)
+        window.layoutIfNeeded()
+
+        store.send(.clips(.clipFinalized(clipB)))
+
+        #expect(controller.indexPathForTesting(rowID: .finished(clipB.id)) != nil)
+
+        navigationController.popViewController(animated: false)
+        controller.layoutClipsTableForTesting()
+
+        #expect(controller.clipThumbnailCellForTesting(clipID: clipB.id) != nil)
+    }
+
     @Test func recordingCardSwipeHasNoActions() throws {
         let controller = makeController(
             clips: [

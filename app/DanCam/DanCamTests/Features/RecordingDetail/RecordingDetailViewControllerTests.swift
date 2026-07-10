@@ -237,6 +237,38 @@ struct RecordingDetailViewControllerTests {
         #expect(navigationController.topViewController === above)
     }
 
+    @Test func coveredUpdatesStayCurrentAndRenderAfterReattachment() throws {
+        let (controller, store) = makeControllerAndStore(
+            clips: [clip(id: 12, bootTag: "target")],
+            nextCursor: nil
+        )
+        let root = UIViewController()
+        let navigationController = UINavigationController(rootViewController: root)
+        navigationController.pushViewController(controller, animated: false)
+        let window = try embed(navigationController)
+        defer { window.isHidden = true }
+        let cover = UIViewController()
+        navigationController.pushViewController(cover, animated: false)
+        window.layoutIfNeeded()
+
+        store.send(.clips(.clipFinalized(clip(id: 13, bootTag: "target"))))
+
+        #expect(controller.indexPathForTesting(clipID: 13) != nil)
+
+        navigationController.popViewController(animated: false)
+        controller.layoutTableForTesting()
+
+        #expect(controller.clipThumbnailCellForTesting(clipID: 13) != nil)
+
+        navigationController.pushViewController(cover, animated: false)
+        window.layoutIfNeeded()
+        store.send(.clips(.clipRemoved(id: 13)))
+        store.send(.clips(.clipRemoved(id: 12)))
+
+        #expect(navigationController.viewControllers.contains(controller) == false)
+        #expect(navigationController.topViewController === cover)
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func finalizedClipForRecordingAppearsAsNewTopRow() async throws {
         let (controller, store) = makeControllerAndStore(
