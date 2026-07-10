@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated enum TempWarning: Equatable {
+nonisolated enum TelemetryWarning: Equatable {
     case warn
     case critical
 }
@@ -14,6 +14,8 @@ nonisolated enum Formatters {
     static let memoryCriticalThreshold = 0.90
     static let swapWarnThreshold = 0.50
     static let swapCriticalThreshold = 0.80
+    static let cpuWarnThreshold = 85.0
+    static let cpuCriticalThreshold = 95.0
 
     static func storageDisplay(_ storage: Storage) -> (freeText: String, usedFraction: Double) {
         let free = storage.total >= storage.used ? storage.total - storage.used : 0
@@ -215,15 +217,21 @@ nonisolated enum Formatters {
         return "\(Int(celsius.rounded())) C"
     }
 
-    static func socWarning(for soc: Double?) -> TempWarning? {
+    static func socWarning(for soc: Double?) -> TelemetryWarning? {
         warning(for: soc, warn: socWarnThreshold, critical: socCriticalThreshold)
     }
 
-    static func sensorWarning(for sensor: Double?) -> TempWarning? {
+    static func sensorWarning(for sensor: Double?) -> TelemetryWarning? {
         warning(for: sensor, warn: sensorWarnThreshold, critical: sensorCriticalThreshold)
     }
 
-    private static func warning(for value: Double?, warn: Double, critical: Double) -> TempWarning? {
+    static func cpuPercentage(_ value: Int?) -> String { value.map { "\($0)%" } ?? "--" }
+
+    static func cpuWarning(for value: Int?) -> TelemetryWarning? {
+        warning(for: value.map(Double.init), warn: cpuWarnThreshold, critical: cpuCriticalThreshold)
+    }
+
+    private static func warning(for value: Double?, warn: Double, critical: Double) -> TelemetryWarning? {
         guard let value else { return nil }
 
         if value >= critical {

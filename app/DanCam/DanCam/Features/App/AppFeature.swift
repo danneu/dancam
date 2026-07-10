@@ -432,6 +432,11 @@ extension AppFeature.State {
             if let mem = world.mem {
                 fields.append("mem_available=\(mem.available)")
             }
+            let cpu = world.cpu.cores.map { core in
+                [core.id, core.currentPct, core.oneMinutePct, core.fiveMinutePct, core.fifteenMinutePct]
+                    .map { $0.map(String.init) ?? "nil" }.joined(separator: "/")
+            }.joined(separator: ",")
+            fields.append("cpu_cores=\(cpu)")
             fields.append("time_synced=\(world.time.map { String($0.synced) } ?? "nil")")
         }
 
@@ -571,6 +576,8 @@ private extension CameraEvent {
             "tempChanged"
         case .memChanged:
             "memChanged"
+        case .cpuChanged:
+            "cpuChanged"
         case .timeSynced:
             "timeSynced"
         case .heartbeat:

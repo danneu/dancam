@@ -58,3 +58,18 @@ The recorder slice is the source of truth for the live row:
 
 `current_segment` is `null` until a real segment is observed open, and is
 cleared on stop or failure. `detail` is populated only for the error phase.
+
+## CPU Telemetry
+
+The snapshot's required `cpu` slice and each `cpu_changed` delta contain a complete
+replacement `cores` array, sorted by runtime-discovered Linux logical CPU ID. IDs and
+array length are data; clients must not assume contiguous IDs or a fixed core count.
+Percentages are whole integers from 0 through 100. All four values are null for a new
+core's counter baseline and after that core's counters reset. An empty array means CPU
+topology is unavailable, including after a whole `/proc/stat` read or parse failure.
+
+`current_pct` covers the latest counter interval. The 1 minute, 5 minute, and 15 minute
+values are EWMAs using 60, 300, and 900 second time constants and actual monotonic
+elapsed time. The first valid counter pair seeds all three averages to current load.
+Per-core invalid deltas clear only that core; whole-read failures clear all history.
+Smoothing history begins anew when the service restarts.

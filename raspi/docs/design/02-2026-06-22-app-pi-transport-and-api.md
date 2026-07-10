@@ -155,6 +155,14 @@
 > service restart (including a crash-restart via `Restart=on-failure`) resets either
 > max. Deepens `fern`.
 
+> **Note (2026-07-10): Per-core CPU telemetry.** The required snapshot `cpu` slice
+> and additive `cpu_changed` delta carry a complete runtime-ID-sorted `cores` array.
+> Each core reports current utilization plus 1m/5m/15m EWMAs, coarsened to whole
+> percentages at the wire boundary while smoothing retains full precision and uses
+> actual monotonic elapsed time. Per-core `/proc/stat` baselines and counter resets
+> publish all-null rows; a whole read/parse failure clears the array and all history.
+> This exposes single-core saturation without adding aggregate load or policy.
+
 ## Context
 
 The camera unit (Raspberry Pi Zero 2 W) records continuously to its own microSD --

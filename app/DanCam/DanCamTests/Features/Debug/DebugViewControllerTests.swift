@@ -164,6 +164,21 @@ struct DebugViewControllerTests {
         #expect(max.color == .systemOrange)
     }
 
+    @Test func cpuRowUsesFullWidthConfigurationAndSpokenUnavailable() throws {
+        let world = CameraSamples.world(cpu: CPU(cores: [
+            CPUCore(id: 7, currentPct: nil, oneMinutePct: 95, fiveMinutePct: 52, fifteenMinutePct: 40),
+        ]))
+        let controller = makeController(appState: appState(link: .online(world)))
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+        #expect(controller.presentedCPUForTesting(7) == DebugCPUConfiguration(
+            title: "Core 7",
+            detail: "Now -- | 1m 95% | 5m 52% | 15m 40%",
+            accessibilityValue: "Now unavailable, 1 minute 95 percent, 5 minutes 52 percent, 15 minutes 40 percent",
+            tint: .critical
+        ))
+    }
+
     private func makeController(
         appState: AppFeature.State = AppFeature.State(),
         logExporter: LogExporter = .noop,

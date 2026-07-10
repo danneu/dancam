@@ -46,6 +46,7 @@ struct CameraEventCorpusTests {
             CameraEvent.self,
             from: Data(contentsOf: corpusURL("temp_changed.json"))
         )
+        let cpuChanged = try decoder.decode(CameraEvent.self, from: Data(contentsOf: corpusURL("cpu_changed.json")))
 
         #expect(snapshot == .snapshot(World(
             recorder: RecorderSnapshot(
@@ -64,6 +65,10 @@ struct CameraEventCorpusTests {
                 sensor: TempReading(max: 49.0)
             ),
             mem: Mem(total: 512_000_000, available: 256_000_000, swapTotal: 134_217_728, swapUsed: 0),
+            cpu: CPU(cores: [
+                CPUCore(id: 0, currentPct: 98, oneMinutePct: 74, fiveMinutePct: 52, fifteenMinutePct: 40),
+                CPUCore(id: 2, currentPct: 12, oneMinutePct: 20, fiveMinutePct: 30, fifteenMinutePct: 35),
+            ]),
             time: TimeStatus(synced: true)
         )))
         #expect(opened == .segmentOpened(session: 7, id: 43, atMs: 5_400))
@@ -84,6 +89,10 @@ struct CameraEventCorpusTests {
             soc: TempReading(current: 51.5, max: 62.5),
             sensor: TempReading(current: 43.5, max: 49.0)
         )))
+        #expect(cpuChanged == .cpuChanged(CPU(cores: [
+            CPUCore(id: 0, currentPct: 98, oneMinutePct: 74, fiveMinutePct: 52, fifteenMinutePct: 40),
+            CPUCore(id: 2, currentPct: nil, oneMinutePct: nil, fiveMinutePct: nil, fifteenMinutePct: nil),
+        ])))
     }
 
     @Test(.tags(.networking))

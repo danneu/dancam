@@ -934,6 +934,13 @@ struct AppFeatureTests {
             nextWorld.mem = Mem(total: 3, available: 2, swapTotal: 1, swapUsed: 0)
             $0.link = .online(nextWorld)
         }
+        let memWorld = try #require(store.state.link.world)
+        let cpu = CPU(cores: [CPUCore(id: 2, currentPct: 90, oneMinutePct: 80, fiveMinutePct: 70, fifteenMinutePct: 60)])
+        await store.send(.event(.cpuChanged(cpu))) {
+            var nextWorld = memWorld
+            nextWorld.cpu = cpu
+            $0.link = .online(nextWorld)
+        }
         await store.finishEffects()
     }
 

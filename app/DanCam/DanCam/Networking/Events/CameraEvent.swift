@@ -14,6 +14,7 @@ nonisolated enum CameraEvent: Decodable, Equatable, Sendable {
     case storageChanged(used: UInt64, total: UInt64)
     case tempChanged(TempC)
     case memChanged(total: UInt64, available: UInt64, swapTotal: UInt64, swapUsed: UInt64)
+    case cpuChanged(CPU)
     case timeSynced(atMs: UInt64)
     case heartbeat(tMs: UInt64)
     case unknown(type: String)
@@ -122,6 +123,8 @@ extension CameraEvent {
                 swapTotal: payload.swapTotal,
                 swapUsed: payload.swapUsed
             )
+        case "cpu_changed":
+            self = .cpuChanged(try CPU(from: decoder))
         case "time_synced":
             self = .timeSynced(atMs: try TimeSyncedPayload(from: decoder).atMs)
         case "heartbeat":
@@ -141,6 +144,7 @@ nonisolated struct World: Codable, Equatable, Sendable {
     var storage: Storage?
     var tempC: TempC
     var mem: Mem?
+    var cpu: CPU
     var time: TimeStatus? = nil
 }
 
@@ -188,6 +192,8 @@ extension World {
             next.tempC = tempC
         case .memChanged(let total, let available, let swapTotal, let swapUsed):
             next.mem = Mem(total: total, available: available, swapTotal: swapTotal, swapUsed: swapUsed)
+        case .cpuChanged(let cpu):
+            next.cpu = cpu
         case .timeSynced:
             next.time = TimeStatus(synced: true)
         case .heartbeat(let tMs):
@@ -275,6 +281,19 @@ nonisolated struct Mem: Codable, Equatable, Sendable {
     var available: UInt64
     var swapTotal: UInt64
     var swapUsed: UInt64
+}
+
+nonisolated struct CPU: Codable, Equatable, Sendable {
+    var cores: [CPUCore]
+    init(cores: [CPUCore] = []) { self.cores = cores }
+}
+
+nonisolated struct CPUCore: Codable, Equatable, Sendable {
+    var id: Int
+    var currentPct: Int?
+    var oneMinutePct: Int?
+    var fiveMinutePct: Int?
+    var fifteenMinutePct: Int?
 }
 
 nonisolated struct TimeStatus: Codable, Equatable, Sendable {

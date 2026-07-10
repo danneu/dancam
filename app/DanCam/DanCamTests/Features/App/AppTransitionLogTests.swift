@@ -48,6 +48,14 @@ struct AppTransitionLogTests {
         )
     }
 
+    @Test func cpuChangeLogsLabelAndCompactCoreDiff() {
+        let old = onlineState(CameraSamples.world())
+        let cpu = CPU(cores: [CPUCore(id: 2, currentPct: 98, oneMinutePct: 74, fiveMinutePct: nil, fifteenMinutePct: 40)])
+        let new = onlineState(CameraSamples.world(cpu: cpu))
+        #expect(AppFeature.transitionLog(action: .event(.cpuChanged(cpu)), old: old, new: new)
+            == .debug("action=event.cpuChanged cpu_cores=->2/98/74/nil/40"))
+    }
+
     @Test func summaryChangeLogsNoticeWithOldAndNewSummaries() {
         let old = AppFeature.State()
         let world = CameraSamples.world()

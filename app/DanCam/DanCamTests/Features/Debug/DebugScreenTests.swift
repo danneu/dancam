@@ -20,7 +20,7 @@ struct DebugScreenTests {
 
         let sections = DebugScreen.sections(for: state(link: .online(world)))
 
-        #expect(sections.map(\.id) == [.recorder, .camera, .storage, .memory, .system, .actions])
+        #expect(sections.map(\.id) == [.recorder, .camera, .cpu, .storage, .memory, .system, .actions])
         #expect(try row(.value(.recorderPhase), in: sections) == .value(
             id: .recorderPhase,
             label: "Phase",
@@ -88,6 +88,7 @@ struct DebugScreenTests {
         #expect(try value(for: .recorderPhase, in: sections) == "--")
         #expect(try value(for: .cameraState, in: sections) == "--")
         #expect(try value(for: .storage, in: sections) == "--")
+        #expect(try value(for: .cpuUnavailable, in: sections) == "--")
         #expect(try value(for: .ram, in: sections) == "--")
         #expect(try value(for: .swap, in: sections) == "--")
         #expect(try value(for: .bootID, in: sections) == "--")
@@ -243,6 +244,20 @@ struct DebugScreenTests {
             .value(id: .socMaxTemperature, label: "SoC max", value: "--", tint: .neutral),
             .value(id: .cameraTemperature, label: "Camera temp", value: "--", tint: .neutral),
             .value(id: .cameraMaxTemperature, label: "Camera max", value: "--", tint: .neutral),
+        ])
+    }
+
+    @Test func cpuRowsUseRuntimeIDsValuesAndOneMinuteTint() throws {
+        let world = CameraSamples.world(cpu: CPU(cores: [
+            CPUCore(id: 2, currentPct: 98, oneMinutePct: 84, fiveMinutePct: 52, fifteenMinutePct: 40),
+            CPUCore(id: 7, currentPct: nil, oneMinutePct: 85, fiveMinutePct: nil, fifteenMinutePct: 30),
+            CPUCore(id: 9, currentPct: 20, oneMinutePct: 95, fiveMinutePct: 40, fifteenMinutePct: 50),
+        ]))
+        let rows = try rows(in: .cpu, from: DebugScreen.sections(for: state(link: .online(world))))
+        #expect(rows == [
+            .cpuCore(id: 2, detail: "Now 98% | 1m 84% | 5m 52% | 15m 40%", accessibilityValue: "Now 98 percent, 1 minute 84 percent, 5 minutes 52 percent, 15 minutes 40 percent", tint: .neutral),
+            .cpuCore(id: 7, detail: "Now -- | 1m 85% | 5m -- | 15m 30%", accessibilityValue: "Now unavailable, 1 minute 85 percent, 5 minutes unavailable, 15 minutes 30 percent", tint: .warn),
+            .cpuCore(id: 9, detail: "Now 20% | 1m 95% | 5m 40% | 15m 50%", accessibilityValue: "Now 20 percent, 1 minute 95 percent, 5 minutes 40 percent, 15 minutes 50 percent", tint: .critical),
         ])
     }
 

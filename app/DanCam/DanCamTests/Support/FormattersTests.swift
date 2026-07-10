@@ -3,6 +3,14 @@ import Testing
 @testable import DanCam
 
 struct FormattersTests {
+    @Test func cpuPercentageAndWarningsUseInclusiveThresholds() {
+        #expect(Formatters.cpuPercentage(nil) == "--")
+        #expect(Formatters.cpuPercentage(98) == "98%")
+        #expect(Formatters.cpuWarning(for: 84) == nil)
+        #expect(Formatters.cpuWarning(for: 85) == .warn)
+        #expect(Formatters.cpuWarning(for: 94) == .warn)
+        #expect(Formatters.cpuWarning(for: 95) == .critical)
+    }
     @Test func storageDisplayFormatsFreeSpaceAndUsedFraction() {
         let display = Formatters.storageDisplay(Storage(used: 4_000, total: 10_000))
 
@@ -86,7 +94,7 @@ struct FormattersTests {
     }
 
     @Test func sensorWarningUsesSensorThresholdsOnly() {
-        let cases: [(sensor: Double?, warning: TempWarning?)] = [
+        let cases: [(sensor: Double?, warning: TelemetryWarning?)] = [
             (nil, nil),
             (49.9, nil),
             (50, .warn),
@@ -100,12 +108,12 @@ struct FormattersTests {
     }
 
     @Test(arguments: [
-        (value: 69.9, expected: TempWarning?.none),
-        (value: 70.0, expected: TempWarning?.some(.warn)),
-        (value: 79.9, expected: TempWarning?.some(.warn)),
-        (value: 80.0, expected: TempWarning?.some(.critical)),
+        (value: 69.9, expected: TelemetryWarning?.none),
+        (value: 70.0, expected: TelemetryWarning?.some(.warn)),
+        (value: 79.9, expected: TelemetryWarning?.some(.warn)),
+        (value: 80.0, expected: TelemetryWarning?.some(.critical)),
     ])
-    func socWarningUsesInclusiveSocThresholds(value: Double, expected: TempWarning?) {
+    func socWarningUsesInclusiveSocThresholds(value: Double, expected: TelemetryWarning?) {
         #expect(Formatters.socWarning(for: value) == expected)
     }
 

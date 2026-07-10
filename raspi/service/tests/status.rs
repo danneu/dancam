@@ -116,6 +116,7 @@ async fn status_returns_snapshot_wire_contract() {
         json["temp_c"]["sensor"]["max"].is_number() || json["temp_c"]["sensor"]["max"].is_null()
     );
     assert!(json["mem"].is_object() || json["mem"].is_null());
+    assert!(json["cpu"]["cores"].is_array());
     assert_eq!(json["time"]["synced"], false);
 }
 

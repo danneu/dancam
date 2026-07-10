@@ -18,6 +18,7 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 use crate::{
     backend::{Backend, BackendError, FrameStream},
     clips::{clip_meta, ClipMeta},
+    cpu::Cpu,
     event_hub::{EventConnection, EventHub},
     events::Event,
     events::Snapshot,
@@ -270,8 +271,9 @@ impl Backend for CameraBackend {
         storage: Option<DiskUsage>,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
+        cpu: Cpu,
     ) {
-        self.hub.update_telemetry(storage, soc_temp_c, mem);
+        self.hub.update_telemetry(storage, soc_temp_c, mem, cpu);
     }
 }
 

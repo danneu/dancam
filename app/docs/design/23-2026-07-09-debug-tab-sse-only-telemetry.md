@@ -17,6 +17,12 @@ recovers. The SoC row gains its own warn/critical thresholds (70/80 C); the
 camera row keeps 50/55. Home's temperature pill stays sensor-only and
 current-only -- it never reflects `max`, so it clears when the sensor cools.
 
+**Note (2026-07-10): Per-core CPU rows.** Debug adds a `CPU per core` section with
+one full-width row per runtime logical CPU ID. Each row shows current, 1m, 5m, and
+15m utilization, with `--` for baseline values; an unavailable/empty CPU slice shows
+one stable `CPU --` row. Only the core title is tinted, using the sustained 1 minute
+value at inclusive 85% orange and 95% red thresholds.
+
 **Note (2026-07-10, supersedes the render detail above): separate current/max
 rows.** The Debug SoC and camera temperatures now render as two plain single-fact
 value rows each (`SoC temp` / `SoC max` / `Camera temp` / `Camera max`) instead

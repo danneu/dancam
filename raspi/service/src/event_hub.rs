@@ -6,6 +6,7 @@ use std::{
 use tokio::sync::{broadcast, watch};
 
 use crate::{
+    cpu::Cpu,
     events::{Event, Snapshot},
     recorder::{RecorderPhase, SegmentId, SessionId},
     world::{CameraState, Input, LiveStatus, World},
@@ -157,11 +158,13 @@ impl EventHub {
         storage: Option<crate::sysfacts::DiskUsage>,
         soc_temp_c: Option<f32>,
         mem: Option<crate::sysfacts::MemInfo>,
+        cpu: Cpu,
     ) {
         self.drive_now(Input::Telemetry {
             storage,
             soc_temp_c,
             mem,
+            cpu,
         });
     }
 
@@ -205,6 +208,7 @@ mod tests {
 
     use super::EventHub;
     use crate::{
+        cpu::Cpu,
         events::Event,
         recorder::{RecorderEvent, RecorderPhase},
         sysfacts::DiskUsage,
@@ -275,6 +279,7 @@ mod tests {
                         }),
                         soc_temp_c: None,
                         mem: None,
+                        cpu: Cpu::empty(),
                     },
                     used,
                 );

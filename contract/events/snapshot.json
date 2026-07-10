@@ -33,6 +33,12 @@
     "swap_total": 134217728,
     "swap_used": 0
   },
+  "cpu": {
+    "cores": [
+      { "id": 0, "current_pct": 98, "one_minute_pct": 74, "five_minute_pct": 52, "fifteen_minute_pct": 40 },
+      { "id": 2, "current_pct": 12, "one_minute_pct": 20, "five_minute_pct": 30, "fifteen_minute_pct": 35 }
+    ]
+  },
   "time": {
     "synced": true
   }

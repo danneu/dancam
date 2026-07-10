@@ -133,6 +133,16 @@ final class DebugViewController: UIViewController {
             )
         }
 
+        let cpuRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, DebugRowID> { [weak self] cell, _, id in
+            guard let row = self?.renderedRows[id],
+                  case .cpuCore(let coreID, let detail, let accessibilityValue, let tint) = row
+            else { return }
+            cell.contentConfiguration = DebugCPUConfiguration(
+                title: "Core \(coreID)", detail: detail,
+                accessibilityValue: accessibilityValue, tint: tint
+            )
+        }
+
         let source = UICollectionViewDiffableDataSource<DebugSectionID, DebugRowID>(collectionView: collectionView) { [weak self] collectionView, indexPath, id in
             guard let self, let row = self.renderedRows[id] else { return nil }
             switch row {
@@ -140,6 +150,8 @@ final class DebugViewController: UIViewController {
                 return collectionView.dequeueConfiguredReusableCell(using: valueRegistration, for: indexPath, item: id)
             case .gauge:
                 return collectionView.dequeueConfiguredReusableCell(using: gaugeRegistration, for: indexPath, item: id)
+            case .cpuCore:
+                return collectionView.dequeueConfiguredReusableCell(using: cpuRegistration, for: indexPath, item: id)
             case .button:
                 return collectionView.dequeueConfiguredReusableCell(using: buttonRegistration, for: indexPath, item: id)
             case .banner, .exportError:
@@ -284,6 +296,13 @@ final class DebugViewController: UIViewController {
         )
     }
 
+    func presentedCPUForTesting(_ id: Int) -> DebugCPUConfiguration? {
+        guard let indexPath = dataSource.indexPath(for: .cpuCore(id)) else { return nil }
+        collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: false)
+        collectionView.layoutIfNeeded()
+        return collectionView.cellForItem(at: indexPath)?.contentConfiguration as? DebugCPUConfiguration
+    }
+
     private func exportLogs(presentShareSheet: Bool) async {
         switch await buildExportText() {
         case .success(let text):
@@ -346,6 +365,42 @@ private struct DebugGaugeConfiguration: UIContentConfiguration, Hashable {
 
     func updated(for state: any UIConfigurationState) -> DebugGaugeConfiguration {
         self
+    }
+}
+
+struct DebugCPUConfiguration: UIContentConfiguration, Hashable {
+    var title: String
+    var detail: String
+    var accessibilityValue: String
+    var tint: DebugTint
+    func makeContentView() -> any UIView & UIContentView { DebugCPUContentView(configuration: self) }
+    func updated(for state: any UIConfigurationState) -> DebugCPUConfiguration { self }
+}
+
+private final class DebugCPUContentView: UIView, UIContentView {
+    private let titleLabel = UILabel()
+    private let detailLabel = UILabel()
+    var configuration: any UIContentConfiguration { didSet { if let value = configuration as? DebugCPUConfiguration { apply(value) } } }
+    init(configuration: DebugCPUConfiguration) { self.configuration = configuration; super.init(frame: .zero); configureViews(); apply(configuration) }
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError("DebugCPUContentView is programmatic.") }
+    private func configureViews() {
+        preservesSuperviewLayoutMargins = true
+        directionalLayoutMargins = UIListContentConfiguration.valueCell().directionalLayoutMargins
+        isAccessibilityElement = true
+        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        detailLabel.font = UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .monospacedDigitSystemFont(ofSize: 12, weight: .regular))
+        detailLabel.adjustsFontForContentSizeCategory = true
+        detailLabel.textColor = .secondaryLabel
+        detailLabel.numberOfLines = 0
+        let stack = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
+        stack.axis = .vertical; stack.spacing = 4; stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor), stack.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor), stack.topAnchor.constraint(equalTo: layoutMarginsGuide.topAnchor), stack.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor)])
+    }
+    private func apply(_ value: DebugCPUConfiguration) {
+        titleLabel.text = value.title; titleLabel.textColor = value.tint.color(default: .label)
+        detailLabel.text = value.detail; accessibilityLabel = value.title; accessibilityValue = value.accessibilityValue
     }
 }
 

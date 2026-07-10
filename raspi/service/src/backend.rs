@@ -22,6 +22,7 @@ use tokio_stream::{wrappers::WatchStream, Stream, StreamExt};
 use crate::{
     clips::{clip_meta, ClipMeta},
     clock,
+    cpu::Cpu,
     event_hub::{EventConnection, EventHub, SeqEvent},
     events::Snapshot,
     recorder::{
@@ -85,6 +86,7 @@ pub trait Backend: Send + Sync + 'static {
         _storage: Option<DiskUsage>,
         _soc_temp_c: Option<f32>,
         _mem: Option<MemInfo>,
+        _cpu: Cpu,
     ) {
     }
 }
@@ -279,8 +281,9 @@ impl Backend for MockBackend {
         storage: Option<DiskUsage>,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
+        cpu: Cpu,
     ) {
-        self.hub.update_telemetry(storage, soc_temp_c, mem);
+        self.hub.update_telemetry(storage, soc_temp_c, mem, cpu);
     }
 }
 

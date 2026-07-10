@@ -16,6 +16,7 @@ nonisolated enum DebugValueID: Hashable {
     case socMaxTemperature
     case cameraTemperature
     case cameraMaxTemperature
+    case cpuUnavailable
     case storage
     case ram
     case swap
@@ -39,6 +40,7 @@ nonisolated enum DebugRowID: Hashable {
     case banner
     case value(DebugValueID)
     case gauge(DebugGaugeID)
+    case cpuCore(Int)
     case button(DebugButtonID)
     case exportError
 }
@@ -52,6 +54,7 @@ nonisolated enum DebugRow: Equatable {
         tint: DebugTint
     )
     case gauge(id: DebugGaugeID, title: String, detail: String, fraction: Double, tint: DebugTint)
+    case cpuCore(id: Int, detail: String, accessibilityValue: String, tint: DebugTint)
     case button(DebugButtonID)
     case exportError(String)
 
@@ -63,6 +66,8 @@ nonisolated enum DebugRow: Equatable {
             .value(id)
         case .gauge(let id, _, _, _, _):
             .gauge(id)
+        case .cpuCore(let id, _, _, _):
+            .cpuCore(id)
         case .button(let id):
             .button(id)
         case .exportError:
@@ -76,6 +81,7 @@ nonisolated enum DebugSectionID: Hashable {
     case staleness
     case recorder
     case camera
+    case cpu
     case storage
     case memory
     case system
@@ -114,6 +120,7 @@ enum DebugScreen {
             title: "Camera",
             rows: cameraRows(world: world)
         ))
+        sections.append(DebugSection(id: .cpu, title: "CPU per core", rows: cpuRows(world: world)))
         sections.append(DebugSection(
             id: .storage,
             title: "Storage",
@@ -217,22 +224,39 @@ enum DebugScreen {
         currentLabel: String,
         maxLabel: String,
         reading: TempReading?,
-        warning: (Double?) -> TempWarning?
+        warning: (Double?) -> TelemetryWarning?
     ) -> [DebugRow] {
         [
             .value(
                 id: currentID,
                 label: currentLabel,
                 value: reading?.current.map { Formatters.temperature($0, precise: true) } ?? "--",
-                tint: tempTint(warning(reading?.current))
+                tint: telemetryTint(warning(reading?.current))
             ),
             .value(
                 id: maxID,
                 label: maxLabel,
                 value: reading?.max.map { Formatters.temperature($0, precise: true) } ?? "--",
-                tint: tempTint(warning(reading?.max))
+                tint: telemetryTint(warning(reading?.max))
             ),
         ]
+    }
+
+    private static func cpuRows(world: World?) -> [DebugRow] {
+        guard let cores = world?.cpu.cores, !cores.isEmpty else {
+            return [.value(id: .cpuUnavailable, label: "CPU", value: "--", tint: .neutral)]
+        }
+        return cores.map { core in
+            let values = [core.currentPct, core.oneMinutePct, core.fiveMinutePct, core.fifteenMinutePct]
+            let display = values.map(Formatters.cpuPercentage)
+            let spoken = values.map { $0.map { "\($0) percent" } ?? "unavailable" }
+            return .cpuCore(
+                id: core.id,
+                detail: "Now \(display[0]) | 1m \(display[1]) | 5m \(display[2]) | 15m \(display[3])",
+                accessibilityValue: "Now \(spoken[0]), 1 minute \(spoken[1]), 5 minutes \(spoken[2]), 15 minutes \(spoken[3])",
+                tint: telemetryTint(Formatters.cpuWarning(for: core.oneMinutePct))
+            )
+        }
     }
 
     private static func storageRows(world: World?) -> [DebugRow] {
@@ -327,7 +351,7 @@ enum DebugScreen {
         return rows
     }
 
-    private static func tempTint(_ warning: TempWarning?) -> DebugTint {
+    private static func telemetryTint(_ warning: TelemetryWarning?) -> DebugTint {
         switch warning {
         case .warn:
             .warn

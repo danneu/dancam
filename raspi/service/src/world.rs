@@ -1,5 +1,6 @@
 use crate::{
     clips::ClipMeta,
+    cpu::Cpu,
     events::{Event, Snapshot, TimeStatus},
     recorder::{RecorderEvent, RecorderPhase, RecorderState, SegmentId, SessionId},
     sysfacts::{DiskUsage, MemInfo},
@@ -68,6 +69,7 @@ pub struct World {
     storage: Option<DiskUsage>,
     temp_c: TempC,
     mem: Option<MemInfo>,
+    cpu: Cpu,
     time_synced: bool,
 }
 
@@ -79,6 +81,7 @@ impl World {
             storage: None,
             temp_c: TempC::empty(),
             mem: None,
+            cpu: Cpu::empty(),
             time_synced: false,
         }
     }
@@ -93,6 +96,7 @@ impl World {
             storage: self.storage.clone(),
             temp_c: self.temp_c.clone(),
             mem: self.mem.clone(),
+            cpu: self.cpu.clone(),
             time: TimeStatus {
                 synced: self.time_synced,
             },
@@ -158,7 +162,8 @@ impl World {
                 storage,
                 soc_temp_c,
                 mem,
-            } => self.apply_telemetry(storage, soc_temp_c, mem),
+                cpu,
+            } => self.apply_telemetry(storage, soc_temp_c, mem, cpu),
             Input::SensorTemp { celsius } => self.apply_sensor_temp(celsius),
             Input::TimeSynced => {
                 if self.time_synced {
@@ -282,6 +287,7 @@ impl World {
         storage: Option<DiskUsage>,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
+        cpu: Cpu,
     ) -> Vec<Event> {
         let storage = storage.map(quantize_storage);
         let mut events = Vec::new();
@@ -312,6 +318,11 @@ impl World {
                     swap_used: mem.swap_used,
                 });
             }
+        }
+
+        if self.cpu != cpu {
+            self.cpu = cpu.clone();
+            events.push(Event::CpuChanged { cores: cpu.cores });
         }
 
         events
@@ -366,6 +377,7 @@ pub enum Input {
         storage: Option<DiskUsage>,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
+        cpu: Cpu,
     },
     SensorTemp {
         celsius: Option<f32>,
@@ -406,6 +418,7 @@ mod tests {
     use super::{CameraState, Input, TempC, TempReading, World, MEM_QUANTUM, STORAGE_QUANTUM};
     use crate::{
         clips::ClipMeta,
+        cpu::Cpu,
         events::Event,
         recorder::{RecorderEvent, RecorderPhase},
         sysfacts::{DiskUsage, MemInfo},
@@ -586,6 +599,7 @@ mod tests {
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
+                cpu: Cpu::empty(),
             },
             1000,
         );
@@ -644,6 +658,7 @@ mod tests {
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
+                cpu: Cpu::empty(),
             },
             1000,
         );
@@ -660,10 +675,59 @@ mod tests {
                         available: 256_999_500,
                         ..sample_mem()
                     }),
+                    cpu: Cpu::empty(),
                 },
                 1100,
             )
             .is_empty());
+    }
+
+    #[test]
+    fn cpu_replaces_full_slice_only_when_reported_value_changes() {
+        let mut world = World::new(CameraState::Running);
+        let baseline = Cpu {
+            cores: vec![crate::cpu::CpuCore {
+                id: 2,
+                current_pct: None,
+                one_minute_pct: None,
+                five_minute_pct: None,
+                fifteen_minute_pct: None,
+            }],
+        };
+        let input = |cpu| Input::Telemetry {
+            storage: None,
+            soc_temp_c: None,
+            mem: None,
+            cpu,
+        };
+        assert_eq!(
+            world.apply(input(baseline.clone()), 1),
+            vec![Event::CpuChanged {
+                cores: baseline.cores.clone()
+            }]
+        );
+        assert!(world.apply(input(baseline.clone()), 2).is_empty());
+        assert_eq!(world.snapshot("boot", 1).cpu, baseline);
+        let populated = Cpu {
+            cores: vec![crate::cpu::CpuCore {
+                id: 2,
+                current_pct: Some(50),
+                one_minute_pct: Some(50),
+                five_minute_pct: Some(50),
+                fifteen_minute_pct: Some(50),
+            }],
+        };
+        assert_eq!(
+            world.apply(input(populated.clone()), 3),
+            vec![Event::CpuChanged {
+                cores: populated.cores.clone()
+            }]
+        );
+        assert_eq!(
+            world.apply(input(Cpu::empty()), 4),
+            vec![Event::CpuChanged { cores: vec![] }]
+        );
+        assert_eq!(world.snapshot("boot", 1).cpu, Cpu::empty());
     }
 
     #[test]
@@ -674,6 +738,7 @@ mod tests {
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
+                cpu: Cpu::empty(),
             },
             1000,
         );
@@ -690,6 +755,7 @@ mod tests {
                         available: 17 * MEM_QUANTUM + 9,
                         ..sample_mem()
                     }),
+                    cpu: Cpu::empty(),
                 },
                 1100,
             ),
@@ -721,6 +787,7 @@ mod tests {
                     storage: None,
                     soc_temp_c: Some(current),
                     mem: None,
+                    cpu: Cpu::empty(),
                 },
                 1000,
             );
@@ -732,6 +799,7 @@ mod tests {
                     storage: None,
                     soc_temp_c: Some(51.5),
                     mem: None,
+                    cpu: Cpu::empty(),
                 },
                 1100,
             ),
@@ -796,6 +864,7 @@ mod tests {
                 storage: None,
                 soc_temp_c: Some(51.5),
                 mem: None,
+                cpu: Cpu::empty(),
             },
             1000,
         );
@@ -943,6 +1012,7 @@ mod tests {
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
+                cpu: Cpu::empty(),
             },
             1000,
         );

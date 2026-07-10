@@ -1,0 +1,7 @@
+{
+  "type": "cpu_changed",
+  "cores": [
+    { "id": 0, "current_pct": 98, "one_minute_pct": 74, "five_minute_pct": 52, "fifteen_minute_pct": 40 },
+    { "id": 2, "current_pct": null, "one_minute_pct": null, "five_minute_pct": null, "fifteen_minute_pct": null }
+  ]
+}

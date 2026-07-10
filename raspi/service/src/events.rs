@@ -9,6 +9,7 @@ use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::{
     clips::{resolve_segment, ClipMeta},
+    cpu::{Cpu, CpuCore, CpuSampler},
     recorder::{CurrentSegment, RecorderSnapshot},
     sysfacts::{DiskUsage, MemInfo},
     world::{CameraState, TempC, TempReading},
@@ -66,6 +67,9 @@ pub enum Event {
         swap_total: u64,
         swap_used: u64,
     },
+    CpuChanged {
+        cores: Vec<CpuCore>,
+    },
     TimeSynced {
         at_ms: u64,
     },
@@ -84,6 +88,7 @@ pub struct Snapshot {
     pub storage: Option<DiskUsage>,
     pub temp_c: TempC,
     pub mem: Option<MemInfo>,
+    pub cpu: Cpu,
     pub time: TimeStatus,
 }
 
@@ -136,12 +141,14 @@ pub fn spawn_telemetry(
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(interval);
+        let mut cpu_sampler = CpuSampler::new();
         loop {
             interval.tick().await;
             backend.update_telemetry(
                 crate::sysfacts::disk_usage(&rec_dir),
                 crate::sysfacts::soc_temp_c(),
                 crate::sysfacts::mem_info(),
+                cpu_sampler.sample(),
             );
         }
     });
@@ -187,6 +194,7 @@ mod tests {
     use super::{Event, Snapshot, TimeStatus};
     use crate::{
         clips::ClipMeta,
+        cpu::{Cpu, CpuCore},
         recorder::{CurrentSegment, RecorderPhase, RecorderSnapshot},
         sysfacts::{DiskUsage, MemInfo},
         world::{CameraState, TempC, TempReading},
@@ -241,6 +249,24 @@ mod tests {
                     swap_total: 134_217_728,
                     swap_used: 0,
                 }),
+                cpu: Cpu {
+                    cores: vec![
+                        CpuCore {
+                            id: 0,
+                            current_pct: Some(98),
+                            one_minute_pct: Some(74),
+                            five_minute_pct: Some(52),
+                            fifteen_minute_pct: Some(40),
+                        },
+                        CpuCore {
+                            id: 2,
+                            current_pct: Some(12),
+                            one_minute_pct: Some(20),
+                            five_minute_pct: Some(30),
+                            fifteen_minute_pct: Some(35),
+                        },
+                    ],
+                },
                 time: TimeStatus { synced: true },
             }),
             Event::RecordingStarting {
@@ -304,6 +330,24 @@ mod tests {
                 swap_total: 134_217_728,
                 swap_used: 0,
             },
+            Event::CpuChanged {
+                cores: vec![
+                    CpuCore {
+                        id: 0,
+                        current_pct: Some(98),
+                        one_minute_pct: Some(74),
+                        five_minute_pct: Some(52),
+                        fifteen_minute_pct: Some(40),
+                    },
+                    CpuCore {
+                        id: 2,
+                        current_pct: None,
+                        one_minute_pct: None,
+                        five_minute_pct: None,
+                        fifteen_minute_pct: None,
+                    },
+                ],
+            },
             Event::TimeSynced { at_ms: 7000 },
             Event::Heartbeat { t_ms: 12000 },
         ]
@@ -324,6 +368,7 @@ mod tests {
             Event::StorageChanged { .. } => "storage_changed",
             Event::TempChanged { .. } => "temp_changed",
             Event::MemChanged { .. } => "mem_changed",
+            Event::CpuChanged { .. } => "cpu_changed",
             Event::TimeSynced { .. } => "time_synced",
             Event::Heartbeat { .. } => "heartbeat",
         }

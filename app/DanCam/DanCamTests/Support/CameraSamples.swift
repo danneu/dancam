@@ -11,6 +11,7 @@ enum CameraSamples {
         storage: Storage? = Storage(used: 100, total: 1_000),
         tempC: TempC = TempC(),
         mem: Mem? = nil,
+        cpu: CPU = CPU(),
         uptimeS: UInt64 = 1,
         bootTag: String? = nil,
         time: TimeStatus? = TimeStatus(synced: true)
@@ -29,6 +30,7 @@ enum CameraSamples {
             storage: storage,
             tempC: tempC,
             mem: mem,
+            cpu: cpu,
             time: time
         )
     }

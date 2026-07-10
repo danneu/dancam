@@ -92,6 +92,8 @@ mock first.
       - [x] Deepening: Track max-since-service-start SoC and camera temperatures in
             the Pi world as `{current, max}` readings, and show both with independent
             warn/critical tints on Debug; the SoC row uses 70/80 C thresholds.
+      - [x] Deepening: Flow per-core current plus 1m/5m/15m CPU utilization from
+            `/proc/stat` through snapshot/delta events to full-width Debug rows.
       - [x] Started with polling `status`/`clips`; `pulse` replaced live state polling
             with snapshot-first `GET /v1/events`, while `/v1/status` and `/v1/clips`
             remain one-shot reads.
