@@ -178,13 +178,13 @@ nonisolated enum Formatters {
         count == 1 ? "1 clip" : "\(count) clips"
     }
 
-    static func driveCardTitle(start: Date?, end: Date?, timeZone: TimeZone = .current) -> String {
-        guard let start, let end else { return "Drive" }
+    static func recordingCardTitle(start: Date?, end: Date?, timeZone: TimeZone = .current) -> String {
+        guard let start, let end else { return "Recording" }
 
         return timeSpan(start: start, end: end, timeZone: timeZone)
     }
 
-    static func driveCardSubtitle(durationMs: UInt64?, clipCount count: Int) -> String {
+    static func recordingCardSubtitle(durationMs: UInt64?, clipCount count: Int) -> String {
         let duration = durationMs.map(compactDuration)
         return [duration, clipCount(count)].compactMap { $0 }.joined(separator: " · ")
     }

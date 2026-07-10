@@ -306,25 +306,41 @@ struct LiveRecordingStatusTests {
         #expect(live.id == 7)
     }
 
-    @Test func recordingDriveDerivesFreshnessFromStatusAndBootTag() {
+    @Test func recordingAttributionPairsBootTagWithFreshnessAndSession() {
         let clock = ContinuousClock()
-        let tickingSegment = ticking(sessionId: 7, id: 7, seedDurMs: 1_000, anchor: clock.now)
-        let frozenSegment = frozen(sessionId: 7, id: 7, durMs: 1_000)
+        let tickingSegment = ticking(sessionId: 5, id: 7, seedDurMs: 1_000, anchor: clock.now)
+        let frozenSegment = frozen(sessionId: 6, id: 7, durMs: 1_000)
+        let liveRecorder = RecorderTruth.live(recorder(session: 9, currentSegment: nil))
 
-        #expect(RecordingDrive.from(status: .pending, worldBootTag: nil) == nil)
-        #expect(RecordingDrive.from(status: .none, worldBootTag: "7f3a91c2b0d4") == nil)
-        #expect(RecordingDrive.from(
+        // No world boot tag, or a .none status -> no attribution regardless of recorder.
+        #expect(RecordingAttribution.from(status: .pending, worldBootTag: nil, recorder: liveRecorder) == nil)
+        #expect(RecordingAttribution.from(status: .none, worldBootTag: "7f3a91c2b0d4", recorder: liveRecorder) == nil)
+
+        // Pending pairs the world boot tag with the live recorder snapshot's session.
+        #expect(RecordingAttribution.from(
             status: .pending,
-            worldBootTag: "7f3a91c2b0d4"
-        ) == RecordingDrive(bootTag: "7f3a91c2b0d4", freshness: .live))
-        #expect(RecordingDrive.from(
+            worldBootTag: "7f3a91c2b0d4",
+            recorder: liveRecorder
+        ) == RecordingAttribution(id: RecordingID(bootTag: "7f3a91c2b0d4", session: 9), freshness: .live))
+
+        // A non-live recorder cannot source a session, so pending degrades to no attribution.
+        #expect(RecordingAttribution.from(
+            status: .pending,
+            worldBootTag: "7f3a91c2b0d4",
+            recorder: .unknown
+        ) == nil)
+
+        // Ticking/frozen pair the world boot tag with the live segment's own session.
+        #expect(RecordingAttribution.from(
             status: .live(tickingSegment),
-            worldBootTag: "7f3a91c2b0d4"
-        ) == RecordingDrive(bootTag: "7f3a91c2b0d4", freshness: .live))
-        #expect(RecordingDrive.from(
+            worldBootTag: "7f3a91c2b0d4",
+            recorder: liveRecorder
+        ) == RecordingAttribution(id: RecordingID(bootTag: "7f3a91c2b0d4", session: 5), freshness: .live))
+        #expect(RecordingAttribution.from(
             status: .live(frozenSegment),
-            worldBootTag: "7f3a91c2b0d4"
-        ) == RecordingDrive(bootTag: "7f3a91c2b0d4", freshness: .lastKnown))
+            worldBootTag: "7f3a91c2b0d4",
+            recorder: liveRecorder
+        ) == RecordingAttribution(id: RecordingID(bootTag: "7f3a91c2b0d4", session: 6), freshness: .lastKnown))
     }
 
     @Test func liveRecordingInputsUseLastKnownWorldBootTag() {

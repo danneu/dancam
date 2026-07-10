@@ -2,14 +2,14 @@ import UIKit
 
 nonisolated enum HomeRow: Equatable, Sendable {
     case finished(Clip)
-    case drive(DriveGroup)
+    case recording(RecordingGroup)
 
     var id: HomeRowID {
         switch self {
         case .finished(let clip):
             .finished(clip.id)
-        case .drive(let drive):
-            .drive(bootTag: drive.bootTag, occurrence: drive.occurrence)
+        case .recording(let recording):
+            .recording(recording: recording.recordingID, occurrence: recording.occurrence)
         }
     }
 
@@ -17,8 +17,8 @@ nonisolated enum HomeRow: Equatable, Sendable {
         switch self {
         case .finished(let clip):
             return clip
-        case .drive(let drive):
-            return drive.representative
+        case .recording(let recording):
+            return recording.representative
         }
     }
 
@@ -66,7 +66,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var dataSource: UITableViewDiffableDataSource<HomeSection, HomeRowID>!
 
     private var liveRecordingStatus: LiveRecordingStatus = .none
-    private var recordingDrive: RecordingDrive?
+    private var recordingAttribution: RecordingAttribution?
     private var finishedClips: [Clip] = []
     private var clipsStatus: ClipsFeature.State.Status = .idle
     private var clipsNextCursor: String?
@@ -385,7 +385,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                 )
                 return cell
 
-            case .drive(let drive):
+            case .recording(let recording):
                 guard let cell = tableView.dequeueReusableCell(
                     withIdentifier: "clipThumbnail",
                     for: indexPath
@@ -393,9 +393,9 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                     return UITableViewCell(style: .default, reuseIdentifier: nil)
                 }
                 cell.configure(
-                    drive: drive,
+                    recording: recording,
                     loader: self.dependencies.thumbnailLoader,
-                    preservedThumbnail: drive.representative
+                    preservedThumbnail: recording.representative
                         .map(ClipThumbnailIdentity.init)
                         .flatMap { self.preservedVisibleThumbnails[$0] }
                 )
@@ -468,7 +468,11 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             now: now
         )
         liveRecordingStatus = status
-        recordingDrive = RecordingDrive.from(status: status, worldBootTag: inputs.worldBootTag)
+        recordingAttribution = RecordingAttribution.from(
+            status: status,
+            worldBootTag: inputs.worldBootTag,
+            recorder: inputs.recorder
+        )
         liveRecordingWidget.configure(status: status, now: now)
 
         let shouldHide = status == .none
@@ -490,7 +494,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         let visibleThumbnails = visibleThumbnailImages()
         let newSections = HomeRow.composeSections(
             clips: finishedClips,
-            recordingDrive: recordingDrive,
+            recordingAttribution: recordingAttribution,
             today: wallNow(),
             calendar: currentCalendar()
         )
@@ -678,13 +682,13 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                 ClipViewerViewController(dependencies: dependencies, store: store, clip: clip),
                 animated: true
             )
-        case .drive(let drive):
+        case .recording(let recording):
             tableView.deselectRow(at: indexPath, animated: true)
             navigationController?.pushViewController(
-                DriveDetailViewController(
+                RecordingDetailViewController(
                     dependencies: dependencies,
                     store: store,
-                    bootTag: drive.bootTag,
+                    recordingID: recording.recordingID,
                     initialLiveSegment: liveRecordingStatus.liveSegment
                 ),
                 animated: true
@@ -851,8 +855,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             switch row {
             case .finished(let clip):
                 cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
-            case .drive(let drive):
-                cell.configure(drive: drive, loader: dependencies.thumbnailLoader)
+            case .recording(let recording):
+                cell.configure(recording: recording, loader: dependencies.thumbnailLoader)
             }
         }
     }
@@ -862,8 +866,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell
     }
 
-    func driveThumbnailCellForTesting(bootTag: String, occurrence: Int = 0) -> ClipThumbnailCell? {
-        guard let indexPath = dataSource.indexPath(for: .drive(bootTag: bootTag, occurrence: occurrence)) else {
+    func recordingThumbnailCellForTesting(recording: RecordingID, occurrence: Int = 0) -> ClipThumbnailCell? {
+        guard let indexPath = dataSource.indexPath(
+            for: .recording(recording: recording, occurrence: occurrence)
+        ) else {
             return nil
         }
         return clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell

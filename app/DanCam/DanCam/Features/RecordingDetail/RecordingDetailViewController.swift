@@ -1,25 +1,25 @@
 import UIKit
 
-private nonisolated enum DriveDetailSection: Hashable, Sendable {
+private nonisolated enum RecordingDetailSection: Hashable, Sendable {
     case clips
 }
 
-private nonisolated enum DriveDetailRow: Hashable, Sendable {
+private nonisolated enum RecordingDetailRow: Hashable, Sendable {
     case liveRecording
     case clip(Int)
 }
 
-final class DriveDetailViewController: UIViewController, UITableViewDelegate, UITableViewDataSourcePrefetching {
+final class RecordingDetailViewController: UIViewController, UITableViewDelegate, UITableViewDataSourcePrefetching {
     private let dependencies: AppDependencies
     private let store: AppStore
-    private let bootTag: String
+    private let recordingID: RecordingID
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let clock = ContinuousClock()
 
     private var liveRecordingObservation: StoreObservation?
     private var stateObservation: StoreObservation?
-    private var dataSource: UITableViewDiffableDataSource<DriveDetailSection, DriveDetailRow>!
-    private var state: DriveDetailState
+    private var dataSource: UITableViewDiffableDataSource<RecordingDetailSection, RecordingDetailRow>!
+    private var state: RecordingDetailState
     private var clips: [Clip] = []
     private var clipsByID: [Int: Clip] = [:]
     private var paginationTailID: Int?
@@ -34,13 +34,13 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
     init(
         dependencies: AppDependencies,
         store: AppStore,
-        bootTag: String,
+        recordingID: RecordingID,
         initialLiveSegment: LiveSegment? = nil
     ) {
         self.dependencies = dependencies
         self.store = store
-        self.bootTag = bootTag
-        state = DriveDetailState(allClips: [], nextCursor: nil, bootTag: bootTag)
+        self.recordingID = recordingID
+        state = RecordingDetailState(allClips: [], nextCursor: nil, recordingID: recordingID)
         // Seed the threaded `previous` so a detail pushed mid-segment counts elapsed up from
         // Home's running total instead of anchoring at 00:00 (segment_opened folds durMs: nil).
         liveRecordingStatus = initialLiveSegment.map(LiveRecordingStatus.live) ?? .none
@@ -49,30 +49,30 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("DriveDetailViewController is programmatic.")
+        fatalError("RecordingDetailViewController is programmatic.")
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = "Drive"
+        title = "Recording"
         view.backgroundColor = .systemBackground
         configureTable()
 
         // Register the live observation before the clips projection: `showsLiveRow` must be
-        // known before `handlePostApplyState` can decide an empty drive should pop, so a drive
-        // we are actively recording into with zero finished clips stays on screen.
+        // known before `handlePostApplyState` can decide an empty recording should pop, so a
+        // recording we are actively recording into with zero finished clips stays on screen.
         liveRecordingObservation = store.observe(select: LiveRecordingInputs.from) { [weak self] inputs in
             self?.renderLiveRecording(inputs)
         }
 
-        let bootTag = bootTag
+        let recordingID = recordingID
         stateObservation = store.observe(
             select: { appState in
-                DriveDetailState(
+                RecordingDetailState(
                     allClips: appState.clips.clips,
                     nextCursor: appState.clips.nextCursor,
-                    bootTag: bootTag
+                    recordingID: recordingID
                 )
             }
         ) { [weak self] state in
@@ -106,7 +106,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         tableView.alwaysBounceVertical = true
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
-        dataSource = UITableViewDiffableDataSource<DriveDetailSection, DriveDetailRow>(tableView: tableView) { [weak self] tableView, indexPath, row in
+        dataSource = UITableViewDiffableDataSource<RecordingDetailSection, RecordingDetailRow>(tableView: tableView) { [weak self] tableView, indexPath, row in
             guard let self else {
                 return UITableViewCell(style: .default, reuseIdentifier: nil)
             }
@@ -148,17 +148,17 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         ])
     }
 
-    private func render(_ newState: DriveDetailState) {
+    private func render(_ newState: RecordingDetailState) {
         let oldClips = clips
         let visibleThumbnails = visibleThumbnailImages()
-        let reconfigure = changedClipIDs(old: oldClips, new: newState.clips).map(DriveDetailRow.clip)
+        let reconfigure = changedClipIDs(old: oldClips, new: newState.clips).map(RecordingDetailRow.clip)
 
         hasLoadedClips = true
         state = newState
         clips = newState.clips
         clipsByID = Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0) })
         paginationTailID = clips.last?.id
-        title = driveTitle(for: clips)
+        title = recordingTitle(for: clips)
         prunePrefetches(surviving: Set(clips.map(ClipThumbnailIdentity.init)))
         preservedThumbnailGeneration += 1
         let thumbnailGeneration = preservedThumbnailGeneration
@@ -189,7 +189,11 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
             previous: liveRecordingStatus.liveSegment,
             now: now
         )
-        let showsLiveRow = RecordingDrive.from(status: status, worldBootTag: inputs.worldBootTag)?.bootTag == bootTag
+        let showsLiveRow = RecordingAttribution.from(
+            status: status,
+            worldBootTag: inputs.worldBootTag,
+            recorder: inputs.recorder
+        )?.id == recordingID
 
         // The stable `.liveRecording` identity means pending -> live, freeze/thaw, and segment
         // rolls are in-place reconfigures rather than row churn; force one whenever the rendered
@@ -199,7 +203,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         liveRecordingStatus = status
         self.showsLiveRow = showsLiveRow
 
-        let reconfigure: [DriveDetailRow] = wasShowing && showsLiveRow && statusChanged
+        let reconfigure: [RecordingDetailRow] = wasShowing && showsLiveRow && statusChanged
             ? [.liveRecording]
             : []
         dataSource.apply(
@@ -214,14 +218,14 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
     }
 
     private func makeSnapshot(
-        reconfigure: [DriveDetailRow]
-    ) -> NSDiffableDataSourceSnapshot<DriveDetailSection, DriveDetailRow> {
-        var snapshot = NSDiffableDataSourceSnapshot<DriveDetailSection, DriveDetailRow>()
+        reconfigure: [RecordingDetailRow]
+    ) -> NSDiffableDataSourceSnapshot<RecordingDetailSection, RecordingDetailRow> {
+        var snapshot = NSDiffableDataSourceSnapshot<RecordingDetailSection, RecordingDetailRow>()
         snapshot.appendSections([.clips])
         if showsLiveRow {
             snapshot.appendItems([.liveRecording], toSection: .clips)
         }
-        snapshot.appendItems(clips.map { DriveDetailRow.clip($0.id) }, toSection: .clips)
+        snapshot.appendItems(clips.map { RecordingDetailRow.clip($0.id) }, toSection: .clips)
         snapshot.reconfigureItems(reconfigure)
         return snapshot
     }
@@ -246,7 +250,7 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
                 store.send(.clips(.loadMore))
             } else if showsLiveRow == false {
                 // A live/pending row with zero finished clips is legitimate (fresh boot, or the
-                // user deleted everything mid-drive); only pop once recording stops.
+                // user deleted everything mid-recording); only pop once recording stops.
                 removeFromNavigationStack()
             }
             return
@@ -255,13 +259,13 @@ final class DriveDetailViewController: UIViewController, UITableViewDelegate, UI
         loadMoreIfVisibleTail()
     }
 
-    private func driveTitle(for clips: [Clip]) -> String {
+    private func recordingTitle(for clips: [Clip]) -> String {
         guard let start = clips.last?.resolvedStartDate,
               let end = clips.first?.resolvedStartDate else {
-            return "Drive"
+            return "Recording"
         }
 
-        return Formatters.driveCardTitle(start: start, end: end)
+        return Formatters.recordingCardTitle(start: start, end: end)
     }
 
     private func removeFromNavigationStack() {

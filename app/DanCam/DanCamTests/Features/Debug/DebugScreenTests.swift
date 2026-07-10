@@ -10,7 +10,7 @@ struct DebugScreenTests {
             tempC: TempC(soc: 51.2, sensor: 52.3),
             mem: Mem(total: 1_000_000, available: 400_000, swapTotal: 200_000, swapUsed: 100_000),
             uptimeS: 200_000,
-            bootTag: "drive-7",
+            bootTag: "boot-7",
             time: TimeStatus(synced: true)
         )
         world = World.folding(world, .segmentOpened(session: 7, id: 24, atMs: 5_000))
@@ -58,7 +58,7 @@ struct DebugScreenTests {
             tint: .warn
         ))
         #expect(try value(for: .bootID, in: sections) == "boot-123")
-        #expect(try value(for: .bootTag, in: sections) == "drive-7")
+        #expect(try value(for: .bootTag, in: sections) == "boot-7")
         #expect(try value(for: .uptime, in: sections) == "2d 7h 33m")
         #expect(try value(for: .time, in: sections) == "synced")
         #expect(sections.flatMap(\.rows).contains { $0.id == .banner } == false)

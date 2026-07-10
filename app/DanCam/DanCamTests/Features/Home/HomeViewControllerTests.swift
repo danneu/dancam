@@ -20,11 +20,11 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func driveCardUsesOnlyRepresentativeThumbnailForDisplayAndPrefetch() async throws {
+    func recordingCardUsesOnlyRepresentativeThumbnailForDisplayAndPrefetch() async throws {
         let probe = HomeLoaderProbe()
-        let oldest = driveClip(id: 1, bootTag: "boot-a")
-        let middle = driveClip(id: 2, bootTag: "boot-a")
-        let newest = driveClip(id: 3, bootTag: "boot-a")
+        let oldest = recordingClip(id: 1, bootTag: "boot-a")
+        let middle = recordingClip(id: 2, bootTag: "boot-a")
+        let newest = recordingClip(id: 3, bootTag: "boot-a")
         let (controller, store) = makeControllerAndStore(
             clips: [newest, middle, oldest],
             loader: probe.loader()
@@ -36,12 +36,12 @@ struct HomeViewControllerTests {
             probe.thumbnailIdentities() == [ClipThumbnailIdentity(oldest)]
         }
 
-        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
-        controller.tableView(UITableView(), prefetchRowsAt: [driveIndexPath])
+        let recordingIndexPath = try #require(controller.indexPathForTesting(rowID: .recording(recording: RecordingID(bootTag: "boot-a", session: 7), occurrence: 0)))
+        controller.tableView(UITableView(), prefetchRowsAt: [recordingIndexPath])
 
         #expect(probe.prefetchIdentities() == [ClipThumbnailIdentity(oldest)])
 
-        store.send(.clips(.clipFinalized(driveClip(id: 4, bootTag: "boot-a"))))
+        store.send(.clips(.clipFinalized(recordingClip(id: 4, bootTag: "boot-a"))))
         try await Task.sleep(for: .milliseconds(40))
 
         #expect(probe.thumbnailIdentities() == [ClipThumbnailIdentity(oldest)])
@@ -136,12 +136,12 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func paginationTriggersFromTailDriveRows() async throws {
+    func paginationTriggersFromTailRecordingRows() async throws {
         let fetchSpy = HomeFetchSpy()
         let controller = makeController(
             clips: [
-                driveClip(id: 10, bootTag: "boot-a"),
-                driveClip(id: 9, bootTag: "boot-a"),
+                recordingClip(id: 10, bootTag: "boot-a"),
+                recordingClip(id: 9, bootTag: "boot-a"),
             ],
             loader: .noop,
             clipsClient: fetchSpy.client(),
@@ -149,22 +149,22 @@ struct HomeViewControllerTests {
         )
         controller.loadViewIfNeeded()
 
-        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
-        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: driveIndexPath)
+        let recordingIndexPath = try #require(controller.indexPathForTesting(rowID: .recording(recording: RecordingID(bootTag: "boot-a", session: 7), occurrence: 0)))
+        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: recordingIndexPath)
 
         try await waitForCursors(fetchSpy, [Optional("8")])
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func pageAbsorbedByVisibleBottomDriveIssuesNextFetch() async throws {
+    func pageAbsorbedByVisibleBottomRecordingIssuesNextFetch() async throws {
         let fetchSpy = HomeFetchSpy(responses: [
-            ClipsResponse(clips: [driveClip(id: 8, bootTag: "boot-a")], serverTimeMs: nil, nextCursor: "7"),
+            ClipsResponse(clips: [recordingClip(id: 8, bootTag: "boot-a")], serverTimeMs: nil, nextCursor: "7"),
             ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil),
         ])
         let controller = makeController(
             clips: [
-                driveClip(id: 10, bootTag: "boot-a"),
-                driveClip(id: 9, bootTag: "boot-a"),
+                recordingClip(id: 10, bootTag: "boot-a"),
+                recordingClip(id: 9, bootTag: "boot-a"),
             ],
             loader: .noop,
             clipsClient: fetchSpy.client(),
@@ -173,45 +173,45 @@ struct HomeViewControllerTests {
         let window = try embed(controller)
         defer { window.isHidden = true }
 
-        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
-        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: driveIndexPath)
+        let recordingIndexPath = try #require(controller.indexPathForTesting(rowID: .recording(recording: RecordingID(bootTag: "boot-a", session: 7), occurrence: 0)))
+        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: recordingIndexPath)
 
         try await waitForCursors(fetchSpy, [Optional("8"), Optional("7")])
     }
 
-    @Test func tappingDriveCardPushesDriveDetail() throws {
+    @Test func tappingRecordingCardPushesRecordingDetail() throws {
         let controller = makeController(
             clips: [
-                driveClip(id: 10, bootTag: "boot-a"),
-                driveClip(id: 9, bootTag: "boot-a"),
+                recordingClip(id: 10, bootTag: "boot-a"),
+                recordingClip(id: 9, bootTag: "boot-a"),
             ],
             loader: .noop
         )
         let (window, navigationController) = try embedInNavigationController(controller)
         defer { window.isHidden = true }
 
-        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
-        controller.tableView(UITableView(), didSelectRowAt: driveIndexPath)
+        let recordingIndexPath = try #require(controller.indexPathForTesting(rowID: .recording(recording: RecordingID(bootTag: "boot-a", session: 7), occurrence: 0)))
+        controller.tableView(UITableView(), didSelectRowAt: recordingIndexPath)
 
-        #expect(navigationController.topViewController is DriveDetailViewController)
+        #expect(navigationController.topViewController is RecordingDetailViewController)
         #expect(navigationController.viewControllers.count == 2)
     }
 
-    @Test func driveCardSwipeHasNoActions() throws {
+    @Test func recordingCardSwipeHasNoActions() throws {
         let controller = makeController(
             clips: [
-                driveClip(id: 10, bootTag: "boot-a"),
-                driveClip(id: 9, bootTag: "boot-a"),
+                recordingClip(id: 10, bootTag: "boot-a"),
+                recordingClip(id: 9, bootTag: "boot-a"),
             ],
             loader: .noop
         )
         controller.loadViewIfNeeded()
 
-        let driveIndexPath = try #require(controller.indexPathForTesting(rowID: .drive(bootTag: "boot-a", occurrence: 0)))
+        let recordingIndexPath = try #require(controller.indexPathForTesting(rowID: .recording(recording: RecordingID(bootTag: "boot-a", session: 7), occurrence: 0)))
 
         #expect(controller.tableView(
             UITableView(),
-            trailingSwipeActionsConfigurationForRowAt: driveIndexPath
+            trailingSwipeActionsConfigurationForRowAt: recordingIndexPath
         ) == nil)
     }
 
@@ -588,14 +588,14 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func recordingDriveCardShowsRedPillAndClearsOnStop() async throws {
+    func recordingCardShowsRedPillAndClearsOnStop() async throws {
         let world = CameraSamples.world(
             phase: .recording,
             currentSegment: RecorderSegment(id: 24, durMs: 107_000),
             bootTag: "boot-a"
         )
         let (controller, store) = makeControllerAndStore(
-            clips: [driveClip(id: 10, bootTag: "boot-a")],
+            clips: [recordingClip(id: 10, bootTag: "boot-a")],
             loader: .noop,
             world: world,
             recording: .recording
@@ -604,7 +604,7 @@ struct HomeViewControllerTests {
         defer { window.isHidden = true }
 
         try await waitUntil {
-            guard let cell = controller.driveThumbnailCellForTesting(bootTag: "boot-a") else { return false }
+            guard let cell = controller.recordingThumbnailCellForTesting(recording: RecordingID(bootTag: "boot-a", session: 7)) else { return false }
             return cell.isRecordingPillVisibleForTesting &&
                 self.colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemRed)
         }
@@ -612,20 +612,20 @@ struct HomeViewControllerTests {
         store.send(.event(.recordingStopped(session: 7, atMs: 62_000)))
 
         try await waitUntil {
-            guard let cell = controller.driveThumbnailCellForTesting(bootTag: "boot-a") else { return false }
+            guard let cell = controller.recordingThumbnailCellForTesting(recording: RecordingID(bootTag: "boot-a", session: 7)) else { return false }
             return cell.isRecordingPillVisibleForTesting == false
         }
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func recordingDriveCardGraysWhenLinkDrops() async throws {
+    func recordingCardGraysWhenLinkDrops() async throws {
         let world = CameraSamples.world(
             phase: .recording,
             currentSegment: RecorderSegment(id: 24, durMs: 107_000),
             bootTag: "boot-a"
         )
         let (controller, store) = makeControllerAndStore(
-            clips: [driveClip(id: 10, bootTag: "boot-a")],
+            clips: [recordingClip(id: 10, bootTag: "boot-a")],
             loader: .noop,
             world: world,
             recording: .recording
@@ -634,21 +634,21 @@ struct HomeViewControllerTests {
         defer { window.isHidden = true }
 
         try await waitUntil {
-            guard let cell = controller.driveThumbnailCellForTesting(bootTag: "boot-a") else { return false }
+            guard let cell = controller.recordingThumbnailCellForTesting(recording: RecordingID(bootTag: "boot-a", session: 7)) else { return false }
             return self.colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemRed)
         }
 
         store.send(.heartbeatTimedOut)
 
         try await waitUntil {
-            guard let cell = controller.driveThumbnailCellForTesting(bootTag: "boot-a") else { return false }
+            guard let cell = controller.recordingThumbnailCellForTesting(recording: RecordingID(bootTag: "boot-a", session: 7)) else { return false }
             return cell.isRecordingPillVisibleForTesting &&
                 self.colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemGray)
         }
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func reconnectSnapshotWithNewBootTagMarksOnlyNewDriveCard() async throws {
+    func reconnectSnapshotWithNewBootTagMarksOnlyNewRecordingCard() async throws {
         let oldWorld = CameraSamples.world(phase: .idle, currentSegment: nil, bootTag: "old-boot")
         let newWorld = CameraSamples.world(
             phase: .recording,
@@ -657,8 +657,8 @@ struct HomeViewControllerTests {
         )
         let (controller, store) = makeControllerAndStore(
             clips: [
-                driveClip(id: 11, bootTag: "new-boot"),
-                driveClip(id: 10, bootTag: "old-boot"),
+                recordingClip(id: 11, bootTag: "new-boot"),
+                recordingClip(id: 10, bootTag: "old-boot"),
             ],
             loader: .noop,
             world: oldWorld,
@@ -672,15 +672,15 @@ struct HomeViewControllerTests {
         }
 
         try await waitUntil {
-            controller.driveThumbnailCellForTesting(bootTag: "new-boot") != nil &&
-                controller.driveThumbnailCellForTesting(bootTag: "old-boot") != nil
+            controller.recordingThumbnailCellForTesting(recording: RecordingID(bootTag: "new-boot", session: 7)) != nil &&
+                controller.recordingThumbnailCellForTesting(recording: RecordingID(bootTag: "old-boot", session: 7)) != nil
         }
 
         store.send(.event(.snapshot(newWorld)))
 
         try await waitUntil {
-            guard let newCell = controller.driveThumbnailCellForTesting(bootTag: "new-boot"),
-                  let oldCell = controller.driveThumbnailCellForTesting(bootTag: "old-boot") else {
+            guard let newCell = controller.recordingThumbnailCellForTesting(recording: RecordingID(bootTag: "new-boot", session: 7)),
+                  let oldCell = controller.recordingThumbnailCellForTesting(recording: RecordingID(bootTag: "old-boot", session: 7)) else {
                 return false
             }
 
@@ -1121,7 +1121,7 @@ struct HomeViewControllerTests {
         )
     }
 
-    private func driveClip(id: Int, bootTag: String) -> Clip {
+    private func recordingClip(id: Int, bootTag: String, session: UInt64 = 7) -> Clip {
         Clip(
             id: id,
             startMs: nil,
@@ -1130,7 +1130,8 @@ struct HomeViewControllerTests {
             locked: false,
             etag: "\(id)-\(id * 100)",
             timeApproximate: true,
-            bootTag: bootTag
+            bootTag: bootTag,
+            session: session
         )
     }
 

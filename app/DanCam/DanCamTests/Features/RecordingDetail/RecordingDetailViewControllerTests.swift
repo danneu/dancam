@@ -4,8 +4,10 @@ import UIKit
 @testable import DanCam
 
 @MainActor
-struct DriveDetailViewControllerTests {
-    @Test func rendersOnlyTheTargetDrive() {
+struct RecordingDetailViewControllerTests {
+    private let target = RecordingID(bootTag: "target", session: 7)
+
+    @Test func rendersOnlyTheTargetRecording() {
         let controller = makeController(clips: [
             clip(id: 12, bootTag: "target"),
             clip(id: 11, bootTag: "other"),
@@ -18,7 +20,7 @@ struct DriveDetailViewControllerTests {
         #expect(controller.clipIDsForTesting() == [12, 10])
     }
 
-    @Test func titleUsesFullDriveSpanAndUndatedFallback() {
+    @Test func titleUsesFullRecordingSpanAndUndatedFallback() {
         let newestStart = UInt64(1_767_231_420_000)
         let oldestStart = UInt64(1_767_225_720_000)
         let datedController = makeController(clips: [
@@ -28,7 +30,7 @@ struct DriveDetailViewControllerTests {
 
         datedController.loadViewIfNeeded()
 
-        #expect(datedController.title == Formatters.driveCardTitle(
+        #expect(datedController.title == Formatters.recordingCardTitle(
             start: Date(timeIntervalSince1970: Double(oldestStart) / 1_000),
             end: Date(timeIntervalSince1970: Double(newestStart) / 1_000)
         ))
@@ -39,11 +41,11 @@ struct DriveDetailViewControllerTests {
 
         undatedController.loadViewIfNeeded()
 
-        #expect(undatedController.title == "Drive")
+        #expect(undatedController.title == "Recording")
     }
 
     @Test func prefetchAndCancelRoutesThroughThumbnailLoader() throws {
-        let probe = DriveLoaderProbe()
+        let probe = RecordingLoaderProbe()
         let controller = makeController(
             clips: [clip(id: 12, bootTag: "target")],
             thumbnailLoader: probe.loader()
@@ -78,7 +80,7 @@ struct DriveDetailViewControllerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func swipeDeleteConfigurationAndConfirmedDeleteSendDeleteTapped() async throws {
-        let deleteSpy = DriveDeleteSpy()
+        let deleteSpy = RecordingDeleteSpy()
         let controller = makeController(
             clips: [clip(id: 12, bootTag: "target")],
             clipsClient: deleteSpy.client()
@@ -100,8 +102,8 @@ struct DriveDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func tailWillDisplayLoadsMoreOnlyWhenDriveCanLoadMore() async throws {
-        let blockedSpy = DriveFetchSpy()
+    func tailWillDisplayLoadsMoreOnlyWhenRecordingCanLoadMore() async throws {
+        let blockedSpy = RecordingFetchSpy()
         let blockedController = makeController(
             clips: [
                 clip(id: 12, bootTag: "target"),
@@ -117,7 +119,7 @@ struct DriveDetailViewControllerTests {
         try await Task.sleep(for: .milliseconds(40))
         #expect(await blockedSpy.requestedCursors() == [])
 
-        let fetchSpy = DriveFetchSpy()
+        let fetchSpy = RecordingFetchSpy()
         let loadingController = makeController(
             clips: [
                 clip(id: 12, bootTag: "target"),
@@ -136,7 +138,7 @@ struct DriveDetailViewControllerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func nilOnlyPageAdvancesFrontierAndTriggersTheNextLoad() async throws {
-        let fetchSpy = DriveFetchSpy(responses: [
+        let fetchSpy = RecordingFetchSpy(responses: [
             ClipsResponse(
                 clips: [clip(id: 11, bootTag: nil)],
                 serverTimeMs: nil,
@@ -169,7 +171,7 @@ struct DriveDetailViewControllerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func emptyButNotExhaustedKeepsControllerAndLoadsMore() async throws {
-        let fetchSpy = ParkedDriveFetchSpy()
+        let fetchSpy = ParkedRecordingFetchSpy()
         defer {
             Task {
                 await fetchSpy.releaseFetches()
@@ -196,7 +198,7 @@ struct DriveDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func exhaustedEmptyDrivePopsWhenTopmost() async throws {
+    func exhaustedEmptyRecordingPopsWhenTopmost() async throws {
         let (controller, store) = makeControllerAndStore(
             clips: [clip(id: 12, bootTag: "target")],
             nextCursor: nil
@@ -215,7 +217,7 @@ struct DriveDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func exhaustedEmptyDriveSplicesOutWhenNotTopmost() async throws {
+    func exhaustedEmptyRecordingSplicesOutWhenNotTopmost() async throws {
         let (controller, store) = makeControllerAndStore(
             clips: [clip(id: 12, bootTag: "target")],
             nextCursor: nil
@@ -236,7 +238,7 @@ struct DriveDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func finalizedClipForDriveAppearsAsNewTopRow() async throws {
+    func finalizedClipForRecordingAppearsAsNewTopRow() async throws {
         let (controller, store) = makeControllerAndStore(
             clips: [clip(id: 12, bootTag: "target")],
             nextCursor: nil
@@ -253,7 +255,7 @@ struct DriveDetailViewControllerTests {
     // MARK: Live recording row
 
     @Test(.timeLimit(.minutes(1)))
-    func currentDriveShowsLiveRowAtTop() async throws {
+    func currentRecordingShowsLiveRowAtTop() async throws {
         let controller = makeController(
             clips: [clip(id: 10, bootTag: "target")],
             world: CameraSamples.world(
@@ -274,13 +276,40 @@ struct DriveDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func otherDriveShowsNoLiveRow() async throws {
+    func otherRecordingShowsNoLiveRow() async throws {
         let controller = makeController(
             clips: [clip(id: 10, bootTag: "target")],
             world: CameraSamples.world(
                 phase: .recording,
                 currentSegment: RecorderSegment(id: 24, durMs: 107_000),
                 bootTag: "other"
+            ),
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.layoutTableForTesting()
+            return controller.clipThumbnailCellForTesting(clipID: 10) != nil
+        }
+
+        #expect(controller.isShowingLiveRowForTesting == false)
+        #expect(controller.liveRecordingCellForTesting() == nil)
+        #expect(controller.indexPathForTesting(clipID: 10) == IndexPath(row: 0, section: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func olderSessionOfRecordingBootShowsNoLiveRow() async throws {
+        // Detail is scoped to an older session (1) of a boot the recorder is now recording into
+        // under a newer session (7). Same boot, different session -> no live row.
+        let controller = makeController(
+            clips: [clip(id: 10, bootTag: "target", session: 1)],
+            recordingID: RecordingID(bootTag: "target", session: 1),
+            world: CameraSamples.world(
+                phase: .recording,
+                currentSegment: RecorderSegment(id: 24, durMs: 107_000),
+                bootTag: "target"
             ),
             recording: .recording
         )
@@ -403,7 +432,7 @@ struct DriveDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func openingCurrentDriveMidSegmentSeedsElapsedFromInitialLiveSegment() async throws {
+    func openingCurrentRecordingMidSegmentSeedsElapsedFromInitialLiveSegment() async throws {
         let seed = LiveSegment(
             sessionId: 7,
             id: 24,
@@ -429,7 +458,7 @@ struct DriveDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func exhaustedEmptyDriveStaysWhileRecordingIntoItThenPopsAfterStop() async throws {
+    func exhaustedEmptyRecordingStaysWhileRecordingIntoItThenPopsAfterStop() async throws {
         let (controller, store) = makeControllerAndStore(
             clips: [],
             nextCursor: nil,
@@ -461,15 +490,17 @@ struct DriveDetailViewControllerTests {
         clipsClient: ClipsClient = .noop,
         nextCursor: String? = nil,
         thumbnailLoader: ThumbnailLoader = .noop,
+        recordingID: RecordingID? = nil,
         world: World? = nil,
         recording: RecordingFeature.State = .unknown,
         initialLiveSegment: LiveSegment? = nil
-    ) -> DriveDetailViewController {
+    ) -> RecordingDetailViewController {
         makeControllerAndStore(
             clips: clips,
             clipsClient: clipsClient,
             nextCursor: nextCursor,
             thumbnailLoader: thumbnailLoader,
+            recordingID: recordingID,
             world: world,
             recording: recording,
             initialLiveSegment: initialLiveSegment
@@ -481,10 +512,11 @@ struct DriveDetailViewControllerTests {
         clipsClient: ClipsClient = .noop,
         nextCursor: String? = nil,
         thumbnailLoader: ThumbnailLoader = .noop,
+        recordingID: RecordingID? = nil,
         world: World? = nil,
         recording: RecordingFeature.State = .unknown,
         initialLiveSegment: LiveSegment? = nil
-    ) -> (DriveDetailViewController, AppStore) {
+    ) -> (RecordingDetailViewController, AppStore) {
         var state = AppFeature.State()
         state.clips.clips = clips
         state.clips.nextCursor = nextCursor
@@ -500,10 +532,10 @@ struct DriveDetailViewControllerTests {
         )
         let store = AppStore(initialState: state, dependencies: dependencies, reduce: AppFeature.reduce)
         return (
-            DriveDetailViewController(
+            RecordingDetailViewController(
                 dependencies: dependencies,
                 store: store,
-                bootTag: "target",
+                recordingID: recordingID ?? target,
                 initialLiveSegment: initialLiveSegment
             ),
             store
@@ -517,7 +549,7 @@ struct DriveDetailViewControllerTests {
         }
     }
 
-    private func liveCell(in controller: DriveDetailViewController) async throws -> LiveRecordingCell {
+    private func liveCell(in controller: RecordingDetailViewController) async throws -> LiveRecordingCell {
         try await waitUntil {
             controller.layoutTableForTesting()
             return controller.liveRecordingCellForTesting() != nil
@@ -547,14 +579,16 @@ struct DriveDetailViewControllerTests {
     private func clip(
         id: Int,
         bootTag: String?,
-        startMs: UInt64? = nil
+        startMs: UInt64? = nil,
+        session: UInt64? = 7
     ) -> Clip {
         CameraSamples.clip(
             id: id,
             startMs: startMs,
             durMs: 30_000,
             timeApproximate: startMs == nil,
-            bootTag: bootTag
+            bootTag: bootTag,
+            session: bootTag == nil ? nil : session
         )
     }
 
@@ -576,20 +610,20 @@ struct DriveDetailViewControllerTests {
         Issue.record("Timed out waiting for condition.")
     }
 
-    private func waitForCursors(_ spy: DriveFetchSpy, _ expected: [String?]) async throws {
+    private func waitForCursors(_ spy: RecordingFetchSpy, _ expected: [String?]) async throws {
         try await waitUntil {
             await spy.requestedCursors() == expected
         }
     }
 
-    private func waitForCursors(_ spy: ParkedDriveFetchSpy, _ expected: [String?]) async throws {
+    private func waitForCursors(_ spy: ParkedRecordingFetchSpy, _ expected: [String?]) async throws {
         try await waitUntil {
             await spy.requestedCursors() == expected
         }
     }
 }
 
-private actor DriveDeleteSpy {
+private actor RecordingDeleteSpy {
     private var ids: [Int] = []
 
     nonisolated func client() -> ClipsClient {
@@ -608,7 +642,7 @@ private actor DriveDeleteSpy {
     }
 }
 
-private actor DriveFetchSpy {
+private actor RecordingFetchSpy {
     private var cursors: [String?] = []
     private var responses: [ClipsResponse]
 
@@ -638,7 +672,7 @@ private actor DriveFetchSpy {
     }
 }
 
-private actor ParkedDriveFetchSpy {
+private actor ParkedRecordingFetchSpy {
     private var cursors: [String?] = []
     private let release = AsyncSignal()
 
@@ -667,7 +701,7 @@ private actor ParkedDriveFetchSpy {
     }
 }
 
-private final class DriveLoaderProbe: @unchecked Sendable {
+private final class RecordingLoaderProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var prefetched: [Int] = []
     private var cancels: [Int: Int] = [:]

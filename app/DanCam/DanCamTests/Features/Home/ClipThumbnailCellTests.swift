@@ -144,10 +144,10 @@ struct ClipThumbnailCellTests {
         #expect(cell.accessibilityLabel == "seg_00008.ts")
     }
 
-    @Test func configureClipResetsDriveAccessoryAndLabels() {
+    @Test func configureClipResetsRecordingAccessoryAndLabels() {
         let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
-        let drive = DriveGroup(
-            bootTag: "boot-a",
+        let recording = RecordingGroup(
+            recordingID: RecordingID(bootTag: "boot-a", session: 7),
             occurrence: 0,
             clips: [
                 clip(id: 8, startMs: nil, durMs: 30_000, bytes: 8, etag: "8-100", timeApproximate: true, bootTag: "boot-a"),
@@ -155,11 +155,11 @@ struct ClipThumbnailCellTests {
             ]
         )
 
-        cell.configure(drive: drive, loader: .noop)
+        cell.configure(recording: recording, loader: .noop)
         #expect(cell.accessoryType == .disclosureIndicator)
-        #expect(cell.titleTextForTesting == "Drive")
+        #expect(cell.titleTextForTesting == "Recording")
         #expect(cell.subtitleTextForTesting == "1m · 2 clips")
-        #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips")
+        #expect(cell.accessibilityLabel == "Recording, 1m · 2 clips")
 
         cell.configure(
             clip: clip(id: 9, startMs: nil, durMs: nil, bytes: 9, etag: "9-100", timeApproximate: false),
@@ -172,10 +172,10 @@ struct ClipThumbnailCellTests {
         #expect(cell.accessibilityLabel == "seg_00009.ts")
     }
 
-    @Test func configureDriveResetsClipAccessoryAndLabels() {
+    @Test func configureRecordingResetsClipAccessoryAndLabels() {
         let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
-        let drive = DriveGroup(
-            bootTag: "boot-a",
+        let recording = RecordingGroup(
+            recordingID: RecordingID(bootTag: "boot-a", session: 7),
             occurrence: 0,
             clips: [
                 clip(id: 8, startMs: nil, durMs: 30_000, bytes: 8, etag: "8-100", timeApproximate: true, bootTag: "boot-a"),
@@ -191,38 +191,38 @@ struct ClipThumbnailCellTests {
         #expect(cell.titleTextForTesting == "seg_00009.ts")
         #expect(cell.subtitleTextForTesting?.isEmpty == true)
 
-        cell.configure(drive: drive, loader: .noop)
+        cell.configure(recording: recording, loader: .noop)
 
         #expect(cell.accessoryType == .disclosureIndicator)
-        #expect(cell.titleTextForTesting == "Drive")
+        #expect(cell.titleTextForTesting == "Recording")
         #expect(cell.subtitleTextForTesting == "1m · 2 clips")
-        #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips")
+        #expect(cell.accessibilityLabel == "Recording, 1m · 2 clips")
     }
 
-    @Test func configureDriveShowsLiveRecordingPill() {
+    @Test func configureRecordingShowsLiveRecordingPill() {
         let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
 
-        cell.configure(drive: drive(recording: .live), loader: .noop)
+        cell.configure(recording: recordingGroup(recording: .live), loader: .noop)
 
         #expect(cell.isRecordingPillVisibleForTesting)
         #expect(colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemRed))
-        #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips, Recording")
+        #expect(cell.accessibilityLabel == "Recording, 1m · 2 clips, Recording")
     }
 
-    @Test func configureDriveShowsLastKnownRecordingPill() {
+    @Test func configureRecordingShowsLastKnownRecordingPill() {
         let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
 
-        cell.configure(drive: drive(recording: .lastKnown), loader: .noop)
+        cell.configure(recording: recordingGroup(recording: .lastKnown), loader: .noop)
 
         #expect(cell.isRecordingPillVisibleForTesting)
         #expect(colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemGray))
-        #expect(cell.accessibilityLabel == "Drive, 1m · 2 clips, Last known recording")
+        #expect(cell.accessibilityLabel == "Recording, 1m · 2 clips, Last known recording")
     }
 
     @Test func clipConfigureAndReuseHideRecordingPill() {
         let cell = ClipThumbnailCell(style: .default, reuseIdentifier: "c")
 
-        cell.configure(drive: drive(recording: .live), loader: .noop)
+        cell.configure(recording: recordingGroup(recording: .live), loader: .noop)
         #expect(cell.isRecordingPillVisibleForTesting)
 
         cell.configure(
@@ -233,7 +233,7 @@ struct ClipThumbnailCellTests {
         #expect(cell.isRecordingPillVisibleForTesting == false)
         #expect(cell.recordingPillForTesting.dotColorForTesting == nil)
 
-        cell.configure(drive: drive(recording: .live), loader: .noop)
+        cell.configure(recording: recordingGroup(recording: .live), loader: .noop)
         cell.prepareForReuse()
 
         #expect(cell.isRecordingPillVisibleForTesting == false)
@@ -243,9 +243,9 @@ struct ClipThumbnailCellTests {
 
     // MARK: - Helpers
 
-    private func drive(recording: RecordingDrive.Freshness?) -> DriveGroup {
-        DriveGroup(
-            bootTag: "boot-a",
+    private func recordingGroup(recording: RecordingAttribution.Freshness?) -> RecordingGroup {
+        RecordingGroup(
+            recordingID: RecordingID(bootTag: "boot-a", session: 7),
             occurrence: 0,
             clips: [
                 clip(id: 8, startMs: nil, durMs: 30_000, bytes: 8, etag: "8-100", timeApproximate: true, bootTag: "boot-a"),

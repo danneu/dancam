@@ -150,16 +150,21 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `18-2026-07-08-heartbeat-fresh-present-tense.md` -- present-tense UI claims require
   heartbeat-fresh state; stale recorder state stays typed and visually last-known rather
   than being extrapolated as live.
-- `19-2026-07-08-drive-grouped-clip-browsing.md` -- treat a drive boottag as the Home
-  browse unit for finished clips, with app-side drive cards, detail projections, stable
-  representative thumbnails, and per-clip deletion.
-- `20-2026-07-09-live-recording-surfaces-and-drive-attribution.md` -- move live/pending
-  recorder state to a widget under the Record button, a REC marker on the recording
-  drive's card, and a live row atop that drive's detail; snapshot-level nullable
-  `boot_tag` is the drive identity, read with recorder truth through one projection.
+- `19-2026-07-08-drive-grouped-clip-browsing.md` -- superseded by ADR 24; treated a
+  drive boottag as the Home browse unit for finished clips, with app-side drive cards,
+  detail projections, stable representative thumbnails, and per-clip deletion.
+- `20-2026-07-09-live-recording-surfaces-and-drive-attribution.md` -- superseded by ADR
+  24; moved live/pending recorder state to a widget under the Record button, a REC marker
+  on the recording drive's card, and a live row atop that drive's detail; snapshot-level
+  nullable `boot_tag` was the drive identity, read with recorder truth through one
+  projection.
 - `21-2026-07-09-status-strip-recording-pill.md` -- show connection and recording state
   together in the shell-owned dual-pill status strip.
 - `22-2026-07-09-tab-based-top-level-navigation.md` -- embed Home and Settings as
   independently navigable tabs below the global status strip.
 - `23-2026-07-09-debug-tab-sse-only-telemetry.md` -- add Debug as the middle tab,
   render it solely from the folded SSE world, and keep uptime heartbeat-fresh.
+- `24-2026-07-09-recording-grouped-clip-browsing-and-attribution.md` -- make a recording
+  `(boot_tag, session)` the Home browse unit, superseding the boot-keyed "drive" model of
+  ADRs 19/20; re-keys grouping, occurrences, detail, and REC attribution to `RecordingID`
+  and retires the "Drive" vocabulary from the active tree.

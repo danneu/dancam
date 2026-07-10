@@ -10,11 +10,11 @@ nonisolated struct HomeSectionModel: Equatable, Sendable {
     var rows: [HomeRow]
 }
 
-nonisolated struct DriveGroup: Equatable, Sendable {
-    var bootTag: String
+nonisolated struct RecordingGroup: Equatable, Sendable {
+    var recordingID: RecordingID
     var occurrence: Int
     var clips: [Clip]
-    var recording: RecordingDrive.Freshness? = nil
+    var recording: RecordingAttribution.Freshness? = nil
 
     var representative: Clip? {
         clips.last
@@ -59,13 +59,13 @@ private nonisolated enum HomeSectionBase: Hashable, Sendable {
 extension HomeRow {
     nonisolated static func composeSections(
         clips: [Clip],
-        recordingDrive: RecordingDrive?,
+        recordingAttribution: RecordingAttribution?,
         today _: Date,
         calendar: Calendar
     ) -> [HomeSectionModel] {
         let rows = clips.map(HomeRow.finished)
         var occurrenceCounts: [HomeSectionBase: Int] = [:]
-        var driveOccurrenceCounts: [String: Int] = [:]
+        var recordingOccurrenceCounts: [RecordingID: Int] = [:]
         var sections: [HomeSectionModel] = []
         var currentBase: HomeSectionBase?
         var currentRows: [HomeRow] = []
@@ -77,10 +77,10 @@ extension HomeRow {
             occurrenceCounts[currentBase] = occurrence + 1
             sections.append(HomeSectionModel(
                 id: currentBase.section(occurrence: occurrence),
-                rows: coalescedDriveRows(
+                rows: coalescedRecordingRows(
                     currentRows,
-                    recordingDrive: recordingDrive,
-                    driveOccurrenceCounts: &driveOccurrenceCounts
+                    recordingAttribution: recordingAttribution,
+                    recordingOccurrenceCounts: &recordingOccurrenceCounts
                 )
             ))
         }
@@ -94,8 +94,8 @@ extension HomeRow {
                 } else {
                     base = .dateUnknown
                 }
-            case .drive(let drive):
-                if let startDate = drive.startDate {
+            case .recording(let recording):
+                if let startDate = recording.startDate {
                     base = .day(calendar.startOfDay(for: startDate))
                 } else {
                     base = .dateUnknown
@@ -115,17 +115,17 @@ extension HomeRow {
         return sections
     }
 
-    private nonisolated static func coalescedDriveRows(
+    private nonisolated static func coalescedRecordingRows(
         _ rows: [HomeRow],
-        recordingDrive: RecordingDrive?,
-        driveOccurrenceCounts: inout [String: Int]
+        recordingAttribution: RecordingAttribution?,
+        recordingOccurrenceCounts: inout [RecordingID: Int]
     ) -> [HomeRow] {
         var output: [HomeRow] = []
         var index = rows.startIndex
 
         while index < rows.endIndex {
             guard case .finished(let firstClip) = rows[index],
-                  let bootTag = firstClip.bootTag else {
+                  let recordingID = firstClip.recordingID else {
                 output.append(rows[index])
                 index = rows.index(after: index)
                 continue
@@ -135,7 +135,7 @@ extension HomeRow {
             var scan = rows.index(after: index)
             while scan < rows.endIndex {
                 guard case .finished(let clip) = rows[scan],
-                      clip.bootTag == bootTag else {
+                      clip.recordingID == recordingID else {
                     break
                 }
 
@@ -143,13 +143,13 @@ extension HomeRow {
                 scan = rows.index(after: scan)
             }
 
-            let occurrence = driveOccurrenceCounts[bootTag, default: 0]
-            driveOccurrenceCounts[bootTag] = occurrence + 1
-            let recording = bootTag == recordingDrive?.bootTag && occurrence == 0
-                ? recordingDrive?.freshness
+            let occurrence = recordingOccurrenceCounts[recordingID, default: 0]
+            recordingOccurrenceCounts[recordingID] = occurrence + 1
+            let recording = recordingID == recordingAttribution?.id && occurrence == 0
+                ? recordingAttribution?.freshness
                 : nil
-            output.append(.drive(DriveGroup(
-                bootTag: bootTag,
+            output.append(.recording(RecordingGroup(
+                recordingID: recordingID,
                 occurrence: occurrence,
                 clips: clips,
                 recording: recording

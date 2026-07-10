@@ -39,7 +39,7 @@ enum CameraSamples {
         durMs: UInt64? = nil,
         timeApproximate: Bool = true,
         bootTag: String? = nil,
-        session: UInt64? = nil
+        session: UInt64? = 7
     ) -> Clip {
         Clip(
             id: id,

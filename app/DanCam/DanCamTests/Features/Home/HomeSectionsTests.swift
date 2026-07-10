@@ -59,7 +59,7 @@ struct HomeSectionsTests {
         ])
     }
 
-    @Test func stampedRunCollapsesToOneDriveCardWithNewestFirstClips() throws {
+    @Test func stampedRunCollapsesToOneRecordingCardWithNewestFirstClips() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
@@ -71,15 +71,15 @@ struct HomeSectionsTests {
             today: today,
             calendar: calendar
         )
-        let drive = try requireDrive(sections.first?.rows.first)
+        let recording = try requireRecording(sections.first?.rows.first)
 
-        #expect(sections.map(rowIDs) == [[.drive(bootTag: "boot-a", occurrence: 0)]])
-        #expect(drive.bootTag == "boot-a")
-        #expect(drive.clips.map(\.id) == [5, 4])
-        #expect(drive.representative?.id == 4)
+        #expect(sections.map(rowIDs) == [[.recording(recording: recordingID("boot-a"), occurrence: 0)]])
+        #expect(recording.recordingID == recordingID("boot-a"))
+        #expect(recording.clips.map(\.id) == [5, 4])
+        #expect(recording.representative?.id == 4)
     }
 
-    @Test func singleStampedClipIsStillADriveCard() throws {
+    @Test func singleStampedClipIsStillARecordingCard() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
@@ -89,10 +89,10 @@ struct HomeSectionsTests {
             calendar: calendar
         )
 
-        #expect(sections.map(rowIDs) == [[.drive(bootTag: "boot-a", occurrence: 0)]])
+        #expect(sections.map(rowIDs) == [[.recording(recording: recordingID("boot-a"), occurrence: 0)]])
     }
 
-    @Test func bareClipsStayFlatBetweenStampedDriveCards() throws {
+    @Test func bareClipsStayFlatBetweenStampedRecordingCards() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
@@ -107,9 +107,9 @@ struct HomeSectionsTests {
         )
 
         #expect(sections.map(rowIDs) == [[
-            .drive(bootTag: "boot-a", occurrence: 0),
+            .recording(recording: recordingID("boot-a"), occurrence: 0),
             .finished(5),
-            .drive(bootTag: "boot-a", occurrence: 1),
+            .recording(recording: recordingID("boot-a"), occurrence: 1),
         ]])
     }
 
@@ -127,12 +127,54 @@ struct HomeSectionsTests {
         )
 
         #expect(sections.map(rowIDs) == [[
-            .drive(bootTag: "boot-b", occurrence: 0),
-            .drive(bootTag: "boot-a", occurrence: 0),
+            .recording(recording: recordingID("boot-b"), occurrence: 0),
+            .recording(recording: recordingID("boot-a"), occurrence: 0),
         ]])
     }
 
-    @Test func midnightSpanningDriveUsesDistinctOccurrencesAcrossDaySections() throws {
+    @Test func sameBootTwoSessionsBecomeTwoRecordingCards() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 6, date: today, bootTag: "boot-a", session: 2),
+                stampedDatedClip(id: 5, date: today, bootTag: "boot-a", session: 1),
+            ],
+            today: today,
+            calendar: calendar
+        )
+
+        // One boot, two sessions: two separate cards, each occurrence 0 of its own RecordingID.
+        #expect(sections.map(rowIDs) == [[
+            .recording(recording: recordingID("boot-a", session: 2), occurrence: 0),
+            .recording(recording: recordingID("boot-a", session: 1), occurrence: 0),
+        ]])
+    }
+
+    @Test func partialIdentityClipStaysUngroupedFinishedRow() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        // A clip with a non-nil bootTag but nil session (recordingID == nil) is not a recording:
+        // it stays an ordinary finished row and does not coalesce with the adjacent same-bootTag
+        // stamped clip -- pinning the all-or-nothing degrade.
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 6, date: today, bootTag: "boot-a"),
+                partialIdentityClip(id: 5, date: today, bootTag: "boot-a"),
+            ],
+            today: today,
+            calendar: calendar
+        )
+
+        #expect(sections.map(rowIDs) == [[
+            .recording(recording: recordingID("boot-a"), occurrence: 0),
+            .finished(5),
+        ]])
+    }
+
+    @Test func midnightSpanningRecordingUsesDistinctOccurrencesAcrossDaySections() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let jan3 = try date(year: 2026, month: 1, day: 3, hour: 0, minute: 1, calendar: calendar)
         let jan2 = try date(year: 2026, month: 1, day: 2, hour: 23, minute: 59, calendar: calendar)
@@ -150,13 +192,15 @@ struct HomeSectionsTests {
             .day(startOfDay: calendar.startOfDay(for: jan3), occurrence: 0),
             .day(startOfDay: calendar.startOfDay(for: jan2), occurrence: 0),
         ])
+        // The same RecordingID split across two day sections gets distinct per-RecordingID
+        // occurrences, so each card keeps a stable identity.
         #expect(sections.map(rowIDs) == [
-            [.drive(bootTag: "boot-a", occurrence: 0)],
-            [.drive(bootTag: "boot-a", occurrence: 1)],
+            [.recording(recording: recordingID("boot-a"), occurrence: 0)],
+            [.recording(recording: recordingID("boot-a"), occurrence: 1)],
         ])
     }
 
-    @Test func recordingDriveMarksOnlyNewestOccurrence() throws {
+    @Test func recordingAttributionMarksOnlyNewestOccurrence() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let jan3 = try date(year: 2026, month: 1, day: 3, hour: 0, minute: 1, calendar: calendar)
         let jan2 = try date(year: 2026, month: 1, day: 2, hour: 23, minute: 59, calendar: calendar)
@@ -166,41 +210,69 @@ struct HomeSectionsTests {
                 stampedDatedClip(id: 6, date: jan3, bootTag: "boot-a"),
                 stampedDatedClip(id: 5, date: jan2, bootTag: "boot-a"),
             ],
-            recordingDrive: RecordingDrive(bootTag: "boot-a", freshness: .live),
+            recordingAttribution: RecordingAttribution(id: recordingID("boot-a"), freshness: .live),
             today: jan3,
             calendar: calendar
         )
 
-        let newestDrive = try requireDrive(sections.first?.rows.first)
-        let olderDrive = try requireDrive(sections.last?.rows.first)
-        #expect(newestDrive.recording == .live)
-        #expect(olderDrive.recording == nil)
+        let newestRecording = try requireRecording(sections.first?.rows.first)
+        let olderRecording = try requireRecording(sections.last?.rows.first)
+        #expect(newestRecording.recording == .live)
+        #expect(olderRecording.recording == nil)
     }
 
-    @Test func recordingDriveDoesNotMarkTagMismatchOrNilAttribution() throws {
+    @Test func recordingAttributionMarksOnlySessionMatchingCard() throws {
+        let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
+        let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
+
+        let sections = compose(
+            clips: [
+                stampedDatedClip(id: 6, date: today, bootTag: "boot-a", session: 2),
+                stampedDatedClip(id: 5, date: today, bootTag: "boot-a", session: 1),
+            ],
+            recordingAttribution: RecordingAttribution(
+                id: recordingID("boot-a", session: 2),
+                freshness: .live
+            ),
+            today: today,
+            calendar: calendar
+        )
+        let rows = sections.first?.rows ?? []
+        let recordingSession = try requireRecording(rows.first)
+        let otherSession = try requireRecording(rows.last)
+
+        // REC attaches only to the session actually being recorded, not the same boot's other
+        // session.
+        #expect(recordingSession.recordingID == recordingID("boot-a", session: 2))
+        #expect(recordingSession.recording == .live)
+        #expect(otherSession.recordingID == recordingID("boot-a", session: 1))
+        #expect(otherSession.recording == nil)
+    }
+
+    @Test func recordingAttributionDoesNotMarkTagMismatchOrNilAttribution() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
         let mismatch = compose(
             clips: [stampedDatedClip(id: 5, date: today, bootTag: "boot-a")],
-            recordingDrive: RecordingDrive(bootTag: "boot-b", freshness: .live),
+            recordingAttribution: RecordingAttribution(id: recordingID("boot-b"), freshness: .live),
             today: today,
             calendar: calendar
         )
         let nilAttribution = compose(
             clips: [stampedDatedClip(id: 5, date: today, bootTag: "boot-a")],
-            recordingDrive: nil,
+            recordingAttribution: nil,
             today: today,
             calendar: calendar
         )
-        let mismatchDrive = try requireDrive(mismatch.first?.rows.first)
-        let nilAttributionDrive = try requireDrive(nilAttribution.first?.rows.first)
+        let mismatchRecording = try requireRecording(mismatch.first?.rows.first)
+        let nilAttributionRecording = try requireRecording(nilAttribution.first?.rows.first)
 
-        #expect(mismatchDrive.recording == nil)
-        #expect(nilAttributionDrive.recording == nil)
+        #expect(mismatchRecording.recording == nil)
+        #expect(nilAttributionRecording.recording == nil)
     }
 
-    @Test func undatedStampedDriveGroupsInDateUnknown() throws {
+    @Test func undatedStampedRecordingGroupsInDateUnknown() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
@@ -214,7 +286,7 @@ struct HomeSectionsTests {
         )
 
         #expect(sections.map(\.id) == [.dateUnknown(occurrence: 0)])
-        #expect(sections.map(rowIDs) == [[.drive(bootTag: "boot-a", occurrence: 0)]])
+        #expect(sections.map(rowIDs) == [[.recording(recording: recordingID("boot-a"), occurrence: 0)]])
     }
 
     @Test func splitRunsUseDistinctOccurrences() throws {
@@ -285,7 +357,7 @@ struct HomeSectionsTests {
         #expect(newBottomIDs == oldBottomIDs)
     }
 
-    @Test func driveOccurrencesAreStableAcrossSameDrivePrependAndAppend() throws {
+    @Test func recordingOccurrencesAreStableAcrossSameRecordingPrependAndAppend() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
         let earlier = try date(year: 2026, month: 1, day: 3, hour: 11, calendar: calendar)
@@ -321,7 +393,7 @@ struct HomeSectionsTests {
         #expect(newBottomIDs == oldBottomIDs)
     }
 
-    @Test func mixedDurationDriveOmitsAggregateDuration() throws {
+    @Test func mixedDurationRecordingOmitsAggregateDuration() throws {
         let calendar = gregorianCalendar(timeZone: try timeZone(secondsFromGMT: 0))
         let today = try date(year: 2026, month: 1, day: 3, hour: 12, calendar: calendar)
 
@@ -333,10 +405,13 @@ struct HomeSectionsTests {
             today: today,
             calendar: calendar
         )
-        let drive = try requireDrive(sections.first?.rows.first)
+        let recording = try requireRecording(sections.first?.rows.first)
 
-        #expect(drive.totalDurMs == nil)
-        #expect(Formatters.driveCardSubtitle(durationMs: drive.totalDurMs, clipCount: drive.clipCount) == "2 clips")
+        #expect(recording.totalDurMs == nil)
+        #expect(Formatters.recordingCardSubtitle(
+            durationMs: recording.totalDurMs,
+            clipCount: recording.clipCount
+        ) == "2 clips")
     }
 
     @Test func calendarTimeZoneControlsDayBoundaries() throws {
@@ -378,13 +453,13 @@ struct HomeSectionsTests {
 
     private func compose(
         clips: [Clip],
-        recordingDrive: RecordingDrive? = nil,
+        recordingAttribution: RecordingAttribution? = nil,
         today: Date,
         calendar: Calendar
     ) -> [HomeSectionModel] {
         HomeRow.composeSections(
             clips: clips,
-            recordingDrive: recordingDrive,
+            recordingAttribution: recordingAttribution,
             today: today,
             calendar: calendar
         )
@@ -392,6 +467,10 @@ struct HomeSectionsTests {
 
     private func rowIDs(_ section: HomeSectionModel) -> [HomeRowID] {
         section.rows.map(\.id)
+    }
+
+    private func recordingID(_ bootTag: String, session: UInt64 = 7) -> RecordingID {
+        RecordingID(bootTag: bootTag, session: session)
     }
 
     private func datedClip(id: Int, date: Date) -> Clip {
@@ -418,28 +497,43 @@ struct HomeSectionsTests {
         id: Int,
         date: Date,
         durMs: UInt64? = 30_000,
-        bootTag: String
+        bootTag: String,
+        session: UInt64 = 7
     ) -> Clip {
         CameraSamples.clip(
             id: id,
             startMs: UInt64((date.timeIntervalSince1970 * 1_000).rounded()),
             durMs: durMs,
             timeApproximate: false,
-            bootTag: bootTag
+            bootTag: bootTag,
+            session: session
         )
     }
 
-    private func stampedUndatedClip(id: Int, bootTag: String) -> Clip {
-        CameraSamples.clip(id: id, durMs: 30_000, bootTag: bootTag)
+    private func stampedUndatedClip(id: Int, bootTag: String, session: UInt64 = 7) -> Clip {
+        CameraSamples.clip(id: id, durMs: 30_000, bootTag: bootTag, session: session)
     }
 
-    private func requireDrive(_ row: HomeRow?) throws -> DriveGroup {
+    /// A clip with stamped bootTag but no session -- the all-or-nothing degrade: `recordingID`
+    /// is nil, so it never groups.
+    private func partialIdentityClip(id: Int, date: Date, bootTag: String) -> Clip {
+        CameraSamples.clip(
+            id: id,
+            startMs: UInt64((date.timeIntervalSince1970 * 1_000).rounded()),
+            durMs: 30_000,
+            timeApproximate: false,
+            bootTag: bootTag,
+            session: nil
+        )
+    }
+
+    private func requireRecording(_ row: HomeRow?) throws -> RecordingGroup {
         let row = try #require(row)
-        guard case .drive(let drive) = row else {
-            Issue.record("Expected a drive row.")
-            return DriveGroup(bootTag: "", occurrence: -1, clips: [])
+        guard case .recording(let recording) = row else {
+            Issue.record("Expected a recording row.")
+            return RecordingGroup(recordingID: RecordingID(bootTag: "", session: 0), occurrence: -1, clips: [])
         }
-        return drive
+        return recording
     }
 
     private func gregorianCalendar(timeZone: TimeZone) -> Calendar {

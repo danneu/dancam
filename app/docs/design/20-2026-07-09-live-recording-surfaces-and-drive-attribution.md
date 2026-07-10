@@ -1,6 +1,6 @@
 # ADR: live-recording surfaces and drive attribution
 
-- **Status:** Accepted
+- **Status:** Superseded by 24-2026-07-09-recording-grouped-clip-browsing-and-attribution.md
 - **Date:** 2026-07-09
 - **Owner:** app
 - **Related:** `17-2026-07-02-selector-observation-and-view-state.md`;

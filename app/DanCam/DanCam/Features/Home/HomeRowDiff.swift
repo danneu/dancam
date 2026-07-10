@@ -2,7 +2,7 @@ import Foundation
 
 nonisolated enum HomeRowID: Hashable, Sendable {
     case finished(Int)
-    case drive(bootTag: String, occurrence: Int)
+    case recording(recording: RecordingID, occurrence: Int)
 }
 
 nonisolated enum HomeRowDiff {

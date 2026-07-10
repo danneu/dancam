@@ -1,6 +1,6 @@
 # ADR: drive-grouped clip browsing
 
-- **Status:** Accepted
+- **Status:** Superseded by 24-2026-07-09-recording-grouped-clip-browsing-and-attribution.md
 - **Date:** 2026-07-08
 - **Owner:** app
 - **Related:** `02-2026-06-22-app-pi-transport-and-api.md`;

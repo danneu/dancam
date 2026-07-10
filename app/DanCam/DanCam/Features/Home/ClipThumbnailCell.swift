@@ -97,20 +97,23 @@ final class ClipThumbnailCell: UITableViewCell {
         configureThumbnail(clip: clip, loader: loader, preservedThumbnail: preservedThumbnail)
     }
 
-    func configure(drive: DriveGroup, loader: ThumbnailLoader, preservedThumbnail: UIImage? = nil) {
+    func configure(recording: RecordingGroup, loader: ThumbnailLoader, preservedThumbnail: UIImage? = nil) {
         accessoryType = .disclosureIndicator
-        configureRecordingPill(drive.recording)
-        titleLabel.text = Formatters.driveCardTitle(start: drive.startDate, end: drive.endDate)
-        let subtitle = Formatters.driveCardSubtitle(durationMs: drive.totalDurMs, clipCount: drive.clipCount)
+        configureRecordingPill(recording.recording)
+        titleLabel.text = Formatters.recordingCardTitle(start: recording.startDate, end: recording.endDate)
+        let subtitle = Formatters.recordingCardSubtitle(
+            durationMs: recording.totalDurMs,
+            clipCount: recording.clipCount
+        )
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle.isEmpty
         accessibilityLabel = cellAccessibilityLabel(
             title: titleLabel.text,
             subtitle: subtitle,
-            recording: drive.recording
+            recording: recording.recording
         )
 
-        guard let representative = drive.representative else {
+        guard let representative = recording.representative else {
             cancelLoad()
             displayState.clear()
             resetToPlaceholder()
@@ -225,7 +228,7 @@ final class ClipThumbnailCell: UITableViewCell {
         thumbnailView.image = nil
     }
 
-    private func configureRecordingPill(_ freshness: RecordingDrive.Freshness?) {
+    private func configureRecordingPill(_ freshness: RecordingAttribution.Freshness?) {
         guard let freshness else {
             recordingPill.configure(caption: "REC", dotColor: nil)
             recordingPill.isHidden = true
@@ -251,7 +254,7 @@ final class ClipThumbnailCell: UITableViewCell {
     private func cellAccessibilityLabel(
         title: String?,
         subtitle: String,
-        recording: RecordingDrive.Freshness?
+        recording: RecordingAttribution.Freshness?
     ) -> String {
         let recordingLabel: String?
         switch recording {

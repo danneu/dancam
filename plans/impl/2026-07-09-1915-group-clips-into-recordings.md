@@ -697,6 +697,22 @@ End-to-end mock check (after commit 3):
   assertion proves real decoding, not a coincidental match. Same pattern as the raspi
   side extending `read_finished_clips_reports_boot_tag_for_stamped_segments_only` in place.
 
+### Commit 3
+
+- **`CameraSamples.clip` default session lifted from nil to 7.** The plan's partial-
+  identity note says the shared test helpers "default it to 7" so stamped clips pair with
+  `CameraSamples.world`'s recorder session 7. Commit 2 introduced the factory param as
+  `session: UInt64? = nil`; Commit 3 changes that default to `7`, so every `bootTag`-bearing
+  test clip forms a `RecordingID(bootTag, 7)` without each call site spelling out the
+  session, while the partial-identity case passes `session: nil` explicitly. Bare clips
+  (nil `bootTag`) stay ungrouped regardless, since `recordingID` requires both facts.
+- **Two un-enumerated fixture renames to keep the "drive" sweep clean.** The plan's
+  intentional-survivors re-sweep must leave only documented hits. Two active-tree tokens
+  the rename table did not list were renamed rather than left as stray "drive" hits: the
+  opaque `DebugScreenTests` bootTag fixture `"drive-7"` -> `"boot-7"`, and the
+  `HomeViewControllerTests` local vars `driveIndexPath` -> `recordingIndexPath`. Neither
+  names the browse-unit concept; both just carried the old word.
+
 ## Follow Up
 
 - **Operator cleanup (manual, not committed) -- do after landing Commit 1.** Clear the
@@ -710,4 +726,4 @@ End-to-end mock check (after commit 3):
 ## Commit progress
 - [x] 1. feat(raspi): stamp recorder session into segment filenames
 - [x] 2. feat(contract): carry recorder session on finished clips
-- [ ] 3. feat(app): group and attribute clips by recording, not boot
+- [x] 3. feat(app): group and attribute clips by recording, not boot

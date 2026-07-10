@@ -330,22 +330,22 @@ struct FormattersTests {
         }
     }
 
-    @Test func driveCardTitleUsesSpanOrUndatedFallback() throws {
+    @Test func recordingCardTitleUsesSpanOrUndatedFallback() throws {
         let utc = try #require(TimeZone(secondsFromGMT: 0))
         let calendar = gregorianCalendar(timeZone: utc)
         let start = try date(2026, 1, 1, hour: 14, minute: 2, calendar: calendar)
         let end = try date(2026, 1, 1, hour: 15, minute: 37, calendar: calendar)
 
-        #expect(Formatters.driveCardTitle(start: start, end: end, timeZone: utc) == "14:02 - 15:37")
-        #expect(Formatters.driveCardTitle(start: nil, end: end, timeZone: utc) == "Drive")
-        #expect(Formatters.driveCardTitle(start: start, end: nil, timeZone: utc) == "Drive")
-        #expect(Formatters.driveCardTitle(start: nil, end: nil, timeZone: utc) == "Drive")
+        #expect(Formatters.recordingCardTitle(start: start, end: end, timeZone: utc) == "14:02 - 15:37")
+        #expect(Formatters.recordingCardTitle(start: nil, end: end, timeZone: utc) == "Recording")
+        #expect(Formatters.recordingCardTitle(start: start, end: nil, timeZone: utc) == "Recording")
+        #expect(Formatters.recordingCardTitle(start: nil, end: nil, timeZone: utc) == "Recording")
     }
 
-    @Test func driveCardSubtitleOmitsUnknownDurationAndFormatsClipCount() {
-        #expect(Formatters.driveCardSubtitle(durationMs: 4_860_000, clipCount: 163) == "1h 21m · 163 clips")
-        #expect(Formatters.driveCardSubtitle(durationMs: nil, clipCount: 3) == "3 clips")
-        #expect(Formatters.driveCardSubtitle(durationMs: 30_000, clipCount: 1) == "30s · 1 clip")
+    @Test func recordingCardSubtitleOmitsUnknownDurationAndFormatsClipCount() {
+        #expect(Formatters.recordingCardSubtitle(durationMs: 4_860_000, clipCount: 163) == "1h 21m · 163 clips")
+        #expect(Formatters.recordingCardSubtitle(durationMs: nil, clipCount: 3) == "3 clips")
+        #expect(Formatters.recordingCardSubtitle(durationMs: 30_000, clipCount: 1) == "30s · 1 clip")
     }
 
     private func clip(

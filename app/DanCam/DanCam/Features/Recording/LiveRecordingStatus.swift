@@ -153,26 +153,37 @@ nonisolated enum LiveRecordingStatus: Equatable, Sendable {
     }
 }
 
-nonisolated struct RecordingDrive: Equatable, Sendable {
+nonisolated struct RecordingAttribution: Equatable, Sendable {
     enum Freshness: Equatable, Sendable {
         case live
         case lastKnown
     }
 
-    var bootTag: String
+    var id: RecordingID
     var freshness: Freshness
 
-    static func from(status: LiveRecordingStatus, worldBootTag: String?) -> Self? {
+    static func from(
+        status: LiveRecordingStatus,
+        worldBootTag: String?,
+        recorder: RecorderTruth
+    ) -> Self? {
         guard let worldBootTag else { return nil }
 
         switch status {
         case .none:
             return nil
         case .pending:
-            return RecordingDrive(bootTag: worldBootTag, freshness: .live)
+            // `shouldShowPending` already guarantees a live recorder here; guard defensively
+            // for the session so a non-live truth degrades to no attribution rather than a
+            // misattributed recording.
+            guard case .live(let snapshot) = recorder else { return nil }
+            return RecordingAttribution(
+                id: RecordingID(bootTag: worldBootTag, session: snapshot.session),
+                freshness: .live
+            )
         case .live(let segment):
-            return RecordingDrive(
-                bootTag: worldBootTag,
+            return RecordingAttribution(
+                id: RecordingID(bootTag: worldBootTag, session: segment.sessionId),
                 freshness: segment.isTicking ? .live : .lastKnown
             )
         }
