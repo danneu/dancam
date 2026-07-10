@@ -74,20 +74,40 @@ final class DebugViewController: UIViewController {
     private func makeDataSource() -> UICollectionViewDiffableDataSource<DebugSectionID, DebugRowID> {
         let valueRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, DebugRowID> { [weak self] cell, _, id in
             guard let row = self?.renderedRows[id],
-                  case .value(_, let label, let value, let tint) = row
+                  case .value(_, let label, let value, let tint, let detail, let detailTint) = row
             else { return }
 
             var content = UIListContentConfiguration.valueCell()
             content.text = label
-            content.secondaryText = value
             content.textProperties.adjustsFontForContentSizeCategory = true
             content.secondaryTextProperties.adjustsFontForContentSizeCategory = true
             let valueFont = id == .value(.bootID)
                 ? UIFont.monospacedSystemFont(ofSize: 17, weight: .regular)
                 : UIFont.monospacedDigitSystemFont(ofSize: 17, weight: .regular)
-            content.secondaryTextProperties.font = UIFontMetrics(forTextStyle: .body)
-                .scaledFont(for: valueFont)
-            content.secondaryTextProperties.color = tint.color(default: .secondaryLabel)
+            let scaledValueFont = UIFontMetrics(forTextStyle: .body).scaledFont(for: valueFont)
+
+            if let detail {
+                let text = "\(value) \(detail)"
+                let attributedText = NSMutableAttributedString(
+                    string: text,
+                    attributes: [.font: scaledValueFont]
+                )
+                attributedText.addAttribute(
+                    .foregroundColor,
+                    value: tint.color(default: .secondaryLabel),
+                    range: NSRange(location: 0, length: value.utf16.count)
+                )
+                attributedText.addAttribute(
+                    .foregroundColor,
+                    value: detailTint.color(default: .secondaryLabel),
+                    range: NSRange(location: value.utf16.count + 1, length: detail.utf16.count)
+                )
+                content.secondaryAttributedText = attributedText
+            } else {
+                content.secondaryText = value
+                content.secondaryTextProperties.font = scaledValueFont
+                content.secondaryTextProperties.color = tint.color(default: .secondaryLabel)
+            }
             cell.contentConfiguration = content
         }
 
@@ -254,6 +274,18 @@ final class DebugViewController: UIViewController {
         dataSource.snapshot().itemIdentifiers
     }
 
+    func secondaryAttributedTextForTesting(_ id: DebugValueID) -> NSAttributedString? {
+        let rowID = DebugRowID.value(id)
+        guard let indexPath = dataSource.indexPath(for: rowID) else { return nil }
+        collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: false)
+        collectionView.layoutIfNeeded()
+        guard let cell = collectionView.cellForItem(at: indexPath),
+              let configuration = cell.contentConfiguration as? UIListContentConfiguration
+        else { return nil }
+
+        return configuration.secondaryAttributedText
+    }
+
     func presentedGaugeForTesting(_ id: DebugGaugeID) -> DebugRow? {
         guard let indexPath = dataSource.indexPath(for: .gauge(id)) else { return nil }
         collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: false)
@@ -307,7 +339,7 @@ extension DebugViewController: UICollectionViewDelegate {
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
         guard dataSource.itemIdentifier(for: indexPath) == .value(.bootID),
-              case .value(_, _, let value, _) = renderedRows[.value(.bootID)],
+              case .value(_, _, let value, _, _, _) = renderedRows[.value(.bootID)],
               value != "--"
         else { return nil }
 

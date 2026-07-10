@@ -408,8 +408,10 @@ extension AppFeature.State {
                 fields.append("storage_used=\(storage.used)")
                 fields.append("storage_total=\(storage.total)")
             }
-            fields.append("temp_soc_c=\(world.tempC.soc.map(String.init(describing:)) ?? "nil")")
-            fields.append("temp_sensor_c=\(world.tempC.sensor.map(String.init(describing:)) ?? "nil")")
+            fields.append("temp_soc_c=\(world.tempC.soc.current.map(String.init(describing:)) ?? "nil")")
+            fields.append("temp_soc_max_c=\(world.tempC.soc.max.map(String.init(describing:)) ?? "nil")")
+            fields.append("temp_sensor_c=\(world.tempC.sensor.current.map(String.init(describing:)) ?? "nil")")
+            fields.append("temp_sensor_max_c=\(world.tempC.sensor.max.map(String.init(describing:)) ?? "nil")")
             if let mem = world.mem {
                 fields.append("mem_available=\(mem.available)")
             }

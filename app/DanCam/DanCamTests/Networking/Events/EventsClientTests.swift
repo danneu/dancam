@@ -7,7 +7,7 @@ struct EventsClientTests {
     func emitsDecodedEvents() async throws {
         var body = SSEWireBuilder.event(
             id: 1,
-            data: Data("{\"type\":\"snapshot\",\"recorder\":{\"phase\":\"idle\",\"session\":7,\"current_segment\":null,\"detail\":null},\"camera_state\":\"running\",\"boot_id\":\"boot-123\",\"uptime_s\":1,\"storage\":null,\"temp_c\":{\"soc\":null,\"sensor\":null},\"mem\":null}".utf8)
+            data: Data("{\"type\":\"snapshot\",\"recorder\":{\"phase\":\"idle\",\"session\":7,\"current_segment\":null,\"detail\":null},\"camera_state\":\"running\",\"boot_id\":\"boot-123\",\"uptime_s\":1,\"storage\":null,\"temp_c\":{\"soc\":{\"current\":null,\"max\":null},\"sensor\":{\"current\":null,\"max\":null}},\"mem\":null}".utf8)
         )
         body.append(SSEWireBuilder.event(
             id: 2,

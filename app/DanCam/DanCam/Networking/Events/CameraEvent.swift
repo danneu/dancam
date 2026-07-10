@@ -12,7 +12,7 @@ nonisolated enum CameraEvent: Decodable, Equatable, Sendable {
     case recorderFailed(session: UInt64, detail: String, atMs: UInt64)
     case cameraStateChanged(state: CameraState)
     case storageChanged(used: UInt64, total: UInt64)
-    case tempChanged(soc: Double?, sensor: Double?)
+    case tempChanged(TempC)
     case memChanged(total: UInt64, available: UInt64, swapTotal: UInt64, swapUsed: UInt64)
     case timeSynced(atMs: UInt64)
     case heartbeat(tMs: UInt64)
@@ -59,8 +59,8 @@ extension CameraEvent {
     }
 
     nonisolated private struct TempChangedPayload: Decodable {
-        var soc: Double?
-        var sensor: Double?
+        var soc: TempReading
+        var sensor: TempReading
     }
 
     nonisolated private struct MemChangedPayload: Decodable {
@@ -113,7 +113,7 @@ extension CameraEvent {
             self = .storageChanged(used: payload.used, total: payload.total)
         case "temp_changed":
             let payload = try TempChangedPayload(from: decoder)
-            self = .tempChanged(soc: payload.soc, sensor: payload.sensor)
+            self = .tempChanged(TempC(soc: payload.soc, sensor: payload.sensor))
         case "mem_changed":
             let payload = try MemChangedPayload(from: decoder)
             self = .memChanged(
@@ -184,8 +184,8 @@ extension World {
             next.cameraState = state
         case .storageChanged(let used, let total):
             next.storage = Storage(used: used, total: total)
-        case .tempChanged(let soc, let sensor):
-            next.tempC = TempC(soc: soc, sensor: sensor)
+        case .tempChanged(let tempC):
+            next.tempC = tempC
         case .memChanged(let total, let available, let swapTotal, let swapUsed):
             next.mem = Mem(total: total, available: available, swapTotal: swapTotal, swapUsed: swapUsed)
         case .timeSynced:
@@ -250,9 +250,24 @@ nonisolated struct Storage: Codable, Equatable, Sendable {
     var total: UInt64
 }
 
+nonisolated struct TempReading: Codable, Equatable, Sendable {
+    var current: Double?
+    var max: Double?
+
+    init(current: Double? = nil, max: Double? = nil) {
+        self.current = current
+        self.max = max
+    }
+}
+
 nonisolated struct TempC: Codable, Equatable, Sendable {
-    var soc: Double?
-    var sensor: Double?
+    var soc: TempReading
+    var sensor: TempReading
+
+    init(soc: TempReading = TempReading(), sensor: TempReading = TempReading()) {
+        self.soc = soc
+        self.sensor = sensor
+    }
 }
 
 nonisolated struct Mem: Codable, Equatable, Sendable {

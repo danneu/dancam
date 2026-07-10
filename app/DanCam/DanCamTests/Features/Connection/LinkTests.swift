@@ -78,7 +78,10 @@ struct LinkTests {
         let world = CameraSamples.world(
             phase: .recording,
             storage: Storage(used: 200, total: 1_000),
-            tempC: TempC(soc: 40, sensor: 45),
+            tempC: TempC(
+                soc: TempReading(current: 40, max: 42),
+                sensor: TempReading(current: 45, max: 47)
+            ),
             mem: Mem(total: 100, available: 50, swapTotal: 100, swapUsed: 25),
             uptimeS: 1
         )

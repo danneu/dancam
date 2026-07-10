@@ -5,7 +5,10 @@ struct HomeStatusPillsTests {
     @Test func normalRunningWorldHasNoPills() {
         let pills = HomeStatusPills.from(CameraSamples.world(
             cameraState: .running,
-            tempC: TempC(soc: 42, sensor: 45)
+            tempC: TempC(
+                soc: TempReading(current: 42),
+                sensor: TempReading(current: 45)
+            )
         ))
 
         #expect(pills == HomeStatusPills(tempWarning: nil, cameraOffline: false))
@@ -16,7 +19,10 @@ struct HomeStatusPillsTests {
             phase: .idle,
             cameraState: .running,
             storage: Storage(used: 100, total: 1_000),
-            tempC: TempC(soc: 40, sensor: 45),
+            tempC: TempC(
+                soc: TempReading(current: 40),
+                sensor: TempReading(current: 45)
+            ),
             mem: Mem(total: 1_000, available: 900, swapTotal: 0, swapUsed: 0),
             uptimeS: 1
         ))
@@ -25,7 +31,10 @@ struct HomeStatusPillsTests {
             currentSegment: RecorderSegment(id: 8, durMs: nil),
             cameraState: .starting,
             storage: Storage(used: 500, total: 2_000),
-            tempC: TempC(soc: 99, sensor: 45),
+            tempC: TempC(
+                soc: TempReading(current: 99),
+                sensor: TempReading(current: 45)
+            ),
             mem: Mem(total: 2_000, available: 1_800, swapTotal: 100, swapUsed: 1),
             uptimeS: 999
         ))
@@ -35,10 +44,10 @@ struct HomeStatusPillsTests {
 
     @Test func warningCaptionDeduplicatesAtDisplayGranularity() {
         let first = HomeStatusPills.from(CameraSamples.world(
-            tempC: TempC(soc: nil, sensor: 52.1)
+            tempC: TempC(sensor: TempReading(current: 52.1))
         ))
         let second = HomeStatusPills.from(CameraSamples.world(
-            tempC: TempC(soc: nil, sensor: 52.4)
+            tempC: TempC(sensor: TempReading(current: 52.4))
         ))
 
         #expect(first == second)
@@ -47,14 +56,29 @@ struct HomeStatusPillsTests {
 
     @Test func sensorThresholdsProduceWarnAndCriticalPills() throws {
         let warn = try #require(HomeStatusPills.from(CameraSamples.world(
-            tempC: TempC(soc: nil, sensor: Formatters.sensorWarnThreshold)
+            tempC: TempC(sensor: TempReading(current: Formatters.sensorWarnThreshold))
         )).tempWarning)
         let critical = try #require(HomeStatusPills.from(CameraSamples.world(
-            tempC: TempC(soc: nil, sensor: Formatters.sensorCriticalThreshold)
+            tempC: TempC(sensor: TempReading(current: Formatters.sensorCriticalThreshold))
         )).tempWarning)
 
         #expect(warn.isCritical == false)
         #expect(critical.isCritical == true)
+    }
+
+    @Test func maxTemperatureNeverProducesAHomeWarning() {
+        let noCurrent = HomeStatusPills.from(CameraSamples.world(
+            tempC: TempC(sensor: TempReading(max: Formatters.sensorCriticalThreshold))
+        ))
+        let safeCurrent = HomeStatusPills.from(CameraSamples.world(
+            tempC: TempC(sensor: TempReading(
+                current: Formatters.sensorWarnThreshold - 0.1,
+                max: Formatters.sensorCriticalThreshold
+            ))
+        ))
+
+        #expect(noCurrent.tempWarning == nil)
+        #expect(safeCurrent.tempWarning == nil)
     }
 
     @Test func offlineAndNilWorldProduceExpectedPills() {

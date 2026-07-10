@@ -6,6 +6,8 @@ nonisolated enum TempWarning: Equatable {
 }
 
 nonisolated enum Formatters {
+    static let socWarnThreshold = 70.0
+    static let socCriticalThreshold = 80.0
     static let sensorWarnThreshold = 50.0
     static let sensorCriticalThreshold = 55.0
     static let memoryWarnThreshold = 0.80
@@ -213,14 +215,26 @@ nonisolated enum Formatters {
         return "\(Int(celsius.rounded())) C"
     }
 
-    static func sensorWarning(for sensor: Double?) -> TempWarning? {
-        guard let sensor else { return nil }
+    static func temperatureNumber(_ celsius: Double) -> String {
+        String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), celsius)
+    }
 
-        if sensor >= sensorCriticalThreshold {
+    static func socWarning(for soc: Double?) -> TempWarning? {
+        warning(for: soc, warn: socWarnThreshold, critical: socCriticalThreshold)
+    }
+
+    static func sensorWarning(for sensor: Double?) -> TempWarning? {
+        warning(for: sensor, warn: sensorWarnThreshold, critical: sensorCriticalThreshold)
+    }
+
+    private static func warning(for value: Double?, warn: Double, critical: Double) -> TempWarning? {
+        guard let value else { return nil }
+
+        if value >= critical {
             return .critical
         }
 
-        if sensor >= sensorWarnThreshold {
+        if value >= warn {
             return .warn
         }
 

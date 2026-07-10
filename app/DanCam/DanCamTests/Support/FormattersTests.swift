@@ -99,10 +99,24 @@ struct FormattersTests {
         }
     }
 
+    @Test(arguments: [
+        (value: 69.9, expected: TempWarning?.none),
+        (value: 70.0, expected: TempWarning?.some(.warn)),
+        (value: 79.9, expected: TempWarning?.some(.warn)),
+        (value: 80.0, expected: TempWarning?.some(.critical)),
+    ])
+    func socWarningUsesInclusiveSocThresholds(value: Double, expected: TempWarning?) {
+        #expect(Formatters.socWarning(for: value) == expected)
+    }
+
     @Test func temperatureFormatsRoundedAndPreciseVariants() {
         #expect(Formatters.temperature(52.3) == "52 C")
         #expect(Formatters.temperature(52.6) == "53 C")
         #expect(Formatters.temperature(52.3, precise: true) == "52.3 C")
+    }
+
+    @Test func temperatureNumberFormatsWithoutUnit() {
+        #expect(Formatters.temperatureNumber(62.54) == "62.5")
     }
 
     @Test func byteSizeFormatsKnownCounts() {

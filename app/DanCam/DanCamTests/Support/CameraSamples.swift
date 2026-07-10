@@ -9,7 +9,7 @@ enum CameraSamples {
         detail: String? = nil,
         cameraState: CameraState = .running,
         storage: Storage? = Storage(used: 100, total: 1_000),
-        tempC: TempC = TempC(soc: nil, sensor: nil),
+        tempC: TempC = TempC(),
         mem: Mem? = nil,
         uptimeS: UInt64 = 1,
         bootTag: String? = nil,

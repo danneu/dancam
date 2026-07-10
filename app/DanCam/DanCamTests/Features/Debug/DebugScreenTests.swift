@@ -7,7 +7,10 @@ struct DebugScreenTests {
         var world = CameraSamples.world(
             phase: .starting,
             storage: Storage(used: 1_000, total: 4_000),
-            tempC: TempC(soc: 51.2, sensor: 52.3),
+            tempC: TempC(
+                soc: TempReading(current: 51.2),
+                sensor: TempReading(current: 52.3)
+            ),
             mem: Mem(total: 1_000_000, available: 400_000, swapTotal: 200_000, swapUsed: 100_000),
             uptimeS: 200_000,
             bootTag: "boot-7",
@@ -132,7 +135,10 @@ struct DebugScreenTests {
         let world = CameraSamples.world(
             phase: .recording,
             storage: Storage(used: 200, total: 1_000),
-            tempC: TempC(soc: 40, sensor: 45),
+            tempC: TempC(
+                soc: TempReading(current: 40),
+                sensor: TempReading(current: 45)
+            ),
             mem: Mem(total: 100, available: 40, swapTotal: 100, swapUsed: 25),
             uptimeS: 1
         )
@@ -189,24 +195,52 @@ struct DebugScreenTests {
             phase: .error,
             detail: "camera process exited",
             storage: Storage(used: 97, total: 100),
-            tempC: TempC(soc: 70, sensor: 50),
+            tempC: TempC(
+                soc: TempReading(current: 70),
+                sensor: TempReading(current: 50)
+            ),
             mem: nil,
             time: TimeStatus(synced: false)
         )
         let warningSections = DebugScreen.sections(for: state(link: .online(world)))
 
         #expect(try gaugeTint(for: .storage, in: warningSections) == .neutral)
-        #expect(try tint(for: .socTemperature, in: warningSections) == .neutral)
+        #expect(try tint(for: .socTemperature, in: warningSections) == .warn)
         #expect(try tint(for: .cameraTemperature, in: warningSections) == .warn)
         #expect(try tint(for: .time, in: warningSections) == .warn)
         #expect(try tint(for: .recorderDetail, in: warningSections) == .critical)
 
         var criticalWorld = world
-        criticalWorld.tempC.sensor = 55
+        criticalWorld.tempC.soc.current = 80
+        criticalWorld.tempC.sensor.current = 55
+        let criticalSections = DebugScreen.sections(for: state(link: .online(criticalWorld)))
+        #expect(try tint(for: .socTemperature, in: criticalSections) == .critical)
         #expect(try tint(
             for: .cameraTemperature,
-            in: DebugScreen.sections(for: state(link: .online(criticalWorld)))
+            in: criticalSections
         ) == .critical)
+    }
+
+    @Test func temperatureRowsComposeCurrentAndMaxWithIndependentTints() throws {
+        let world = CameraSamples.world(tempC: TempC(
+            soc: TempReading(current: 45, max: 72),
+            sensor: TempReading(max: 55)
+        ))
+        let sections = DebugScreen.sections(for: state(link: .online(world)))
+
+        #expect(try value(for: .socTemperature, in: sections) == "45.0 C")
+        #expect(try tint(for: .socTemperature, in: sections) == .neutral)
+        #expect(try detail(for: .socTemperature, in: sections) == "(max 72.0)")
+        #expect(try detailTint(for: .socTemperature, in: sections) == .warn)
+        #expect(try value(for: .cameraTemperature, in: sections) == "--")
+        #expect(try detail(for: .cameraTemperature, in: sections) == "(max 55.0)")
+        #expect(try detailTint(for: .cameraTemperature, in: sections) == .critical)
+
+        let emptySections = DebugScreen.sections(for: state(link: .online(CameraSamples.world())))
+        #expect(try value(for: .socTemperature, in: emptySections) == "--")
+        #expect(try detail(for: .socTemperature, in: emptySections) == nil)
+        #expect(try value(for: .cameraTemperature, in: emptySections) == "--")
+        #expect(try detail(for: .cameraTemperature, in: emptySections) == nil)
     }
 
     private func state(link: Link) -> AppFeature.State {
@@ -220,7 +254,7 @@ struct DebugScreenTests {
     }
 
     private func value(for id: DebugValueID, in sections: [DebugSection]) throws -> String {
-        guard case .value(_, _, let value, _) = try row(.value(id), in: sections) else {
+        guard case .value(_, _, let value, _, _, _) = try row(.value(id), in: sections) else {
             Issue.record("Expected value row for \(id).")
             return ""
         }
@@ -228,11 +262,27 @@ struct DebugScreenTests {
     }
 
     private func tint(for id: DebugValueID, in sections: [DebugSection]) throws -> DebugTint {
-        guard case .value(_, _, _, let tint) = try row(.value(id), in: sections) else {
+        guard case .value(_, _, _, let tint, _, _) = try row(.value(id), in: sections) else {
             Issue.record("Expected value row for \(id).")
             return .neutral
         }
         return tint
+    }
+
+    private func detail(for id: DebugValueID, in sections: [DebugSection]) throws -> String? {
+        guard case .value(_, _, _, _, let detail, _) = try row(.value(id), in: sections) else {
+            Issue.record("Expected value row for \(id).")
+            return nil
+        }
+        return detail
+    }
+
+    private func detailTint(for id: DebugValueID, in sections: [DebugSection]) throws -> DebugTint {
+        guard case .value(_, _, _, _, _, let detailTint) = try row(.value(id), in: sections) else {
+            Issue.record("Expected value row for \(id).")
+            return .neutral
+        }
+        return detailTint
     }
 
     private func gaugeTint(for id: DebugGaugeID, in sections: [DebugSection]) throws -> DebugTint {

@@ -16,7 +16,7 @@ nonisolated struct HomeStatusPills: Equatable {
         }
 
         var warning: Warning?
-        if let sensor = world.tempC.sensor,
+        if let sensor = world.tempC.sensor.current,
            let level = Formatters.sensorWarning(for: sensor) {
             warning = Warning(
                 caption: "\(Formatters.temperature(sensor)) camera",

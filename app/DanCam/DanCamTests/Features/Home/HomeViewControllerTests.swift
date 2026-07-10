@@ -290,7 +290,10 @@ struct HomeViewControllerTests {
     @Test(.timeLimit(.minutes(1)))
     func telemetryDeltaDoesNotChurnTheClipList() async throws {
         let probe = HomeLoaderProbe()
-        let world = CameraSamples.world(tempC: TempC(soc: 39, sensor: 40))
+        let world = CameraSamples.world(tempC: TempC(
+            soc: TempReading(current: 39),
+            sensor: TempReading(current: 40)
+        ))
         let (controller, store) = makeControllerAndStore(
             clips: [clipA, clipB],
             loader: probe.loader(),
@@ -299,7 +302,10 @@ struct HomeViewControllerTests {
         controller.loadViewIfNeeded()
 
         controller.tableView(UITableView(), prefetchRowsAt: [IndexPath(row: 0, section: 0)])
-        store.send(.event(.tempChanged(soc: 40, sensor: 41)))
+        store.send(.event(.tempChanged(TempC(
+            soc: TempReading(current: 40),
+            sensor: TempReading(current: 41)
+        ))))
 
         #expect(probe.prefetchCancelCount(clipA) == 0)
     }

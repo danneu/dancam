@@ -8,6 +8,15 @@
   `18-2026-07-08-heartbeat-fresh-present-tense.md`;
   `22-2026-07-09-tab-based-top-level-navigation.md`
 
+**Note (2026-07-10): Current + max temperatures.** `temp_c.soc` and
+`temp_c.sensor` are now nested `{current, max}` readings (see raspi ADR 02's
+2026-07-10 note for the wire shape and the max-since-service-start semantics).
+The Debug SoC and camera rows render `current (max ...)` with the current and
+max parts independently tinted, so a past-hot peak stays visible after current
+recovers. The SoC row gains its own warn/critical thresholds (70/80 C); the
+camera row keeps 50/55. Home's temperature pill stays sensor-only and
+current-only -- it never reflects `max`, so it clears when the sensor cools.
+
 ## Context
 
 Debug predated the tab-based shell and was pushed from a Home navigation-bar button.

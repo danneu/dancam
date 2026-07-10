@@ -43,7 +43,14 @@ nonisolated enum DebugRowID: Hashable {
 
 nonisolated enum DebugRow: Equatable {
     case banner(String)
-    case value(id: DebugValueID, label: String, value: String, tint: DebugTint)
+    case value(
+        id: DebugValueID,
+        label: String,
+        value: String,
+        tint: DebugTint,
+        detail: String?,
+        detailTint: DebugTint
+    )
     case gauge(id: DebugGaugeID, title: String, detail: String, fraction: Double, tint: DebugTint)
     case button(DebugButtonID)
     case exportError(String)
@@ -52,7 +59,7 @@ nonisolated enum DebugRow: Equatable {
         switch self {
         case .banner:
             .banner
-        case .value(let id, _, _, _):
+        case .value(let id, _, _, _, _, _):
             .value(id)
         case .gauge(let id, _, _, _, _):
             .gauge(id)
@@ -61,6 +68,10 @@ nonisolated enum DebugRow: Equatable {
         case .exportError:
             .exportError
         }
+    }
+
+    static func value(id: DebugValueID, label: String, value: String, tint: DebugTint) -> DebugRow {
+        .value(id: id, label: label, value: value, tint: tint, detail: nil, detailTint: .neutral)
     }
 }
 
@@ -181,19 +192,35 @@ enum DebugScreen {
                 value: world?.cameraState.rawValue ?? "--",
                 tint: .neutral
             ),
-            .value(
+            tempRow(
                 id: .socTemperature,
                 label: "SoC temp",
-                value: world?.tempC.soc.map { Formatters.temperature($0, precise: true) } ?? "--",
-                tint: .neutral
+                reading: world?.tempC.soc,
+                warning: Formatters.socWarning
             ),
-            .value(
+            tempRow(
                 id: .cameraTemperature,
                 label: "Camera temp",
-                value: world?.tempC.sensor.map { Formatters.temperature($0, precise: true) } ?? "--",
-                tint: sensorTint(world?.tempC.sensor)
+                reading: world?.tempC.sensor,
+                warning: Formatters.sensorWarning
             ),
         ]
+    }
+
+    private static func tempRow(
+        id: DebugValueID,
+        label: String,
+        reading: TempReading?,
+        warning: (Double?) -> TempWarning?
+    ) -> DebugRow {
+        .value(
+            id: id,
+            label: label,
+            value: reading?.current.map { Formatters.temperature($0, precise: true) } ?? "--",
+            tint: tempTint(warning(reading?.current)),
+            detail: reading?.max.map { "(max \(Formatters.temperatureNumber($0)))" },
+            detailTint: tempTint(warning(reading?.max))
+        )
     }
 
     private static func storageRows(world: World?) -> [DebugRow] {
@@ -288,8 +315,8 @@ enum DebugScreen {
         return rows
     }
 
-    private static func sensorTint(_ value: Double?) -> DebugTint {
-        switch Formatters.sensorWarning(for: value) {
+    private static func tempTint(_ warning: TempWarning?) -> DebugTint {
+        switch warning {
         case .warn:
             .warn
         case .critical:

@@ -61,7 +61,10 @@ struct StripCoordinationTests {
             phase: .recording,
             currentSegment: RecorderSegment(id: 24, durMs: 107_000),
             storage: Storage(used: 100, total: 1_000),
-            tempC: TempC(soc: 40, sensor: 41),
+            tempC: TempC(
+                soc: TempReading(current: 40),
+                sensor: TempReading(current: 41)
+            ),
             uptimeS: 1
         ))
         first.recording = .recording
@@ -71,7 +74,10 @@ struct StripCoordinationTests {
             phase: .recording,
             currentSegment: RecorderSegment(id: 24, durMs: 107_000),
             storage: Storage(used: 900, total: 1_000),
-            tempC: TempC(soc: 45, sensor: 46),
+            tempC: TempC(
+                soc: TempReading(current: 45),
+                sensor: TempReading(current: 46)
+            ),
             uptimeS: 30
         ))
 

@@ -326,4 +326,4 @@ on the Debug screen; SoC gains 70/80 thresholds.
 ## Commit progress
 
 - [x] 1. `feat(raspi): track max-since-service-start temps in world and contract`
-- [ ] 2. `feat(app): show current and max temps on Debug screen`
+- [x] 2. `feat(app): show current and max temps on Debug screen`

@@ -16,15 +16,20 @@ struct AppTransitionLogTests {
     }
 
     @Test func tempChangeInvisibleToSummaryLogsSnapshotDiff() {
-        let old = onlineState(CameraSamples.world(tempC: TempC(soc: 51.5, sensor: nil)))
-        let new = onlineState(CameraSamples.world(tempC: TempC(soc: 52.0, sensor: nil)))
+        let old = onlineState(CameraSamples.world(tempC: TempC(
+            soc: TempReading(current: 51.5, max: 62.0)
+        )))
+        let newTemp = TempC(
+            soc: TempReading(current: 52.0, max: 63.0)
+        )
+        let new = onlineState(CameraSamples.world(tempC: newTemp))
 
         #expect(
             AppFeature.transitionLog(
-                action: .event(.tempChanged(soc: 52.0, sensor: nil)),
+                action: .event(.tempChanged(newTemp)),
                 old: old,
                 new: new
-            ) == .debug("action=event.tempChanged temp_soc_c=51.5->52.0")
+            ) == .debug("action=event.tempChanged temp_soc_c=51.5->52.0 temp_soc_max_c=62.0->63.0")
         )
     }
 

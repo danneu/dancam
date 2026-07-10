@@ -676,7 +676,7 @@ struct AppFeatureTests {
     }
 
     @Test func telemetryEventsFoldWorldSlices() async throws {
-        let world = CameraSamples.world(storage: nil, tempC: TempC(soc: nil, sensor: nil), mem: nil)
+        let world = CameraSamples.world(storage: nil, tempC: TempC(), mem: nil)
         let store = TestStore(
             initialState: state(link: .online(world)),
             dependencies: dependencies(),
@@ -690,9 +690,10 @@ struct AppFeatureTests {
         }
         let storageWorld = try #require(store.state.link.world)
 
-        await store.send(.event(.tempChanged(soc: 51.5, sensor: nil))) {
+        let changedTemp = TempC(soc: TempReading(current: 51.5, max: 51.5))
+        await store.send(.event(.tempChanged(changedTemp))) {
             var nextWorld = storageWorld
-            nextWorld.tempC = TempC(soc: 51.5, sensor: nil)
+            nextWorld.tempC = changedTemp
             $0.link = .online(nextWorld)
         }
         let tempWorld = try #require(store.state.link.world)

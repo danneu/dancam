@@ -89,6 +89,9 @@ mock first.
             owner samples Picamera2 metadata, sends `sensor_temp` to the service,
             and the world merges it into `temp_changed` and snapshots for the app's
             Debug screen.
+      - [x] Deepening: Track max-since-service-start SoC and camera temperatures in
+            the Pi world as `{current, max}` readings, and show both with independent
+            warn/critical tints on Debug; the SoC row uses 70/80 C thresholds.
       - [x] Started with polling `status`/`clips`; `pulse` replaced live state polling
             with snapshot-first `GET /v1/events`, while `/v1/status` and `/v1/clips`
             remain one-shot reads.
