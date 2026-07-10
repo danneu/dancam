@@ -38,7 +38,8 @@ enum CameraSamples {
         startMs: UInt64? = nil,
         durMs: UInt64? = nil,
         timeApproximate: Bool = true,
-        bootTag: String? = nil
+        bootTag: String? = nil,
+        session: UInt64? = nil
     ) -> Clip {
         Clip(
             id: id,
@@ -48,7 +49,8 @@ enum CameraSamples {
             locked: false,
             etag: "\(id)-\(id * 100)",
             timeApproximate: timeApproximate,
-            bootTag: bootTag
+            bootTag: bootTag,
+            session: session
         )
     }
 

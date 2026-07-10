@@ -33,6 +33,7 @@ const MAX_LIMIT: usize = DEFAULT_LIMIT;
 pub struct ClipMeta {
     pub id: u32,
     pub boot_tag: Option<String>,
+    pub session: Option<u64>,
     pub start_ms: Option<u64>,
     pub dur_ms: Option<u64>,
     pub bytes: u64,
@@ -521,9 +522,11 @@ fn clip_meta_from_candidate(
 ) -> ClipMeta {
     let start_ms = derive_start_ms(candidate.facts.as_ref(), time_store);
     let boot_tag = candidate.facts.as_ref().map(|facts| facts.boot_tag.clone());
+    let session = candidate.facts.as_ref().map(|facts| facts.session);
     ClipMeta {
         id: candidate.seq,
         boot_tag,
+        session,
         start_ms,
         dur_ms: duration_cache
             .and_then(|cache| cache.duration_ms(candidate.seq, &candidate.path, candidate.bytes)),
@@ -1078,7 +1081,9 @@ mod tests {
 
         assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [8, 7]);
         assert_eq!(clips[0].boot_tag.as_deref(), Some("abc123def456"));
+        assert_eq!(clips[0].session, Some(1));
         assert_eq!(clips[1].boot_tag, None);
+        assert_eq!(clips[1].session, None);
     }
 
     #[test]

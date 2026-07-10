@@ -685,6 +685,18 @@ End-to-end mock check (after commit 3):
   `None`, so left unchanged the case would have passed for the wrong reason (invalid parse)
   instead of exercising the stamped-parse + same-seq dedup path it is meant to cover.
 
+### Commit 2
+
+- **Session decode coverage folded into the existing bootTag tests, not new
+  functions.** The plan asked `ClipsClientTests` to "add decode-present/decode-absent
+  assertions" for `session`. Since `session` and `bootTag` are the all-or-nothing
+  identity pair (present together for a stamped clip, both absent for bare), the natural
+  home was the two existing `clipsResponseDecodesBootTag*` tests -- extended in place with
+  `clip.session` assertions -- rather than two near-duplicate standalone tests. The
+  present-decode fixture uses `"session": 3` (deliberately not the corpus's 7) so the
+  assertion proves real decoding, not a coincidental match. Same pattern as the raspi
+  side extending `read_finished_clips_reports_boot_tag_for_stamped_segments_only` in place.
+
 ## Follow Up
 
 - **Operator cleanup (manual, not committed) -- do after landing Commit 1.** Clear the
@@ -697,5 +709,5 @@ End-to-end mock check (after commit 3):
 
 ## Commit progress
 - [x] 1. feat(raspi): stamp recorder session into segment filenames
-- [ ] 2. feat(contract): carry recorder session on finished clips
+- [x] 2. feat(contract): carry recorder session on finished clips
 - [ ] 3. feat(app): group and attribute clips by recording, not boot

@@ -730,6 +730,7 @@ mod tests {
         ClipMeta {
             id,
             boot_tag: None,
+            session: None,
             start_ms: None,
             dur_ms: None,
             bytes: 7,

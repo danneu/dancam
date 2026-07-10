@@ -8,8 +8,8 @@ struct ClipsClientTests {
         let response = try decodeClipsResponse("""
         {
           "clips": [
-            { "id": 7, "boot_tag": "7f3a91c2b0d4", "start_ms": null, "dur_ms": null,
-              "bytes": 39123456, "locked": false, "etag": "7-39123456",
+            { "id": 7, "boot_tag": "7f3a91c2b0d4", "session": 3, "start_ms": null,
+              "dur_ms": null, "bytes": 39123456, "locked": false, "etag": "7-39123456",
               "time_approximate": true }
           ],
           "server_time_ms": 1719338400000,
@@ -19,6 +19,7 @@ struct ClipsClientTests {
 
         let clip = try #require(response.clips.first)
         #expect(clip.bootTag == "7f3a91c2b0d4")
+        #expect(clip.session == 3)
     }
 
     @Test(.tags(.networking))
@@ -36,6 +37,7 @@ struct ClipsClientTests {
 
         let clip = try #require(response.clips.first)
         #expect(clip.bootTag == nil)
+        #expect(clip.session == nil)
     }
 
     @Test(.tags(.networking))

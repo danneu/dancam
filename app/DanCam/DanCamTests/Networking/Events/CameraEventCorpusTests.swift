@@ -68,7 +68,8 @@ struct CameraEventCorpusTests {
             locked: false,
             etag: "42-1048576",
             timeApproximate: true,
-            bootTag: "7f3a91c2b0d4"
+            bootTag: "7f3a91c2b0d4",
+            session: 7
         )))
         #expect(removed == .clipRemoved(id: 42))
         #expect(timeSynced == .timeSynced(atMs: 7_000))

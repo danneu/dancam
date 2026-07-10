@@ -177,6 +177,9 @@ async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
     );
     assert_eq!(finalized.json["time_approximate"], false);
 
+    // The stamped rollover clip carries the recording's session (start segment 0 -> 1).
+    assert_eq!(finalized.json["session"], 1);
+
     // /v1/clips derives dur_ms from the same segment file, so it must agree exactly --
     // a fabricated event duration would diverge here and the value would flicker on
     // refresh.

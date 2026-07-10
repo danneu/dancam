@@ -15,6 +15,7 @@ nonisolated struct Clip: Codable, Equatable, Sendable {
     var etag: String
     var timeApproximate: Bool
     var bootTag: String? = nil
+    var session: UInt64? = nil
 }
 
 extension Clip {
