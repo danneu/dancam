@@ -25,7 +25,7 @@ nonisolated enum ClipPullError: Error, Equatable, Sendable {
     case http(Int)
     case malformedResponse(String)
     case file(String)
-    case transport(String)
+    case transport(TransportFailure)
     case exhausted(ExhaustionReason)
 }
 
@@ -38,8 +38,8 @@ extension ClipPullError: LocalizedError {
             "Clip pull response was invalid: \(message)"
         case .file(let message):
             "Could not save clip file: \(message)"
-        case .transport(let message):
-            "Camera transfer failed: \(message)"
+        case .transport(let failure):
+            failure.displayMessage
         case .exhausted(.consecutiveStalls):
             "Clip pull stopped after repeated reconnects without progress."
         case .exhausted(.totalReconnects):
@@ -245,7 +245,7 @@ nonisolated struct ClipPullClient {
             )
             continuation.finish(throwing: error)
         } catch {
-            let pullError = ClipPullError.transport(error.localizedDescription)
+            let pullError = ClipPullError.transport(.wrapping(error))
             try? fileHandle?.close()
             if shouldKeepOutput == false, let outputURL {
                 try? FileManager.default.removeItem(at: outputURL)

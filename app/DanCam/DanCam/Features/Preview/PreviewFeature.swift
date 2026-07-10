@@ -98,7 +98,7 @@ enum PreviewFeature {
                 await send(.streamFailed(error))
             } catch {
                 guard Task.isCancelled == false else { return }
-                await send(.streamFailed(.connectionFailed(error.localizedDescription)))
+                await send(.streamFailed(.transport(.wrapping(error))))
             }
         }
     }

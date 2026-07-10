@@ -920,7 +920,7 @@ struct HomeViewControllerTests {
         #expect(controller.isRefreshingForTesting)
         #expect(controller.isManualRefreshingForTesting)
 
-        store.send(.clips(.clipsResponse(epoch: 1, .failure(.transport("No route")))))
+        store.send(.clips(.clipsResponse(epoch: 1, .failure(.transport(.connectTimedOut)))))
 
         #expect(controller.isRefreshingForTesting == false)
         #expect(controller.isManualRefreshingForTesting == false)
@@ -995,9 +995,9 @@ struct HomeViewControllerTests {
         let (staleController, staleStore) = makeControllerAndStore(clips: [clipA], loader: .noop)
         staleController.loadViewIfNeeded()
 
-        staleStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport("No route")))))
+        staleStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport(.connectTimedOut)))))
 
-        #expect(staleController.clipsFailureMessageForTesting == "Transport error: No route")
+        #expect(staleController.clipsFailureMessageForTesting == "Can't reach the camera (timed out).")
         #expect(staleController.isShowingEmptyStateForTesting == false)
 
         staleStore.send(.clips(.clipsResponse(epoch: 0, .success(ClipsResponse(
@@ -1013,9 +1013,9 @@ struct HomeViewControllerTests {
         emptyController.loadViewIfNeeded()
         #expect(emptyController.isShowingEmptyStateForTesting == false)
 
-        emptyStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport("No route")))))
+        emptyStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport(.connectTimedOut)))))
 
-        #expect(emptyController.clipsFailureMessageForTesting == "Transport error: No route")
+        #expect(emptyController.clipsFailureMessageForTesting == "Can't reach the camera (timed out).")
         #expect(emptyController.isShowingEmptyStateForTesting == false)
     }
 

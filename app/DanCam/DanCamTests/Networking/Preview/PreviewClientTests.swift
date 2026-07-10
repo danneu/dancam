@@ -121,7 +121,7 @@ struct PreviewClientTests {
     }
 
     @Test(.tags(.networking))
-    func byteStreamFailureMapsToConnectionFailed() async throws {
+    func byteStreamFailureMapsToTransportFailure() async throws {
         let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
         let client = PreviewClient.live(
             baseURL: baseURL,
@@ -133,10 +133,10 @@ struct PreviewClientTests {
 
         do {
             _ = try await collect(client.connect(), count: 1)
-            Issue.record("Expected PreviewError.connectionFailed.")
-        } catch PreviewError.connectionFailed {
+            Issue.record("Expected PreviewError.transport.")
+        } catch PreviewError.transport {
         } catch {
-            Issue.record("Expected PreviewError.connectionFailed, got \(error).")
+            Issue.record("Expected PreviewError.transport, got \(error).")
         }
     }
 

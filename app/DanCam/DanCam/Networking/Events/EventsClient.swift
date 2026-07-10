@@ -1,7 +1,7 @@
 import Foundation
 
 nonisolated enum EventsError: Error, Equatable {
-    case connectionFailed(String)
+    case transport(TransportFailure)
     case http(Int)
     case notEventStream(String)
     case malformedResponse(String)
@@ -9,8 +9,8 @@ nonisolated enum EventsError: Error, Equatable {
 
     var displayMessage: String {
         switch self {
-        case .connectionFailed(let message):
-            "Connection failed: \(message)"
+        case .transport(let failure):
+            failure.displayMessage
         case .http(let statusCode):
             "HTTP \(statusCode)"
         case .notEventStream(let contentType):
@@ -142,7 +142,7 @@ nonisolated struct EventsClient {
         } catch let error as DecodingError {
             continuation.finish(throwing: EventsError.decoding(String(describing: error)))
         } catch {
-            continuation.finish(throwing: EventsError.connectionFailed(error.localizedDescription))
+            continuation.finish(throwing: EventsError.transport(.wrapping(error)))
         }
     }
 

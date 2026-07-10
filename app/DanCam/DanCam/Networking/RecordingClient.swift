@@ -2,14 +2,14 @@ import Foundation
 
 nonisolated enum RecordingError: Error, Equatable {
     case http(Int)
-    case transport(String)
+    case transport(TransportFailure)
 
     var displayMessage: String {
         switch self {
         case .http(let statusCode):
             "HTTP \(statusCode)"
-        case .transport(let message):
-            "Transport error: \(message)"
+        case .transport(let failure):
+            failure.displayMessage
         }
     }
 }
@@ -96,7 +96,7 @@ nonisolated struct RecordingClient {
         } catch let error as URLError where error.code == .cancelled {
             throw error
         } catch {
-            throw RecordingError.transport(error.localizedDescription)
+            throw RecordingError.transport(.wrapping(error))
         }
 
         guard (200...299).contains(head.statusCode) else {

@@ -4,7 +4,7 @@ nonisolated enum ClipPrefixError: Error, Equatable {
     case http(Int)
     case malformedResponse(String)
     case validatorMismatch
-    case transport(String)
+    case transport(TransportFailure)
 }
 
 /// Fetches a bounded byte prefix of a finished clip (`GET /v1/clips/{id}` with a
@@ -83,7 +83,7 @@ nonisolated struct ClipPrefixClient: Sendable {
         } catch let error as URLError where error.code == .cancelled {
             throw error
         } catch {
-            throw ClipPrefixError.transport(error.localizedDescription)
+            throw ClipPrefixError.transport(.wrapping(error))
         }
 
         var headParser = HTTPResponseHeadParser()
@@ -130,7 +130,7 @@ nonisolated struct ClipPrefixClient: Sendable {
         } catch let error as URLError where error.code == .cancelled {
             throw error
         } catch {
-            throw ClipPrefixError.transport(error.localizedDescription)
+            throw ClipPrefixError.transport(.wrapping(error))
         }
 
         guard decoder != nil else {

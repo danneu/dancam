@@ -15,7 +15,7 @@ enum ClipsFeature {
         enum Status: Equatable {
             case idle
             case loading
-            case failed(String)
+            case failed(ClipsError)
         }
     }
 
@@ -98,7 +98,7 @@ enum ClipsFeature {
                 incoming: [clip],
                 suppressed: state.suppressedClipIDs
             )
-            state.status = .failed(error.displayMessage)
+            state.status = .failed(error)
             return .none
 
         case .clipRemoved(let id):
@@ -129,7 +129,7 @@ enum ClipsFeature {
 
         case .clipsResponse(let epoch, .failure(let error)):
             guard epoch == state.headEpoch else { return .none }
-            state.status = .failed(error.displayMessage)
+            state.status = .failed(error)
             return .none
 
         case .pageResponse(let epoch, .success(let response)):
@@ -182,7 +182,7 @@ enum ClipsFeature {
             } catch let error as ClipsError {
                 await send(.deleteResponse(clip: clip, .failure(error)))
             } catch {
-                await send(.deleteResponse(clip: clip, .failure(.transport(error.localizedDescription))))
+                await send(.deleteResponse(clip: clip, .failure(.transport(.wrapping(error)))))
             }
         }
     }
@@ -214,7 +214,7 @@ enum ClipsFeature {
         } catch let error as ClipsError {
             return .failure(error)
         } catch {
-            return .failure(.transport(error.localizedDescription))
+            return .failure(.transport(.wrapping(error)))
         }
     }
 

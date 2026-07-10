@@ -10,7 +10,7 @@ nonisolated struct PreviewFrame: Equatable, Sendable, CustomStringConvertible {
 }
 
 nonisolated enum PreviewError: Error, Equatable {
-    case connectionFailed(String)
+    case transport(TransportFailure)
     case http(Int)
     case notMultipart(String)
     case missingBoundary
@@ -18,8 +18,8 @@ nonisolated enum PreviewError: Error, Equatable {
 
     var displayMessage: String {
         switch self {
-        case .connectionFailed(let message):
-            "Connection failed: \(message)"
+        case .transport(let failure):
+            failure.displayMessage
         case .http(let statusCode):
             "HTTP \(statusCode)"
         case .notMultipart(let contentType):
@@ -155,7 +155,7 @@ nonisolated struct PreviewClient {
         } catch let error as HTTPBodyDecodingError {
             continuation.finish(throwing: PreviewError.malformedResponse(String(describing: error)))
         } catch {
-            continuation.finish(throwing: PreviewError.connectionFailed(error.localizedDescription))
+            continuation.finish(throwing: PreviewError.transport(.wrapping(error)))
         }
     }
 

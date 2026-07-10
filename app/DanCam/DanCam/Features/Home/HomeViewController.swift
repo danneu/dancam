@@ -556,9 +556,9 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         let placeholder: ClipsBodyPlaceholderPresentation
 
         switch clipsStatus {
-        case .failed(let message):
+        case .failed(let error):
             clipsFailureBanner.configure(
-                caption: message,
+                caption: error.displayMessage,
                 dotColor: .systemRed,
                 backgroundStyle: .tinted(UIColor.systemRed.withAlphaComponent(0.16))
             )

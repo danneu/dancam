@@ -42,7 +42,7 @@ enum RecordingFeature {
                     await send(.recordingResponse(.failure(error)))
                 } catch {
                     guard Task.isCancelled == false else { return }
-                    await send(.recordingResponse(.failure(.transport(error.localizedDescription))))
+                    await send(.recordingResponse(.failure(.transport(.wrapping(error)))))
                 }
             }
 
@@ -62,7 +62,7 @@ enum RecordingFeature {
                     await send(.recordingResponse(.failure(error)))
                 } catch {
                     guard Task.isCancelled == false else { return }
-                    await send(.recordingResponse(.failure(.transport(error.localizedDescription))))
+                    await send(.recordingResponse(.failure(.transport(.wrapping(error)))))
                 }
             }
 

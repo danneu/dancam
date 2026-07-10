@@ -90,10 +90,10 @@ struct EventsClientTests {
 
         do {
             _ = try await collect(client.connect(), count: 1)
-            Issue.record("Expected EventsError.connectionFailed.")
-        } catch EventsError.connectionFailed {
+            Issue.record("Expected EventsError.transport.")
+        } catch EventsError.transport {
         } catch {
-            Issue.record("Expected EventsError.connectionFailed, got \(error).")
+            Issue.record("Expected EventsError.transport, got \(error).")
         }
     }
 

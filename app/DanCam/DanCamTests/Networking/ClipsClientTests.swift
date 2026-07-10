@@ -155,6 +155,23 @@ struct ClipsClientTests {
     }
 
     @Test(.tags(.networking))
+    func fetchMapsByteStreamFailureToTypedTransportFailure() async throws {
+        let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
+        let client = ClipsClient.live(baseURL: baseURL) { _, _ in
+            throw NWByteStreamError.connectTimedOut
+        }
+
+        do {
+            _ = try await client.fetch(nil)
+            Issue.record("Expected ClipsError.transport.")
+        } catch let error as ClipsError {
+            #expect(error == .transport(.connectTimedOut))
+        } catch {
+            Issue.record("Expected ClipsError.transport, got \(error).")
+        }
+    }
+
+    @Test(.tags(.networking))
     func deleteBuildsRequestWithIdempotencyKeyAndDecodesSuccess() async throws {
         let baseURL = try #require(URL(string: "http://127.0.0.1:8080"))
         let capture = RequestCapture()

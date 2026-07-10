@@ -2,15 +2,15 @@ import Foundation
 
 nonisolated enum TimeSyncError: Error, Equatable {
     case http(Int)
-    case transport(String)
+    case transport(TransportFailure)
     case encoding(String)
 
     var displayMessage: String {
         switch self {
         case .http(let statusCode):
             "HTTP \(statusCode)"
-        case .transport(let message):
-            "Transport error: \(message)"
+        case .transport(let failure):
+            failure.displayMessage
         case .encoding(let message):
             "Encoding error: \(message)"
         }
@@ -109,7 +109,7 @@ nonisolated struct TimeClient {
         } catch let error as TimeSyncError {
             throw error
         } catch {
-            throw TimeSyncError.transport(error.localizedDescription)
+            throw TimeSyncError.transport(.wrapping(error))
         }
 
         guard (200...299).contains(head.statusCode) else {

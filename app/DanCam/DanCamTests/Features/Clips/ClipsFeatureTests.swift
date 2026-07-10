@@ -88,7 +88,7 @@ struct ClipsFeatureTests {
 
         await store.send(.clipsResponse(epoch: 1, .failure(.http(503)))) {
             $0.clips = existing
-            $0.status = .failed("HTTP 503")
+            $0.status = .failed(.http(503))
         }
     }
 
@@ -168,7 +168,7 @@ struct ClipsFeatureTests {
 
         await store.send(.deleteResponse(clip: clip, .failure(.http(500)))) {
             $0.clips = [clip]
-            $0.status = .failed("HTTP 500")
+            $0.status = .failed(.http(500))
             $0.pendingDeleteIDs = []
             $0.suppressedClipIDs = []
         }
@@ -249,7 +249,7 @@ struct ClipsFeatureTests {
         }
         await store.send(.deleteResponse(clip: clip, .failure(.http(500)))) {
             $0.clips = [clip]
-            $0.status = .failed("HTTP 500")
+            $0.status = .failed(.http(500))
             $0.pendingDeleteIDs = []
             $0.suppressedClipIDs = []
         }

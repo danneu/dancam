@@ -2,15 +2,15 @@ import Foundation
 
 nonisolated enum ClipsError: Error, Equatable {
     case http(Int)
-    case transport(String)
+    case transport(TransportFailure)
     case decoding(String)
 
     var displayMessage: String {
         switch self {
         case .http(let statusCode):
             "HTTP \(statusCode)"
-        case .transport(let message):
-            "Transport error: \(message)"
+        case .transport(let failure):
+            failure.displayMessage
         case .decoding(let message):
             "Decode error: \(message)"
         }
@@ -77,7 +77,7 @@ nonisolated struct ClipsClient {
             } catch let error as URLError where error.code == .cancelled {
                 throw error
             } catch {
-                throw ClipsError.transport(error.localizedDescription)
+                throw ClipsError.transport(.wrapping(error))
             }
 
             guard (200...299).contains(head.statusCode) else {
@@ -109,7 +109,7 @@ nonisolated struct ClipsClient {
             } catch let error as URLError where error.code == .cancelled {
                 throw error
             } catch {
-                throw ClipsError.transport(error.localizedDescription)
+                throw ClipsError.transport(.wrapping(error))
             }
 
             guard (200...299).contains(head.statusCode) else {
