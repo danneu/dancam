@@ -17,6 +17,81 @@ raspi-check:
 raspi-deploy:
     ./raspi/deploy.sh
 
+# Wipe recorded footage on the Pi: refuse unless /data is a real mount, then stop dancam,
+# delete everything under /data/rec (segments + witness/time state, so the next run
+# restarts at seq 0 / session 1), and always restart dancam and wait for it to answer
+# /v1/health -- failing loudly if it does not come back. Destructive; prompts unless
+# DANCAM_YES=1. Override host with DANCAM_HOST=...
+raspi-reset-data:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HOST="${DANCAM_HOST:-pi@dancam.local}"
+    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+    SSH_KEY="${SSH_KEY/#\~/$HOME}"
+    PORT="${DANCAM_PORT:-8080}"
+    HEALTH_TIMEOUT="${DANCAM_HEALTH_TIMEOUT:-60}"
+    # Mount witness identical to the service's stat-based ensure_required_mountpoint:
+    # /data is mounted iff dev(/data) != dev(/) OR ino(/data) == ino(/); abort on the
+    # complement. Each stat is captured in its own fail-closed assignment (a stat that
+    # fails aborts under set -e -- it never leaves an empty value that a bare `$(stat)`
+    # inside the `if` condition could let slip past the guard). Defined once and
+    # interpolated into both SSH sessions so they stay in lockstep.
+    WITNESS='
+      [ -d /data ] || { echo "ABORT: /data missing or not a directory; refusing to touch /data/rec" >&2; exit 1; }
+      data_dev=$(stat -c %d /data) || { echo "ABORT: cannot stat /data; refusing to touch /data/rec" >&2; exit 1; }
+      root_dev=$(stat -c %d /)     || { echo "ABORT: cannot stat /; refusing to touch /data/rec" >&2; exit 1; }
+      data_ino=$(stat -c %i /data) || { echo "ABORT: cannot stat /data; refusing to touch /data/rec" >&2; exit 1; }
+      root_ino=$(stat -c %i /)     || { echo "ABORT: cannot stat /; refusing to touch /data/rec" >&2; exit 1; }
+      if [ "$data_dev" = "$root_dev" ] && [ "$data_ino" != "$root_ino" ]; then
+        echo "ABORT: /data is not a mounted filesystem (same device as /); refusing to touch /data/rec" >&2
+        exit 1
+      fi'
+    echo "==> current footage on $HOST:"
+    ssh -t -i "$SSH_KEY" "$HOST" "
+      set -euo pipefail
+      $WITNESS
+      sudo du -sh /data/rec 2>/dev/null || true
+      printf 'entries: '; sudo find /data/rec -mindepth 1 2>/dev/null | wc -l
+    "
+    if [ "${DANCAM_YES:-}" != "1" ]; then
+      read -r -p "Delete ALL of /data/rec on $HOST? [y/N] " ans
+      case "$ans" in y | Y) ;; *) echo "aborted"; exit 1 ;; esac
+    fi
+    ssh -t -i "$SSH_KEY" "$HOST" "
+      set -euo pipefail
+      $WITNESS
+      # Cleanup runs on EVERY exit path -- normal, a set -e failure, or an untrapped fatal
+      # signal (Ctrl-C / dropped SSH link), for which bash still runs the EXIT trap and then
+      # exits 128+signum. Trapping ONLY EXIT is deliberate: an explicit INT/TERM/HUP handler
+      # would begin with whatever \$? happened to be (possibly 0) and could report an
+      # interrupted wipe as success. Installed BEFORE stop so no interruption window leaves
+      # dancam down.
+      cleanup() {
+        status=\$?
+        trap - EXIT
+        if ! sudo systemctl start dancam; then
+          echo 'ERROR: dancam failed to start after reset -- recording is DOWN; restart it manually' >&2
+          exit 1
+        fi
+        # Type=exec: systemctl start returns once the binary execs, not once it serves.
+        # Confirm dancam actually answers /v1/health (the same bounded poll as deploy.sh) so
+        # a crash-looping unit is never reported as a clean restart.
+        deadline=\$(( \$(date +%s) + $HEALTH_TIMEOUT ))
+        until curl -fsS --max-time 5 -o /dev/null http://localhost:$PORT/v1/health 2>/dev/null; do
+          if (( \$(date +%s) >= deadline )); then
+            echo 'ERROR: dancam did not answer /v1/health after restart -- recording is DOWN; check journalctl -u dancam' >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        exit \$status
+      }
+      trap cleanup EXIT
+      sudo systemctl stop dancam
+      sudo find /data/rec -mindepth 1 -delete
+    "
+    echo "==> /data/rec cleared; dancam restarted and answering /v1/health (next run: seq 0 / session 1)"
+
 # Hardware-free regression for the SD-card partition math.
 raspi-partition-test:
     bash raspi/scripts/partition-card-test.sh

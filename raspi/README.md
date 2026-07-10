@@ -460,6 +460,25 @@ raise service verbosity without rebuilding, add `Environment=RUST_LOG=dancam=deb
 with `sudo systemctl edit dancam`, then restart `dancam`; DEBUG includes emitted SSE
 events with `seq` and body, and TRACE adds heartbeats.
 
+Reset recorded footage: to clear all recordings from the Pi -- after a filename-format
+change, or just to reclaim the card -- use `just raspi-reset-data`. It stops `dancam`,
+deletes everything under `/data/rec` (segments plus the witness/time state, so the next
+run restarts at seq 0 / session 1), then restarts the service and waits for it to answer
+`/v1/health`. It refuses to run unless `/data` is a mounted filesystem, and it always
+attempts to restart `dancam` even if the wipe or the run is interrupted -- failing loudly
+(non-zero, "recording is DOWN") if the service does not come back and answer `/v1/health`,
+so a failed or interrupted reset is never mistaken for a clean one. It previews what will
+be deleted and prompts first; set `DANCAM_YES=1` to skip the prompt.
+
+```sh
+just raspi-reset-data                 # prompts before wiping /data/rec
+DANCAM_YES=1 just raspi-reset-data    # unattended
+```
+
+Leaving old-format segments in place is harmless -- the service ignores names it cannot
+parse and the seq witness stays monotonic -- so this reset reclaims space and clears
+stale footage; it is not required for correctness.
+
 ## 9. Smoke-test the AP path
 
 With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, join
