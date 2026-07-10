@@ -12,7 +12,7 @@ struct AppConfigurationTests {
 
         #expect(configuration.cameraAPIBaseURL == expected)
         #expect(configuration.cameraAPIInterfacePinning == .wifi)
-        #expect(configuration.cameraAPIConnectTimeout == .seconds(2))
+        #expect(configuration.cameraAPIConnectTimeout == .seconds(4))
         #expect(configuration.cameraAPIReceiveIdleTimeout == .seconds(8))
         #expect(configuration.heartbeatTimeout == .seconds(6))
     }
@@ -123,7 +123,7 @@ struct AppConfigurationTests {
                 infoDictionary: [:]
             )
 
-            #expect(configuration.cameraAPIConnectTimeout == .seconds(2))
+            #expect(configuration.cameraAPIConnectTimeout == .seconds(4))
             #expect(configuration.heartbeatTimeout == .seconds(6))
         }
     }

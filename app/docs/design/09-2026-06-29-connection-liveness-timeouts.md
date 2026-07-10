@@ -17,6 +17,13 @@
 > `3 x (connectTimeout + pollInterval)` rough 10 second estimate and reconciles the
 > app policy with ADR 02's missed-heartbeat contract.
 
+> **Note (2026-07-10):** the default connect deadline is now 4 seconds rather than
+> 2 seconds. TCP retransmits a lost SYN after about 1 second and again after about
+> 3 seconds cumulatively, so the larger bound admits two retransmissions on the
+> congested camera link while remaining below the 6 second heartbeat timeout.
+> `DANCAM_CONNECT_TIMEOUT_MS` remains the override path, and heartbeat presence
+> remains the app's connection truth.
+
 ## Context
 
 The app's global connection strip is driven by whether `GET /v1/status` succeeds.
