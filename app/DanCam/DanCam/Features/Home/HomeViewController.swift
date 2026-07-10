@@ -64,6 +64,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let clock = ContinuousClock()
     private let paginationThreshold = 4
     private var dataSource: UITableViewDiffableDataSource<HomeSection, HomeRowID>!
+    private lazy var snapshotGate = DiffableSnapshotApplyGate(
+        dataSource: dataSource,
+        tableView: clipsTableView
+    )
 
     private var liveRecordingStatus: LiveRecordingStatus = .none
     private var recordingAttribution: RecordingAttribution?
@@ -142,6 +146,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        view.setNeedsLayout()
         reconfigureVisibleThumbnails()
     }
 
@@ -158,6 +163,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         super.viewDidLayoutSubviews()
         installOrSizeHeaderIfPossible()
         updateClipsBottomInset()
+        snapshotGate.flushIfReady()
     }
 
     isolated deinit {
@@ -516,9 +522,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             snapshot.appendItems(section.rows.map(\.id), toSection: section.id)
         }
         snapshot.reconfigureItems(reconfigure)
-        dataSource.applyDetachedAware(
+        snapshotGate.submit(
             snapshot,
-            tableView: clipsTableView,
             completion: { [weak self] in
                 MainActor.assumeIsolated {
                     if self?.preservedThumbnailGeneration == thumbnailGeneration {
@@ -713,8 +718,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         willDisplay cell: UITableViewCell,
         forRowAt indexPath: IndexPath
     ) {
-        guard let id = dataSource.itemIdentifier(for: indexPath),
-              paginationTailIDs.contains(id),
+        guard let row = row(at: indexPath),
+              paginationTailIDs.contains(row.id),
               clipsNextCursor != nil else {
             return
         }
@@ -771,8 +776,11 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func row(at indexPath: IndexPath) -> HomeRow? {
-        guard let id = dataSource.itemIdentifier(for: indexPath) else { return nil }
-        return rowsByID[id]
+        guard sections.indices.contains(indexPath.section),
+              sections[indexPath.section].rows.indices.contains(indexPath.row) else {
+            return nil
+        }
+        return sections[indexPath.section].rows[indexPath.row]
     }
 
     private func performDelete(_ clip: Clip) {
@@ -880,7 +888,16 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     func indexPathForTesting(rowID: HomeRowID) -> IndexPath? {
-        dataSource.indexPath(for: rowID)
+        for (sectionIndex, section) in sections.enumerated() {
+            if let rowIndex = section.rows.firstIndex(where: { $0.id == rowID }) {
+                return IndexPath(row: rowIndex, section: sectionIndex)
+            }
+        }
+        return nil
+    }
+
+    var rowIDsForTesting: [HomeRowID] {
+        rows.map(\.id)
     }
 
     func layoutClipsTableForTesting() {

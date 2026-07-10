@@ -222,9 +222,10 @@ struct HomeViewControllerTests {
 
         store.send(.clips(.clipFinalized(clipB)))
 
-        #expect(controller.indexPathForTesting(rowID: .finished(clipB.id)) != nil)
+        #expect(controller.rowIDsForTesting.contains(.finished(clipB.id)))
 
         navigationController.popViewController(animated: false)
+        window.layoutIfNeeded()
         controller.layoutClipsTableForTesting()
 
         #expect(controller.clipThumbnailCellForTesting(clipID: clipB.id) != nil)

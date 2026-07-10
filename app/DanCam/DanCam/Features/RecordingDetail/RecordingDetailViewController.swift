@@ -19,6 +19,10 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     private var liveRecordingObservation: StoreObservation?
     private var stateObservation: StoreObservation?
     private var dataSource: UITableViewDiffableDataSource<RecordingDetailSection, RecordingDetailRow>!
+    private lazy var snapshotGate = DiffableSnapshotApplyGate(
+        dataSource: dataSource,
+        tableView: tableView
+    )
     private var state: RecordingDetailState
     private var clips: [Clip] = []
     private var clipsByID: [Int: Clip] = [:]
@@ -82,6 +86,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        view.setNeedsLayout()
         reconfigureVisibleThumbnails()
     }
 
@@ -89,6 +94,11 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         super.viewWillDisappear(animated)
         cancelAllPrefetches()
         quietVisibleThumbnailLoads()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        snapshotGate.flushIfReady()
     }
 
     isolated deinit {
@@ -164,18 +174,18 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         let thumbnailGeneration = preservedThumbnailGeneration
         preservedVisibleThumbnails = visibleThumbnails
 
-        dataSource.applyDetachedAware(
+        snapshotGate.submit(
             makeSnapshot(reconfigure: reconfigure),
-            tableView: tableView,
             completion: { [weak self] in
                 MainActor.assumeIsolated {
                     if self?.preservedThumbnailGeneration == thumbnailGeneration {
                         self?.preservedVisibleThumbnails.removeAll()
                     }
-                    self?.handlePostApplyState()
+                    self?.loadMoreIfVisibleTail()
                 }
             }
         )
+        handleProjectedState()
     }
 
     private func renderLiveRecording(
@@ -206,15 +216,15 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         let reconfigure: [RecordingDetailRow] = wasShowing && showsLiveRow && statusChanged
             ? [.liveRecording]
             : []
-        dataSource.applyDetachedAware(
+        snapshotGate.submit(
             makeSnapshot(reconfigure: reconfigure),
-            tableView: tableView,
             completion: { [weak self] in
                 MainActor.assumeIsolated {
-                    self?.handlePostApplyState()
+                    self?.loadMoreIfVisibleTail()
                 }
             }
         )
+        handleProjectedState()
     }
 
     private func makeSnapshot(
@@ -238,7 +248,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         }
     }
 
-    private func handlePostApplyState() {
+    private func handleProjectedState() {
         guard hasLoadedClips else { return }
 
         if clips.isEmpty {
@@ -249,10 +259,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
                 // user deleted everything mid-recording); only pop once recording stops.
                 removeFromNavigationStack()
             }
-            return
         }
-
-        loadMoreIfVisibleTail()
     }
 
     private func recordingTitle(for clips: [Clip]) -> String {
@@ -305,8 +312,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         forRowAt indexPath: IndexPath
     ) {
         guard state.canLoadMore,
-              case .clip(let id)? = dataSource.itemIdentifier(for: indexPath),
-              id == paginationTailID else {
+              clip(at: indexPath)?.id == paginationTailID else {
             return
         }
 
@@ -340,8 +346,10 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     }
 
     private func clip(at indexPath: IndexPath) -> Clip? {
-        guard case .clip(let id)? = dataSource.itemIdentifier(for: indexPath) else { return nil }
-        return clipsByID[id]
+        guard indexPath.section == 0 else { return nil }
+        let clipIndex = indexPath.row - (showsLiveRow ? 1 : 0)
+        guard clips.indices.contains(clipIndex) else { return nil }
+        return clips[clipIndex]
     }
 
     private func performDelete(_ clip: Clip) {
@@ -412,7 +420,8 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     }
 
     func indexPathForTesting(clipID: Int) -> IndexPath? {
-        dataSource.indexPath(for: .clip(clipID))
+        guard let index = clips.firstIndex(where: { $0.id == clipID }) else { return nil }
+        return IndexPath(row: index + (showsLiveRow ? 1 : 0), section: 0)
     }
 
     func clipThumbnailCellForTesting(clipID: Int) -> ClipThumbnailCell? {

@@ -1,5 +1,11 @@
 # Detached-aware snapshot apply (fix off-window UITableView layout warnings)
 
+> Correction (2026-07-10): Physical-device validation exposed a second unsafe state:
+> the list can be attached to a window while its width is still zero. The reload-data
+> fallback below can queue work that runs in that state, so it is replaced by
+> `plans/impl/2026-07-10-1811-geometry-gated-diffable-snapshot-application.md`, which
+> waits for both window attachment and positive geometry before touching the data source.
+
 ## Context
 
 Pushing into RecordingDetail spews Xcode console errors: "UITableView was told to

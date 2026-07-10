@@ -107,7 +107,8 @@ struct DebugViewControllerTests {
         ))
     }
 
-    @Test func liveTelemetryUpdateReconfiguresStableGaugeRows() throws {
+    @Test(.timeLimit(.minutes(1)))
+    func liveTelemetryUpdateReconfiguresStableGaugeRows() async throws {
         let world = CameraSamples.world(
             storage: Storage(used: 100, total: 1_000),
             mem: Mem(total: 1_000, available: 800, swapTotal: 1_000, swapUsed: 100)
@@ -115,13 +116,40 @@ struct DebugViewControllerTests {
         let (controller, appStore) = makeControllerAndAppStore(appState: appState(link: .online(world)))
         let window = try embed(controller)
         defer { window.isHidden = true }
+        try await waitUntil {
+            controller.presentedGaugeForTesting(.storage) != nil &&
+                controller.presentedGaugeForTesting(.ram) != nil &&
+                controller.presentedGaugeForTesting(.swap) != nil
+        }
         let originalIDs = controller.rowIDsForTesting
-        _ = try #require(controller.presentedGaugeForTesting(.storage))
-        _ = try #require(controller.presentedGaugeForTesting(.ram))
-        _ = try #require(controller.presentedGaugeForTesting(.swap))
 
         appStore.send(.event(.storageChanged(used: 600, total: 1_000)))
         appStore.send(.event(.memChanged(total: 1_000, available: 100, swapTotal: 1_000, swapUsed: 800)))
+
+        try await waitUntil {
+            let storage = controller.presentedGaugeForTesting(.storage)
+            let ram = controller.presentedGaugeForTesting(.ram)
+            let swap = controller.presentedGaugeForTesting(.swap)
+            return storage == .gauge(
+                id: .storage,
+                title: "Storage",
+                detail: "600 bytes of 1 KB -- 400 bytes free",
+                fraction: 0.6,
+                tint: .neutral
+            ) && ram == .gauge(
+                id: .ram,
+                title: "RAM",
+                detail: "900 bytes of 1 KB",
+                fraction: 0.9,
+                tint: .critical
+            ) && swap == .gauge(
+                id: .swap,
+                title: "Swap",
+                detail: "800 bytes of 1 KB",
+                fraction: 0.8,
+                tint: .critical
+            )
+        }
 
         #expect(controller.rowIDsForTesting == originalIDs)
         #expect(controller.presentedGaugeForTesting(.storage) == .gauge(

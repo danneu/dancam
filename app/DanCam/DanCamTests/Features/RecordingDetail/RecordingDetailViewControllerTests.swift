@@ -237,7 +237,8 @@ struct RecordingDetailViewControllerTests {
         #expect(navigationController.topViewController === above)
     }
 
-    @Test func coveredUpdatesStayCurrentAndRenderAfterReattachment() throws {
+    @Test(.timeLimit(.minutes(1)))
+    func coveredUpdatesStayCurrentAndRenderAfterReattachment() async throws {
         let (controller, store) = makeControllerAndStore(
             clips: [clip(id: 12, bootTag: "target")],
             nextCursor: nil
@@ -253,12 +254,15 @@ struct RecordingDetailViewControllerTests {
 
         store.send(.clips(.clipFinalized(clip(id: 13, bootTag: "target"))))
 
-        #expect(controller.indexPathForTesting(clipID: 13) != nil)
+        #expect(controller.clipIDsForTesting() == [13, 12])
 
         navigationController.popViewController(animated: false)
+        window.layoutIfNeeded()
         controller.layoutTableForTesting()
 
-        #expect(controller.clipThumbnailCellForTesting(clipID: 13) != nil)
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: 13) != nil
+        }
 
         navigationController.pushViewController(cover, animated: false)
         window.layoutIfNeeded()

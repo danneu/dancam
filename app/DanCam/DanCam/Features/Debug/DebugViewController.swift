@@ -15,6 +15,10 @@ final class DebugViewController: UIViewController {
         collectionViewLayout: makeLayout()
     )
     private lazy var dataSource = makeDataSource()
+    private lazy var snapshotGate = DiffableSnapshotApplyGate(
+        dataSource: dataSource,
+        collectionView: collectionView
+    )
 
     init(
         dependencies: AppDependencies,
@@ -44,6 +48,11 @@ final class DebugViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        snapshotGate.flushIfReady()
     }
 
     private func makeLayout() -> UICollectionViewLayout {
@@ -199,28 +208,29 @@ final class DebugViewController: UIViewController {
             renderedSections = sections
             renderedRows = nextRows
 
-            var snapshot = dataSource.snapshot()
+            var snapshot = makeSnapshot(sections)
             snapshot.reconfigureItems(changed)
-            dataSource.applyDetachedAware(
+            snapshotGate.submit(
                 snapshot,
-                collectionView: collectionView,
-                animatedWhenAttached: false
+                animatingDifferences: false
             )
             return
         }
 
         renderedSections = sections
         renderedRows = nextRows
+        snapshotGate.submit(makeSnapshot(sections), animatingDifferences: false)
+    }
+
+    private func makeSnapshot(
+        _ sections: [DebugSection]
+    ) -> NSDiffableDataSourceSnapshot<DebugSectionID, DebugRowID> {
         var snapshot = NSDiffableDataSourceSnapshot<DebugSectionID, DebugRowID>()
         for section in sections {
             snapshot.appendSections([section.id])
             snapshot.appendItems(section.rows.map(\.id), toSection: section.id)
         }
-        dataSource.applyDetachedAware(
-            snapshot,
-            collectionView: collectionView,
-            animatedWhenAttached: false
-        )
+        return snapshot
     }
 
     @objc private func refreshPulled() {
