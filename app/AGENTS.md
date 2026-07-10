@@ -140,7 +140,8 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   make cached fast-start MP4 the sole clip playback and future export artifact.
 - `14-2026-07-01-structured-logging-and-export.md` -- use Apple unified logging as the
   app's diagnostic stream and expose current-process log export from the Debug screen.
-- `15-2026-07-01-clip-export-share.md` -- system share sheet over the cached MP4.
+- `15-2026-07-01-clip-export-share.md` -- superseded by ADR 25; system share sheet over
+  the cached MP4.
 - `16-2026-07-01-client-side-clip-thumbnails.md` -- generate clip-list thumbnails on the
   phone (cache-first memory/disk/free-MP4/ranged-prefix pipeline); supersedes the raspi
   `/thumb` endpoint and cached `seg-<seq>.jpg` thumbnails.
@@ -168,3 +169,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   `(boot_tag, session)` the Home browse unit, superseding the boot-keyed "drive" model of
   ADRs 19/20; re-keys grouping, occurrences, detail, and REC attribution to `RecordingID`
   and retires the "Drive" vocabulary from the active tree.
+- `25-2026-07-10-clip-share-raw-file-url.md` -- remove the unnecessary
+  `UIActivityItemSource` wrapper that crashed during share discovery and return to the
+  device-verified raw MP4 file URL.

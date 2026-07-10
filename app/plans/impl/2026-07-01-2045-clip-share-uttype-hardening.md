@@ -1,5 +1,9 @@
 # Plan: correct the benign clip-share log-line claim, then harden the UTType via UIActivityItemSource
 
+> Update 2026-07-10: Commit 2's `ClipShareItemSource` was reverted after it caused a
+> device crash. See ADR 25 and
+> `../../../plans/impl/2026-07-10-1650-clip-share-raw-file-url.md`.
+
 ## Context
 
 Two follow-ups fall out of the on-device verification of the clip-share fix

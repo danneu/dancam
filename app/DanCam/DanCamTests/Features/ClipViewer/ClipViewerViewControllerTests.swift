@@ -326,21 +326,6 @@ struct ClipViewerViewControllerTests {
         #expect(UTType(filenameExtension: artifact.url.pathExtension)?.conforms(to: .movie) == true)
     }
 
-    @Test
-    func clipShareItemSourceDeclaresMovieTypeAndVendsTheURL() throws {
-        let url = try temporaryFile(extension: "mp4", contents: Data([0x00]))
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        let source = ClipShareItemSource(url: url)
-        let host = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-
-        #expect(source.activityViewControllerPlaceholderItem(host) as? URL == url)
-        #expect(source.activityViewController(host, itemForActivityType: nil) as? URL == url)
-
-        let identifier = source.activityViewController(host, dataTypeIdentifierForActivityType: nil)
-        #expect(UTType(identifier)?.conforms(to: .movie) == true)
-    }
-
     @Test(.timeLimit(.minutes(1)))
     func cloneFailureFallsBackToCacheURL() async throws {
         let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))

@@ -1,7 +1,6 @@
 # ADR: clip export share sheet
 
-- **Status:** Accepted (amended 2026-07-01: construction corrected after device
-  verification -- see "Correction 2026-07-01")
+- **Status:** Superseded by `25-2026-07-10-clip-share-raw-file-url.md`
 - **Date:** 2026-07-01
 - **Owner:** app
 - **Related:** `13-2026-07-01-durable-clip-cache.md`; `../../../docs/roadmap.md`
