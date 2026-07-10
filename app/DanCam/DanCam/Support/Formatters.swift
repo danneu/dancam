@@ -215,10 +215,6 @@ nonisolated enum Formatters {
         return "\(Int(celsius.rounded())) C"
     }
 
-    static func temperatureNumber(_ celsius: Double) -> String {
-        String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), celsius)
-    }
-
     static func socWarning(for soc: Double?) -> TempWarning? {
         warning(for: soc, warn: socWarnThreshold, critical: socCriticalThreshold)
     }

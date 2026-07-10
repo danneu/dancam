@@ -13,7 +13,9 @@ nonisolated enum DebugValueID: Hashable {
     case recorderDetail
     case cameraState
     case socTemperature
+    case socMaxTemperature
     case cameraTemperature
+    case cameraMaxTemperature
     case storage
     case ram
     case swap
@@ -47,9 +49,7 @@ nonisolated enum DebugRow: Equatable {
         id: DebugValueID,
         label: String,
         value: String,
-        tint: DebugTint,
-        detail: String?,
-        detailTint: DebugTint
+        tint: DebugTint
     )
     case gauge(id: DebugGaugeID, title: String, detail: String, fraction: Double, tint: DebugTint)
     case button(DebugButtonID)
@@ -59,7 +59,7 @@ nonisolated enum DebugRow: Equatable {
         switch self {
         case .banner:
             .banner
-        case .value(let id, _, _, _, _, _):
+        case .value(let id, _, _, _):
             .value(id)
         case .gauge(let id, _, _, _, _):
             .gauge(id)
@@ -70,9 +70,6 @@ nonisolated enum DebugRow: Equatable {
         }
     }
 
-    static func value(id: DebugValueID, label: String, value: String, tint: DebugTint) -> DebugRow {
-        .value(id: id, label: label, value: value, tint: tint, detail: nil, detailTint: .neutral)
-    }
 }
 
 nonisolated enum DebugSectionID: Hashable {
@@ -185,42 +182,57 @@ enum DebugScreen {
     }
 
     private static func cameraRows(world: World?) -> [DebugRow] {
-        [
+        var rows: [DebugRow] = [
             .value(
                 id: .cameraState,
                 label: "State",
                 value: world?.cameraState.rawValue ?? "--",
                 tint: .neutral
             ),
-            tempRow(
-                id: .socTemperature,
-                label: "SoC temp",
-                reading: world?.tempC.soc,
-                warning: Formatters.socWarning
-            ),
-            tempRow(
-                id: .cameraTemperature,
-                label: "Camera temp",
-                reading: world?.tempC.sensor,
-                warning: Formatters.sensorWarning
-            ),
         ]
+
+        rows.append(contentsOf: tempRows(
+            currentID: .socTemperature,
+            maxID: .socMaxTemperature,
+            currentLabel: "SoC temp",
+            maxLabel: "SoC max",
+            reading: world?.tempC.soc,
+            warning: Formatters.socWarning
+        ))
+        rows.append(contentsOf: tempRows(
+            currentID: .cameraTemperature,
+            maxID: .cameraMaxTemperature,
+            currentLabel: "Camera temp",
+            maxLabel: "Camera max",
+            reading: world?.tempC.sensor,
+            warning: Formatters.sensorWarning
+        ))
+
+        return rows
     }
 
-    private static func tempRow(
-        id: DebugValueID,
-        label: String,
+    private static func tempRows(
+        currentID: DebugValueID,
+        maxID: DebugValueID,
+        currentLabel: String,
+        maxLabel: String,
         reading: TempReading?,
         warning: (Double?) -> TempWarning?
-    ) -> DebugRow {
-        .value(
-            id: id,
-            label: label,
-            value: reading?.current.map { Formatters.temperature($0, precise: true) } ?? "--",
-            tint: tempTint(warning(reading?.current)),
-            detail: reading?.max.map { "(max \(Formatters.temperatureNumber($0)))" },
-            detailTint: tempTint(warning(reading?.max))
-        )
+    ) -> [DebugRow] {
+        [
+            .value(
+                id: currentID,
+                label: currentLabel,
+                value: reading?.current.map { Formatters.temperature($0, precise: true) } ?? "--",
+                tint: tempTint(warning(reading?.current))
+            ),
+            .value(
+                id: maxID,
+                label: maxLabel,
+                value: reading?.max.map { Formatters.temperature($0, precise: true) } ?? "--",
+                tint: tempTint(warning(reading?.max))
+            ),
+        ]
     }
 
     private static func storageRows(world: World?) -> [DebugRow] {

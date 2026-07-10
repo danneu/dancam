@@ -115,10 +115,6 @@ struct FormattersTests {
         #expect(Formatters.temperature(52.3, precise: true) == "52.3 C")
     }
 
-    @Test func temperatureNumberFormatsWithoutUnit() {
-        #expect(Formatters.temperatureNumber(62.54) == "62.5")
-    }
-
     @Test func byteSizeFormatsKnownCounts() {
         #expect(Formatters.byteSize(0) == "Zero KB")
         #expect(Formatters.byteSize(1_000) == "1 KB")

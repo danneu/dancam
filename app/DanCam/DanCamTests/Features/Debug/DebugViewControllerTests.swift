@@ -147,7 +147,7 @@ struct DebugViewControllerTests {
         ))
     }
 
-    @Test func temperatureValueRendersIndependentAttributedTintRuns() throws {
+    @Test func temperatureRowsRenderPlainTextWithIndependentTints() throws {
         let world = CameraSamples.world(tempC: TempC(
             soc: TempReading(current: 45, max: 72)
         ))
@@ -155,14 +155,13 @@ struct DebugViewControllerTests {
         let window = try embed(controller)
         defer { window.isHidden = true }
 
-        let attributed = try #require(controller.secondaryAttributedTextForTesting(.socTemperature))
-        let detailStart = "45.0 C ".utf16.count
+        let current = try #require(controller.secondaryTextForTesting(.socTemperature))
+        #expect(current.text == "45.0 C")
+        #expect(current.color == .secondaryLabel)
 
-        #expect(attributed.string == "45.0 C (max 72.0)")
-        #expect(attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor == .secondaryLabel)
-        #expect(
-            attributed.attribute(.foregroundColor, at: detailStart, effectiveRange: nil) as? UIColor == .systemOrange
-        )
+        let max = try #require(controller.secondaryTextForTesting(.socMaxTemperature))
+        #expect(max.text == "72.0 C")
+        #expect(max.color == .systemOrange)
     }
 
     private func makeController(

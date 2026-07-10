@@ -221,26 +221,29 @@ struct DebugScreenTests {
         ) == .critical)
     }
 
-    @Test func temperatureRowsComposeCurrentAndMaxWithIndependentTints() throws {
+    @Test func temperatureRowsSeparateCurrentAndMaxWithStableOrderAndIndependentTints() throws {
         let world = CameraSamples.world(tempC: TempC(
             soc: TempReading(current: 45, max: 72),
             sensor: TempReading(max: 55)
         ))
         let sections = DebugScreen.sections(for: state(link: .online(world)))
 
-        #expect(try value(for: .socTemperature, in: sections) == "45.0 C")
-        #expect(try tint(for: .socTemperature, in: sections) == .neutral)
-        #expect(try detail(for: .socTemperature, in: sections) == "(max 72.0)")
-        #expect(try detailTint(for: .socTemperature, in: sections) == .warn)
-        #expect(try value(for: .cameraTemperature, in: sections) == "--")
-        #expect(try detail(for: .cameraTemperature, in: sections) == "(max 55.0)")
-        #expect(try detailTint(for: .cameraTemperature, in: sections) == .critical)
+        #expect(try rows(in: .camera, from: sections) == [
+            .value(id: .cameraState, label: "State", value: "running", tint: .neutral),
+            .value(id: .socTemperature, label: "SoC temp", value: "45.0 C", tint: .neutral),
+            .value(id: .socMaxTemperature, label: "SoC max", value: "72.0 C", tint: .warn),
+            .value(id: .cameraTemperature, label: "Camera temp", value: "--", tint: .neutral),
+            .value(id: .cameraMaxTemperature, label: "Camera max", value: "55.0 C", tint: .critical),
+        ])
 
         let emptySections = DebugScreen.sections(for: state(link: .online(CameraSamples.world())))
-        #expect(try value(for: .socTemperature, in: emptySections) == "--")
-        #expect(try detail(for: .socTemperature, in: emptySections) == nil)
-        #expect(try value(for: .cameraTemperature, in: emptySections) == "--")
-        #expect(try detail(for: .cameraTemperature, in: emptySections) == nil)
+        #expect(try rows(in: .camera, from: emptySections) == [
+            .value(id: .cameraState, label: "State", value: "running", tint: .neutral),
+            .value(id: .socTemperature, label: "SoC temp", value: "--", tint: .neutral),
+            .value(id: .socMaxTemperature, label: "SoC max", value: "--", tint: .neutral),
+            .value(id: .cameraTemperature, label: "Camera temp", value: "--", tint: .neutral),
+            .value(id: .cameraMaxTemperature, label: "Camera max", value: "--", tint: .neutral),
+        ])
     }
 
     private func state(link: Link) -> AppFeature.State {
@@ -253,8 +256,12 @@ struct DebugScreenTests {
         try #require(sections.flatMap(\.rows).first { $0.id == id })
     }
 
+    private func rows(in id: DebugSectionID, from sections: [DebugSection]) throws -> [DebugRow] {
+        try #require(sections.first { $0.id == id }).rows
+    }
+
     private func value(for id: DebugValueID, in sections: [DebugSection]) throws -> String {
-        guard case .value(_, _, let value, _, _, _) = try row(.value(id), in: sections) else {
+        guard case .value(_, _, let value, _) = try row(.value(id), in: sections) else {
             Issue.record("Expected value row for \(id).")
             return ""
         }
@@ -262,27 +269,11 @@ struct DebugScreenTests {
     }
 
     private func tint(for id: DebugValueID, in sections: [DebugSection]) throws -> DebugTint {
-        guard case .value(_, _, _, let tint, _, _) = try row(.value(id), in: sections) else {
+        guard case .value(_, _, _, let tint) = try row(.value(id), in: sections) else {
             Issue.record("Expected value row for \(id).")
             return .neutral
         }
         return tint
-    }
-
-    private func detail(for id: DebugValueID, in sections: [DebugSection]) throws -> String? {
-        guard case .value(_, _, _, _, let detail, _) = try row(.value(id), in: sections) else {
-            Issue.record("Expected value row for \(id).")
-            return nil
-        }
-        return detail
-    }
-
-    private func detailTint(for id: DebugValueID, in sections: [DebugSection]) throws -> DebugTint {
-        guard case .value(_, _, _, _, _, let detailTint) = try row(.value(id), in: sections) else {
-            Issue.record("Expected value row for \(id).")
-            return .neutral
-        }
-        return detailTint
     }
 
     private func gaugeTint(for id: DebugGaugeID, in sections: [DebugSection]) throws -> DebugTint {
