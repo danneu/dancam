@@ -13,6 +13,9 @@ pub fn segment_filename(seq: SegmentId) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SegmentFacts {
     pub boot_tag: String,
+    /// Recorder session id, `>= 1` by construction: it is `start_segment + 1` from the
+    /// durably reserved start segment (ADR 20), so session 0 never reaches a filename.
+    pub session: SessionId,
     pub mono_ms: u64,
 }
 
@@ -24,9 +27,10 @@ pub struct ParsedSegment {
 
 pub fn stamped_segment_filename(seq: SegmentId, facts: &SegmentFacts) -> String {
     format!(
-        "{}_{}_{}.ts",
+        "{}_{}_{}_{}.ts",
         segment_stem(seq),
         facts.boot_tag,
+        facts.session,
         facts.mono_ms
     )
 }
@@ -40,14 +44,19 @@ pub fn parse_segment_filename(name: &str) -> Option<ParsedSegment> {
             let seq = seq_digits.parse::<SegmentId>().ok()?;
             (segment_filename(seq) == name).then_some(ParsedSegment { seq, facts: None })
         }
-        [seq_digits, boot_tag, mono_digits] => {
+        [seq_digits, boot_tag, session_digits, mono_digits] => {
             let seq = seq_digits.parse::<SegmentId>().ok()?;
             if !valid_boot_tag(boot_tag) {
                 return None;
             }
+            // Bounding both numeric fields to `u64` before re-rendering is what makes an
+            // oversized value reject: Python ints are unbounded, so an out-of-range
+            // `sess`/`monoMs` re-renders byte-identically yet must not parse.
+            let session = session_digits.parse::<u64>().ok()?;
             let mono_ms = mono_digits.parse::<u64>().ok()?;
             let facts = SegmentFacts {
                 boot_tag: (*boot_tag).to_string(),
+                session,
                 mono_ms,
             };
             (stamped_segment_filename(seq, &facts) == name).then_some(ParsedSegment {
@@ -136,7 +145,11 @@ impl RecorderState {
             return None;
         }
 
-        self.session = self.session.saturating_add(1);
+        // Session is derived from the durably reserved start segment (ADR 20), not an
+        // in-process counter: `start_segment` is the storage coordinator's monotonic
+        // high-water witness, so a same-boot service restart cannot reissue session 1.
+        // `start_segment + 1` keeps session `>= 1` (session 0 never reaches a filename).
+        self.session = u64::from(start_segment) + 1;
         self.phase = RecorderPhase::Starting;
         self.current_segment = None;
         self.start_segment = start_segment;
@@ -333,8 +346,8 @@ mod tests {
             "seg_abc.ts",
             "seg_00005.mp4",
             "seg_4294967296.ts",
-            "seg_00005_abc123abc123.ts",
-            "seg_00005_abc123abc123_.ts",
+            "seg_00005_abc123def456_7.ts",
+            "seg_00005_abc123def456_7_.ts",
         ] {
             assert_eq!(parse_segment_filename(name), None, "{name}");
         }
@@ -344,6 +357,7 @@ mod tests {
     fn stamped_segment_filename_round_trips_past_the_five_digit_boundary() {
         let facts = SegmentFacts {
             boot_tag: "abc123def456".to_string(),
+            session: 7,
             mono_ms: 987654321,
         };
 
@@ -360,26 +374,49 @@ mod tests {
 
         assert_eq!(
             stamped_segment_filename(0, &facts),
-            "seg_00000_abc123def456_987654321.ts"
+            "seg_00000_abc123def456_7_987654321.ts"
         );
         assert_eq!(
             stamped_segment_filename(100000, &facts),
-            "seg_100000_abc123def456_987654321.ts"
+            "seg_100000_abc123def456_7_987654321.ts"
+        );
+
+        // A `u64::MAX` session is a valid parse -- it round-trips byte-for-byte.
+        let max_session = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: u64::MAX,
+            mono_ms: 987654321,
+        };
+        let name = stamped_segment_filename(5, &max_session);
+        assert_eq!(
+            parse_segment_filename(&name),
+            Some(ParsedSegment {
+                seq: 5,
+                facts: Some(max_session)
+            })
         );
     }
 
     #[test]
     fn stamped_segment_filename_rejects_non_rendered_aliases() {
         for name in [
-            "seg_999_abc123def456_7.ts",
-            "seg_000005_abc123def456_7.ts",
-            "seg_00005_ABC123DEF456_7.ts",
-            "seg_00005_abc123def45_7.ts",
-            "seg_00005_abc123def4567_7.ts",
-            "seg_00005_abc123def456_007.ts",
-            "seg_00005_abc123def456_+7.ts",
-            "seg_00005_abc123def456_7.mp4",
-            "seg_00005_abc123xyz456_7.ts",
+            "seg_999_abc123def456_7_987654321.ts",
+            "seg_000005_abc123def456_7_987654321.ts",
+            "seg_00005_ABC123DEF456_7_987654321.ts",
+            "seg_00005_abc123def45_7_987654321.ts",
+            "seg_00005_abc123def4567_7_987654321.ts",
+            "seg_00005_abc123def456_007_987654321.ts",
+            "seg_00005_abc123def456_+7_987654321.ts",
+            "seg_00005_abc123def456_7_007.ts",
+            "seg_00005_abc123def456_7_+9.ts",
+            "seg_00005_abc123def456_7_987654321.mp4",
+            "seg_00005_abc123xyz456_7_987654321.ts",
+            // The old 3-part stamped form is rejected outright -- no legacy parse.
+            "seg_00005_abc123def456_7.ts",
+            // Oversized `sess` / `monoMs` round-trip textually but exceed `u64`, so the
+            // range guard, not just re-render, must drop them.
+            "seg_00005_abc123def456_18446744073709551616_7.ts",
+            "seg_00005_abc123def456_7_18446744073709551616.ts",
         ] {
             assert_eq!(parse_segment_filename(name), None, "{name}");
         }
@@ -404,13 +441,29 @@ mod tests {
     fn start_seeds_session_phase_and_unpullable_floor() {
         let mut recorder = RecorderState::new();
 
-        assert_eq!(recorder.start(43), Some(1));
+        // Session is `start_segment + 1`, so starting at segment 43 yields session 44.
+        assert_eq!(recorder.start(43), Some(44));
 
         let snapshot = recorder.snapshot();
         assert_eq!(snapshot.phase, RecorderPhase::Starting);
-        assert_eq!(snapshot.session, 1);
+        assert_eq!(snapshot.session, 44);
         assert_eq!(snapshot.current_segment, None);
         assert_eq!(recorder.unpullable_from(), Some(43));
+    }
+
+    #[test]
+    fn session_derives_from_start_segment_not_an_in_process_counter() {
+        // Two *fresh* states stand in for a same-boot service restart: the in-process
+        // session field resets to 0 each time, so if session were an in-process counter
+        // both would return 1 and two unrelated recordings would merge. Sourcing it from
+        // the durably reserved start segment keeps them distinct.
+        let mut before_restart = RecorderState::new();
+        assert_eq!(before_restart.start(0), Some(1));
+
+        let mut after_restart = RecorderState::new();
+        assert_eq!(after_restart.start(41), Some(42));
+
+        assert_ne!(before_restart.session(), after_restart.session());
     }
 
     #[test]

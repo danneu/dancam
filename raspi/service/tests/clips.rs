@@ -961,8 +961,10 @@ impl StubBackend {
     fn recording_segment(id: SegmentId) -> Self {
         let hub = Arc::new(EventHub::new(CameraState::Running));
         hub.drive(Input::StartCommand { start_segment: id }, 1000);
+        // Session derives from the start segment: start_segment `id` -> session `id + 1`.
+        let session = u64::from(id) + 1;
         hub.drive(
-            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id }),
+            Input::Recorder(RecorderEvent::SegmentOpened { session, id }),
             1100,
         );
         Self { hub }
@@ -976,25 +978,17 @@ impl StubBackend {
             },
             1000,
         );
+        let session = u64::from(start) + 1;
         hub.drive(
-            Input::Recorder(RecorderEvent::SegmentOpened {
-                session: 1,
-                id: start,
-            }),
+            Input::Recorder(RecorderEvent::SegmentOpened { session, id: start }),
             1100,
         );
         hub.drive(
-            Input::Recorder(RecorderEvent::SegmentClosed {
-                session: 1,
-                id: start,
-            }),
+            Input::Recorder(RecorderEvent::SegmentClosed { session, id: start }),
             1200,
         );
         hub.drive(
-            Input::Recorder(RecorderEvent::SegmentOpened {
-                session: 1,
-                id: open,
-            }),
+            Input::Recorder(RecorderEvent::SegmentOpened { session, id: open }),
             1300,
         );
         hub.drive(
@@ -1072,6 +1066,7 @@ fn stamped_name_for_tag(seq: u32, boot_tag: &str, mono_ms: u64) -> String {
         seq,
         &SegmentFacts {
             boot_tag: boot_tag.to_string(),
+            session: 1,
             mono_ms,
         },
     )

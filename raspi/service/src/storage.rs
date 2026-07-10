@@ -223,12 +223,22 @@ fn mount_witness_error(mountpoint: &Path, detail: impl std::fmt::Display) -> io:
 fn next_start_segment(rec_dir: &Path) -> io::Result<SegmentId> {
     let witness = read_witness(rec_dir)?;
     let scanned = max_clip_seq(rec_dir)?;
-    Ok(witness
-        .into_iter()
-        .chain(scanned)
-        .max()
-        .map(|seq| seq.saturating_add(1))
-        .unwrap_or(0))
+    match witness.into_iter().chain(scanned).max() {
+        // Fail closed at the ceiling rather than reissuing `u32::MAX` (which would mint a
+        // same-seq stamped twin and, via `start_segment + 1`, reissue the session). ADR 20
+        // refines ADR 16 here: start allocation is strictly monotonic and never repeats an
+        // id. `u32::MAX` itself is the last legal reservation; the *next* start fails.
+        Some(seq) if seq == SegmentId::MAX => Err(segment_ceiling_error()),
+        Some(seq) => Ok(seq + 1),
+        None => Ok(0),
+    }
+}
+
+fn segment_ceiling_error() -> io::Error {
+    io::Error::new(
+        ErrorKind::InvalidData,
+        "segment id space exhausted: high-water is u32::MAX, so start allocation would reissue an id; recorder stays idle.",
+    )
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -712,6 +722,43 @@ mod tests {
     }
 
     #[test]
+    fn allocate_fails_closed_when_witness_is_at_the_u32_ceiling() {
+        let rec_dir = TempRecDir::new();
+        write_witness(&rec_dir.path, SegmentId::MAX);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        let error = coordinator.allocate_start_segment().unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("exhausted"), "{error}");
+    }
+
+    #[test]
+    fn allocate_fails_closed_when_scan_max_is_at_the_u32_ceiling() {
+        let rec_dir = TempRecDir::new();
+        write_segment(&rec_dir.path, SegmentId::MAX);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        let error = coordinator.allocate_start_segment().unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn allocate_yields_the_last_legal_id_then_fails_closed() {
+        let rec_dir = TempRecDir::new();
+        write_witness(&rec_dir.path, SegmentId::MAX - 1);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        assert_eq!(
+            coordinator.allocate_start_segment().unwrap(),
+            SegmentId::MAX
+        );
+        assert_eq!(read_high_water_seq(&rec_dir.path), SegmentId::MAX);
+        assert!(coordinator.allocate_start_segment().is_err());
+    }
+
+    #[test]
     fn leftover_tmp_witness_garbage_is_inert() {
         let rec_dir = TempRecDir::new();
         write_raw_tmp_witness(&rec_dir.path, "not json");
@@ -763,6 +810,7 @@ mod tests {
             seq,
             &SegmentFacts {
                 boot_tag: "abc123def456".to_string(),
+                session: 1,
                 mono_ms: 123456789,
             },
         )

@@ -363,3 +363,13 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   plain read-only ext4 root for the car image, `/persist` for OS state, and
   mount-witness requirements so `/data` failures are diagnosable instead of bricking
   the unit.
+- `19-2026-07-08-inflight-segment-durability-and-boot-scrub.md` (Accepted) -- the open
+  segment is periodically `fdatasync`ed from the watcher (and the mock mirrors it), and a
+  boot-time zero-byte scrub removes unrecoverable power-loss leftovers, raising the
+  witness before unlink while preserving nonzero footage.
+- `20-2026-07-09-recording-session-in-segment-filenames.md` (Accepted) -- segment
+  filenames gain a `session` field (`seg_<seq>_<boottag>_<sess>_<monoMs>.ts`) so a
+  recording is `(boot_tag, session)`; session is `start_segment + 1` from the durable
+  witness (survives a same-boot restart) and start allocation fails closed at the `u32`
+  ceiling. Scoped-supersedes ADR 10's session-id definition, ADR 15's filename
+  grammar/parser canon, and ADR 16's allocation ceiling.

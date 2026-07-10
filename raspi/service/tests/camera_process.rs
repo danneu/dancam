@@ -232,7 +232,9 @@ async fn python_fake_contract_honors_start_segment_and_emits_lifecycle() {
     assert!(segments.contains(&5));
     assert!(segments.contains(&6));
     assert!(!segments.contains(&4));
-    assert_new_segments_are_stamped(&rec_dir, &[5, 6]);
+    // Driving the child directly bypasses the FSM derivation, so both segments carry the
+    // commanded session_id 99 for the whole recording.
+    assert_new_segments_are_stamped(&rec_dir, &[(5, 99), (6, 99)]);
 
     let _ = fs::remove_dir_all(rec_dir);
 }
@@ -323,7 +325,15 @@ async fn supervisor_confirms_start_stop_and_records_with_idle_preview_subscriber
     backend.stop_recording().await.unwrap();
 
     assert_eq!(segment_ids(&rec_dir), [0, 1]);
-    assert_new_segments_are_stamped(&rec_dir, &[0, 1]);
+    // Two same-boot recordings, each writing a single segment: run 1 reserves start
+    // segment 0 (session 1), run 2 reserves start segment 1 (session 2). Each run's
+    // start_segment equals its lone seq here, so the stamped session is `seq + 1` and the
+    // two differ -- the end-to-end proof a same-boot restart never reissues session 1.
+    let expected: Vec<(u32, u64)> = [0_u32, 1]
+        .into_iter()
+        .map(|seq| (seq, u64::from(seq) + 1))
+        .collect();
+    assert_new_segments_are_stamped(&rec_dir, &expected);
 
     control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
@@ -465,7 +475,8 @@ async fn supervisor_starts_after_six_digit_existing_segment_without_overwrite() 
 
     backend.start_recording().await.unwrap();
     wait_for_current_segment(&backend, 100001).await;
-    assert_new_segments_are_stamped(&rec_dir, &[100001]);
+    // start_segment 100001 -> session 100002.
+    assert_new_segments_are_stamped(&rec_dir, &[(100001, 100002)]);
     assert_eq!(
         fs::read(rec_dir.join("seg_100000.ts")).unwrap().as_slice(),
         sentinel
@@ -705,22 +716,29 @@ fn storage_for(rec_dir: &Path) -> Arc<StorageCoordinator> {
     Arc::new(StorageCoordinator::new(rec_dir.to_path_buf()))
 }
 
-fn assert_new_segments_are_stamped(rec_dir: &Path, expected_ids: &[u32]) {
-    let stamped = fs::read_dir(rec_dir)
+fn assert_new_segments_are_stamped(rec_dir: &Path, expected: &[(u32, u64)]) {
+    let stamped = stamped_sessions(rec_dir);
+
+    for (seq, session) in expected {
+        assert_eq!(
+            stamped.get(seq),
+            Some(session),
+            "segment {seq} was not stamped with session {session} in {stamped:?}"
+        );
+    }
+}
+
+/// Map of every stamped segment's seq to the session it was stamped with, read straight
+/// from the raw directory names (the parser filters out any out-of-range overflow file).
+fn stamped_sessions(rec_dir: &Path) -> std::collections::BTreeMap<u32, u64> {
+    fs::read_dir(rec_dir)
         .unwrap()
         .filter_map(|entry| {
             let name = entry.ok()?.file_name().into_string().ok()?;
             let parsed = parse_segment_filename(&name)?;
-            parsed.facts.map(|_| parsed.seq)
+            parsed.facts.map(|facts| (parsed.seq, facts.session))
         })
-        .collect::<std::collections::BTreeSet<_>>();
-
-    for expected in expected_ids {
-        assert!(
-            stamped.contains(expected),
-            "segment {expected} was not stamped in {stamped:?}"
-        );
-    }
+        .collect()
 }
 
 async fn response_json(response: axum::http::Response<Body>) -> Value {
@@ -777,6 +795,80 @@ async fn supervisor_start_fails_closed_when_witness_is_corrupt() {
     assert_eq!(snapshot.recorder.phase, RecorderPhase::Idle);
     assert_eq!(snapshot.recorder.current_segment, None);
     assert!(segment_ids(&rec_dir).is_empty());
+
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+/// End-to-end proof of the fake driver's seq-ceiling guard: a within-recording rollover
+/// at `u32::MAX` must drive the recorder to Error (child `error` -> `Input::Fail`) and
+/// write neither a same-seq twin nor an out-of-range overflow file. This is the
+/// fake-driver counterpart to `writer_mock_start_at_ceiling_fails_closed_on_rollover`.
+#[tokio::test]
+async fn supervisor_fake_driver_fails_closed_at_seq_ceiling() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("supervisor-seq-ceiling");
+    fs::create_dir_all(rec_dir.join("state")).unwrap();
+    // Witness at u32::MAX - 1 so reserve_start_segment returns u32::MAX (the last legal
+    // id -- start succeeds); its next rollover would reissue u32::MAX.
+    fs::write(
+        rec_dir.join("state").join("state.json"),
+        format!(r#"{{"high_water_seq":{}}}"#, u32::MAX - 1),
+    )
+    .unwrap();
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "10".to_string(),
+            "--fake-segment-secs".to_string(),
+            "0.6".to_string(),
+        ],
+    );
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    backend.start_recording().await.unwrap();
+    wait_for_current_segment(&backend, u32::MAX).await;
+
+    // The ceiling rollover makes the child emit an error, which the supervisor turns into
+    // Input::Fail -> RecorderPhase::Error.
+    wait_for_recorder_phase(&backend, RecorderPhase::Error).await;
+
+    // start_segment u32::MAX -> session u32::MAX + 1, stamped onto the one legal segment.
+    let stamped = stamped_sessions(&rec_dir);
+    assert_eq!(stamped.get(&u32::MAX), Some(&(u64::from(u32::MAX) + 1)));
+
+    // Inspect raw names (segment_ids parses and would filter an overflow file out):
+    // exactly one u32::MAX segment (no same-seq twin) and no `seg_4294967296.ts`.
+    let raw_names: Vec<String> = fs::read_dir(&rec_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .collect();
+    let ceiling_files: Vec<&String> = raw_names
+        .iter()
+        .filter(|name| name.starts_with("seg_4294967295"))
+        .collect();
+    assert_eq!(
+        ceiling_files.len(),
+        1,
+        "expected exactly one u32::MAX segment file, got {ceiling_files:?}"
+    );
+    assert!(
+        !raw_names
+            .iter()
+            .any(|name| name.starts_with("seg_4294967296")),
+        "an out-of-range overflow segment was written: {raw_names:?}"
+    );
 
     control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);

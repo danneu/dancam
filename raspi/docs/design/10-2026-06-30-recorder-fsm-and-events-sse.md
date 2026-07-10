@@ -28,6 +28,9 @@ The recorder state is:
 
 - `phase`: `idle`, `starting`, `recording`, `stopping`, or `error`
 - `session`: a monotonic per-boot session id, starting at 0 before the first start
+  (**scoped-superseded, for the session id only, by ADR 20**: `session` is now
+  `start_segment + 1` from the durable start-segment witness, so it is durable across a
+  same-boot service restart rather than a process-local counter)
 - `current_segment`: the live segment id, present only after a real segment has
   been observed open
 - `detail`: an error detail only in `error`

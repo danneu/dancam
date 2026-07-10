@@ -98,7 +98,8 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
     assert_eq!(stopped_status["recorder"]["current_segment"], Value::Null);
 
     let snapshot = segment_snapshot(&rec_dir.path);
-    assert_new_segments_are_stamped(&rec_dir.path, &[first_segment, rolled_segment]);
+    // The recording started at segment 0, so its session is `0 + 1 = 1` for every segment.
+    assert_new_segments_are_stamped(&rec_dir.path, &[(first_segment, 1), (rolled_segment, 1)]);
     tokio::time::sleep(roll_interval * 2).await;
     assert_eq!(segment_snapshot(&rec_dir.path), snapshot);
 }
@@ -127,7 +128,8 @@ async fn writer_mock_starts_after_six_digit_existing_segment_without_mutating_it
 
     let first_segment = poll_status_for_segment(app.clone(), None, Duration::from_secs(2)).await;
     assert_eq!(first_segment, 100001);
-    assert_new_segments_are_stamped(&rec_dir.path, &[100001]);
+    // start_segment 100001 -> session 100002.
+    assert_new_segments_are_stamped(&rec_dir.path, &[(100001, 100002)]);
     assert_eq!(read_high_water_seq(&rec_dir.path), 100001);
     assert_eq!(
         fs::read(rec_dir.path.join("seg_100000.ts"))
@@ -169,6 +171,134 @@ async fn writer_mock_start_fails_closed_when_witness_is_corrupt() {
     assert_eq!(status["recorder"]["phase"], "idle");
     assert_eq!(status["recorder"]["current_segment"], Value::Null);
     assert!(segment_ids(&rec_dir.path).is_empty());
+}
+
+#[tokio::test]
+async fn writer_mock_start_fails_closed_when_segment_ids_are_exhausted() {
+    let rec_dir = TempRecDir::new();
+    // Witness already at the u32 ceiling: the next start would reissue u32::MAX.
+    write_witness(&rec_dir.path, u32::MAX);
+    let storage = storage_for(&rec_dir.path);
+    let app = dancam::app(
+        AppState::new(
+            BOOT_ID.to_string(),
+            MockBackend::recording_to(storage.clone(), Duration::from_secs(30)),
+        )
+        .with_storage(storage),
+    );
+
+    let start = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/start", "start-exhausted"))
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response_text(start).await, "storage allocation failed");
+
+    let status = response_json(app.oneshot(get_request("/v1/status")).await.unwrap()).await;
+    assert_eq!(status["recorder"]["phase"], "idle");
+    assert_eq!(status["recorder"]["current_segment"], Value::Null);
+    assert!(segment_ids(&rec_dir.path).is_empty());
+}
+
+#[tokio::test]
+async fn writer_mock_start_at_ceiling_fails_closed_on_rollover() {
+    let rec_dir = TempRecDir::new();
+    // Reserve the *last legal* id: witness at u32::MAX - 1 means start reserves u32::MAX,
+    // so allocation succeeds and the recording opens seg u32::MAX. Its next rollover would
+    // reissue u32::MAX, and the writer must fail closed there instead.
+    write_witness(&rec_dir.path, u32::MAX - 1);
+    let roll_interval = Duration::from_millis(300);
+    let storage = storage_for(&rec_dir.path);
+    let app = dancam::app(
+        AppState::new(
+            BOOT_ID.to_string(),
+            MockBackend::recording_to(storage.clone(), roll_interval),
+        )
+        .with_storage(storage),
+    );
+
+    let start = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/start", "start-ceiling"))
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+
+    let first_segment = poll_status_for_segment(app.clone(), None, Duration::from_secs(2)).await;
+    assert_eq!(first_segment, u32::MAX);
+
+    poll_status_for_recorder_phase(app.clone(), "error", Duration::from_secs(3)).await;
+
+    // Exactly one stamped seg u32::MAX (start_segment u32::MAX -> session u32::MAX + 1),
+    // no same-seq twin, and no out-of-range overflow file.
+    let stamped = stamped_sessions(&rec_dir.path);
+    assert_eq!(stamped.get(&u32::MAX), Some(&(u64::from(u32::MAX) + 1)));
+    assert_eq!(segment_ids(&rec_dir.path), vec![u32::MAX]);
+    assert!(!rec_dir.path.join("seg_4294967296.ts").exists());
+}
+
+/// A same-boot service restart must not merge two recordings: the second recording's
+/// session must be distinct from the first (which is session 1). This drives the real
+/// composition seam -- a *brand-new* `StorageCoordinator` + `MockBackend` + `AppState`
+/// against the same rec dir and the same `BOOT_ID` -- so it passes only because the
+/// rebuilt coordinator re-reads the durable witness and feeds the correct reservation
+/// into a fresh `RecorderState` whose in-process session field has reset to 0.
+#[tokio::test]
+async fn same_boot_service_restart_does_not_reissue_session_one() {
+    let rec_dir = TempRecDir::new();
+    let roll_interval = Duration::from_millis(300);
+
+    drive_one_recording(&rec_dir.path, roll_interval, "restart-run-1").await;
+    assert_eq!(
+        newest_stamped_session(&rec_dir.path),
+        1,
+        "first recording starts at segment 0, so its session is 1"
+    );
+
+    drive_one_recording(&rec_dir.path, roll_interval, "restart-run-2").await;
+    let second = newest_stamped_session(&rec_dir.path);
+    assert!(
+        second > 1,
+        "a same-boot service restart must not reissue session 1 (was {second})"
+    );
+}
+
+async fn drive_one_recording(rec_dir: &Path, roll_interval: Duration, key: &str) {
+    let storage = storage_for(rec_dir);
+    let app = dancam::app(
+        AppState::new(
+            BOOT_ID.to_string(),
+            MockBackend::recording_to(storage.clone(), roll_interval),
+        )
+        .with_storage(storage),
+    );
+
+    let start = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/start", key))
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+
+    poll_status_for_segment(app.clone(), None, Duration::from_secs(2)).await;
+
+    let stop = app
+        .oneshot(recording_request(
+            "/v1/recording/stop",
+            &format!("{key}-stop"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stop.status(), StatusCode::OK);
+}
+
+fn newest_stamped_session(rec_dir: &Path) -> u64 {
+    stamped_sessions(rec_dir)
+        .into_iter()
+        .max_by_key(|(seq, _)| *seq)
+        .map(|(_, session)| session)
+        .expect("expected at least one stamped segment")
 }
 
 #[tokio::test]
@@ -305,6 +435,26 @@ async fn poll_status_for_segment(
     .expect("timed out waiting for mock segment status")
 }
 
+async fn poll_status_for_recorder_phase(app: axum::Router, phase: &str, timeout: Duration) {
+    tokio::time::timeout(timeout, async {
+        loop {
+            let json = response_json(
+                app.clone()
+                    .oneshot(get_request("/v1/status"))
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            if json["recorder"]["phase"] == phase {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for recorder phase {phase}"));
+}
+
 async fn response_json(response: axum::http::Response<Body>) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&body).unwrap()
@@ -392,22 +542,38 @@ fn read_high_water_seq(rec_dir: &Path) -> u32 {
         .unwrap() as u32
 }
 
-fn assert_new_segments_are_stamped(rec_dir: &Path, expected_ids: &[u32]) {
-    let stamped = fs::read_dir(rec_dir)
+fn assert_new_segments_are_stamped(rec_dir: &Path, expected: &[(u32, u64)]) {
+    let stamped = stamped_sessions(rec_dir);
+
+    for (seq, session) in expected {
+        assert_eq!(
+            stamped.get(seq),
+            Some(session),
+            "segment {seq} was not stamped with session {session} in {stamped:?}"
+        );
+    }
+}
+
+/// Map of every stamped segment's seq to the session it was stamped with.
+fn stamped_sessions(rec_dir: &Path) -> std::collections::BTreeMap<u32, u64> {
+    fs::read_dir(rec_dir)
         .unwrap()
         .filter_map(|entry| {
             let name = entry.ok()?.file_name().into_string().ok()?;
             let parsed = parse_segment_filename(&name)?;
-            parsed.facts.map(|_| parsed.seq)
+            parsed.facts.map(|facts| (parsed.seq, facts.session))
         })
-        .collect::<std::collections::BTreeSet<_>>();
+        .collect()
+}
 
-    for expected in expected_ids {
-        assert!(
-            stamped.contains(expected),
-            "segment {expected} was not stamped in {stamped:?}"
-        );
-    }
+fn write_witness(rec_dir: &Path, high_water_seq: u32) {
+    let state_dir = rec_dir.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::write(
+        state_dir.join("state.json"),
+        format!(r#"{{"high_water_seq":{high_water_seq}}}"#),
+    )
+    .unwrap();
 }
 
 fn stamped_name(seq: u32) -> String {
@@ -415,6 +581,7 @@ fn stamped_name(seq: u32) -> String {
         seq,
         &SegmentFacts {
             boot_tag: "abc123def456".to_string(),
+            session: 1,
             mono_ms: 123456789,
         },
     )

@@ -456,7 +456,8 @@ async fn run_mock_recording_writer(
         start_segment,
     } = context;
     let mut seq = start_segment;
-    let mut file = match open_mock_segment(rec_dir.as_ref(), seq, boot_tag.as_ref()).await {
+    let mut file = match open_mock_segment(rec_dir.as_ref(), seq, session, boot_tag.as_ref()).await
+    {
         Ok(file) => file,
         Err(error) => {
             tracing::error!(%error, seq, "failed to open mock recording segment");
@@ -530,8 +531,22 @@ async fn run_mock_recording_writer(
                             return;
                         }
                     };
+                    // Fail closed at the seq ceiling rather than reissuing `u32::MAX`
+                    // (a fresh `mono_ms` would mint a same-seq stamped twin inside one
+                    // session). This is the within-recording complement to the
+                    // start-allocation guard in storage.rs. The just-finalized `u32::MAX`
+                    // segment is the last legal one.
+                    if seq == u32::MAX {
+                        tracing::error!(seq, "mock recording exhausted segment ids at u32::MAX");
+                        hub.drive_now(Input::Fail {
+                            detail: "mock recording exhausted segment ids at u32::MAX".to_string(),
+                        });
+                        return;
+                    }
                     seq = seq.saturating_add(1);
-                    file = match open_mock_segment(rec_dir.as_ref(), seq, boot_tag.as_ref()).await {
+                    file = match open_mock_segment(rec_dir.as_ref(), seq, session, boot_tag.as_ref())
+                        .await
+                    {
                         Ok(file) => file,
                         Err(error) => {
                             tracing::error!(%error, seq, "failed to roll mock recording segment");
@@ -623,6 +638,7 @@ async fn finalized_clip_meta(
 async fn open_mock_segment(
     rec_dir: &Path,
     seq: u32,
+    session: u64,
     boot_tag: &StdMutex<Option<String>>,
 ) -> std::io::Result<tokio::fs::File> {
     let filename = boot_tag
@@ -634,6 +650,7 @@ async fn open_mock_segment(
                 seq,
                 &SegmentFacts {
                     boot_tag,
+                    session,
                     mono_ms: clock::boottime_ms(),
                 },
             )

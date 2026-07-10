@@ -369,7 +369,7 @@ mod tests {
         assert_eq!(
             world.apply(Input::StartCommand { start_segment: 43 }, 5000),
             vec![Event::RecordingStarting {
-                session: 1,
+                session: 44,
                 at_ms: 5000
             }]
         );
@@ -379,7 +379,7 @@ mod tests {
         assert_eq!(
             world.apply(Input::StopCommand, 6000),
             vec![Event::RecordingStopping {
-                session: 1,
+                session: 44,
                 at_ms: 6000
             }]
         );
@@ -392,7 +392,10 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(Input::StartCommand { start_segment: 43 }, 5000);
         world.apply(
-            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id: 43 }),
+            Input::Recorder(RecorderEvent::SegmentOpened {
+                session: 44,
+                id: 43,
+            }),
             5200,
         );
 
@@ -410,7 +413,7 @@ mod tests {
                 9001
             ),
             vec![Event::RecorderFailed {
-                session: 1,
+                session: 44,
                 detail: "camera process exited".to_string(),
                 at_ms: 9001
             }]
@@ -441,13 +444,16 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(Input::StartCommand { start_segment: 43 }, 5000);
         world.apply(
-            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id: 43 }),
+            Input::Recorder(RecorderEvent::SegmentOpened {
+                session: 44,
+                id: 43,
+            }),
             5200,
         );
 
         let events = world.apply(
             Input::SegmentRollover {
-                session: 1,
+                session: 44,
                 finalized: clip(43),
                 opened: 44,
             },
@@ -459,7 +465,7 @@ mod tests {
             vec![
                 Event::ClipFinalized(clip(43)),
                 Event::SegmentOpened {
-                    session: 1,
+                    session: 44,
                     id: 44,
                     at_ms: 8000
                 }
@@ -474,7 +480,10 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(Input::StartCommand { start_segment: 43 }, 5000);
         world.apply(
-            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id: 43 }),
+            Input::Recorder(RecorderEvent::SegmentOpened {
+                session: 44,
+                id: 43,
+            }),
             5200,
         );
         let before = world.clone();
@@ -491,7 +500,10 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(Input::StartCommand { start_segment: 43 }, 5000);
         world.apply(
-            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id: 43 }),
+            Input::Recorder(RecorderEvent::SegmentOpened {
+                session: 44,
+                id: 43,
+            }),
             5200,
         );
         world.apply(Input::StopCommand, 6000);
@@ -499,7 +511,7 @@ mod tests {
         assert_eq!(
             world.apply(
                 Input::RecordingStopped {
-                    session: 1,
+                    session: 44,
                     finalized: Some(clip(43)),
                 },
                 6100,
@@ -507,7 +519,7 @@ mod tests {
             vec![
                 Event::ClipFinalized(clip(43)),
                 Event::RecordingStopped {
-                    session: 1,
+                    session: 44,
                     at_ms: 6100
                 }
             ]
@@ -695,7 +707,10 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(Input::StartCommand { start_segment: 43 }, 5000);
         world.apply(
-            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id: 43 }),
+            Input::Recorder(RecorderEvent::SegmentOpened {
+                session: 44,
+                id: 43,
+            }),
             5200,
         );
 

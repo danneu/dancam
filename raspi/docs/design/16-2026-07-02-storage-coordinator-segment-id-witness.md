@@ -32,7 +32,11 @@ the seam for later delete, ring-GC, incident hardlink, and finalize/register tur
 1. Reads `<rec_dir>/state/state.json` as JSON with a `high_water_seq` field.
 2. Scans the current flat recording directory for the max `seg_*.ts` sequence.
 3. Chooses `next = max(high_water_seq, max_file_seq).saturating_add(1)`, or `0`
-   when both are absent.
+   when both are absent. (**Scoped-superseded by ADR 20, ceiling case only:** at
+   `max == u32::MAX` allocation fails closed with an `InvalidData` error instead of
+   reissuing the id, so start-segment reservation -- and the session ADR 20 derives from
+   it, `start_segment + 1` -- is strictly monotonic and never repeats an id. The rest of
+   this allocation rule is unchanged.)
 4. Persists `{"high_water_seq": next}` before returning by creating `state/`, writing
    `state.json.tmp`, fsyncing the file, renaming it over `state.json`, and fsyncing
    the `state/` directory. The recording directory is fsynced after creating

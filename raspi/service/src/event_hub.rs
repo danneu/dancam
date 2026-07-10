@@ -215,8 +215,12 @@ mod tests {
     fn connect_after_drive_sees_event_in_snapshot_not_receiver() {
         let hub = EventHub::new(CameraState::Running);
         hub.drive(Input::StartCommand { start_segment: 43 }, 1000);
+        // Session derives from the start segment: start_segment 43 -> session 44.
         hub.drive(
-            Input::Recorder(RecorderEvent::SegmentOpened { session: 1, id: 43 }),
+            Input::Recorder(RecorderEvent::SegmentOpened {
+                session: 44,
+                id: 43,
+            }),
             1100,
         );
 

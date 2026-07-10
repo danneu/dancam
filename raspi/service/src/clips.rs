@@ -1202,6 +1202,7 @@ mod tests {
             seq,
             &SegmentFacts {
                 boot_tag: boot_tag.to_string(),
+                session: 1,
                 mono_ms,
             },
         )

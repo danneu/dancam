@@ -27,8 +27,9 @@ from typing import Any, Callable
 SEGMENT_WIDTH = 5
 INFLIGHT_FLUSH_INTERVAL_SECS = 2.0
 U32_MAX = 0xFFFF_FFFF
+U64_MAX = 0xFFFF_FFFF_FFFF_FFFF
 BOOT_TAG_WIDTH = 12
-SEGMENT_RE = re.compile(r"^seg_([0-9]+)(?:_([0-9a-f]{12})_([0-9]+))?\.ts$")
+SEGMENT_RE = re.compile(r"^seg_([0-9]+)(?:_([0-9a-f]{12})_([0-9]+)_([0-9]+))?\.ts$")
 FAKE_JPEG = (
     b"\xff\xd8"
     b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
@@ -91,12 +92,21 @@ def segment_filename(seq: int) -> str:
     return f"seg_{seq:0{SEGMENT_WIDTH}d}.ts"
 
 
-def stamped_segment_filename(seq: int, boot_tag: str, mono_ms_value: int) -> str:
-    return f"seg_{seq:0{SEGMENT_WIDTH}d}_{boot_tag}_{mono_ms_value}.ts"
+def stamped_segment_filename(seq: int, boot_tag: str, session_id: int, mono_ms_value: int) -> str:
+    return f"seg_{seq:0{SEGMENT_WIDTH}d}_{boot_tag}_{session_id}_{mono_ms_value}.ts"
 
 
 def segment_ffmpeg_pattern() -> str:
     return f"seg_%0{SEGMENT_WIDTH}d.ts"
+
+
+def next_segment_index(seq: int) -> int | None:
+    """The seq that follows `seq`, or None at the u32 ceiling. Python ints are unbounded,
+    so without this guard a rollover past U32_MAX would open an out-of-range name the
+    parser rejects (silently dropped from the event stream and scanner)."""
+    if seq >= U32_MAX:
+        return None
+    return seq + 1
 
 
 def parse_segment_filename(name: str) -> int | None:
@@ -106,13 +116,19 @@ def parse_segment_filename(name: str) -> int | None:
 
     seq = int(match.group(1))
     boot_tag = match.group(2)
-    mono_ms_value = match.group(3)
+    session_value = match.group(3)
+    mono_ms_value = match.group(4)
     if seq > U32_MAX:
         return None
-    if boot_tag is None and mono_ms_value is None:
+    if boot_tag is None and session_value is None and mono_ms_value is None:
         rendered = segment_filename(seq)
-    elif boot_tag is not None and mono_ms_value is not None:
-        rendered = stamped_segment_filename(seq, boot_tag, int(mono_ms_value))
+    elif boot_tag is not None and session_value is not None and mono_ms_value is not None:
+        # Bound both numeric fields before re-rendering: Python ints are unbounded, so an
+        # oversized session/mono_ms would re-render byte-identically yet must not parse
+        # (Rust's u64 scan drops it, and this grammar stays byte-identical).
+        if int(session_value) > U64_MAX or int(mono_ms_value) > U64_MAX:
+            return None
+        rendered = stamped_segment_filename(seq, boot_tag, int(session_value), int(mono_ms_value))
     else:
         return None
     if rendered != name:
@@ -180,12 +196,12 @@ def detect_segment_events(baseline: int, prev_max: int | None, names: list[str])
     return events
 
 
-def stamp_segment(rec_dir: Path, seq: int, boot_tag: str, mono_ms_value: int) -> None:
+def stamp_segment(rec_dir: Path, seq: int, boot_tag: str, session_id: int, mono_ms_value: int) -> None:
     bare = rec_dir / segment_filename(seq)
     if not bare.exists():
         return
 
-    stamped = rec_dir / stamped_segment_filename(seq, boot_tag, mono_ms_value)
+    stamped = rec_dir / stamped_segment_filename(seq, boot_tag, session_id, mono_ms_value)
     try:
         os.rename(bare, stamped)
     except OSError as error:
@@ -330,7 +346,7 @@ def watch_segment_events(
                 continue
             if event["event"] == "segment_opened":
                 opened_mono_ms = mono_ms()
-                stamp_segment(rec_dir, event["id"], boot_tag, opened_mono_ms)
+                stamp_segment(rec_dir, event["id"], boot_tag, session_id, opened_mono_ms)
             emit_event(event["event"], session_id=session_id, id=event["id"])
             if event["event"] == "segment_opened":
                 # detect_segment_events filters opened ids to seqs >= baseline.
@@ -372,20 +388,22 @@ def run_self_test() -> int:
     assert segment_filename(100000) == "seg_100000.ts"
     assert segment_filename(U32_MAX) == "seg_4294967295.ts"
     assert (
-        stamped_segment_filename(5, "abc123def456", 987654321)
-        == "seg_00005_abc123def456_987654321.ts"
+        stamped_segment_filename(5, "abc123def456", 7, 987654321)
+        == "seg_00005_abc123def456_7_987654321.ts"
     )
+    assert parse_segment_filename("seg_00005_abc123def456_7_987654321.ts") == 5
+    assert parse_segment_filename("seg_100000_abc123def456_7_987654321.ts") == 100000
+    # A u64::MAX session round-trips byte-for-byte (a valid parse).
     assert (
-        parse_segment_filename("seg_00005_abc123def456_987654321.ts")
+        parse_segment_filename(stamped_segment_filename(5, "abc123def456", U64_MAX, 987654321))
         == 5
     )
-    assert (
-        parse_segment_filename("seg_100000_abc123def456_987654321.ts")
-        == 100000
-    )
+    # The seq-ceiling guard: rollover fails closed at U32_MAX; U32_MAX - 1 still advances.
+    assert next_segment_index(U32_MAX) is None
+    assert next_segment_index(U32_MAX - 1) == U32_MAX
     with tempfile.TemporaryDirectory() as temp_dir:
         rec_dir = Path(temp_dir)
-        stamped = rec_dir / stamped_segment_filename(5, "abc123def456", 987654321)
+        stamped = rec_dir / stamped_segment_filename(5, "abc123def456", 7, 987654321)
         stamped.write_bytes(b"segment")
         assert fsync_segment(rec_dir, 5) == stamped
     attempts: list[int] = []
@@ -512,12 +530,20 @@ def run_self_test() -> int:
         "seg_abc.ts",
         "seg_00005.mp4",
         "seg_4294967296.ts",
-        "seg_00005_ABC123DEF456_7.ts",
-        "seg_00005_abc123def45_7.ts",
-        "seg_00005_abc123def4567_7.ts",
-        "seg_00005_abc123def456_007.ts",
-        "seg_00005_abc123def456_+7.ts",
-        "seg_00005_abc123xyz456_7.ts",
+        "seg_00005_ABC123DEF456_7_987654321.ts",
+        "seg_00005_abc123def45_7_987654321.ts",
+        "seg_00005_abc123def4567_7_987654321.ts",
+        "seg_00005_abc123def456_007_987654321.ts",
+        "seg_00005_abc123def456_+7_987654321.ts",
+        "seg_00005_abc123def456_7_007.ts",
+        "seg_00005_abc123def456_7_+9.ts",
+        "seg_00005_abc123xyz456_7_987654321.ts",
+        # The old 3-part stamped form is rejected outright -- no legacy parse.
+        "seg_00005_abc123def456_7.ts",
+        # Oversized sess / mono_ms round-trip textually but exceed u64, so the range guard
+        # (not just re-render) must drop them -- mirrors the Rust overflow rejects.
+        "seg_00005_abc123def456_18446744073709551616_7.ts",
+        "seg_00005_abc123def456_7_18446744073709551616.ts",
     ]:
         assert parse_segment_filename(name) is None
     assert (
@@ -544,9 +570,9 @@ def run_self_test() -> int:
         43,
         43,
         [
-            "seg_00043_abc123def456_1000.ts",
+            "seg_00043_abc123def456_1_1000.ts",
             "seg_00044.ts",
-            "seg_00044_abc123def456_2000.ts",
+            "seg_00044_abc123def456_1_2000.ts",
         ],
     ) == [
         {"event": "segment_closed", "id": 43},
@@ -734,7 +760,15 @@ class FakeCameraDriver:
                     and self.current_segment_index is not None
                     and time.monotonic() - self.segment_started_at >= self.fake_segment_secs
                 ):
-                    new = self.current_segment_index + 1
+                    new = next_segment_index(self.current_segment_index)
+                    if new is None:
+                        # Fail closed at the seq ceiling rather than opening an out-of-range
+                        # name: finish the last legal segment, stop, and emit an error the
+                        # supervisor turns into a failed recorder.
+                        self._finish_segment_locked()
+                        self.recording.clear()
+                        emit_event("error", detail="segment ids exhausted at u32::MAX")
+                        return
                     self._finish_segment_locked()
                     self.current_segment_index = new
                     self._open_segment_locked(new)

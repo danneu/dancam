@@ -30,6 +30,13 @@ wall time.
 
 Use a derive model: store measurements, not conclusions.
 
+> **Scoped-superseded by ADR 20 (segment filename grammar and parser canon only).**
+> The stamped form now carries a `session` field --
+> `seg_<seq>_<boottag>_<sess>_<monoMs>.ts` -- and both parsers bound the numeric fields to
+> their integer types (`u32` seq, `u64` sess/mono). Everything else in this ADR (bare-form
+> semantics, the watcher rename/emit, write-once per-boot offset durability, the
+> `start_ms = monoMs + offset_ms` time model) stays live and is not superseded.
+
 Each segment filename carries immutable per-segment facts:
 
 ```text
