@@ -101,10 +101,7 @@ impl StorageCoordinator {
             return Err(SegmentDeleteError::NotFound);
         }
 
-        update_witness(rec_dir, |witness| {
-            witness.high_water_seq = witness.high_water_seq.max(id);
-        })
-        .map_err(SegmentDeleteError::Io)?;
+        raise_witness_at_least(rec_dir, id).map_err(SegmentDeleteError::Io)?;
 
         for path in paths {
             fs::remove_file(path).map_err(SegmentDeleteError::Io)?;
@@ -143,9 +140,7 @@ impl StorageCoordinator {
         repaired_paths.sort();
 
         if let Some(max_deleted) = deleted_ids.iter().copied().max() {
-            update_witness(rec_dir, |witness| {
-                witness.high_water_seq = witness.high_water_seq.max(max_deleted);
-            })?;
+            raise_witness_at_least(rec_dir, max_deleted)?;
         }
 
         for id in &deleted_ids {
@@ -287,6 +282,19 @@ fn update_witness(rec_dir: &Path, mutate: impl FnOnce(&mut StateWitness)) -> io:
     Ok(())
 }
 
+/// Write-ahead raise: durably ensure high_water_seq >= floor before any unlink.
+/// No-ops (no write, no fsync) when the committed witness already covers it --
+/// GC deletes oldest ids, so at steady state this saves an fsync per eviction.
+fn raise_witness_at_least(rec_dir: &Path, floor: SegmentId) -> io::Result<()> {
+    if read_witness_state(rec_dir)?.is_some_and(|witness| witness.high_water_seq >= floor) {
+        return Ok(());
+    }
+
+    update_witness(rec_dir, |witness| {
+        witness.high_water_seq = witness.high_water_seq.max(floor);
+    })
+}
+
 fn fsync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
@@ -310,12 +318,13 @@ mod tests {
     use std::{
         collections::HashSet,
         fs,
+        os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
         sync::{Arc, Barrier},
         thread,
     };
 
-    use super::{state_path, SegmentDeleteError, StorageCoordinator};
+    use super::{state_path, SegmentDeleteError, StorageCoordinator, STATE_DIR};
     use crate::{
         clips::resolve_segment,
         recorder::{segment_filename, stamped_segment_filename, SegmentFacts, SegmentId},
@@ -423,6 +432,43 @@ mod tests {
         assert!(!rec_dir.path.join(segment_filename(2)).exists());
         assert!(read_high_water_seq(&rec_dir.path) >= 2);
         assert!(coordinator.allocate_start_segment().unwrap() >= 3);
+    }
+
+    #[test]
+    fn delete_below_witness_skips_rewrite() {
+        let rec_dir = TempRecDir::new();
+        write_witness(&rec_dir.path, 9);
+        write_segment(&rec_dir.path, 2);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+        let state_dir = rec_dir.path.join(STATE_DIR);
+        let original_permissions = fs::metadata(&state_dir).unwrap().permissions();
+        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = coordinator.delete_finished_segment(2, || None);
+
+        fs::set_permissions(&state_dir, original_permissions).unwrap();
+        result.unwrap();
+        assert!(!rec_dir.path.join(segment_filename(2)).exists());
+        assert_eq!(read_high_water_seq(&rec_dir.path), 9);
+        assert_eq!(coordinator.allocate_start_segment().unwrap(), 10);
+    }
+
+    #[test]
+    fn gc_style_delete_of_highest_remaining_id_prevents_reuse() {
+        let rec_dir = TempRecDir::new();
+        for seq in 0..=3 {
+            write_segment(&rec_dir.path, seq);
+        }
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        for seq in (0..=3).rev() {
+            coordinator.delete_finished_segment(seq, || None).unwrap();
+        }
+
+        for seq in 0..=3 {
+            assert!(!rec_dir.path.join(segment_filename(seq)).exists());
+        }
+        assert_eq!(coordinator.allocate_start_segment().unwrap(), 4);
     }
 
     #[test]
@@ -591,6 +637,25 @@ mod tests {
         assert_eq!(report.deleted_ids, [4]);
         assert!(report.repaired_paths.is_empty());
         assert!(!rec_dir.path.join(segment_filename(4)).exists());
+        assert_eq!(read_high_water_seq(&rec_dir.path), 9);
+    }
+
+    #[test]
+    fn scrub_below_witness_skips_rewrite() {
+        let rec_dir = TempRecDir::new();
+        write_witness(&rec_dir.path, 9);
+        write_empty_segment(&rec_dir.path, 2);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+        let state_dir = rec_dir.path.join(STATE_DIR);
+        let original_permissions = fs::metadata(&state_dir).unwrap().permissions();
+        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = coordinator.scrub_unrecoverable_segments();
+
+        fs::set_permissions(&state_dir, original_permissions).unwrap();
+        let report = result.unwrap();
+        assert_eq!(report.deleted_ids, [2]);
+        assert!(!rec_dir.path.join(segment_filename(2)).exists());
         assert_eq!(read_high_water_seq(&rec_dir.path), 9);
     }
 
