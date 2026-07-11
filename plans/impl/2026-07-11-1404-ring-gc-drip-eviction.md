@@ -1136,7 +1136,7 @@ Gate: `just app-test`.
 ## Commit progress
 
 - [x] 1. docs(raspi): add ring-GC drip-eviction ADR and roadmap silt swoop
-- [ ] 2. refactor(raspi): field-preserving witness read-modify-write
+- [x] 2. refactor(raspi): field-preserving witness read-modify-write
 - [ ] 3. refactor(raspi): skip redundant witness rewrites on delete and scrub
 - [ ] 4. feat(raspi): GC pass core, worker, startup, and f_bavail probe
 - [ ] 5. chore(raspi): mock GC dev-loop recipe and docs

@@ -68,7 +68,9 @@ impl StorageCoordinator {
         fs::create_dir_all(self.rec_dir.as_ref())?;
         let next = next_start_segment(self.rec_dir.as_ref())?;
 
-        persist_witness(self.rec_dir.as_ref(), next)?;
+        update_witness(self.rec_dir.as_ref(), |witness| {
+            witness.high_water_seq = next;
+        })?;
         let committed = commit(next);
         Ok((next, committed))
     }
@@ -99,10 +101,10 @@ impl StorageCoordinator {
             return Err(SegmentDeleteError::NotFound);
         }
 
-        let existing = read_witness(rec_dir)
-            .map_err(SegmentDeleteError::Io)?
-            .unwrap_or(0);
-        persist_witness(rec_dir, existing.max(id)).map_err(SegmentDeleteError::Io)?;
+        update_witness(rec_dir, |witness| {
+            witness.high_water_seq = witness.high_water_seq.max(id);
+        })
+        .map_err(SegmentDeleteError::Io)?;
 
         for path in paths {
             fs::remove_file(path).map_err(SegmentDeleteError::Io)?;
@@ -141,8 +143,9 @@ impl StorageCoordinator {
         repaired_paths.sort();
 
         if let Some(max_deleted) = deleted_ids.iter().copied().max() {
-            let existing = read_witness(rec_dir)?.unwrap_or(0);
-            persist_witness(rec_dir, existing.max(max_deleted))?;
+            update_witness(rec_dir, |witness| {
+                witness.high_water_seq = witness.high_water_seq.max(max_deleted);
+            })?;
         }
 
         for id in &deleted_ids {
@@ -221,7 +224,7 @@ fn mount_witness_error(mountpoint: &Path, detail: impl std::fmt::Display) -> io:
 }
 
 fn next_start_segment(rec_dir: &Path) -> io::Result<SegmentId> {
-    let witness = read_witness(rec_dir)?;
+    let witness = read_witness_state(rec_dir)?.map(|state| state.high_water_seq);
     let scanned = max_clip_seq(rec_dir)?;
     match witness.into_iter().chain(scanned).max() {
         // Fail closed at the ceiling rather than reissuing `u32::MAX` (which would mint a
@@ -244,9 +247,11 @@ fn segment_ceiling_error() -> io::Error {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StateWitness {
     high_water_seq: SegmentId,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
-fn read_witness(rec_dir: &Path) -> io::Result<Option<SegmentId>> {
+fn read_witness_state(rec_dir: &Path) -> io::Result<Option<StateWitness>> {
     let path = state_path(rec_dir);
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
@@ -256,10 +261,16 @@ fn read_witness(rec_dir: &Path) -> io::Result<Option<SegmentId>> {
     let state: StateWitness =
         serde_json::from_slice(&bytes).map_err(|error| corrupt_witness_error(&path, error))?;
 
-    Ok(Some(state.high_water_seq))
+    Ok(Some(state))
 }
 
-fn persist_witness(rec_dir: &Path, high_water_seq: SegmentId) -> io::Result<()> {
+fn update_witness(rec_dir: &Path, mutate: impl FnOnce(&mut StateWitness)) -> io::Result<()> {
+    let mut state = read_witness_state(rec_dir)?.unwrap_or_else(|| StateWitness {
+        high_water_seq: 0,
+        extra: serde_json::Map::new(),
+    });
+    mutate(&mut state);
+
     let state_dir = rec_dir.join(STATE_DIR);
     fs::create_dir_all(&state_dir)?;
     fsync_dir(rec_dir)?;
@@ -267,7 +278,7 @@ fn persist_witness(rec_dir: &Path, high_water_seq: SegmentId) -> io::Result<()> 
     let tmp_path = state_dir.join(TMP_STATE_FILE);
     let final_path = state_dir.join(STATE_FILE);
     let file = File::create(&tmp_path)?;
-    serde_json::to_writer(&file, &StateWitness { high_water_seq })?;
+    serde_json::to_writer(&file, &state)?;
     file.sync_all()?;
     drop(file);
 
@@ -674,6 +685,47 @@ mod tests {
     }
 
     #[test]
+    fn witness_writer_preserves_unknown_fields_on_reserve() {
+        let rec_dir = TempRecDir::new();
+        write_raw_witness(&rec_dir.path, r#"{"high_water_seq":10,"future":true}"#);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        assert_eq!(coordinator.allocate_start_segment().unwrap(), 11);
+
+        let witness = read_witness_json(&rec_dir.path);
+        assert_eq!(witness["high_water_seq"], 11);
+        assert_eq!(witness["future"], true);
+    }
+
+    #[test]
+    fn witness_writer_preserves_unknown_fields_on_delete() {
+        let rec_dir = TempRecDir::new();
+        write_segment(&rec_dir.path, 12);
+        write_raw_witness(&rec_dir.path, r#"{"high_water_seq":10,"future":true}"#);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        coordinator.delete_finished_segment(12, || None).unwrap();
+
+        let witness = read_witness_json(&rec_dir.path);
+        assert_eq!(witness["high_water_seq"], 12);
+        assert_eq!(witness["future"], true);
+    }
+
+    #[test]
+    fn witness_writer_preserves_unknown_fields_on_scrub() {
+        let rec_dir = TempRecDir::new();
+        write_empty_segment(&rec_dir.path, 12);
+        write_raw_witness(&rec_dir.path, r#"{"high_water_seq":10,"future":true}"#);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        coordinator.scrub_unrecoverable_segments().unwrap();
+
+        let witness = read_witness_json(&rec_dir.path);
+        assert_eq!(witness["high_water_seq"], 12);
+        assert_eq!(witness["future"], true);
+    }
+
+    #[test]
     fn sequential_and_concurrent_allocations_are_serialized() {
         let rec_dir = TempRecDir::new();
         let coordinator = Arc::new(StorageCoordinator::new(rec_dir.path.clone()));
@@ -836,15 +888,18 @@ mod tests {
     }
 
     fn read_high_water_seq(rec_dir: &Path) -> SegmentId {
-        let bytes = fs::read(state_path(rec_dir)).unwrap();
-        serde_json::from_slice::<serde_json::Value>(&bytes)
-            .unwrap()
+        read_witness_json(rec_dir)
             .get("high_water_seq")
             .unwrap()
             .as_u64()
             .unwrap()
             .try_into()
             .unwrap()
+    }
+
+    fn read_witness_json(rec_dir: &Path) -> serde_json::Value {
+        let bytes = fs::read(state_path(rec_dir)).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
     }
 
     struct TempRecDir {
