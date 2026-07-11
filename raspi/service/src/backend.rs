@@ -249,6 +249,7 @@ impl Backend for MockBackend {
     }
 
     fn note_clip_removed(&self, id: SegmentId) {
+        self.clip_durations.forget(id);
         self.hub.drive_now(Input::ClipRemoved { id });
     }
 

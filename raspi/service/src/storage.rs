@@ -104,10 +104,27 @@ impl StorageCoordinator {
         raise_witness_at_least(rec_dir, id).map_err(SegmentDeleteError::Io)?;
 
         for path in paths {
-            fs::remove_file(path).map_err(SegmentDeleteError::Io)?;
+            remove_segment_file(&path).map_err(SegmentDeleteError::Io)?;
         }
         fsync_dir(rec_dir).map_err(SegmentDeleteError::Io)?;
         Ok(())
+    }
+
+    pub(crate) fn raise_witness_for_batch(
+        &self,
+        batch_max: SegmentId,
+        ceiling: SegmentId,
+    ) -> io::Result<()> {
+        let _guard = self
+            .mutation
+            .lock()
+            .expect("storage coordinator mutex poisoned");
+        self.ensure_rec_mounted()?;
+        let rec_dir = self.rec_dir.as_ref();
+        if read_witness_state(rec_dir)?.is_some_and(|witness| witness.high_water_seq >= batch_max) {
+            return Ok(());
+        }
+        raise_witness_at_least(rec_dir, ceiling)
     }
 
     /// Boot-time repair for unrecoverable zero-byte leftovers from power loss.
@@ -292,6 +309,34 @@ fn raise_witness_at_least(rec_dir: &Path, floor: SegmentId) -> io::Result<()> {
 
     update_witness(rec_dir, |witness| {
         witness.high_water_seq = witness.high_water_seq.max(floor);
+    })
+}
+
+fn remove_segment_file(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if fail_unlink_now() {
+        return Err(io::Error::other("injected segment unlink failure"));
+    }
+    fs::remove_file(path)
+}
+
+#[cfg(test)]
+thread_local! {
+    static FAIL_UNLINK_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn fail_unlink_now() -> bool {
+    FAIL_UNLINK_AFTER.with(|counter| match counter.get() {
+        Some(1) => {
+            counter.set(None);
+            true
+        }
+        Some(n) => {
+            counter.set(Some(n - 1));
+            false
+        }
+        None => false,
     })
 }
 
@@ -894,6 +939,50 @@ mod tests {
 
         assert_eq!(coordinator.allocate_start_segment().unwrap(), 4);
         assert_eq!(read_high_water_seq(&rec_dir.path), 4);
+    }
+
+    #[test]
+    fn raise_witness_for_batch_jumps_to_ceiling_when_below() {
+        let rec_dir = TempRecDir::new();
+        write_witness(&rec_dir.path, 0);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        coordinator.raise_witness_for_batch(3, 20).unwrap();
+
+        assert_eq!(read_high_water_seq(&rec_dir.path), 20);
+        assert_eq!(coordinator.allocate_start_segment().unwrap(), 21);
+    }
+
+    #[test]
+    fn raise_witness_for_batch_fails_closed_on_corrupt_witness() {
+        let rec_dir = TempRecDir::new();
+        write_raw_witness(&rec_dir.path, "garbage");
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        assert_eq!(
+            coordinator
+                .raise_witness_for_batch(3, 20)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn raise_witness_for_batch_fails_closed_on_missing_mount() {
+        let rec_dir = TempRecDir::new();
+        let mount = TempRecDir::new();
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone())
+            .with_required_mountpoint(mount.path.clone());
+
+        assert_eq!(
+            coordinator
+                .raise_witness_for_batch(3, 20)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert!(!state_path(&rec_dir.path).exists());
     }
 
     fn write_segment(rec_dir: &Path, seq: SegmentId) {

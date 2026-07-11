@@ -399,7 +399,7 @@ pub(crate) fn resolve_segment(
         .find(|candidate| candidate.seq == seq))
 }
 
-fn segment_candidates(rec_dir: &Path) -> io::Result<Vec<SegmentCandidate>> {
+pub(crate) fn segment_candidates(rec_dir: &Path) -> io::Result<Vec<SegmentCandidate>> {
     Ok(dedupe_candidates(raw_segment_candidates(rec_dir)?))
 }
 

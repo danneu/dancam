@@ -30,6 +30,7 @@ mod clock;
 pub mod cpu;
 pub mod event_hub;
 pub mod events;
+pub mod gc;
 mod health;
 mod jpeg;
 mod mutation;

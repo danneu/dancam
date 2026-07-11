@@ -79,6 +79,18 @@ pub fn disk_usage(path: &Path) -> Option<DiskUsage> {
     })
 }
 
+/// Bytes available to the non-root service. This deliberately uses f_bavail,
+/// excluding filesystem blocks reserved for root.
+pub fn disk_avail(path: &Path) -> Option<u64> {
+    let stat = rustix::fs::statvfs(path).ok()?;
+    let block_size = if stat.f_frsize > 0 {
+        stat.f_frsize
+    } else {
+        stat.f_bsize
+    };
+    stat.f_bavail.checked_mul(block_size)
+}
+
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn meminfo_kib(raw: &str, key: &str) -> Option<u64> {
     raw.lines().find_map(|line| {
@@ -96,7 +108,7 @@ fn meminfo_kib(raw: &str, key: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_meminfo, parse_thermal, MemInfo};
+    use super::{disk_avail, disk_usage, parse_meminfo, parse_thermal, MemInfo};
 
     #[test]
     fn parse_thermal_converts_millicelsius_to_celsius() {
@@ -144,5 +156,12 @@ SwapFree:           1024 kB
 ";
 
         assert_eq!(parse_meminfo(meminfo), None);
+    }
+
+    #[test]
+    fn disk_avail_reports_non_root_available_bytes() {
+        let dir = std::env::temp_dir();
+        let avail = disk_avail(&dir).expect("temporary directory should be stat-able");
+        assert!(avail <= disk_usage(&dir).expect("disk usage").total);
     }
 }

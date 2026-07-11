@@ -73,6 +73,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         state.storage.rec_dir(),
         Duration::from_secs(2),
     );
+    let gc = dancam::gc::GcConfig::from_env(state.storage.rec_dir());
+    if gc.floor_bytes > 0 {
+        tracing::info!(floor_bytes = gc.floor_bytes, "segment gc enabled");
+        dancam::gc::spawn_gc(state.storage.clone(), state.backend.clone(), gc);
+    }
 
     tracing::info!(%local_addr, "listening");
 
