@@ -244,7 +244,7 @@ mock first.
       - [x] Car-image hardening: `car_image`-gated read-only root/boot, tmpfs and
             `/persist` binds for writable OS state, read-only-root-aware deploy, and
             bench power-cut validation.
-- [ ] **Swoop `silt` -- Ring-buffer GC (drip eviction).** Pi deletes oldest
+- [x] **Swoop `silt` -- Ring-buffer GC (drip eviction).** Pi deletes oldest
       finished segments when `/data` available bytes fall below
       `DANCAM_GC_FLOOR_BYTES` (default 2 GiB), via the existing coordinator
       delete + `clip_removed`. Adds no wire surface (the app already folds
