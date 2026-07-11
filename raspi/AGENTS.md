@@ -376,3 +376,8 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   witness (survives a same-boot restart) and start allocation fails closed at the `u32`
   ceiling. Scoped-supersedes ADR 10's session-id definition, ADR 15's filename
   grammar/parser canon, and ADR 16's allocation ceiling.
+- `21-2026-07-10-ring-gc-drip-eviction.md` (Accepted) -- GC drip-evicts oldest
+  finished segments to an `f_bavail` byte floor, amortizes write-ahead witness
+  raises per pass, and defines the in-mutex protection seam for incident locks.
+  The flat stamped-filename, stateless-scan layout is the end state, superseding
+  ADR 03's `segments/`, `index.log`, snapshots, and in-memory index machinery.

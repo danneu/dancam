@@ -244,6 +244,14 @@ mock first.
       - [x] Car-image hardening: `car_image`-gated read-only root/boot, tmpfs and
             `/persist` binds for writable OS state, read-only-root-aware deploy, and
             bench power-cut validation.
+- [ ] **Swoop `silt` -- Ring-buffer GC (drip eviction).** Pi deletes oldest
+      finished segments when `/data` available bytes fall below
+      `DANCAM_GC_FLOOR_BYTES` (default 2 GiB), via the existing coordinator
+      delete + `clip_removed`. Adds no wire surface (the app already folds
+      `clip_removed`); the app change bounds its stale-response suppression so
+      continuous `clip_removed` traffic no longer grows an unbounded tombstone
+      set. Shapes the protection seam `nova` plugs incident hardlinks into. See
+      raspi ADR 21.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects `/data` issues and surfaces
       them to the app (missing / unformatted / wrong filesystem); auto-format on first
       insert; format-from-app with a double-confirm (`POST /v1/storage/format`). After

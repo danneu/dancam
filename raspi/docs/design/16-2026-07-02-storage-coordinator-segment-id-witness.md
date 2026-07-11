@@ -67,6 +67,14 @@ under `incidents/*/`, land with their owning features.
 
 The implemented guarantee is intentionally narrower than ADR 03's end state:
 
+> **Note (2026-07-10): Rollover coverage realized by GC.**
+> `21-2026-07-10-ring-gc-drip-eviction.md` supersedes the transitional framing
+> below. The flat stamped-filename layout is the end state. GC covers rollover
+> ids without moving finalize/register into the coordinator: before unlink it
+> performs an amortized per-pass witness raise to the newest scanned finished
+> id, while the per-id delete primitive retains the write-ahead raise as the
+> correctness backstop. The no-reuse target invariant itself remains live.
+
 - **Implemented now:** every id returned by `allocate_start_segment` has a persisted
   witness greater than or equal to that id before it is handed out.
 - **Target invariant:** a segment id is only ever handed out or unlinked when the
@@ -106,8 +114,8 @@ and finalize/register-in-coordinator.
 - Rollover ids are not fully covered until finalize/register enters the coordinator.
   Deleting or evicting finished segments before that move requires write-ahead witness
   updates for every unlinked sequence.
-- The current on-disk shape remains transitional: flat `seg_*.ts` files and no index
-  or incident trees.
+- The flat stamped-filename layout and stateless scans are the end state under
+  ADR 21; the future incident tree remains separate owning-feature work.
 
 ## Alternatives considered
 

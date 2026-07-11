@@ -67,6 +67,13 @@ owned by the transport ADR (e.g. `retention`), and that contract governs.
 
 ### On-Disk Layout
 
+> **Note (2026-07-10): Flat layout is the end state.**
+> `21-2026-07-10-ring-gc-drip-eviction.md` supersedes this section's
+> `segments/`, `index.log`, `index.snapshot`, and in-memory-index target. Stamped
+> filenames (ADRs 15 and 20) are the index, finished segments remain flat in the
+> recording directory, and stateless per-operation scans are the realized
+> posture. The incident hardlink tree and durable coordinator state remain live.
+
 All paths live under `/rec/` on the writable recording partition, never on the
 read-only root filesystem:
 
@@ -178,6 +185,12 @@ incident protects. Segments from a boot that never synced stay
 `time_approximate: true`.
 
 ### Retention And Ring GC
+
+> **Note (2026-07-10): GC policy scoped-superseded.**
+> `21-2026-07-10-ring-gc-drip-eviction.md` replaces percentage high/low
+> watermarks and reserved-percent headroom with oldest-first drip eviction to an
+> `f_bavail` byte floor (2 GiB by default). The hardlink and protect-floor rules
+> remain live and are authoritatively rechecked under the coordinator mutex.
 
 Retention is primarily space-based. GC watches high/low free-space watermarks on
 the recording partition. When free space falls below the low watermark, GC
@@ -348,6 +361,13 @@ and truncation are backstops.
 
 ### Index, Listing, And Rebuild
 
+> **Note (2026-07-10): Stateless scans are the end state.**
+> `21-2026-07-10-ring-gc-drip-eviction.md` supersedes this section's
+> `index.log`, `index.snapshot`, and in-memory sorted segment-table target.
+> Stamped filenames are the durable index; listing, recovery, and GC scan the
+> flat directory per operation. Incident hardlinks and their future metadata
+> remain filesystem-backed durable state.
+
 The in-memory index is a sorted segment table plus an incident table. It is a
 cache and can be rebuilt from disk.
 
@@ -416,6 +436,14 @@ and `seen-keys.log`. Losing boot anchors degrades affected clips to
 durable state and included in the max-of-witnesses rule.
 
 ### Concurrency Model
+
+> **Note (2026-07-10): Coordinator scope refined.**
+> `21-2026-07-10-ring-gc-drip-eviction.md` keeps the single-writer mutation
+> coordinator but supersedes the indexed `segments/`-tree framing. GC scans the
+> flat directory without the mutex, then takes the mutex separately for its
+> optional witness raise and each attempted deletion. Protection is
+> authoritatively rechecked inside each delete; a pass never holds the mutex
+> across its scan or batch.
 
 A single-writer storage coordinator owns all mutations to the index and to the
 `segments/` and `incidents/` trees: segment finalize/register, GC unlink,
