@@ -350,6 +350,22 @@ clips list. The mock bytes are not real TS, so finished mock rows may show bytes
 without a duration; `just raspi-mock-clips` still points at the committed
 `assets/clips` fixture when you need a real finished sample clip.
 
+Ring GC keeps 2 GiB available by default. Set `DANCAM_GC_FLOOR_BYTES=0` to
+disable it. To watch GC operate against the mock recorder, run:
+
+```sh
+just raspi-mock-gc
+```
+
+This recipe pre-creates `.mock-rec` so the startup space probe has a real path,
+then sets the floor to an intentionally impossible value above the Mac's
+available space. The empty ring first triggers the exhausted warning and a
+~30 s backoff. Once recording starts, finished 5 s segments are evicted in
+~30 s bursts as each retry handles the accumulated backlog; stopping recording
+lets the final open segment become evictable on the next retry. This bursty
+cadence is an artifact of the impossible dev floor, not the steady
+one-in-one-out drip produced by a realistic floor.
+
 Verify from the Mac over the LAN:
 
 ```sh

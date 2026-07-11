@@ -241,6 +241,17 @@ app-logs:
 raspi-mock:
     cd raspi/service && DANCAM_REC_DIR=.mock-rec DANCAM_MOCK_SEGMENT_SECS=5 cargo run
 
+# Watch ring GC evict live against the mock recorder: an intentionally huge
+# floor keeps the Mac's "avail" below it, so while recording every FINISHED 5s
+# mock segment becomes eviction fodder (drip oldest-first; only the currently
+# open segment, protected by the live floor, survives) and the loud
+# below-floor-exhausted warning + 30s backoff show up in the logs. After you
+# stop recording, that last segment becomes evictable too and drains on the
+# next retry, leaving the ring empty before Exhausted fires.
+raspi-mock-gc:
+    mkdir -p raspi/service/.mock-rec
+    cd raspi/service && DANCAM_REC_DIR=.mock-rec DANCAM_MOCK_SEGMENT_SECS=5 DANCAM_GC_FLOOR_BYTES=18446744073709551615 cargo run
+
 # Run the mock Pi service with a sample finished clip available from /v1/clips.
 # Seeds a throwaway scratch dir with the committed seg_00000.ts fixture so the
 # recorder serves it as a finished clip without polluting the tracked assets dir.

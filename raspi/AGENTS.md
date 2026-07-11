@@ -142,6 +142,10 @@ over raw `cargo` commands unless they need to test a lower-level Cargo behavior.
 - `just raspi-build` -- build the service for the local host.
 - `just raspi-test` -- run the service test suite.
 - `just raspi-mock` -- run the mock Pi service on `127.0.0.1:8080`.
+- `just raspi-mock-gc` -- run the mock recorder with an impossible free-space
+  floor to watch GC eviction and its exhausted/backoff path. Expect an initial
+  ~30 s quiet window, then eviction in ~30 s bursts; this dev-only cadence is
+  not the steady one-in-one-out drip produced by a realistic floor.
 - `just raspi-mock-lan` -- run the mock Pi service on `[::]:9000` for testing from
   another LAN device, such as the iPhone.
 
@@ -224,7 +228,10 @@ p4  rest-5%  ext4   /data           rw         recording ring under /data/rec
 connectivity state survive a data-partition format or failure. The deployed service
 sets `DANCAM_REC_DIR=/data/rec` and `DANCAM_REQUIRE_REC_MOUNT=/data`; with `nofail`
 fstab entries, boot and diagnostics stay up when `/data` is missing while recording
-mutations fail closed at the service boundary. See
+mutations fail closed at the service boundary. Ring GC uses
+`DANCAM_GC_FLOOR_BYTES`, defaulting to 2 GiB of available space on the recording
+filesystem; set it to `0` to disable GC. The deployed unit relies on this in-binary
+default, so the systemd unit does not duplicate it. See
 `docs/design/18-2026-07-04-sd-card-layout-and-readonly-root.md`.
 
 ### Rust dev loop
