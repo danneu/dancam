@@ -400,7 +400,7 @@ struct HomeViewControllerTests {
             timeApproximate: clipA.timeApproximate
         )
 
-        store.send(.clips(.clipsResponse(epoch: 0, .success(ClipsResponse(
+        store.send(.clips(.clipsResponse(epoch: 0, generation: 0, .success(ClipsResponse(
             clips: [clipC, relabeledClipA, clipB],
             serverTimeMs: 0,
             nextCursor: nil
@@ -454,7 +454,7 @@ struct HomeViewControllerTests {
             timeApproximate: false
         )
 
-        store.send(.clips(.clipsResponse(epoch: 0, .success(ClipsResponse(
+        store.send(.clips(.clipsResponse(epoch: 0, generation: 0, .success(ClipsResponse(
             clips: [trustedClip],
             serverTimeMs: 1_767_225_601_000,
             nextCursor: nil
@@ -939,7 +939,7 @@ struct HomeViewControllerTests {
         #expect(controller.isRefreshingForTesting)
         #expect(controller.isManualRefreshingForTesting)
 
-        store.send(.clips(.clipsResponse(epoch: 1, .failure(.transport(.connectTimedOut)))))
+        store.send(.clips(.clipsResponse(epoch: 1, generation: 0, .failure(.transport(.connectTimedOut)))))
 
         #expect(controller.isRefreshingForTesting == false)
         #expect(controller.isManualRefreshingForTesting == false)
@@ -985,7 +985,7 @@ struct HomeViewControllerTests {
         #expect(controller.isShowingLoadingStateForTesting)
         #expect(controller.isShowingEmptyStateForTesting == false)
 
-        store.send(.clips(.clipsResponse(epoch: 1, .success(ClipsResponse(
+        store.send(.clips(.clipsResponse(epoch: 1, generation: 0, .success(ClipsResponse(
             clips: [],
             serverTimeMs: nil,
             nextCursor: nil
@@ -1000,7 +1000,7 @@ struct HomeViewControllerTests {
         #expect(controller.isShowingEmptyStateForTesting)
         #expect(controller.isShowingLoadingStateForTesting == false)
 
-        store.send(.clips(.clipsResponse(epoch: 2, .success(ClipsResponse(
+        store.send(.clips(.clipsResponse(epoch: 2, generation: 0, .success(ClipsResponse(
             clips: [clipA],
             serverTimeMs: nil,
             nextCursor: nil
@@ -1014,12 +1014,12 @@ struct HomeViewControllerTests {
         let (staleController, staleStore) = makeControllerAndStore(clips: [clipA], loader: .noop)
         staleController.loadViewIfNeeded()
 
-        staleStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport(.connectTimedOut)))))
+        staleStore.send(.clips(.clipsResponse(epoch: 0, generation: 0, .failure(.transport(.connectTimedOut)))))
 
         #expect(staleController.clipsFailureMessageForTesting == "Can't reach the camera (timed out).")
         #expect(staleController.isShowingEmptyStateForTesting == false)
 
-        staleStore.send(.clips(.clipsResponse(epoch: 0, .success(ClipsResponse(
+        staleStore.send(.clips(.clipsResponse(epoch: 0, generation: 0, .success(ClipsResponse(
             clips: [],
             serverTimeMs: 0,
             nextCursor: nil
@@ -1032,7 +1032,7 @@ struct HomeViewControllerTests {
         emptyController.loadViewIfNeeded()
         #expect(emptyController.isShowingEmptyStateForTesting == false)
 
-        emptyStore.send(.clips(.clipsResponse(epoch: 0, .failure(.transport(.connectTimedOut)))))
+        emptyStore.send(.clips(.clipsResponse(epoch: 0, generation: 0, .failure(.transport(.connectTimedOut)))))
 
         #expect(emptyController.clipsFailureMessageForTesting == "Can't reach the camera (timed out).")
         #expect(emptyController.isShowingEmptyStateForTesting == false)

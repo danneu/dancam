@@ -1140,4 +1140,8 @@ Gate: `just app-test`.
 - [x] 3. refactor(raspi): skip redundant witness rewrites on delete and scrub
 - [x] 4. feat(raspi): GC pass core, worker, startup, and f_bavail probe
 - [x] 5. chore(raspi): mock GC dev-loop recipe and docs
-- [ ] 6. feat(app): scope removal tombstones to outstanding request generations and pin GC roll-off cache retention
+- [x] 6. feat(app): scope removal tombstones to outstanding request generations and pin GC roll-off cache retention
+
+## Implementation notes
+
+- Commit 6 also updates `AppFeature.swift`'s action summary and the app/home reducer tests that construct `ClipsFeature` response actions directly; threading the prescribed request generation through those actions makes those call sites part of the compile-time migration.

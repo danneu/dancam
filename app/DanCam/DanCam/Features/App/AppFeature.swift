@@ -628,13 +628,13 @@ private extension ClipsFeature.Action {
             "clipRemoved"
         case .loadMore:
             "loadMore"
-        case .clipsResponse(_, .success):
+        case .clipsResponse(_, _, .success):
             "clipsResponse.success"
-        case .clipsResponse(_, .failure):
+        case .clipsResponse(_, _, .failure):
             "clipsResponse.failure"
-        case .pageResponse(_, .success):
+        case .pageResponse(_, _, .success):
             "pageResponse.success"
-        case .pageResponse(_, .failure):
+        case .pageResponse(_, _, .failure):
             "pageResponse.failure"
         }
     }

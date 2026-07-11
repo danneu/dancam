@@ -7,7 +7,11 @@ enum ClipsFeature {
         var nextCursor: String?
         var isPaging = false
         var pendingDeleteIDs: Set<Int> = []
-        var suppressedClipIDs: Set<Int> = []
+        var requestSeq = 0
+        var inFlightRequests: Set<Int> = []
+        var removalTombstones: [Int: Int] = [:]
+        var headRequest: Int?
+        var pageRequest: Int?
         var headEpoch = 0
         var hasLoadedOnce = false
         var clipFinalizeEpoch: [Int: Int] = [:]
@@ -28,8 +32,8 @@ enum ClipsFeature {
         case deleteTapped(Clip)
         case deleteResponse(clip: Clip, Result<Bool, ClipsError>)
         case clipRemoved(id: Int)
-        case clipsResponse(epoch: Int, Result<ClipsResponse, ClipsError>)
-        case pageResponse(epoch: Int, Result<ClipsResponse, ClipsError>)
+        case clipsResponse(epoch: Int, generation: Int, Result<ClipsResponse, ClipsError>)
+        case pageResponse(epoch: Int, generation: Int, Result<ClipsResponse, ClipsError>)
     }
 
     private static let fetchID = "clips-fetch"
@@ -42,12 +46,22 @@ enum ClipsFeature {
     ) -> Effect<Action> {
         switch action {
         case .load, .refresh:
+            settle(state.headRequest, state: &state)
             state.status = .loading
             state.headEpoch += 1
-            return fetchEffect(epoch: state.headEpoch, cursor: nil, dependencies: dependencies)
+            let generation = issueRequest(state: &state)
+            state.headRequest = generation
+            return fetchEffect(
+                epoch: state.headEpoch,
+                generation: generation,
+                cursor: nil,
+                dependencies: dependencies
+            )
 
         case .onDisappear:
             state.isPaging = false
+            settle(state.pageRequest, state: &state)
+            state.pageRequest = nil
             return .cancel(id: pageID)
 
         case .clipFinalized(let clip):
@@ -55,7 +69,7 @@ enum ClipsFeature {
             state.clips = merged(
                 existing: state.clips,
                 incoming: [clip],
-                suppressed: state.suppressedClipIDs
+                suppressed: suppressedIDs(state)
             )
             return .none
 
@@ -64,24 +78,26 @@ enum ClipsFeature {
                 return .none
             }
             state.isPaging = true
+            let generation = issueRequest(state: &state)
+            state.pageRequest = generation
             return pageEffect(
                 cursor: cursor,
                 epoch: state.headEpoch,
+                generation: generation,
                 dependencies: dependencies
             )
 
         case .deleteTapped(let clip):
             state.pendingDeleteIDs.insert(clip.id)
-            state.suppressedClipIDs.insert(clip.id)
             state.clips.removeAll { $0.id == clip.id }
             return deleteEffect(clip: clip, dependencies: dependencies)
 
         case .deleteResponse(let clip, .success):
-            state.pendingDeleteIDs.remove(clip.id)
+            confirmRemoval(clip.id, state: &state)
             return .none
 
         case .deleteResponse(let clip, .failure(.http(404))):
-            state.pendingDeleteIDs.remove(clip.id)
+            confirmRemoval(clip.id, state: &state)
             return .none
 
         case .deleteResponse(let clip, .failure(let error)):
@@ -89,58 +105,74 @@ enum ClipsFeature {
                 return .none
             }
             state.pendingDeleteIDs.remove(clip.id)
-            state.suppressedClipIDs.remove(clip.id)
             state.clips = merged(
                 existing: state.clips,
                 incoming: [clip],
-                suppressed: state.suppressedClipIDs
+                suppressed: suppressedIDs(state)
             )
             state.status = .failed(error)
             return .none
 
         case .clipRemoved(let id):
-            state.suppressedClipIDs.insert(id)
-            state.pendingDeleteIDs.remove(id)
+            confirmRemoval(id, state: &state)
             state.clips.removeAll { $0.id == id }
             return .none
 
-        case .clipsResponse(let epoch, .success(let response)):
-            guard epoch == state.headEpoch else { return .none }
+        case .clipsResponse(let epoch, let generation, .success(let response)):
+            guard epoch == state.headEpoch else {
+                settleHead(generation, state: &state)
+                return .none
+            }
             let reconciliation = reconciledHead(
                 existing: state.clips,
                 pending: state.pendingDeleteIDs,
                 response: response,
-                suppressed: state.suppressedClipIDs,
+                suppressed: suppressedIDs(state),
                 requestEpoch: epoch,
                 finalizeEpoch: state.clipFinalizeEpoch
             )
-            state.suppressedClipIDs.formUnion(reconciliation.authoritativeAbsentIDs)
+            for id in reconciliation.authoritativeAbsentIDs {
+                state.removalTombstones[id] = state.requestSeq
+            }
             state.pendingDeleteIDs.subtract(reconciliation.authoritativeAbsentIDs)
-            state.clips = reconciliation.clips
+            state.clips = merged(
+                existing: reconciliation.clips,
+                incoming: [],
+                suppressed: suppressedIDs(state)
+            )
             state.status = .idle
             state.hasLoadedOnce = true
             state.nextCursor = response.nextCursor
             state.isPaging = false
             state.clipFinalizeEpoch = state.clipFinalizeEpoch.filter { $0.value >= epoch }
+            settleHead(generation, state: &state)
+            settle(state.pageRequest, state: &state)
+            state.pageRequest = nil
             return .cancel(id: pageID)
 
-        case .clipsResponse(let epoch, .failure(let error)):
+        case .clipsResponse(let epoch, let generation, .failure(let error)):
+            settleHead(generation, state: &state)
             guard epoch == state.headEpoch else { return .none }
             state.status = .failed(error)
             return .none
 
-        case .pageResponse(let epoch, .success(let response)):
-            guard epoch == state.headEpoch else { return .none }
+        case .pageResponse(let epoch, let generation, .success(let response)):
+            guard epoch == state.headEpoch else {
+                settlePage(generation, state: &state)
+                return .none
+            }
             state.clips = merged(
                 existing: state.clips,
                 incoming: response.clips,
-                suppressed: state.suppressedClipIDs
+                suppressed: suppressedIDs(state)
             )
             state.nextCursor = response.nextCursor
             state.isPaging = false
+            settlePage(generation, state: &state)
             return .none
 
-        case .pageResponse(let epoch, .failure):
+        case .pageResponse(let epoch, let generation, .failure):
+            settlePage(generation, state: &state)
             guard epoch == state.headEpoch else { return .none }
             state.isPaging = false
             return .none
@@ -149,6 +181,7 @@ enum ClipsFeature {
 
     private static func fetchEffect(
         epoch: Int,
+        generation: Int,
         cursor: String?,
         dependencies: AppDependencies
     ) -> Effect<Action> {
@@ -157,7 +190,7 @@ enum ClipsFeature {
                   Task.isCancelled == false else {
                 return
             }
-            await send(.clipsResponse(epoch: epoch, result))
+            await send(.clipsResponse(epoch: epoch, generation: generation, result))
         }
     }
 
@@ -187,6 +220,7 @@ enum ClipsFeature {
     private static func pageEffect(
         cursor: String,
         epoch: Int,
+        generation: Int,
         dependencies: AppDependencies
     ) -> Effect<Action> {
         .run(id: pageID) { send in
@@ -194,8 +228,51 @@ enum ClipsFeature {
                   Task.isCancelled == false else {
                 return
             }
-            await send(.pageResponse(epoch: epoch, result))
+            await send(.pageResponse(epoch: epoch, generation: generation, result))
         }
+    }
+
+    private static func issueRequest(state: inout State) -> Int {
+        state.requestSeq += 1
+        state.inFlightRequests.insert(state.requestSeq)
+        return state.requestSeq
+    }
+
+    private static func settle(_ generation: Int?, state: inout State) {
+        guard let generation else { return }
+        state.inFlightRequests.remove(generation)
+        pruneTombstones(state: &state)
+    }
+
+    private static func settleHead(_ generation: Int, state: inout State) {
+        settle(generation, state: &state)
+        if state.headRequest == generation {
+            state.headRequest = nil
+        }
+    }
+
+    private static func settlePage(_ generation: Int, state: inout State) {
+        settle(generation, state: &state)
+        if state.pageRequest == generation {
+            state.pageRequest = nil
+        }
+    }
+
+    private static func confirmRemoval(_ id: Int, state: inout State) {
+        state.removalTombstones[id] = state.requestSeq
+        state.pendingDeleteIDs.remove(id)
+        pruneTombstones(state: &state)
+    }
+
+    private static func pruneTombstones(state: inout State) {
+        let floor = state.inFlightRequests.min()
+        state.removalTombstones = state.removalTombstones.filter { _, bornAt in
+            floor.map { $0 <= bornAt } ?? false
+        }
+    }
+
+    private static func suppressedIDs(_ state: State) -> Set<Int> {
+        state.pendingDeleteIDs.union(state.removalTombstones.keys)
     }
 
     private static func fetchResult(

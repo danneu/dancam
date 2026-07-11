@@ -69,11 +69,16 @@ struct AppFeatureTests {
             $0.recording = .recording
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
-        await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.send(.streamStopped)
         await store.finishEffects()
@@ -96,6 +101,9 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await store.receive(.timeSyncResponded(success: true))
         await store.finishEffects()
@@ -120,6 +128,9 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await store.finishEffects()
 
@@ -143,6 +154,9 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await store.receive(.timeSyncResponded(success: true))
         await store.finishEffects()
@@ -168,6 +182,9 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await store.receive(.timeSyncResponded(success: false))
         await store.receive(.timeSyncRetry)
@@ -200,6 +217,9 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await store.receive(.timeSyncResponded(success: false))
         await sleepGate.waitForSleep(.seconds(2))
@@ -208,11 +228,16 @@ struct AppFeatureTests {
             $0.link = .online(synced)
             $0.clips.status = .loading
             $0.clips.headEpoch = 2
+            $0.clips.requestSeq = 2
+            $0.clips.inFlightRequests = [2]
+            $0.clips.headRequest = 2
         }
-        await store.receive(.clips(.clipsResponse(epoch: 2, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 2, generation: 2, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
 
         await sleepGate.release(.seconds(2))
@@ -245,6 +270,9 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await store.receive(.timeSyncResponded(success: false))
         await sleepGate.waitForSleep(.seconds(2))
@@ -263,6 +291,9 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 2
+            $0.clips.requestSeq = 2
+            $0.clips.inFlightRequests = [2]
+            $0.clips.headRequest = 2
         }
         await store.receive(.timeSyncResponded(success: true))
         await store.send(.streamStopped)
@@ -293,6 +324,9 @@ struct AppFeatureTests {
             $0.streamReconnectAttempt = 0
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
 
         await store.send(.streamStopped) {
@@ -316,6 +350,9 @@ struct AppFeatureTests {
             $0.streamReconnectAttempt = 0
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await store.finishEffects()
     }
@@ -334,6 +371,9 @@ struct AppFeatureTests {
             $0.streamReconnectAttempt = 0
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await store.finishEffects()
     }
@@ -415,9 +455,14 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
-        await store.receive(.clips(.clipsResponse(epoch: 1, .failure(.http(503))))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 1, .failure(.http(503))))) {
             $0.clips.status = .failed(.http(503))
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.send(.event(.heartbeat(tMs: 12_000))) {
             var heartbeatWorld = world
@@ -425,11 +470,16 @@ struct AppFeatureTests {
             $0.link = .online(heartbeatWorld)
             $0.clips.status = .loading
             $0.clips.headEpoch = 2
+            $0.clips.requestSeq = 2
+            $0.clips.inFlightRequests = [2]
+            $0.clips.headRequest = 2
         }
-        await store.receive(.clips(.clipsResponse(epoch: 2, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 2, generation: 2, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.finishEffects()
         store.expectNoReceivedActions()
@@ -452,9 +502,14 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
-        await store.receive(.clips(.clipsResponse(epoch: 1, .failure(.http(404))))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 1, .failure(.http(404))))) {
             $0.clips.status = .failed(.http(404))
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.send(.event(.heartbeat(tMs: 12_000))) {
             var heartbeatWorld = world
@@ -470,11 +525,16 @@ struct AppFeatureTests {
             $0.link = .online(world)
             $0.clips.status = .loading
             $0.clips.headEpoch = 2
+            $0.clips.requestSeq = 2
+            $0.clips.inFlightRequests = [2]
+            $0.clips.headRequest = 2
         }
-        await store.receive(.clips(.clipsResponse(epoch: 2, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 2, generation: 2, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.finishEffects()
         store.expectNoReceivedActions()
@@ -498,9 +558,14 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
-        await store.receive(.clips(.clipsResponse(epoch: 1, .failure(error)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 1, .failure(error)))) {
             $0.clips.status = .failed(error)
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.send(.event(.heartbeat(tMs: 12_000))) {
             var heartbeatWorld = world
@@ -572,8 +637,7 @@ struct AppFeatureTests {
             initialState: state(
                 link: .online(world),
                 clips: ClipsFeature.State(
-                    pendingDeleteIDs: [clip.id],
-                    suppressedClipIDs: [clip.id]
+                    pendingDeleteIDs: [clip.id]
                 )
             ),
             dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
@@ -588,7 +652,6 @@ struct AppFeatureTests {
             $0.clips.clips = [clip]
             $0.clips.status = .failed(.transport(.connectTimedOut))
             $0.clips.pendingDeleteIDs = []
-            $0.clips.suppressedClipIDs = []
         }
         await store.send(.event(.heartbeat(tMs: 12_000))) {
             var heartbeatWorld = world
@@ -596,12 +659,16 @@ struct AppFeatureTests {
             $0.link = .online(heartbeatWorld)
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
-        await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
-            $0.clips.suppressedClipIDs = [clip.id]
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.finishEffects()
         store.expectNoReceivedActions()
@@ -643,7 +710,7 @@ struct AppFeatureTests {
             $0.clips.clips = [folded]
             $0.clips.clipFinalizeEpoch[3] = 1
         }
-        await store.send(.clips(.clipsResponse(epoch: 1, .success(stale)))) {
+        await store.send(.clips(.clipsResponse(epoch: 1, generation: 0, .success(stale)))) {
             $0.clips.clips = [folded] + stale.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
@@ -733,11 +800,16 @@ struct AppFeatureTests {
 
         await store.send(.clips(.loadMore)) {
             $0.clips.isPaging = true
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.pageRequest = 1
         }
-        await store.receive(.clips(.pageResponse(epoch: 0, .success(page)))) {
+        await store.receive(.clips(.pageResponse(epoch: 0, generation: 1, .success(page)))) {
             $0.clips.clips = CameraSamples.clipsResponse(ids: [42]).clips + page.clips
             $0.clips.nextCursor = nil
             $0.clips.isPaging = false
+            $0.clips.inFlightRequests = []
+            $0.clips.pageRequest = nil
         }
 
         let cursors = await queue.requestedCursors()
@@ -764,11 +836,16 @@ struct AppFeatureTests {
         await store.send(.manualRefresh) {
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
-        await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.finishEffects()
         store.expectNoReceivedActions()
@@ -800,11 +877,16 @@ struct AppFeatureTests {
         await store.send(.manualRefresh) {
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
-        await store.receive(.clips(.clipsResponse(epoch: 1, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 1, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
 
         await allowSnapshot.signal()
@@ -814,6 +896,9 @@ struct AppFeatureTests {
             $0.streamReconnectAttempt = 0
             $0.clips.status = .loading
             $0.clips.headEpoch = 2
+            $0.clips.requestSeq = 2
+            $0.clips.inFlightRequests = [2]
+            $0.clips.headRequest = 2
         }
         await store.send(.streamStopped)
         await store.finishEffects()
@@ -871,6 +956,9 @@ struct AppFeatureTests {
             $0.recording = .idle
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
         }
         await offlineStore.send(.streamStopped)
         await offlineStore.finishEffects()
