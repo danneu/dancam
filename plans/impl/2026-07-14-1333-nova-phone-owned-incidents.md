@@ -652,4 +652,4 @@ Behavioral acceptance criteria, owned by the commits above:
 - [x] 3. press capture
 - [x] 4. reconciler + downloads
 - [x] 5. tab + detail
-- [ ] 6. polish + nudge lifecycle
+- [x] 6. polish + nudge lifecycle

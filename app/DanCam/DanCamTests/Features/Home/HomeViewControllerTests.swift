@@ -946,6 +946,26 @@ struct HomeViewControllerTests {
         #expect(controller.incidentButtonForTesting.configuration?.title == "Saving...")
     }
 
+    @Test func incidentButtonSavingFeedbackFollowsPendingLifecycleAfterCooldown() {
+        let id = UUID(uuidString: "50000000-0000-0000-0000-000000000001")!
+        var record = IncidentRecord(
+            id: id,
+            pressedAtMs: 1_784_480_523_000,
+            recordingID: RecordingID(bootTag: "boot", session: 7),
+            markSeq: 43,
+            markAgeMs: 12_000
+        )
+        var state = AppFeature.State()
+        state.incidents.incidents = [record]
+        state.incidents.isPressFeedbackVisible = false
+
+        #expect(IncidentButtonPresentation.from(state).isShowingFeedback)
+
+        record.status = .saved
+        state.incidents.incidents = [record]
+        #expect(IncidentButtonPresentation.from(state).isShowingFeedback == false)
+    }
+
     @Test func incidentPersistenceFailureShowsCalmAlert() async throws {
         let world = CameraSamples.world(
             phase: .recording,

@@ -81,7 +81,9 @@ struct IncidentsFeatureTests {
                 ),
                 incidentNotifier: IncidentNotifier(
                     requestProvisionalAuth: { await ledger.append("auth") },
-                    scheduleNudge: { _, _ in await ledger.append("nudge") },
+                    scheduleNudge: { _, fireIn in
+                        await ledger.append("nudge:\(fireIn == .seconds(180))")
+                    },
                     cancelNudge: { _ in }
                 ),
                 sleep: { duration in await sleepGate.sleep(duration) },
@@ -112,7 +114,7 @@ struct IncidentsFeatureTests {
         await ledger.waitForCount(3)
 
         let events = await ledger.events()
-        #expect(events == ["persist:\(id)", "auth", "nudge"])
+        #expect(events == ["persist:\(id)", "auth", "nudge:true"])
         #expect(store.state.isPressFeedbackVisible)
 
         await sleepGate.release()
@@ -120,6 +122,58 @@ struct IncidentsFeatureTests {
             $0.isPressFeedbackVisible = false
         }
         await store.finishEffects()
+    }
+
+    @Test func backgroundEnsuresNudgeForEachPendingIncidentOnly() async {
+        let ledger = IncidentEffectLedger()
+        let firstID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "10000000-0000-0000-0000-000000000002")!
+        let savedID = UUID(uuidString: "10000000-0000-0000-0000-000000000003")!
+        var state = IncidentsFeature.State()
+        state.incidents = [
+            record(id: firstID, markAgeMs: 1_000),
+            record(id: secondID, markAgeMs: 1_000),
+            record(id: savedID, markAgeMs: 1_000, status: .saved),
+        ]
+        let store = makeLifecycleStore(state: state, ledger: ledger)
+
+        await store.send(.backgrounded)
+        await store.finishEffects()
+
+        #expect(await ledger.events() == ["schedule:\(firstID):true", "schedule:\(secondID):true"])
+    }
+
+    @Test func durableTerminalTransitionCancelsNudge() async {
+        let ledger = IncidentEffectLedger()
+        let id = UUID(uuidString: "20000000-0000-0000-0000-000000000001")!
+        var pending = record(id: id, markAgeMs: 1_000)
+        var state = IncidentsFeature.State()
+        state.incidents = [pending]
+        let store = makeLifecycleStore(state: state, ledger: ledger)
+        pending.status = .saved
+
+        await store.send(.recordPersisted(pending, cancelNudge: true, success: true)) {
+            $0.incidents = [pending]
+        }
+        await store.finishEffects()
+
+        #expect(await ledger.events() == ["cancel:\(id)"])
+    }
+
+    @Test func deletingPendingIncidentCancelsNudgeAfterDeleteSucceeds() async {
+        let ledger = IncidentEffectLedger()
+        let id = UUID(uuidString: "30000000-0000-0000-0000-000000000001")!
+        var state = IncidentsFeature.State()
+        state.incidents = [record(id: id, markAgeMs: 1_000)]
+        let store = makeLifecycleStore(state: state, ledger: ledger)
+
+        await store.send(.deleteTapped(.readable(id)))
+        await store.receive(.deleteResponded(.readable(id), success: true)) {
+            $0.incidents = []
+        }
+        await store.finishEffects()
+
+        #expect(await ledger.events() == ["delete:\(id)", "cancel:\(id)"])
     }
 
     @Test func rolloverRaceKeepsPreviousSegmentWithAgePastItsDuration() async {
@@ -203,14 +257,50 @@ struct IncidentsFeatureTests {
     private func record(
         id: UUID,
         markSeq: Int = 12,
-        markAgeMs: UInt64
+        markAgeMs: UInt64,
+        status: IncidentStatus = .pending
     ) -> IncidentRecord {
         IncidentRecord(
             id: id,
             pressedAtMs: 1_784_480_523_000,
             recordingID: RecordingID(bootTag: "boot-a", session: 7),
             markSeq: markSeq,
-            markAgeMs: markAgeMs
+            markAgeMs: markAgeMs,
+            status: status
+        )
+    }
+
+    private func makeLifecycleStore(
+        state: IncidentsFeature.State,
+        ledger: IncidentEffectLedger
+    ) -> TestStore<IncidentsFeature.State, IncidentsFeature.Action, AppDependencies> {
+        TestStore(
+            initialState: state,
+            dependencies: AppDependencies(
+                incidentStore: IncidentStore(
+                    list: { [] },
+                    create: { _ in },
+                    update: { _ in },
+                    delete: { id in await ledger.append("delete:\(id)") },
+                    deleteUnreadable: { _ in },
+                    directoryURL: { _ in URL(filePath: "/tmp") }
+                ),
+                incidentNotifier: IncidentNotifier(
+                    requestProvisionalAuth: {},
+                    scheduleNudge: { id, fireIn in
+                        await ledger.append("schedule:\(id):\(fireIn == .seconds(180))")
+                    },
+                    cancelNudge: { id in await ledger.append("cancel:\(id)") }
+                )
+            ),
+            reduce: { state, action, dependencies in
+                IncidentsFeature.reduce(
+                    state: &state,
+                    action: action,
+                    world: nil,
+                    dependencies: dependencies
+                )
+            }
         )
     }
 }

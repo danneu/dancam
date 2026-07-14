@@ -35,6 +35,14 @@ enum IncidentsFeature {
         var isLoadingStore = false
         var isPageRequestPending = false
 
+        var pendingIncidentCount: Int {
+            var ids = Set(incidents.lazy.filter { $0.status == .pending }.map(\.id))
+            if let pendingRecord {
+                ids.insert(pendingRecord.id)
+            }
+            return ids.count
+        }
+
         func canPress(world: World?) -> Bool {
             guard let world,
                   world.recorder.phase.claimsRecording,
@@ -53,6 +61,7 @@ enum IncidentsFeature {
     enum Action: Equatable {
         case worldObserved(World?)
         case foregrounded
+        case backgrounded
         case storeLoaded([StoredIncident]?)
         case clipsChanged
         case clipRemoved(seq: Int)
@@ -109,6 +118,18 @@ enum IncidentsFeature {
                     return
                 } catch {
                     await send(.storeLoaded(nil))
+                }
+            }
+
+        case .backgrounded:
+            let pendingIDs = state.incidents.compactMap { record in
+                record.status == .pending ? record.id : nil
+            }
+            guard pendingIDs.isEmpty == false else { return .none }
+            return .run { _ in
+                for id in pendingIDs {
+                    guard Task.isCancelled == false else { return }
+                    await dependencies.incidentNotifier.scheduleNudge(id, .seconds(180))
                 }
             }
 
@@ -412,6 +433,18 @@ enum IncidentsFeature {
             case .readable(let id):
                 state.incidents.removeAll { $0.id == id }
                 state.pendingPersistIDs.remove(id)
+                return .merge([
+                    .run { _ in
+                        await dependencies.incidentNotifier.cancelNudge(id)
+                    },
+                    reduce(
+                        state: &state,
+                        action: .reconcile,
+                        world: world,
+                        clipsState: clipsState,
+                        dependencies: dependencies
+                    ),
+                ])
             case .unreadable(let directoryName):
                 state.unreadableDirectoryNames.removeAll { $0 == directoryName }
             }

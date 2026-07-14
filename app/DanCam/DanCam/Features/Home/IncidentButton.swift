@@ -7,7 +7,7 @@ nonisolated struct IncidentButtonPresentation: Equatable, Sendable {
     static func from(_ state: AppFeature.State) -> Self {
         Self(
             isEnabled: state.incidents.canPress(world: state.link.onlineWorld),
-            isShowingFeedback: state.incidents.isPressFeedbackVisible
+            isShowingFeedback: state.incidents.pendingIncidentCount > 0
         )
     }
 }
@@ -28,7 +28,11 @@ final class IncidentButton: UIButton {
     func apply(_ presentation: IncidentButtonPresentation) {
         var configuration = UIButton.Configuration.filled()
         configuration.title = presentation.isShowingFeedback ? "Saving..." : "Save Incident"
-        configuration.image = UIImage(systemName: presentation.isShowingFeedback ? "checkmark" : "exclamationmark.triangle.fill")
+        configuration.image = UIImage(
+            systemName: presentation.isShowingFeedback
+                ? "arrow.triangle.2.circlepath"
+                : "exclamationmark.triangle.fill"
+        )
         configuration.imagePadding = 8
         configuration.cornerStyle = .large
         self.configuration = configuration

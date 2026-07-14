@@ -7,6 +7,7 @@ final class AppShellViewController: UIViewController {
     private let strip = StatusStripView()
 
     private var observation: StoreObservation?
+    private var incidentBadgeObservation: StoreObservation?
     private var previousLinkPhase: StripCoordination.LinkPhase?
 
     init(
@@ -32,6 +33,13 @@ final class AppShellViewController: UIViewController {
         (embeddedTabBarController.selectedViewController as? UINavigationController)?.topViewController
     }
 
+    private var incidentsTabBarItem: UITabBarItem? {
+        embeddedTabBarController.viewControllers?
+            .compactMap { $0 as? UINavigationController }
+            .first { $0.viewControllers.first is IncidentsViewController }?
+            .tabBarItem
+    }
+
     override var childForStatusBarStyle: UIViewController? {
         embeddedTabBarController
     }
@@ -54,6 +62,9 @@ final class AppShellViewController: UIViewController {
 
         observation = store.observe(select: StripCoordination.project) { [weak self] projection in
             self?.render(projection)
+        }
+        incidentBadgeObservation = store.observe(select: \.incidents.pendingIncidentCount) { [weak self] count in
+            self?.incidentsTabBarItem?.badgeValue = count == 0 ? nil : String(count)
         }
     }
 

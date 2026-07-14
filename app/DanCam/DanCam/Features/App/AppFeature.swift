@@ -21,6 +21,7 @@ enum AppFeature {
         case clips(ClipsFeature.Action)
         case incidents(IncidentsFeature.Action)
         case foregrounded
+        case backgrounded
         case recordTapped
         case manualRefresh
         case reconnectStreamIfOffline
@@ -265,6 +266,13 @@ enum AppFeature {
                 dependencies: dependencies
             )
 
+        case .backgrounded:
+            return reduceIncidents(
+                state: &state,
+                action: .backgrounded,
+                dependencies: dependencies
+            )
+
         case .recordTapped:
             switch state.recording {
             case .recording:
@@ -472,6 +480,8 @@ extension AppFeature.Action {
             "incidents.\(action.logLabel)"
         case .foregrounded:
             "foregrounded"
+        case .backgrounded:
+            "backgrounded"
         case .recordTapped:
             "recordTapped"
         case .manualRefresh:
@@ -498,7 +508,8 @@ extension AppFeature.State {
             "paging=\(clips.isPaging)",
             "cursor=\(clips.nextCursor == nil ? "none" : "present")",
             "incidents=\(incidents.incidents.count)",
-            "incident_press=\(incidents.isPressFeedbackVisible)",
+            "incident_cooldown=\(incidents.isPressFeedbackVisible)",
+            "incident_pending=\(incidents.pendingIncidentCount)",
             "recon=\(streamReconnectAttempt)",
         ].joined(separator: " ")
     }
@@ -738,6 +749,7 @@ private extension IncidentsFeature.Action {
         switch self {
         case .worldObserved: "worldObserved"
         case .foregrounded: "foregrounded"
+        case .backgrounded: "backgrounded"
         case .storeLoaded: "storeLoaded"
         case .clipsChanged: "clipsChanged"
         case .clipRemoved: "clipRemoved"

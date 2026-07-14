@@ -85,6 +85,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
+        appStore?.send(.backgrounded)
         appStore?.send(.streamStopped)
     }
 }

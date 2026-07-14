@@ -14,6 +14,29 @@ struct AppShellViewControllerTests {
         #expect(tabs[3].viewControllers.first is SettingsViewController)
     }
 
+    @Test func incidentsTabBadgeFollowsPendingCount() {
+        let id = UUID(uuidString: "40000000-0000-0000-0000-000000000001")!
+        var pending = IncidentRecord(
+            id: id,
+            pressedAtMs: 1_784_480_523_000,
+            recordingID: RecordingID(bootTag: "boot", session: 7),
+            markSeq: 43,
+            markAgeMs: 12_000
+        )
+        var initialState = AppFeature.State()
+        initialState.incidents.incidents = [pending]
+        let store = makeStore(initialState: initialState)
+        let tabs = SceneDelegate.makeTabs(dependencies: .init(), store: store)
+        let shell = AppShellViewController(tabs: tabs, store: store)
+        shell.loadViewIfNeeded()
+
+        #expect(tabs[1].tabBarItem.badgeValue == "1")
+
+        pending.status = .saved
+        store.send(.incidents(.recordPersisted(pending, cancelNudge: false, success: true)))
+        #expect(tabs[1].tabBarItem.badgeValue == nil)
+    }
+
     @Test func stripHidesRecordingPillWhileConnecting() {
         let store = makeStore()
         let shell = AppShellViewController(
@@ -191,9 +214,9 @@ struct AppShellViewControllerTests {
         return strip
     }
 
-    private func makeStore() -> AppStore {
+    private func makeStore(initialState: AppFeature.State = .init()) -> AppStore {
         AppStore(
-            initialState: AppFeature.State(),
+            initialState: initialState,
             dependencies: AppDependencies(
                 events: .noop,
                 clips: .noop,
