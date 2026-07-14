@@ -53,7 +53,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let timeUnverifiedPill = StatusPillView()
     private let recordButton = RecordButton(frame: .zero)
     private let recordButtonRow = UIView()
-    private let incidentButton = IncidentButton(frame: .zero)
+    private let incidentButton: IncidentButton
     private let incidentButtonRow = UIView()
     private let liveRecordingWidget = LiveRecordingStatusView()
     private let clipsHeaderLabel = UILabel()
@@ -100,6 +100,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         self.store = store
         self.wallNow = wallNow
         self.currentCalendar = currentCalendar
+        incidentButton = IncidentButton(frame: .zero, continuousNow: dependencies.continuousNow)
         previewViewController = PreviewViewController(dependencies: dependencies)
         super.init(nibName: nil, bundle: nil)
     }
@@ -146,8 +147,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             self?.clipsNextCursor = nextCursor
             self?.loadMoreIfVisibleTail()
         }
-        incidentButtonObservation = store.observe(select: IncidentButtonPresentation.from) { [weak self] presentation in
-            self?.incidentButton.apply(presentation)
+        let continuousNow = dependencies.continuousNow
+        incidentButtonObservation = store.observe(select: { state in
+            IncidentButtonPresentation.from(state, now: continuousNow())
+        }) { [weak self] presentation in
+            guard let self else { return }
+            self.incidentButton.apply(presentation, now: self.dependencies.continuousNow())
         }
         incidentFailureObservation = store.observe(\.incidents.persistenceFailed) { [weak self] failed in
             guard failed else { return }
@@ -204,7 +209,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         recordButtonRow.addSubview(recordButton)
 
         incidentButton.addTarget(self, action: #selector(incidentTapped), for: .touchUpInside)
-        incidentButton.apply(IncidentButtonPresentation(isEnabled: false, isShowingFeedback: false))
+        incidentButton.apply(.unavailable, now: dependencies.continuousNow())
         incidentButton.translatesAutoresizingMaskIntoConstraints = false
         incidentButtonRow.addSubview(incidentButton)
 

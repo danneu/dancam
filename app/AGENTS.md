@@ -176,3 +176,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `26-2026-07-14-phone-owned-incidents.md` -- make incidents durable phone-owned
   artifacts assembled from the existing clip list, ranged pull, and events surfaces;
   supersedes the Pi-side incident-lock direction.
+- `27-2026-07-14-incident-post-roll-press-lockout.md` -- replace the 3 s incident
+  cooldown with a recording-scoped monotonic post-roll lockout, one-time relaunch
+  reconstruction, and a single button presentation state machine.

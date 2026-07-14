@@ -21,13 +21,19 @@ enum IncidentsFeature {
     }
 
     nonisolated struct State: Equatable, Sendable {
+        struct RuntimeLockout: Equatable, Sendable {
+            var recordingID: RecordingID
+            var deadline: ContinuousClock.Instant
+        }
+
         var incidents: [IncidentRecord] = []
         var unreadableDirectoryNames: [String] = []
         var openSegmentAnchor: OpenSegmentAnchor?
-        var isPressFeedbackVisible = false
+        var runtimeLockout: RuntimeLockout?
+        var lockoutResolvedRecordingID: RecordingID?
         var persistenceFailed = false
         var hasRequestedProvisionalAuth = false
-        var pendingRecord: IncidentRecord?
+        var pendingRecords: [RecordingID: IncidentRecord] = [:]
         var pullQueue: [PullRequest] = []
         var activePull: PullRequest?
         var pendingPersistIDs: Set<UUID> = []
@@ -37,14 +43,13 @@ enum IncidentsFeature {
 
         var pendingIncidentCount: Int {
             var ids = Set(incidents.lazy.filter { $0.status == .pending }.map(\.id))
-            if let pendingRecord {
-                ids.insert(pendingRecord.id)
-            }
+            ids.formUnion(pendingRecords.values.map(\.id))
             return ids.count
         }
 
-        func canPress(world: World?) -> Bool {
+        func captureRecordingID(world: World?) -> RecordingID? {
             guard let world,
+                  hasLoadedStore,
                   world.recorder.phase.claimsRecording,
                   let bootTag = world.bootTag,
                   let segment = world.recorder.currentSegment,
@@ -53,8 +58,52 @@ enum IncidentsFeature {
                       bootTag: bootTag,
                       session: world.recorder.session
                   ),
-                  openSegmentAnchor.seq == segment.id else { return false }
-            return isPressFeedbackVisible == false && pendingRecord == nil
+                  openSegmentAnchor.seq == segment.id else { return nil }
+            return openSegmentAnchor.recordingID
+        }
+
+        func activeLockout(
+            for recordingID: RecordingID,
+            now: ContinuousClock.Instant
+        ) -> ContinuousClock.Instant? {
+            guard let runtimeLockout,
+                  runtimeLockout.recordingID == recordingID,
+                  now < runtimeLockout.deadline else { return nil }
+            return runtimeLockout.deadline
+        }
+
+        func canPress(world: World?, now: ContinuousClock.Instant) -> Bool {
+            guard let recordingID = captureRecordingID(world: world) else { return false }
+            return pendingRecords[recordingID] == nil
+                && activeLockout(for: recordingID, now: now) == nil
+        }
+
+        mutating func resolveLockoutIfNeeded(
+            world: World?,
+            wallNow: Date,
+            continuousNow: ContinuousClock.Instant
+        ) {
+            guard let recordingID = captureRecordingID(world: world),
+                  lockoutResolvedRecordingID != recordingID else { return }
+
+            let remaining = (Array(pendingRecords.values) + incidents)
+                .lazy
+                .filter { $0.recordingID == recordingID }
+                .compactMap { record -> TimeInterval? in
+                    let pressedAt = Date(timeIntervalSince1970: TimeInterval(record.pressedAtMs) / 1_000)
+                    let windowEnd = pressedAt.addingTimeInterval(IncidentRecord.pressLockoutSpan)
+                    guard wallNow >= pressedAt, wallNow < windowEnd else { return nil }
+                    return windowEnd.timeIntervalSince(wallNow)
+                }
+                .max()
+
+            runtimeLockout = remaining.map {
+                RuntimeLockout(
+                    recordingID: recordingID,
+                    deadline: continuousNow.advanced(by: .seconds($0))
+                )
+            }
+            lockoutResolvedRecordingID = recordingID
         }
     }
 
@@ -67,7 +116,6 @@ enum IncidentsFeature {
         case clipRemoved(seq: Int)
         case pressTapped
         case createResponded(IncidentRecord, success: Bool)
-        case cooldownFinished
         case persistenceAlertDismissed
         case reconcile
         case recordPersisted(IncidentRecord, cancelNudge: Bool, success: Bool)
@@ -79,7 +127,6 @@ enum IncidentsFeature {
         case deleteResponded(IncidentListItemID, success: Bool)
     }
 
-    private static let cooldownID = "incident-press-cooldown"
     private static let pullID = "incident-active-pull"
 
     static func reduce(
@@ -91,7 +138,13 @@ enum IncidentsFeature {
     ) -> Effect<Action> {
         switch action {
         case .worldObserved(let world):
-            updateAnchor(state: &state, world: world, now: dependencies.continuousNow())
+            let continuousNow = dependencies.continuousNow()
+            updateAnchor(state: &state, world: world, now: continuousNow)
+            state.resolveLockoutIfNeeded(
+                world: world,
+                wallNow: dependencies.wallNow(),
+                continuousNow: continuousNow
+            )
             return reduce(
                 state: &state,
                 action: .reconcile,
@@ -145,6 +198,11 @@ enum IncidentsFeature {
                 guard case .unreadable(let directoryName, _) = item else { return nil }
                 return directoryName
             }
+            state.resolveLockoutIfNeeded(
+                world: world,
+                wallNow: dependencies.wallNow(),
+                continuousNow: dependencies.continuousNow()
+            )
             return reduce(
                 state: &state,
                 action: .reconcile,
@@ -198,10 +256,10 @@ enum IncidentsFeature {
             }
 
         case .pressTapped:
-            guard state.canPress(world: world),
+            let now = dependencies.continuousNow()
+            guard state.canPress(world: world, now: now),
                   let anchor = state.openSegmentAnchor else { return .none }
 
-            let now = dependencies.continuousNow()
             let elapsed = anchor.observedAt.duration(to: now)
             let elapsedMs = max(0, elapsed.milliseconds)
             let markAge = anchor.seedDurMs.addingReportingOverflow(UInt64(elapsedMs))
@@ -213,8 +271,11 @@ enum IncidentsFeature {
                 markSeq: anchor.seq,
                 markAgeMs: markAge.overflow ? .max : markAge.partialValue
             )
-            state.pendingRecord = record
-            state.isPressFeedbackVisible = true
+            state.pendingRecords[record.recordingID] = record
+            state.runtimeLockout = State.RuntimeLockout(
+                recordingID: record.recordingID,
+                deadline: now.advanced(by: .seconds(IncidentRecord.pressLockoutSpan))
+            )
             state.persistenceFailed = false
 
             return .run { send in
@@ -229,36 +290,27 @@ enum IncidentsFeature {
             }
 
         case .createResponded(let record, success: true):
-            guard state.pendingRecord?.id == record.id else { return .none }
-            state.pendingRecord = nil
+            guard state.pendingRecords[record.recordingID]?.id == record.id else { return .none }
+            state.pendingRecords[record.recordingID] = nil
             state.incidents.append(record)
 
             let shouldRequestAuth = state.hasRequestedProvisionalAuth == false
             state.hasRequestedProvisionalAuth = true
-            return .merge([
-                .run { send in
-                    if shouldRequestAuth {
-                        await dependencies.incidentNotifier.requestProvisionalAuth()
-                    }
-                    await dependencies.incidentNotifier.scheduleNudge(record.id, .seconds(180))
-                    await send(.reconcile)
-                },
-                .run(id: cooldownID, cancelInFlight: true) { send in
-                    await dependencies.sleep(.seconds(3))
-                    guard Task.isCancelled == false else { return }
-                    await send(.cooldownFinished)
-                },
-            ])
+            return .run { send in
+                if shouldRequestAuth {
+                    await dependencies.incidentNotifier.requestProvisionalAuth()
+                }
+                await dependencies.incidentNotifier.scheduleNudge(record.id, .seconds(180))
+                await send(.reconcile)
+            }
 
         case .createResponded(let record, success: false):
-            guard state.pendingRecord?.id == record.id else { return .none }
-            state.pendingRecord = nil
-            state.isPressFeedbackVisible = false
+            guard state.pendingRecords[record.recordingID]?.id == record.id else { return .none }
+            state.pendingRecords[record.recordingID] = nil
+            if state.runtimeLockout?.recordingID == record.recordingID {
+                state.runtimeLockout = nil
+            }
             state.persistenceFailed = true
-            return .none
-
-        case .cooldownFinished:
-            state.isPressFeedbackVisible = false
             return .none
 
         case .persistenceAlertDismissed:

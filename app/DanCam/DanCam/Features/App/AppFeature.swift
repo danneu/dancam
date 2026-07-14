@@ -508,7 +508,6 @@ extension AppFeature.State {
             "paging=\(clips.isPaging)",
             "cursor=\(clips.nextCursor == nil ? "none" : "present")",
             "incidents=\(incidents.incidents.count)",
-            "incident_cooldown=\(incidents.isPressFeedbackVisible)",
             "incident_pending=\(incidents.pendingIncidentCount)",
             "recon=\(streamReconnectAttempt)",
         ].joined(separator: " ")
@@ -756,7 +755,6 @@ private extension IncidentsFeature.Action {
         case .pressTapped: "pressTapped"
         case .createResponded(_, true): "createResponded.success"
         case .createResponded(_, false): "createResponded.failure"
-        case .cooldownFinished: "cooldownFinished"
         case .persistenceAlertDismissed: "persistenceAlertDismissed"
         case .reconcile: "reconcile"
         case .recordPersisted(_, _, true): "recordPersisted.success"

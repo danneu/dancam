@@ -140,6 +140,7 @@ see Follow-ups.
   press (accidental double-tap guard). Overlapping incidents are allowed and
   simply share segment pulls; there is no coverage-gap concern because
   nothing on the Pi is consumed by a press.
+  Amended 2026-07-14: superseded by the post-roll press lockout in app ADR 27.
 - **Exact incident timestamps for free.** `pressedAt` is the phone's own
   wall clock -- no time-provenance dependency, no "time unverified" treatment
   on incident rows. (Per-clip footage timestamps still come from clip

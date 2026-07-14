@@ -922,6 +922,7 @@ struct HomeViewControllerTests {
     }
 
     @Test func incidentButtonFollowsCaptureEnablementAndFeedback() {
+        let now = ContinuousClock().now
         let world = CameraSamples.world(
             phase: .recording,
             currentSegment: RecorderSegment(id: 24, durMs: 1_000),
@@ -932,7 +933,8 @@ struct HomeViewControllerTests {
             loader: .noop,
             world: world,
             recording: .recording,
-            clipsClient: parkedClipsClient()
+            clipsClient: parkedClipsClient(),
+            continuousNow: { now }
         )
         controller.loadViewIfNeeded()
         #expect(controller.incidentButtonForTesting.isEnabled == false)
@@ -943,27 +945,113 @@ struct HomeViewControllerTests {
 
         store.send(.incidents(.pressTapped))
         #expect(controller.incidentButtonForTesting.isEnabled == false)
-        #expect(controller.incidentButtonForTesting.configuration?.title == "Saving...")
+        #expect(controller.incidentButtonForTesting.configuration?.title == "Saving... 17s")
     }
 
-    @Test func incidentButtonSavingFeedbackFollowsPendingLifecycleAfterCooldown() {
+    @Test func incidentButtonPresentationScopesLockoutAndCreateToCurrentRecording() {
+        let now = ContinuousClock().now
         let id = UUID(uuidString: "50000000-0000-0000-0000-000000000001")!
-        var record = IncidentRecord(
+        let recordingID = RecordingID(bootTag: "boot", session: 7)
+        let record = IncidentRecord(
             id: id,
             pressedAtMs: 1_784_480_523_000,
-            recordingID: RecordingID(bootTag: "boot", session: 7),
+            recordingID: recordingID,
             markSeq: 43,
             markAgeMs: 12_000
         )
         var state = AppFeature.State()
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 43, durMs: 1_000),
+            bootTag: "boot"
+        )
+        state.link = .online(world)
+        state.incidents.hasLoadedStore = true
+        state.incidents.openSegmentAnchor = .init(
+            recordingID: recordingID,
+            seq: 43,
+            seedDurMs: 1_000,
+            observedAt: now
+        )
         state.incidents.incidents = [record]
-        state.incidents.isPressFeedbackVisible = false
+        state.incidents.runtimeLockout = .init(
+            recordingID: recordingID,
+            deadline: now.advanced(by: .seconds(12))
+        )
 
-        #expect(IncidentButtonPresentation.from(state).isShowingFeedback)
+        #expect(IncidentButtonPresentation.from(state, now: now) == .armed(
+            lockoutDeadline: now.advanced(by: .seconds(12)),
+            createInFlight: false
+        ))
 
-        record.status = .saved
-        state.incidents.incidents = [record]
-        #expect(IncidentButtonPresentation.from(state).isShowingFeedback == false)
+        state.incidents.runtimeLockout = nil
+        #expect(IncidentButtonPresentation.from(state, now: now) == .armed(
+            lockoutDeadline: nil,
+            createInFlight: false
+        ))
+
+        state.incidents.pendingRecords[recordingID] = record
+        #expect(IncidentButtonPresentation.from(state, now: now) == .armed(
+            lockoutDeadline: nil,
+            createInFlight: true
+        ))
+
+        state.link = .offline(last: world)
+        #expect(IncidentButtonPresentation.from(state, now: now) == .unavailable)
+    }
+
+    @Test func incidentButtonEnabledStateAndAccessibilityStayConsistent() {
+        let now = ContinuousClock().now
+        let button = IncidentButton(frame: .zero, continuousNow: { now })
+        let presentations: [IncidentButtonPresentation] = [
+            .armed(lockoutDeadline: now.advanced(by: .seconds(12)), createInFlight: false),
+            .armed(lockoutDeadline: nil, createInFlight: false),
+            .armed(lockoutDeadline: now, createInFlight: false),
+            .armed(lockoutDeadline: nil, createInFlight: true),
+            .unavailable,
+        ]
+
+        for (index, presentation) in presentations.enumerated() {
+            button.apply(presentation, now: now)
+            if button.isEnabled {
+                #expect(button.configuration?.title == "Save Incident")
+            }
+            if index > 0 {
+                #expect(button.accessibilityValue == nil)
+            }
+        }
+    }
+
+    @Test func incidentButtonTimerExpiresAndStopsWhenDetached() throws {
+        let now = ContinuousClock().now
+        let button = IncidentButton(
+            frame: .zero,
+            continuousNow: { now.advanced(by: .seconds(200)) }
+        )
+        let windowScene = try #require(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        )
+        let window = UIWindow(windowScene: windowScene)
+        window.addSubview(button)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        button.apply(
+            .armed(lockoutDeadline: now.advanced(by: .seconds(100)), createInFlight: false),
+            now: now
+        )
+        #expect(button.isTickTimerRunningForTesting)
+
+        button.tickForTesting(now: now.advanced(by: .seconds(101)))
+        #expect(button.isEnabled)
+        #expect(button.isTickTimerRunningForTesting == false)
+
+        button.apply(
+            .armed(lockoutDeadline: now.advanced(by: .seconds(100)), createInFlight: false),
+            now: now
+        )
+        button.removeFromSuperview()
+        #expect(button.isTickTimerRunningForTesting == false)
     }
 
     @Test func incidentPersistenceFailureShowsCalmAlert() async throws {
@@ -1134,6 +1222,8 @@ struct HomeViewControllerTests {
         preview: PreviewClient = .noop,
         recordingClient: RecordingClient = .noop,
         incidentStore: IncidentStore = .noop,
+        continuousNow: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
+        dependencyWallNow: @escaping @Sendable () -> Date = Date.init,
         wallNow: @escaping () -> Date = Date.init,
         currentCalendar: @escaping () -> Calendar = { .current }
     ) -> HomeViewController {
@@ -1147,6 +1237,8 @@ struct HomeViewControllerTests {
             preview: preview,
             recordingClient: recordingClient,
             incidentStore: incidentStore,
+            continuousNow: continuousNow,
+            dependencyWallNow: dependencyWallNow,
             wallNow: wallNow,
             currentCalendar: currentCalendar
         ).0
@@ -1162,6 +1254,8 @@ struct HomeViewControllerTests {
         preview: PreviewClient = .noop,
         recordingClient: RecordingClient = .noop,
         incidentStore: IncidentStore = .noop,
+        continuousNow: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
+        dependencyWallNow: @escaping @Sendable () -> Date = Date.init,
         wallNow: @escaping () -> Date = Date.init,
         currentCalendar: @escaping () -> Calendar = { .current }
     ) -> (HomeViewController, AppStore) {
@@ -1169,6 +1263,7 @@ struct HomeViewControllerTests {
         state.clips.clips = clips
         state.clips.nextCursor = nextCursor
         state.recording = recording
+        state.incidents.hasLoadedStore = true
         if let world {
             state.link = .online(world)
         }
@@ -1179,7 +1274,9 @@ struct HomeViewControllerTests {
             preview: preview,
             recording: recordingClient,
             sleep: { _ in try? await Task.sleep(for: .seconds(3600)) },
-            heartbeatTimeout: { throw CancellationError() }
+            heartbeatTimeout: { throw CancellationError() },
+            continuousNow: continuousNow,
+            wallNow: dependencyWallNow
         )
         let store = AppStore(initialState: state, dependencies: dependencies, reduce: AppFeature.reduce)
         return (

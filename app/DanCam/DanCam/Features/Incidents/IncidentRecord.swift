@@ -63,6 +63,11 @@ nonisolated struct IncidentSegment: Codable, Equatable, Sendable, Identifiable {
 }
 
 nonisolated struct IncidentRecord: Codable, Equatable, Sendable, Identifiable {
+    static let defaultPreMs: UInt64 = 30_000
+    static let defaultPostMs: UInt64 = 15_000
+    static let defaultSlackMs: UInt64 = 2_000
+    static let pressLockoutSpan: TimeInterval = TimeInterval(defaultPostMs + defaultSlackMs) / 1_000
+
     var id: UUID
     var pressedAtMs: UInt64
     var bootTag: String
@@ -81,9 +86,9 @@ nonisolated struct IncidentRecord: Codable, Equatable, Sendable, Identifiable {
         recordingID: RecordingID,
         markSeq: Int,
         markAgeMs: UInt64,
-        preMs: UInt64 = 30_000,
-        postMs: UInt64 = 15_000,
-        slackMs: UInt64 = 2_000,
+        preMs: UInt64 = Self.defaultPreMs,
+        postMs: UInt64 = Self.defaultPostMs,
+        slackMs: UInt64 = Self.defaultSlackMs,
         status: IncidentStatus = .pending,
         wanted: [IncidentSegment]? = nil
     ) {
