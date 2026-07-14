@@ -7,6 +7,7 @@ struct AppDependencies {
     var clipRemuxer: ClipRemuxer
     var clipCache: ClipCache
     var incidentStore: IncidentStore
+    var incidentNotifier: IncidentNotifier
     var thumbnailLoader: ThumbnailLoader
     var preview: PreviewClient
     var recording: RecordingClient
@@ -14,6 +15,9 @@ struct AppDependencies {
     var logExporter: LogExporter
     var sleep: @Sendable (Duration) async -> Void
     var heartbeatTimeout: @Sendable () async throws -> Void
+    var continuousNow: @Sendable () -> ContinuousClock.Instant
+    var wallNow: @Sendable () -> Date
+    var uuid: @Sendable () -> UUID
 
     init(
         events: EventsClient = .noop,
@@ -22,6 +26,7 @@ struct AppDependencies {
         clipRemuxer: ClipRemuxer = .noop,
         clipCache: ClipCache = .noop,
         incidentStore: IncidentStore = .noop,
+        incidentNotifier: IncidentNotifier = .noop,
         thumbnailLoader: ThumbnailLoader = .noop,
         preview: PreviewClient = .noop,
         recording: RecordingClient = .noop,
@@ -32,7 +37,10 @@ struct AppDependencies {
         },
         heartbeatTimeout: @escaping @Sendable () async throws -> Void = {
             try await Task.sleep(for: .seconds(3600))
-        }
+        },
+        continuousNow: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
+        wallNow: @escaping @Sendable () -> Date = Date.init,
+        uuid: @escaping @Sendable () -> UUID = UUID.init
     ) {
         self.events = events
         self.clips = clips
@@ -40,6 +48,7 @@ struct AppDependencies {
         self.clipRemuxer = clipRemuxer
         self.clipCache = clipCache
         self.incidentStore = incidentStore
+        self.incidentNotifier = incidentNotifier
         self.thumbnailLoader = thumbnailLoader
         self.preview = preview
         self.recording = recording
@@ -47,6 +56,9 @@ struct AppDependencies {
         self.logExporter = logExporter
         self.sleep = sleep
         self.heartbeatTimeout = heartbeatTimeout
+        self.continuousNow = continuousNow
+        self.wallNow = wallNow
+        self.uuid = uuid
     }
 
     init(configuration: AppConfiguration) {
@@ -80,6 +92,7 @@ struct AppDependencies {
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appending(path: "Incidents", directoryHint: .isDirectory)
         )
+        incidentNotifier = .live
         thumbnailLoader = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
@@ -116,6 +129,9 @@ struct AppDependencies {
         heartbeatTimeout = {
             try await Task.sleep(for: configuration.heartbeatTimeout)
         }
+        continuousNow = { ContinuousClock().now }
+        wallNow = Date.init
+        uuid = UUID.init
     }
 
     static let live = AppDependencies(configuration: .live())

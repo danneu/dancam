@@ -6,6 +6,7 @@ enum AppFeature {
         var link: Link = .connecting
         var recording: RecordingFeature.State = .unknown
         var clips = ClipsFeature.State()
+        var incidents = IncidentsFeature.State()
         var streamReconnectAttempt = 0
     }
 
@@ -18,6 +19,7 @@ enum AppFeature {
         case heartbeatTimedOut
         case recording(RecordingFeature.Action)
         case clips(ClipsFeature.Action)
+        case incidents(IncidentsFeature.Action)
         case recordTapped
         case manualRefresh
         case reconnectStreamIfOffline
@@ -51,6 +53,7 @@ enum AppFeature {
 
         case .streamStopped:
             state.streamReconnectAttempt = 0
+            _ = reduceIncidents(state: &state, action: .worldObserved(nil), dependencies: dependencies)
             return .merge([
                 .cancel(id: streamID),
                 .cancel(id: heartbeatID),
@@ -64,6 +67,20 @@ enum AppFeature {
             var effects = [armHeartbeat(dependencies: dependencies)]
 
             state.link.fold(event)
+
+            if case .snapshot = event {
+                effects.append(reduceIncidents(
+                    state: &state,
+                    action: .worldObserved(state.link.onlineWorld),
+                    dependencies: dependencies
+                ))
+            } else if case .segmentOpened = event {
+                effects.append(reduceIncidents(
+                    state: &state,
+                    action: .worldObserved(state.link.onlineWorld),
+                    dependencies: dependencies
+                ))
+            }
 
             if case .heartbeat = event, shouldReloadClipsOnHeartbeat(state) {
                 effects.append(
@@ -148,6 +165,7 @@ enum AppFeature {
                     action: .linkWentOffline,
                     dependencies: dependencies
                 ),
+                reduceIncidents(state: &state, action: .worldObserved(nil), dependencies: dependencies),
                 scheduleReconnect(
                     attempt: state.streamReconnectAttempt,
                     dependencies: dependencies
@@ -166,6 +184,7 @@ enum AppFeature {
                     action: .linkWentOffline,
                     dependencies: dependencies
                 ),
+                reduceIncidents(state: &state, action: .worldObserved(nil), dependencies: dependencies),
                 scheduleReconnect(
                     attempt: state.streamReconnectAttempt,
                     dependencies: dependencies
@@ -192,6 +211,9 @@ enum AppFeature {
                 dependencies: dependencies
             )
             .map(Action.clips)
+
+        case .incidents(let action):
+            return reduceIncidents(state: &state, action: action, dependencies: dependencies)
 
         case .recordTapped:
             switch state.recording {
@@ -261,6 +283,20 @@ enum AppFeature {
             dependencies: dependencies
         )
         .map(Action.recording)
+    }
+
+    private static func reduceIncidents(
+        state: inout State,
+        action: IncidentsFeature.Action,
+        dependencies: AppDependencies
+    ) -> Effect<Action> {
+        IncidentsFeature.reduce(
+            state: &state.incidents,
+            action: action,
+            world: state.link.onlineWorld,
+            dependencies: dependencies
+        )
+        .map(Action.incidents)
     }
 
     private static func streamEffect(dependencies: AppDependencies) -> Effect<Action> {
@@ -381,6 +417,8 @@ extension AppFeature.Action {
             "recording.\(action.logLabel)"
         case .clips(let action):
             "clips.\(action.logLabel)"
+        case .incidents(let action):
+            "incidents.\(action.logLabel)"
         case .recordTapped:
             "recordTapped"
         case .manualRefresh:
@@ -406,6 +444,8 @@ extension AppFeature.State {
             "clip_count=\(clips.clips.count)",
             "paging=\(clips.isPaging)",
             "cursor=\(clips.nextCursor == nil ? "none" : "present")",
+            "incidents=\(incidents.incidents.count)",
+            "incident_press=\(incidents.isPressFeedbackVisible)",
             "recon=\(streamReconnectAttempt)",
         ].joined(separator: " ")
     }
@@ -636,6 +676,27 @@ private extension ClipsFeature.Action {
             "pageResponse.success"
         case .pageResponse(_, _, .failure):
             "pageResponse.failure"
+        }
+    }
+}
+
+private extension IncidentsFeature.Action {
+    var logLabel: String {
+        switch self {
+        case .worldObserved:
+            "worldObserved"
+        case .pressTapped:
+            "pressTapped"
+        case .createResponded(_, success: true):
+            "createResponded.success"
+        case .createResponded(_, success: false):
+            "createResponded.failure"
+        case .cooldownFinished:
+            "cooldownFinished"
+        case .persistenceAlertDismissed:
+            "persistenceAlertDismissed"
+        case .reconcile:
+            "reconcile"
         }
     }
 }

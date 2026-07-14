@@ -917,7 +917,67 @@ struct HomeViewControllerTests {
 
         #expect(controller.isTableHeaderInstalledForTesting)
         #expect(controller.recordButtonForTesting.isDescendant(of: controller.view))
+        #expect(controller.incidentButtonForTesting.isDescendant(of: controller.view))
         #expect(navigationController.isToolbarHidden == true)
+    }
+
+    @Test func incidentButtonFollowsCaptureEnablementAndFeedback() {
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 1_000),
+            bootTag: "boot-a"
+        )
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            world: world,
+            recording: .recording,
+            clipsClient: parkedClipsClient()
+        )
+        controller.loadViewIfNeeded()
+        #expect(controller.incidentButtonForTesting.isEnabled == false)
+
+        store.send(.event(.snapshot(world)))
+        #expect(controller.incidentButtonForTesting.isEnabled)
+        #expect(controller.incidentButtonForTesting.configuration?.title == "Save Incident")
+
+        store.send(.incidents(.pressTapped))
+        #expect(controller.incidentButtonForTesting.isEnabled == false)
+        #expect(controller.incidentButtonForTesting.configuration?.title == "Saving...")
+    }
+
+    @Test func incidentPersistenceFailureShowsCalmAlert() async throws {
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 1_000),
+            bootTag: "boot-a"
+        )
+        let failingStore = IncidentStore(
+            list: { [] },
+            create: { _ in throw CocoaError(.fileWriteOutOfSpace) },
+            update: { _ in },
+            delete: { _ in },
+            deleteUnreadable: { _ in },
+            directoryURL: { _ in URL(filePath: "/tmp") }
+        )
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            world: world,
+            recording: .recording,
+            clipsClient: parkedClipsClient(),
+            incidentStore: failingStore
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+        store.send(.event(.snapshot(world)))
+
+        controller.incidentButtonForTesting.sendActions(for: .touchUpInside)
+        try await waitUntil { controller.presentedViewController is UIAlertController }
+
+        let alert = try #require(controller.presentedViewController as? UIAlertController)
+        #expect(alert.title == "Could not save incident")
+        #expect(alert.message?.contains("phone storage") == true)
     }
 
     @Test func manualRefreshSpinnerStaysUntilClipsReachTerminalStatus() throws {
@@ -1053,6 +1113,7 @@ struct HomeViewControllerTests {
         nextCursor: String? = nil,
         preview: PreviewClient = .noop,
         recordingClient: RecordingClient = .noop,
+        incidentStore: IncidentStore = .noop,
         wallNow: @escaping () -> Date = Date.init,
         currentCalendar: @escaping () -> Calendar = { .current }
     ) -> HomeViewController {
@@ -1065,6 +1126,7 @@ struct HomeViewControllerTests {
             nextCursor: nextCursor,
             preview: preview,
             recordingClient: recordingClient,
+            incidentStore: incidentStore,
             wallNow: wallNow,
             currentCalendar: currentCalendar
         ).0
@@ -1079,6 +1141,7 @@ struct HomeViewControllerTests {
         nextCursor: String? = nil,
         preview: PreviewClient = .noop,
         recordingClient: RecordingClient = .noop,
+        incidentStore: IncidentStore = .noop,
         wallNow: @escaping () -> Date = Date.init,
         currentCalendar: @escaping () -> Calendar = { .current }
     ) -> (HomeViewController, AppStore) {
@@ -1091,6 +1154,7 @@ struct HomeViewControllerTests {
         }
         let dependencies = AppDependencies(
             clips: clipsClient,
+            incidentStore: incidentStore,
             thumbnailLoader: loader,
             preview: preview,
             recording: recordingClient,

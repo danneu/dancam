@@ -40,6 +40,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var clipsStatusObservation: StoreObservation?
     private var clipsLoadedObservation: StoreObservation?
     private var clipsNextCursorObservation: StoreObservation?
+    private var incidentButtonObservation: StoreObservation?
+    private var incidentFailureObservation: StoreObservation?
     private var calendarDayChangedObserver: NSObjectProtocol?
     private var significantTimeChangedObserver: NSObjectProtocol?
 
@@ -51,6 +53,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let timeUnverifiedPill = StatusPillView()
     private let recordButton = RecordButton(frame: .zero)
     private let recordButtonRow = UIView()
+    private let incidentButton = IncidentButton(frame: .zero)
+    private let incidentButtonRow = UIView()
     private let liveRecordingWidget = LiveRecordingStatusView()
     private let clipsHeaderLabel = UILabel()
     private let clipsTableView = UITableView(frame: .zero, style: .plain)
@@ -142,6 +146,13 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             self?.clipsNextCursor = nextCursor
             self?.loadMoreIfVisibleTail()
         }
+        incidentButtonObservation = store.observe(select: IncidentButtonPresentation.from) { [weak self] presentation in
+            self?.incidentButton.apply(presentation)
+        }
+        incidentFailureObservation = store.observe(\.incidents.persistenceFailed) { [weak self] failed in
+            guard failed else { return }
+            self?.presentIncidentPersistenceAlert()
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -192,6 +203,11 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         liveRecordingWidget.isHidden = true
         recordButtonRow.addSubview(recordButton)
 
+        incidentButton.addTarget(self, action: #selector(incidentTapped), for: .touchUpInside)
+        incidentButton.apply(IncidentButtonPresentation(isEnabled: false, isShowingFeedback: false))
+        incidentButton.translatesAutoresizingMaskIntoConstraints = false
+        incidentButtonRow.addSubview(incidentButton)
+
         headerContainer.directionalLayoutMargins = NSDirectionalEdgeInsets(
             top: 12,
             leading: 16,
@@ -203,6 +219,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         headerStack.translatesAutoresizingMaskIntoConstraints = false
         headerStack.addArrangedSubview(previewViewController.view)
         headerStack.addArrangedSubview(recordButtonRow)
+        headerStack.addArrangedSubview(incidentButtonRow)
         headerStack.addArrangedSubview(liveRecordingWidget)
         headerStack.addArrangedSubview(statusPillsStack)
         headerStack.addArrangedSubview(clipsHeaderLabel)
@@ -219,6 +236,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             recordButton.centerXAnchor.constraint(equalTo: recordButtonRow.centerXAnchor),
             recordButton.leadingAnchor.constraint(greaterThanOrEqualTo: recordButtonRow.leadingAnchor),
             recordButton.trailingAnchor.constraint(lessThanOrEqualTo: recordButtonRow.trailingAnchor),
+
+            incidentButton.topAnchor.constraint(equalTo: incidentButtonRow.topAnchor),
+            incidentButton.bottomAnchor.constraint(equalTo: incidentButtonRow.bottomAnchor),
+            incidentButton.centerXAnchor.constraint(equalTo: incidentButtonRow.centerXAnchor),
+            incidentButton.leadingAnchor.constraint(greaterThanOrEqualTo: incidentButtonRow.leadingAnchor),
+            incidentButton.trailingAnchor.constraint(lessThanOrEqualTo: incidentButtonRow.trailingAnchor),
 
             headerStack.leadingAnchor.constraint(equalTo: headerContainer.layoutMarginsGuide.leadingAnchor),
             headerStack.trailingAnchor.constraint(equalTo: headerContainer.layoutMarginsGuide.trailingAnchor),
@@ -667,6 +690,25 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         store.send(.recordTapped)
     }
 
+    @objc private func incidentTapped() {
+        guard incidentButton.isEnabled else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        store.send(.incidents(.pressTapped))
+    }
+
+    private func presentIncidentPersistenceAlert() {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(
+            title: "Could not save incident",
+            message: "DanCam could not make room for this incident. Check available phone storage and try again.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.store.send(.incidents(.persistenceAlertDismissed))
+        })
+        present(alert, animated: true)
+    }
+
     @objc private func refreshPulled() {
         isManualRefreshing = true
         store.send(.manualRefresh)
@@ -914,6 +956,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     var recordButtonForTesting: RecordButton {
         recordButton
+    }
+
+    var incidentButtonForTesting: IncidentButton {
+        incidentButton
     }
 
     var isLiveRecordingWidgetTickTimerRunningForTesting: Bool {

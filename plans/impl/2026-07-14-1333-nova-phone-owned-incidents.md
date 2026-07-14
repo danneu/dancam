@@ -649,7 +649,7 @@ Behavioral acceptance criteria, owned by the commits above:
 
 - [x] 1. docs + ADR + roadmap
 - [x] 2. model, store, planner
-- [ ] 3. press capture
+- [x] 3. press capture
 - [ ] 4. reconciler + downloads
 - [ ] 5. tab + detail
 - [ ] 6. polish + nudge lifecycle
