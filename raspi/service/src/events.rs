@@ -54,8 +54,7 @@ pub enum Event {
         state: CameraState,
     },
     StorageChanged {
-        used: u64,
-        total: u64,
+        storage: Option<DiskUsage>,
     },
     TempChanged {
         soc: TempReading,
@@ -138,14 +137,23 @@ pub fn spawn_telemetry(
     backend: std::sync::Arc<dyn crate::backend::Backend>,
     rec_dir: std::sync::Arc<Path>,
     interval: Duration,
+    gc_floor_bytes: u64,
+    recording_capacity_override: Option<u64>,
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(interval);
         let mut cpu_sampler = CpuSampler::new();
         loop {
             interval.tick().await;
+            let storage =
+                crate::sysfacts::disk_usage(&rec_dir, gc_floor_bytes).map(|mut storage| {
+                    if let Some(capacity) = recording_capacity_override {
+                        storage.recording_capacity_bytes = capacity;
+                    }
+                    storage
+                });
             backend.update_telemetry(
-                crate::sysfacts::disk_usage(&rec_dir),
+                storage,
                 crate::sysfacts::soc_temp_c(),
                 crate::sysfacts::mem_info(),
                 cpu_sampler.sample(),
@@ -232,6 +240,7 @@ mod tests {
                 storage: Some(DiskUsage {
                     used: 1_000_000_000,
                     total: 32_000_000_000,
+                    recording_capacity_bytes: 29_000_000_000,
                 }),
                 temp_c: TempC {
                     soc: TempReading {
@@ -311,8 +320,11 @@ mod tests {
                 state: CameraState::Running,
             },
             Event::StorageChanged {
-                used: 1_000_000_000,
-                total: 32_000_000_000,
+                storage: Some(DiskUsage {
+                    used: 1_000_000_000,
+                    total: 32_000_000_000,
+                    recording_capacity_bytes: 29_000_000_000,
+                }),
             },
             Event::TempChanged {
                 soc: TempReading {

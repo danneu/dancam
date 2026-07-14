@@ -4,6 +4,7 @@ use std::path::Path;
 pub struct DiskUsage {
     pub used: u64,
     pub total: u64,
+    pub recording_capacity_bytes: u64,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -63,20 +64,43 @@ pub fn parse_meminfo(raw: &str) -> Option<MemInfo> {
     })
 }
 
-pub fn disk_usage(path: &Path) -> Option<DiskUsage> {
+pub fn disk_usage(path: &Path, gc_floor_bytes: u64) -> Option<DiskUsage> {
     let stat = rustix::fs::statvfs(path).ok()?;
     let block_size = if stat.f_frsize > 0 {
         stat.f_frsize
     } else {
         stat.f_bsize
     };
-    let total = stat.f_blocks.checked_mul(block_size)?;
-    let free = stat.f_bfree.checked_mul(block_size)?;
+    let total = stat.f_blocks.saturating_mul(block_size);
+    let free = stat.f_bfree.saturating_mul(block_size);
+    let recording_capacity_bytes = recording_capacity(
+        total,
+        stat.f_bfree,
+        stat.f_bavail,
+        block_size,
+        gc_floor_bytes,
+    );
 
     Some(DiskUsage {
         used: total.saturating_sub(free),
         total,
+        recording_capacity_bytes,
     })
+}
+
+pub fn recording_capacity(
+    total_bytes: u64,
+    free_blocks: u64,
+    available_blocks: u64,
+    block_size: u64,
+    gc_floor_bytes: u64,
+) -> u64 {
+    let reserved_bytes = free_blocks
+        .saturating_sub(available_blocks)
+        .saturating_mul(block_size);
+    total_bytes
+        .saturating_sub(reserved_bytes)
+        .saturating_sub(gc_floor_bytes)
 }
 
 /// Bytes available to the non-root service. This deliberately uses f_bavail,
@@ -108,7 +132,9 @@ fn meminfo_kib(raw: &str, key: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{disk_avail, disk_usage, parse_meminfo, parse_thermal, MemInfo};
+    use super::{
+        disk_avail, disk_usage, parse_meminfo, parse_thermal, recording_capacity, MemInfo,
+    };
 
     #[test]
     fn parse_thermal_converts_millicelsius_to_celsius() {
@@ -162,6 +188,17 @@ SwapFree:           1024 kB
     fn disk_avail_reports_non_root_available_bytes() {
         let dir = std::env::temp_dir();
         let avail = disk_avail(&dir).expect("temporary directory should be stat-able");
-        assert!(avail <= disk_usage(&dir).expect("disk usage").total);
+        assert!(avail <= disk_usage(&dir, 0).expect("disk usage").total);
+    }
+
+    #[test]
+    fn recording_capacity_excludes_reserved_blocks_and_gc_floor() {
+        assert_eq!(recording_capacity(100_000, 30, 20, 1_000, 5_000), 85_000);
+    }
+
+    #[test]
+    fn recording_capacity_saturates_impossible_inputs() {
+        assert_eq!(recording_capacity(100, 20, 10, 20, 0), 0);
+        assert_eq!(recording_capacity(100, 10, 10, 1, 101), 0);
     }
 }

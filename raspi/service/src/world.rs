@@ -293,12 +293,7 @@ impl World {
         let mut events = Vec::new();
         if self.storage != storage {
             self.storage = storage.clone();
-            if let Some(storage) = storage {
-                events.push(Event::StorageChanged {
-                    used: storage.used,
-                    total: storage.total,
-                });
-            }
+            events.push(Event::StorageChanged { storage });
         }
         if self.temp_c.soc.observe(soc_temp_c) {
             events.push(Event::TempChanged {
@@ -393,6 +388,7 @@ fn quantize_storage(storage: DiskUsage) -> DiskUsage {
     DiskUsage {
         used: round_down(storage.used, STORAGE_QUANTUM),
         total: round_down(storage.total, STORAGE_QUANTUM),
+        recording_capacity_bytes: storage.recording_capacity_bytes,
     }
 }
 
@@ -608,8 +604,11 @@ mod tests {
             events,
             vec![
                 Event::StorageChanged {
-                    used: 149 * STORAGE_QUANTUM,
-                    total: 476 * STORAGE_QUANTUM,
+                    storage: Some(DiskUsage {
+                        used: 149 * STORAGE_QUANTUM,
+                        total: 476 * STORAGE_QUANTUM,
+                        recording_capacity_bytes: sample_storage().recording_capacity_bytes,
+                    }),
                 },
                 Event::TempChanged {
                     soc: reading(Some(51.5), Some(51.5)),
@@ -630,6 +629,7 @@ mod tests {
             Some(DiskUsage {
                 used: 149 * STORAGE_QUANTUM,
                 total: 476 * STORAGE_QUANTUM,
+                recording_capacity_bytes: sample_storage().recording_capacity_bytes,
             })
         );
         assert_eq!(
@@ -651,6 +651,34 @@ mod tests {
     }
 
     #[test]
+    fn telemetry_probe_failure_clears_storage_and_emits_null_replacement() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::Telemetry {
+                storage: Some(sample_storage()),
+                soc_temp_c: None,
+                mem: None,
+                cpu: Cpu::empty(),
+            },
+            1000,
+        );
+
+        assert_eq!(
+            world.apply(
+                Input::Telemetry {
+                    storage: None,
+                    soc_temp_c: None,
+                    mem: None,
+                    cpu: Cpu::empty(),
+                },
+                1100,
+            ),
+            vec![Event::StorageChanged { storage: None }]
+        );
+        assert_eq!(world.snapshot("boot", 1).storage, None);
+    }
+
+    #[test]
     fn telemetry_sub_quantum_jitter_emits_nothing() {
         let mut world = World::new(CameraState::Running);
         world.apply(
@@ -669,6 +697,7 @@ mod tests {
                     storage: Some(DiskUsage {
                         used: 149 * STORAGE_QUANTUM + 60_012_345,
                         total: 476 * STORAGE_QUANTUM + 1,
+                        recording_capacity_bytes: sample_storage().recording_capacity_bytes,
                     }),
                     soc_temp_c: Some(51.7),
                     mem: Some(MemInfo {
@@ -749,6 +778,7 @@ mod tests {
                     storage: Some(DiskUsage {
                         used: 152 * STORAGE_QUANTUM + 7,
                         total: 476 * STORAGE_QUANTUM + 1,
+                        recording_capacity_bytes: sample_storage().recording_capacity_bytes,
                     }),
                     soc_temp_c: Some(51.8),
                     mem: Some(MemInfo {
@@ -761,8 +791,11 @@ mod tests {
             ),
             vec![
                 Event::StorageChanged {
-                    used: 152 * STORAGE_QUANTUM,
-                    total: 476 * STORAGE_QUANTUM,
+                    storage: Some(DiskUsage {
+                        used: 152 * STORAGE_QUANTUM,
+                        total: 476 * STORAGE_QUANTUM,
+                        recording_capacity_bytes: sample_storage().recording_capacity_bytes,
+                    }),
                 },
                 Event::TempChanged {
                     soc: reading(Some(52.0), Some(52.0)),
@@ -1084,6 +1117,7 @@ mod tests {
         DiskUsage {
             used: 149 * STORAGE_QUANTUM + 12_345,
             total: 476 * STORAGE_QUANTUM + 1,
+            recording_capacity_bytes: 400 * STORAGE_QUANTUM + 123,
         }
     }
 

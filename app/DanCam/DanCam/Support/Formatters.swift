@@ -44,6 +44,19 @@ nonisolated enum Formatters {
         return formatter.string(fromByteCount: Int64(clamping: bytes))
     }
 
+    static func estimatedFootage(_ durationMs: UInt64) -> (display: String, accessibility: String) {
+        let totalMinutes = durationMs / 60_000
+        if totalMinutes >= 60 {
+            let hours = totalMinutes / 60
+            let unit = hours == 1 ? "hour" : "hours"
+            return ("About \(hours) \(unit)", "About \(hours) \(unit)")
+        }
+
+        let minutes = totalMinutes
+        let unit = minutes == 1 ? "minute" : "minutes"
+        return ("About \(minutes) \(unit)", "About \(minutes) \(unit)")
+    }
+
     static func clipDuration(_ durMs: UInt64?) -> String? {
         guard let durMs else { return nil }
 

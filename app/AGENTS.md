@@ -179,3 +179,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `27-2026-07-14-incident-post-roll-press-lockout.md` -- replace the 3 s incident
   cooldown with a recording-scoped monotonic post-roll lockout, one-time relaunch
   reconstruction, and a single button presentation state machine.
+- `28-2026-07-14-estimated-recording-capacity.md` -- estimate footage retention from
+  freshly finalized clips and Pi-provided recorder-writable capacity, scoped to one
+  live connection epoch and presented in Settings.

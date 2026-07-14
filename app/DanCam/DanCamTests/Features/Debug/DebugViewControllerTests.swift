@@ -165,7 +165,7 @@ struct DebugViewControllerTests {
         }
         let originalIDs = controller.rowIDsForTesting
 
-        appStore.send(.event(.storageChanged(used: 600, total: 1_000)))
+        appStore.send(.event(.storageChanged(Storage(used: 600, total: 1_000, recordingCapacityBytes: 800))))
         appStore.send(.event(.memChanged(total: 1_000, available: 100, swapTotal: 1_000, swapUsed: 800)))
 
         try await waitUntil {

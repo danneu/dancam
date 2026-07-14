@@ -252,6 +252,12 @@ raspi-mock-gc:
     mkdir -p raspi/service/.mock-rec
     cd raspi/service && DANCAM_REC_DIR=.mock-rec DANCAM_MOCK_SEGMENT_SECS=5 DANCAM_GC_FLOOR_BYTES=18446744073709551615 cargo run
 
+# Run a realistic 30s mock segment and a deterministic capacity so Settings
+# converges to "About 23 hours" after the first finalized clip.
+raspi-mock-retention:
+    mkdir -p raspi/service/.mock-rec-retention
+    cd raspi/service && DANCAM_REC_DIR=.mock-rec-retention DANCAM_MOCK_SEGMENT_SECS=30 DANCAM_MOCK_RECORDING_CAPACITY_BYTES=162432000 cargo run
+
 # Run the mock Pi service with a sample finished clip available from /v1/clips.
 # Seeds a throwaway scratch dir with the committed seg_00000.ts fixture so the
 # recorder serves it as a finished clip without polluting the tracked assets dir.

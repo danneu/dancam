@@ -276,6 +276,7 @@ mod tests {
                         storage: Some(DiskUsage {
                             used: used * STORAGE_QUANTUM,
                             total: 100 * STORAGE_QUANTUM,
+                            recording_capacity_bytes: 90 * STORAGE_QUANTUM,
                         }),
                         soc_temp_c: None,
                         mem: None,
@@ -308,8 +309,8 @@ mod tests {
             let snapshot_seq = connection.seq;
             while let Ok(seq_event) = connection.rx.try_recv() {
                 assert!(seq_event.seq > snapshot_seq);
-                if let Event::StorageChanged { used, total } = seq_event.event {
-                    folded_storage = Some(DiskUsage { used, total });
+                if let Event::StorageChanged { storage } = seq_event.event {
+                    folded_storage = storage;
                 }
             }
             assert_eq!(folded_storage, final_storage);

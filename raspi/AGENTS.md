@@ -393,3 +393,6 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   future clip pinning; app ADR 26 removes incident locks from v1.
   The flat stamped-filename, stateless-scan layout is the end state, superseding
   ADR 03's `segments/`, `index.log`, snapshots, and in-memory index machinery.
+- `22-2026-07-14-recording-capacity-telemetry.md` (Accepted) -- storage telemetry
+  reports the exact non-root recorder-writable block pool minus the shared GC
+  floor, and snapshot/delta storage use one complete nullable replacement shape.

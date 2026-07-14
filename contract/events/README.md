@@ -40,6 +40,15 @@ SSE framing.
   command transitions, not just local app optimism.
 - Clients must ignore unknown event `type` values.
 
+## Storage Telemetry
+
+The snapshot's nullable `storage` value and `storage_changed.storage` have the same
+complete shape: quantized `used` and `total` filesystem bytes plus exact
+`recording_capacity_bytes`. Capacity is the maximum block pool writable by the
+non-root recorder after root-reserved blocks and the ring GC floor are excluded;
+it is not current free space. A failed probe produces `storage: null`, which clients
+fold as a direct replacement while the event stream remains online.
+
 ## Recorder Snapshot
 
 The recorder slice is the source of truth for the live row:

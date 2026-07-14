@@ -59,7 +59,11 @@ struct CameraEventCorpusTests {
             bootId: "7f3a91c2-b0d4-4e15-b196-20e0416af749",
             bootTag: "7f3a91c2b0d4",
             uptimeS: 120,
-            storage: Storage(used: 1_000_000_000, total: 32_000_000_000),
+            storage: Storage(
+                used: 1_000_000_000,
+                total: 32_000_000_000,
+                recordingCapacityBytes: 29_000_000_000
+            ),
             tempC: TempC(
                 soc: TempReading(current: 51.5, max: 62.5),
                 sensor: TempReading(max: 49.0)
@@ -105,6 +109,17 @@ struct CameraEventCorpusTests {
         )
 
         #expect(event == .unknown(type: "future_event"))
+    }
+
+    @Test(.tags(.networking))
+    func storageRequiresRecordingCapacity() {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let data = Data("{\"type\":\"storage_changed\",\"storage\":{\"used\":1,\"total\":2}}".utf8)
+
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(CameraEvent.self, from: data)
+        }
     }
 
     private func corpusURLs() throws -> [URL] {

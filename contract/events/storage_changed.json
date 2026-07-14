@@ -1,5 +1,8 @@
 {
   "type": "storage_changed",
-  "used": 1000000000,
-  "total": 32000000000
+  "storage": {
+    "used": 1000000000,
+    "total": 32000000000,
+    "recording_capacity_bytes": 29000000000
+  }
 }

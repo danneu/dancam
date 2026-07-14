@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let boot_id = resolve_boot_id();
     let required_rec_mountpoint = env::var_os("DANCAM_REQUIRE_REC_MOUNT").map(PathBuf::from);
     log_required_mountpoint(required_rec_mountpoint.as_deref());
-    let (state, supervisor): (AppState, Option<SupervisorControl>) =
+    let (state, supervisor, is_mock): (AppState, Option<SupervisorControl>, bool) =
         match env::var("DANCAM_BACKEND").as_deref() {
             Ok("camera") => {
                 let config = CameraConfig::from_env();
@@ -40,6 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (
                     AppState::new(boot_id, backend).with_storage(storage),
                     Some(supervisor),
+                    false,
                 )
             }
             Ok("mock") | Err(_) => {
@@ -58,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .with_storage(storage),
                     None,
+                    true,
                 )
             }
             Ok(other) => {
@@ -68,12 +70,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = state.with_service_port(local_addr.port());
 
     dancam::events::spawn_heartbeat(state.backend.clone(), Duration::from_secs(2));
+    let gc = dancam::gc::GcConfig::from_env(state.storage.rec_dir());
+    let recording_capacity_override = is_mock
+        .then(|| {
+            env::var("DANCAM_MOCK_RECORDING_CAPACITY_BYTES")
+                .ok()?
+                .parse()
+                .ok()
+        })
+        .flatten();
     dancam::events::spawn_telemetry(
         state.backend.clone(),
         state.storage.rec_dir(),
         Duration::from_secs(2),
+        gc.floor_bytes,
+        recording_capacity_override,
     );
-    let gc = dancam::gc::GcConfig::from_env(state.storage.rec_dir());
     if gc.floor_bytes > 0 {
         tracing::info!(floor_bytes = gc.floor_bytes, "segment gc enabled");
         dancam::gc::spawn_gc(state.storage.clone(), state.backend.clone(), gc);

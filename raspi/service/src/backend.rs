@@ -55,6 +55,17 @@ const MOCK_FRAME_BYTES: [&[u8]; 12] = [
 /// 90 kHz PTS ticks per mock packet -- one packet stands in for one 100 ms tick at the
 /// TS clock rate, so a segment's PTS span tracks the wall-clock time it stayed open.
 const MOCK_PTS_TICKS_PER_PACKET: u64 = 9000;
+/// One valid MPEG-TS null packet per segment stands in for fixed mux metadata.
+/// Keeping it separate from the PTS-bearing packets makes mock clip byte rates
+/// include container overhead without distorting their measured duration.
+const MOCK_MUX_PREAMBLE: [u8; 188] = {
+    let mut packet = [0xff; 188];
+    packet[0] = 0x47;
+    packet[1] = 0x1f;
+    packet[2] = 0xff;
+    packet[3] = 0x10;
+    packet
+};
 const MOCK_INFLIGHT_SYNC_INTERVAL: Duration = Duration::from_secs(2);
 
 #[async_trait]
@@ -486,6 +497,13 @@ async fn run_mock_recording_writer(
     // positive span by construction (a wall-clock PTS would collapse burst-fired ticks
     // onto one value). The open-time packet is each segment's first.
     let mut packet_index: u64 = 0;
+    if let Err(error) = write_mock_preamble(&mut file).await {
+        tracing::error!(%error, seq, "failed to write mock recording segment preamble");
+        hub.drive_now(Input::Fail {
+            detail: format!("failed to write mock recording segment {seq} preamble: {error}"),
+        });
+        return;
+    }
     if let Err(error) = write_mock_packet(&mut file, &mut packet_index).await {
         tracing::error!(%error, seq, "failed to write mock recording segment");
         hub.drive_now(Input::Fail {
@@ -570,6 +588,13 @@ async fn run_mock_recording_writer(
                             return;
                         }
                     };
+                    if let Err(error) = write_mock_preamble(&mut file).await {
+                        tracing::error!(%error, seq, "failed to write mock recording segment preamble");
+                        hub.drive_now(Input::Fail {
+                            detail: format!("failed to write mock recording segment {seq} preamble: {error}"),
+                        });
+                        return;
+                    }
                     if let Err(error) = write_mock_packet(&mut file, &mut packet_index).await {
                         tracing::error!(%error, seq, "failed to write mock recording segment");
                         hub.drive_now(Input::Fail {
@@ -606,6 +631,10 @@ async fn run_mock_recording_writer(
 
 /// Append one PTS-bearing TS packet and advance the lifetime packet counter, so each
 /// write lands a strictly larger PTS than the last.
+async fn write_mock_preamble(file: &mut tokio::fs::File) -> std::io::Result<()> {
+    file.write_all(&MOCK_MUX_PREAMBLE).await
+}
+
 async fn write_mock_packet(
     file: &mut tokio::fs::File,
     packet_index: &mut u64,

@@ -7,6 +7,7 @@ enum AppFeature {
         var recording: RecordingFeature.State = .unknown
         var clips = ClipsFeature.State()
         var incidents = IncidentsFeature.State()
+        var retentionEstimator = RetentionEstimator()
         var streamReconnectAttempt = 0
     }
 
@@ -55,6 +56,7 @@ enum AppFeature {
 
         case .streamStopped:
             state.streamReconnectAttempt = 0
+            state.retentionEstimator.reset()
             _ = reduceIncidents(state: &state, action: .worldObserved(nil), dependencies: dependencies)
             return .merge([
                 .cancel(id: streamID),
@@ -68,6 +70,9 @@ enum AppFeature {
             var isSnapshot = false
             var effects = [armHeartbeat(dependencies: dependencies)]
 
+            if case .snapshot = event {
+                state.retentionEstimator.reset()
+            }
             state.link.fold(event)
 
             if case .snapshot = event {
@@ -110,6 +115,7 @@ enum AppFeature {
             }
 
             if case .clipFinalized(let clip) = event {
+                state.retentionEstimator.observe(clip)
                 effects.append(
                     ClipsFeature.reduce(
                         state: &state.clips,
@@ -168,6 +174,7 @@ enum AppFeature {
 
         case .streamFailed:
             state.link.wentOffline()
+            state.retentionEstimator.reset()
             state.streamReconnectAttempt += 1
             return .merge([
                 .cancel(id: heartbeatID),
@@ -186,6 +193,7 @@ enum AppFeature {
 
         case .heartbeatTimedOut:
             state.link.wentOffline()
+            state.retentionEstimator.reset()
             state.streamReconnectAttempt += 1
             return .merge([
                 .cancel(id: streamID),
@@ -527,6 +535,7 @@ extension AppFeature.State {
             if let storage = world.storage {
                 fields.append("storage_used=\(storage.used)")
                 fields.append("storage_total=\(storage.total)")
+                fields.append("recording_capacity=\(storage.recordingCapacityBytes)")
             }
             fields.append("temp_soc_c=\(world.tempC.soc.current.map(String.init(describing:)) ?? "nil")")
             fields.append("temp_soc_max_c=\(world.tempC.soc.max.map(String.init(describing:)) ?? "nil")")

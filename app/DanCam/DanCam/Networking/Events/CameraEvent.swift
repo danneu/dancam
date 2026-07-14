@@ -11,7 +11,7 @@ nonisolated enum CameraEvent: Decodable, Equatable, Sendable {
     case recordingStopped(session: UInt64, atMs: UInt64)
     case recorderFailed(session: UInt64, detail: String, atMs: UInt64)
     case cameraStateChanged(state: CameraState)
-    case storageChanged(used: UInt64, total: UInt64)
+    case storageChanged(Storage?)
     case tempChanged(TempC)
     case memChanged(total: UInt64, available: UInt64, swapTotal: UInt64, swapUsed: UInt64)
     case cpuChanged(CPU)
@@ -55,8 +55,7 @@ extension CameraEvent {
     }
 
     nonisolated private struct StorageChangedPayload: Decodable {
-        var used: UInt64
-        var total: UInt64
+        var storage: Storage?
     }
 
     nonisolated private struct TempChangedPayload: Decodable {
@@ -111,7 +110,7 @@ extension CameraEvent {
             self = .cameraStateChanged(state: try CameraStateChangedPayload(from: decoder).state)
         case "storage_changed":
             let payload = try StorageChangedPayload(from: decoder)
-            self = .storageChanged(used: payload.used, total: payload.total)
+            self = .storageChanged(payload.storage)
         case "temp_changed":
             let payload = try TempChangedPayload(from: decoder)
             self = .tempChanged(TempC(soc: payload.soc, sensor: payload.sensor))
@@ -186,8 +185,8 @@ extension World {
             next.recorder.detail = detail
         case .cameraStateChanged(let state):
             next.cameraState = state
-        case .storageChanged(let used, let total):
-            next.storage = Storage(used: used, total: total)
+        case .storageChanged(let storage):
+            next.storage = storage
         case .tempChanged(let tempC):
             next.tempC = tempC
         case .memChanged(let total, let available, let swapTotal, let swapUsed):
@@ -254,6 +253,7 @@ nonisolated enum CameraState: String, Codable, Equatable, Sendable {
 nonisolated struct Storage: Codable, Equatable, Sendable {
     var used: UInt64
     var total: UInt64
+    var recordingCapacityBytes: UInt64 = 0
 }
 
 nonisolated struct TempReading: Codable, Equatable, Sendable {
