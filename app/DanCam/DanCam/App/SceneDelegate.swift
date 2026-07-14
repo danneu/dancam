@@ -55,11 +55,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.makeKeyAndVisible()
         homeViewController.loadViewIfNeeded()
         appStore.send(.streamStarted)
+        appStore.send(.foregrounded)
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
         if let appStore {
             appStore.send(.streamStarted)
+            appStore.send(.foregrounded)
             Log.reducer.notice("snapshot \(appStore.state.logSnapshot, privacy: .public)")
         }
         (shell?.topViewController as? ConnectionResumable)?.resumeLiveWork()

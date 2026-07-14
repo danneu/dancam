@@ -8,6 +8,8 @@ struct AppDependencies {
     var clipCache: ClipCache
     var incidentStore: IncidentStore
     var incidentNotifier: IncidentNotifier
+    var incidentArtifactInstaller: IncidentArtifactInstaller
+    var incidentBackgroundTask: IncidentBackgroundTaskClient
     var thumbnailLoader: ThumbnailLoader
     var preview: PreviewClient
     var recording: RecordingClient
@@ -27,6 +29,8 @@ struct AppDependencies {
         clipCache: ClipCache = .noop,
         incidentStore: IncidentStore = .noop,
         incidentNotifier: IncidentNotifier = .noop,
+        incidentArtifactInstaller: IncidentArtifactInstaller = .noop,
+        incidentBackgroundTask: IncidentBackgroundTaskClient = .noop,
         thumbnailLoader: ThumbnailLoader = .noop,
         preview: PreviewClient = .noop,
         recording: RecordingClient = .noop,
@@ -49,6 +53,8 @@ struct AppDependencies {
         self.clipCache = clipCache
         self.incidentStore = incidentStore
         self.incidentNotifier = incidentNotifier
+        self.incidentArtifactInstaller = incidentArtifactInstaller
+        self.incidentBackgroundTask = incidentBackgroundTask
         self.thumbnailLoader = thumbnailLoader
         self.preview = preview
         self.recording = recording
@@ -93,6 +99,8 @@ struct AppDependencies {
                 .appending(path: "Incidents", directoryHint: .isDirectory)
         )
         incidentNotifier = .live
+        incidentArtifactInstaller = .live(directoryURL: incidentStore.directoryURL)
+        incidentBackgroundTask = .live
         thumbnailLoader = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,

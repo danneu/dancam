@@ -20,6 +20,7 @@ enum AppFeature {
         case recording(RecordingFeature.Action)
         case clips(ClipsFeature.Action)
         case incidents(IncidentsFeature.Action)
+        case foregrounded
         case recordTapped
         case manualRefresh
         case reconnectStreamIfOffline
@@ -116,6 +117,11 @@ enum AppFeature {
                     )
                     .map(Action.clips)
                 )
+                effects.append(reduceIncidents(
+                    state: &state,
+                    action: .clipsChanged,
+                    dependencies: dependencies
+                ))
             }
 
             if case .clipRemoved(let id) = event {
@@ -127,6 +133,11 @@ enum AppFeature {
                     )
                     .map(Action.clips)
                 )
+                effects.append(reduceIncidents(
+                    state: &state,
+                    action: .clipRemoved(seq: id),
+                    dependencies: dependencies
+                ))
             }
 
             if case .timeSynced = event {
@@ -205,15 +216,54 @@ enum AppFeature {
             )
 
         case .clips(let action):
-            return ClipsFeature.reduce(
+            let clipsEffect = ClipsFeature.reduce(
                 state: &state.clips,
                 action: action,
                 dependencies: dependencies
             )
             .map(Action.clips)
+            var effects = [clipsEffect]
+            switch action {
+            case .clipRemoved(let id):
+                effects.append(reduceIncidents(
+                    state: &state,
+                    action: .clipRemoved(seq: id),
+                    dependencies: dependencies
+                ))
+            case .clipFinalized, .clipsResponse(_, _, .success), .pageResponse(_, _, .success):
+                effects.append(reduceIncidents(
+                    state: &state,
+                    action: .clipsChanged,
+                    dependencies: dependencies
+                ))
+            default:
+                break
+            }
+            return .merge(effects)
 
         case .incidents(let action):
-            return reduceIncidents(state: &state, action: action, dependencies: dependencies)
+            let incidentEffect = reduceIncidents(
+                state: &state,
+                action: action,
+                dependencies: dependencies
+            )
+            guard action == .pageRequested else { return incidentEffect }
+            return .merge([
+                incidentEffect,
+                ClipsFeature.reduce(
+                    state: &state.clips,
+                    action: .loadMore,
+                    dependencies: dependencies
+                )
+                .map(Action.clips),
+            ])
+
+        case .foregrounded:
+            return reduceIncidents(
+                state: &state,
+                action: .foregrounded,
+                dependencies: dependencies
+            )
 
         case .recordTapped:
             switch state.recording {
@@ -294,6 +344,7 @@ enum AppFeature {
             state: &state.incidents,
             action: action,
             world: state.link.onlineWorld,
+            clipsState: state.clips,
             dependencies: dependencies
         )
         .map(Action.incidents)
@@ -419,6 +470,8 @@ extension AppFeature.Action {
             "clips.\(action.logLabel)"
         case .incidents(let action):
             "incidents.\(action.logLabel)"
+        case .foregrounded:
+            "foregrounded"
         case .recordTapped:
             "recordTapped"
         case .manualRefresh:
@@ -683,20 +736,25 @@ private extension ClipsFeature.Action {
 private extension IncidentsFeature.Action {
     var logLabel: String {
         switch self {
-        case .worldObserved:
-            "worldObserved"
-        case .pressTapped:
-            "pressTapped"
-        case .createResponded(_, success: true):
-            "createResponded.success"
-        case .createResponded(_, success: false):
-            "createResponded.failure"
-        case .cooldownFinished:
-            "cooldownFinished"
-        case .persistenceAlertDismissed:
-            "persistenceAlertDismissed"
-        case .reconcile:
-            "reconcile"
+        case .worldObserved: "worldObserved"
+        case .foregrounded: "foregrounded"
+        case .storeLoaded: "storeLoaded"
+        case .clipsChanged: "clipsChanged"
+        case .clipRemoved: "clipRemoved"
+        case .pressTapped: "pressTapped"
+        case .createResponded(_, true): "createResponded.success"
+        case .createResponded(_, false): "createResponded.failure"
+        case .cooldownFinished: "cooldownFinished"
+        case .persistenceAlertDismissed: "persistenceAlertDismissed"
+        case .reconcile: "reconcile"
+        case .recordPersisted(_, _, true): "recordPersisted.success"
+        case .recordPersisted(_, _, false): "recordPersisted.failure"
+        case .pageRequested: "pageRequested"
+        case .pullFinished: "pullFinished"
+        case .pullRecordsPersisted(_, _, true): "pullRecordsPersisted.success"
+        case .pullRecordsPersisted(_, _, false): "pullRecordsPersisted.failure"
+        case .lossRecordsPersisted(_, true): "lossRecordsPersisted.success"
+        case .lossRecordsPersisted(_, false): "lossRecordsPersisted.failure"
         }
     }
 }
