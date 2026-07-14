@@ -15,9 +15,10 @@ final class DebugViewController: UIViewController {
         collectionViewLayout: makeLayout()
     )
     private lazy var dataSource = makeDataSource()
-    private lazy var snapshotGate = DiffableSnapshotApplyGate(
+    private lazy var snapshotPresenter = DiffableSnapshotPresenter(
         dataSource: dataSource,
-        collectionView: collectionView
+        collectionView: collectionView,
+        didCommitLatest: {}
     )
 
     init(
@@ -47,23 +48,23 @@ final class DebugViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        snapshotGate.setActive(true)
+        snapshotPresenter.setActive(true)
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        snapshotGate.setActive(false)
+        snapshotPresenter.setActive(false)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        snapshotGate.flushIfReady()
+        snapshotPresenter.flushIfReady()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        snapshotGate.flushIfReady()
+        snapshotPresenter.flushIfReady()
     }
 
     private func makeLayout() -> UICollectionViewLayout {
@@ -221,7 +222,7 @@ final class DebugViewController: UIViewController {
 
             var snapshot = makeSnapshot(sections)
             snapshot.reconfigureItems(changed)
-            snapshotGate.submit(
+            snapshotPresenter.submit(
                 snapshot,
                 animatingDifferences: false
             )
@@ -230,7 +231,7 @@ final class DebugViewController: UIViewController {
 
         renderedSections = sections
         renderedRows = nextRows
-        snapshotGate.submit(makeSnapshot(sections), animatingDifferences: false)
+        snapshotPresenter.submit(makeSnapshot(sections), animatingDifferences: false)
     }
 
     private func makeSnapshot(

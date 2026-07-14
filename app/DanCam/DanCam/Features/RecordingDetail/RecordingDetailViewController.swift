@@ -19,9 +19,12 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     private var liveRecordingObservation: StoreObservation?
     private var stateObservation: StoreObservation?
     private var dataSource: UITableViewDiffableDataSource<RecordingDetailSection, RecordingDetailRow>!
-    private lazy var snapshotGate = DiffableSnapshotApplyGate(
+    private lazy var snapshotPresenter = DiffableSnapshotPresenter(
         dataSource: dataSource,
-        tableView: tableView
+        tableView: tableView,
+        didCommitLatest: { [weak self] in
+            self?.handleLatestSnapshotCommit()
+        }
     )
     private var state: RecordingDetailState
     private var clips: [Clip] = []
@@ -31,7 +34,6 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     private var liveRecordingStatus: LiveRecordingStatus
     private var showsLiveRow = false
     private var preservedVisibleThumbnails: [ClipThumbnailIdentity: UIImage] = [:]
-    private var preservedThumbnailGeneration = 0
     private var prefetchHandles: [ClipThumbnailIdentity: ThumbnailLoader.PrefetchHandle] = [:]
     private var didRemoveFromNavigationStack = false
     private var isViewActive = false
@@ -88,7 +90,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         isViewActive = true
-        snapshotGate.setActive(true)
+        snapshotPresenter.setActive(true)
         view.setNeedsLayout()
         reconfigureVisibleThumbnails()
     }
@@ -96,20 +98,20 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         isViewActive = false
-        snapshotGate.setActive(false)
+        snapshotPresenter.setActive(false)
         cancelAllPrefetches()
         quietVisibleThumbnailLoads()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        snapshotGate.flushIfReady()
+        snapshotPresenter.flushIfReady()
         reconfigureVisibleThumbnails()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        snapshotGate.flushIfReady()
+        snapshotPresenter.flushIfReady()
     }
 
     isolated deinit {
@@ -181,21 +183,9 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         paginationTailID = clips.last?.id
         navigationItem.title = recordingTitle(for: clips)
         prunePrefetches(surviving: Set(clips.map(ClipThumbnailIdentity.init)))
-        preservedThumbnailGeneration += 1
-        let thumbnailGeneration = preservedThumbnailGeneration
         preservedVisibleThumbnails = visibleThumbnails
 
-        snapshotGate.submit(
-            makeSnapshot(reconfigure: reconfigure),
-            completion: { [weak self] in
-                MainActor.assumeIsolated {
-                    if self?.preservedThumbnailGeneration == thumbnailGeneration {
-                        self?.preservedVisibleThumbnails.removeAll()
-                    }
-                    self?.resumePaginationAfterSnapshot()
-                }
-            }
-        )
+        snapshotPresenter.submit(makeSnapshot(reconfigure: reconfigure))
         handleProjectedState()
     }
 
@@ -227,14 +217,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         let reconfigure: [RecordingDetailRow] = wasShowing && showsLiveRow && statusChanged
             ? [.liveRecording]
             : []
-        snapshotGate.submit(
-            makeSnapshot(reconfigure: reconfigure),
-            completion: { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.resumePaginationAfterSnapshot()
-                }
-            }
-        )
+        snapshotPresenter.submit(makeSnapshot(reconfigure: reconfigure))
         handleProjectedState()
     }
 
@@ -436,6 +419,11 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         } else {
             loadMoreIfVisibleTail()
         }
+    }
+
+    private func handleLatestSnapshotCommit() {
+        preservedVisibleThumbnails.removeAll()
+        resumePaginationAfterSnapshot()
     }
 
     private var isActiveAndAttached: Bool {

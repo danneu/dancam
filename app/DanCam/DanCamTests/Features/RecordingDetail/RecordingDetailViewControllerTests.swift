@@ -63,6 +63,43 @@ struct RecordingDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func metadataUpdateKeepsStableRowThumbnailWithoutAnotherLoaderRequest() async throws {
+        let loader = RecordingPaintingLoader()
+        let initialClip = clip(id: 12, bootTag: "target")
+        let (controller, store) = makeControllerAndStore(
+            clips: [initialClip],
+            thumbnailLoader: loader.loader()
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.layoutTableForTesting()
+            return controller.clipThumbnailCellForTesting(clipID: initialClip.id)?.displayedImageForTesting != nil
+        }
+
+        let cell = try #require(controller.clipThumbnailCellForTesting(clipID: initialClip.id))
+        let originalImage = try #require(cell.displayedImageForTesting)
+        let originalLabel = try #require(cell.accessibilityLabel)
+        var updatedClip = initialClip
+        updatedClip.durMs = 45_000
+
+        store.send(.clips(.clipsResponse(epoch: 0, generation: 0, .success(ClipsResponse(
+            clips: [updatedClip],
+            serverTimeMs: nil,
+            nextCursor: nil
+        )))))
+
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: initialClip.id)?.accessibilityLabel != originalLabel
+        }
+
+        let updatedCell = try #require(controller.clipThumbnailCellForTesting(clipID: initialClip.id))
+        #expect(updatedCell.displayedImageForTesting === originalImage)
+        #expect(loader.requestCount(ClipThumbnailIdentity(initialClip)) == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func tappingClipPushesViewer() async throws {
         let controller = makeController(clips: [clip(id: 12, bootTag: "target")])
         let root = UIViewController()
@@ -792,5 +829,36 @@ private final class RecordingLoaderProbe: @unchecked Sendable {
     private func noteCancel(_ id: Int) {
         lock.lock(); defer { lock.unlock() }
         cancels[id, default: 0] += 1
+    }
+}
+
+private final class RecordingPaintingLoader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requestCounts: [ClipThumbnailIdentity: Int] = [:]
+
+    func loader() -> ThumbnailLoader {
+        ThumbnailLoader(
+            thumbnail: { [self] clip in
+                let identity = ClipThumbnailIdentity(clip)
+                noteRequest(identity)
+                let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+                let image = renderer.image { context in
+                    UIColor.systemBlue.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+                }
+                return ThumbnailImage(image: image)
+            },
+            prefetch: { _ in .inert }
+        )
+    }
+
+    func requestCount(_ identity: ClipThumbnailIdentity) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return requestCounts[identity] ?? 0
+    }
+
+    private func noteRequest(_ identity: ClipThumbnailIdentity) {
+        lock.lock(); defer { lock.unlock() }
+        requestCounts[identity, default: 0] += 1
     }
 }

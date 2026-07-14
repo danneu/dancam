@@ -68,9 +68,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private let clock = ContinuousClock()
     private let paginationThreshold = 4
     private var dataSource: UITableViewDiffableDataSource<HomeSection, HomeRowID>!
-    private lazy var snapshotGate = DiffableSnapshotApplyGate(
+    private lazy var snapshotPresenter = DiffableSnapshotPresenter(
         dataSource: dataSource,
-        tableView: clipsTableView
+        tableView: clipsTableView,
+        didCommitLatest: { [weak self] in
+            self?.handleLatestSnapshotCommit()
+        }
     )
 
     private var liveRecordingStatus: LiveRecordingStatus = .none
@@ -84,7 +87,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var rowsByID: [HomeRowID: HomeRow] = [:]
     private var paginationTailIDs: Set<HomeRowID> = []
     private var preservedVisibleThumbnails: [ClipThumbnailIdentity: UIImage] = [:]
-    private var preservedThumbnailGeneration = 0
     private var isManualRefreshing = false
     private var lastFittedHeaderWidth: CGFloat?
     private var needsHeaderRefit = true
@@ -164,7 +166,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         isViewActive = true
-        snapshotGate.setActive(true)
+        snapshotPresenter.setActive(true)
         view.setNeedsLayout()
         reconfigureVisibleThumbnails()
     }
@@ -172,7 +174,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         isViewActive = false
-        snapshotGate.setActive(false)
+        snapshotPresenter.setActive(false)
         store.send(.clips(.onDisappear))
         refreshControl.endRefreshing()
         isManualRefreshing = false
@@ -182,7 +184,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        snapshotGate.flushIfReady()
+        snapshotPresenter.flushIfReady()
         reconfigureVisibleThumbnails()
     }
 
@@ -190,7 +192,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         super.viewDidLayoutSubviews()
         installOrSizeHeaderIfPossible()
         updateClipsBottomInset()
-        snapshotGate.flushIfReady()
+        snapshotPresenter.flushIfReady()
     }
 
     isolated deinit {
@@ -535,7 +537,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         renderRows()
     }
 
-    private func renderRows(completion: (() -> Void)? = nil) {
+    private func renderRows() {
         let visibleThumbnails = visibleThumbnailImages()
         let newSections = HomeRow.composeSections(
             clips: finishedClips,
@@ -551,8 +553,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         rowsByID = Dictionary(uniqueKeysWithValues: newRows.map { ($0.id, $0) })
         paginationTailIDs = Set(newRows.suffix(paginationThreshold).map(\.id))
         prunePrefetches(surviving: Set(newRows.compactMap(\.thumbnailIdentity)))
-        preservedThumbnailGeneration += 1
-        let thumbnailGeneration = preservedThumbnailGeneration
         preservedVisibleThumbnails = visibleThumbnails
 
         var snapshot = NSDiffableDataSourceSnapshot<HomeSection, HomeRowID>()
@@ -561,18 +561,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             snapshot.appendItems(section.rows.map(\.id), toSection: section.id)
         }
         snapshot.reconfigureItems(reconfigure)
-        snapshotGate.submit(
-            snapshot,
-            completion: { [weak self] in
-                MainActor.assumeIsolated {
-                    if self?.preservedThumbnailGeneration == thumbnailGeneration {
-                        self?.preservedVisibleThumbnails.removeAll()
-                    }
-                    self?.loadMoreIfVisibleTail()
-                    completion?()
-                }
-            }
-        )
+        snapshotPresenter.submit(snapshot)
 
         updateClipsPresentation()
     }
@@ -676,11 +665,13 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func handleDayRollover() {
-        renderRows { [weak self] in
-            MainActor.assumeIsolated {
-                self?.refreshVisibleDayHeaders()
-            }
-        }
+        renderRows()
+    }
+
+    private func handleLatestSnapshotCommit() {
+        preservedVisibleThumbnails.removeAll()
+        refreshVisibleDayHeaders()
+        loadMoreIfVisibleTail()
     }
 
     private func refreshVisibleDayHeaders() {

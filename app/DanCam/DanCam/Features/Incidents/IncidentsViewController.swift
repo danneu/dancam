@@ -14,9 +14,12 @@ final class IncidentsViewController: UIViewController, UICollectionViewDelegate 
         collectionViewLayout: makeLayout()
     )
     private lazy var dataSource = makeDataSource()
-    private lazy var snapshotGate = DiffableSnapshotApplyGate(
+    private lazy var snapshotPresenter = DiffableSnapshotPresenter(
         dataSource: dataSource,
-        collectionView: collectionView
+        collectionView: collectionView,
+        didCommitLatest: { [weak self] in
+            self?.refreshVisibleHeaders()
+        }
     )
     private var isViewActive = false
 
@@ -44,24 +47,24 @@ final class IncidentsViewController: UIViewController, UICollectionViewDelegate 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         isViewActive = true
-        snapshotGate.setActive(true)
+        snapshotPresenter.setActive(true)
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         isViewActive = false
-        snapshotGate.setActive(false)
+        snapshotPresenter.setActive(false)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        snapshotGate.flushIfReady()
+        snapshotPresenter.flushIfReady()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        snapshotGate.flushIfReady()
+        snapshotPresenter.flushIfReady()
     }
 
     private func makeLayout() -> UICollectionViewLayout {
@@ -152,9 +155,7 @@ final class IncidentsViewController: UIViewController, UICollectionViewDelegate 
         snapshot.appendSections([.incidents])
         snapshot.appendItems(projection.rows.map(\.id))
         snapshot.reconfigureItems(snapshot.itemIdentifiers.filter(previousIDs.contains))
-        snapshotGate.submit(snapshot) { [weak self] in
-            self?.refreshVisibleHeaders()
-        }
+        snapshotPresenter.submit(snapshot)
     }
 
     private func configureHeader(_ header: UICollectionViewListCell) {
