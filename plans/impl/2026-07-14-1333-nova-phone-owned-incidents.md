@@ -648,7 +648,7 @@ Behavioral acceptance criteria, owned by the commits above:
 ## Commit progress
 
 - [x] 1. docs + ADR + roadmap
-- [ ] 2. model, store, planner
+- [x] 2. model, store, planner
 - [ ] 3. press capture
 - [ ] 4. reconciler + downloads
 - [ ] 5. tab + detail

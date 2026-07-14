@@ -6,6 +6,7 @@ struct AppDependencies {
     var clipPull: ClipPullClient
     var clipRemuxer: ClipRemuxer
     var clipCache: ClipCache
+    var incidentStore: IncidentStore
     var thumbnailLoader: ThumbnailLoader
     var preview: PreviewClient
     var recording: RecordingClient
@@ -20,6 +21,7 @@ struct AppDependencies {
         clipPull: ClipPullClient = .noop,
         clipRemuxer: ClipRemuxer = .noop,
         clipCache: ClipCache = .noop,
+        incidentStore: IncidentStore = .noop,
         thumbnailLoader: ThumbnailLoader = .noop,
         preview: PreviewClient = .noop,
         recording: RecordingClient = .noop,
@@ -37,6 +39,7 @@ struct AppDependencies {
         self.clipPull = clipPull
         self.clipRemuxer = clipRemuxer
         self.clipCache = clipCache
+        self.incidentStore = incidentStore
         self.thumbnailLoader = thumbnailLoader
         self.preview = preview
         self.recording = recording
@@ -71,6 +74,11 @@ struct AppDependencies {
                 .urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appending(path: "clips", directoryHint: .isDirectory),
             now: { Date() }
+        )
+        incidentStore = .live(
+            rootDirectory: FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appending(path: "Incidents", directoryHint: .isDirectory)
         )
         thumbnailLoader = .live(
             baseURL: configuration.cameraAPIBaseURL,

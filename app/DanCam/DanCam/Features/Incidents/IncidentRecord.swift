@@ -1,0 +1,140 @@
+import Foundation
+
+nonisolated enum IncidentStatus: String, Codable, Equatable, Sendable {
+    case pending
+    case saved
+    case partial
+
+    var isTerminal: Bool { self != .pending }
+}
+
+nonisolated enum IncidentSegmentState: String, Codable, Equatable, Sendable {
+    case unresolved
+    case wanted
+    case pulled
+    case lost
+    case clipped
+}
+
+nonisolated struct IncidentSegment: Codable, Equatable, Sendable, Identifiable {
+    var seq: Int
+    var state: IncidentSegmentState
+    var etag: String?
+    var durMs: UInt64?
+    var bytes: UInt64?
+
+    var id: Int { seq }
+
+    init(
+        seq: Int,
+        state: IncidentSegmentState = .unresolved,
+        etag: String? = nil,
+        durMs: UInt64? = nil,
+        bytes: UInt64? = nil
+    ) {
+        self.seq = seq
+        self.state = state
+        self.etag = etag
+        self.durMs = durMs
+        self.bytes = bytes
+    }
+
+    mutating func resolve(etag: String, durMs: UInt64) {
+        guard state == .unresolved else { return }
+        state = .wanted
+        self.etag = etag
+        self.durMs = durMs
+    }
+
+    mutating func markPulled(bytes: UInt64) {
+        state = .pulled
+        self.bytes = bytes
+    }
+
+    mutating func markLost() {
+        guard state == .unresolved || state == .wanted else { return }
+        state = .lost
+    }
+
+    mutating func markClipped() {
+        guard state == .unresolved else { return }
+        state = .clipped
+    }
+}
+
+nonisolated struct IncidentRecord: Codable, Equatable, Sendable, Identifiable {
+    var id: UUID
+    var pressedAtMs: UInt64
+    var bootTag: String
+    var session: UInt64
+    var markSeq: Int
+    var markAgeMs: UInt64
+    var preMs: UInt64
+    var postMs: UInt64
+    var slackMs: UInt64
+    var status: IncidentStatus
+    var wanted: [IncidentSegment]
+
+    init(
+        id: UUID = UUID(),
+        pressedAtMs: UInt64,
+        recordingID: RecordingID,
+        markSeq: Int,
+        markAgeMs: UInt64,
+        preMs: UInt64 = 30_000,
+        postMs: UInt64 = 15_000,
+        slackMs: UInt64 = 2_000,
+        status: IncidentStatus = .pending,
+        wanted: [IncidentSegment]? = nil
+    ) {
+        self.id = id
+        self.pressedAtMs = pressedAtMs
+        bootTag = recordingID.bootTag
+        session = recordingID.session
+        self.markSeq = markSeq
+        self.markAgeMs = markAgeMs
+        self.preMs = preMs
+        self.postMs = postMs
+        self.slackMs = slackMs
+        self.status = status
+        self.wanted = wanted ?? [IncidentSegment(seq: markSeq)]
+    }
+
+    var recordingID: RecordingID {
+        RecordingID(bootTag: bootTag, session: session)
+    }
+
+    var coveredDurationMs: UInt64 {
+        wanted.lazy
+            .filter { $0.state == .pulled }
+            .compactMap(\.durMs)
+            .reduce(0, +)
+    }
+
+    var pulledBytes: UInt64 {
+        wanted.lazy
+            .filter { $0.state == .pulled }
+            .compactMap(\.bytes)
+            .reduce(0, +)
+    }
+
+    var derivedTerminalStatus: IncidentStatus? {
+        guard wanted.allSatisfy({ $0.state != .unresolved && $0.state != .wanted }) else {
+            return nil
+        }
+        return wanted.contains { $0.state == .lost } ? .partial : .saved
+    }
+
+    mutating func updateSegment(_ segment: IncidentSegment) {
+        if let index = wanted.firstIndex(where: { $0.seq == segment.seq }) {
+            wanted[index] = segment
+        } else {
+            wanted.append(segment)
+            wanted.sort { $0.seq < $1.seq }
+        }
+    }
+
+    func segment(seq: Int) -> IncidentSegment? {
+        wanted.first { $0.seq == seq }
+    }
+}
