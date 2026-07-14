@@ -19,6 +19,22 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         Log.reducer.notice("snapshot \(appStore.state.logSnapshot, privacy: .public)")
 
         let window = UIWindow(windowScene: windowScene)
+        let tabs = Self.makeTabs(dependencies: dependencies, store: appStore)
+        let homeViewController = (tabs[0].viewControllers.first as? HomeViewController)
+
+        let shell = AppShellViewController(tabs: tabs, store: appStore)
+
+        window.rootViewController = shell
+        self.window = window
+        self.appStore = appStore
+        self.shell = shell
+        window.makeKeyAndVisible()
+        homeViewController?.loadViewIfNeeded()
+        appStore.send(.streamStarted)
+        appStore.send(.foregrounded)
+    }
+
+    static func makeTabs(dependencies: AppDependencies, store appStore: AppStore) -> [UINavigationController] {
         let homeViewController = HomeViewController(dependencies: dependencies, store: appStore)
         let homeNavigationController = UINavigationController(rootViewController: homeViewController)
         homeNavigationController.tabBarItem = UITabBarItem(
@@ -32,6 +48,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         debugNavigationController.tabBarItem = UITabBarItem(
             title: "Debug",
             image: UIImage(systemName: "waveform.path.ecg"),
+            tag: 2
+        )
+
+        let incidentsViewController = IncidentsViewController(dependencies: dependencies, store: appStore)
+        let incidentsNavigationController = UINavigationController(rootViewController: incidentsViewController)
+        incidentsNavigationController.tabBarItem = UITabBarItem(
+            title: "Incidents",
+            image: UIImage(systemName: "exclamationmark.triangle"),
             tag: 1
         )
 
@@ -40,22 +64,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         settingsNavigationController.tabBarItem = UITabBarItem(
             title: "Settings",
             image: UIImage(systemName: "gearshape"),
-            tag: 2
+            tag: 3
         )
 
-        let shell = AppShellViewController(
-            tabs: [homeNavigationController, debugNavigationController, settingsNavigationController],
-            store: appStore
-        )
-
-        window.rootViewController = shell
-        self.window = window
-        self.appStore = appStore
-        self.shell = shell
-        window.makeKeyAndVisible()
-        homeViewController.loadViewIfNeeded()
-        appStore.send(.streamStarted)
-        appStore.send(.foregrounded)
+        return [
+            homeNavigationController,
+            incidentsNavigationController,
+            debugNavigationController,
+            settingsNavigationController,
+        ]
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {

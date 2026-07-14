@@ -4,6 +4,16 @@ import UIKit
 
 @MainActor
 struct AppShellViewControllerTests {
+    @Test func sceneTabsAreHomeIncidentsDebugSettings() {
+        let tabs = SceneDelegate.makeTabs(dependencies: .init(), store: makeStore())
+
+        #expect(tabs.map { $0.tabBarItem.title } == ["Home", "Incidents", "Debug", "Settings"])
+        #expect(tabs[0].viewControllers.first is HomeViewController)
+        #expect(tabs[1].viewControllers.first is IncidentsViewController)
+        #expect(tabs[2].viewControllers.first is DebugViewController)
+        #expect(tabs[3].viewControllers.first is SettingsViewController)
+    }
+
     @Test func stripHidesRecordingPillWhileConnecting() {
         let store = makeStore()
         let shell = AppShellViewController(

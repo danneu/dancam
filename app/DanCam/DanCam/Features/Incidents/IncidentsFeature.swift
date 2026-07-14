@@ -22,6 +22,7 @@ enum IncidentsFeature {
 
     nonisolated struct State: Equatable, Sendable {
         var incidents: [IncidentRecord] = []
+        var unreadableDirectoryNames: [String] = []
         var openSegmentAnchor: OpenSegmentAnchor?
         var isPressFeedbackVisible = false
         var persistenceFailed = false
@@ -65,9 +66,12 @@ enum IncidentsFeature {
         case pullFinished(PullRequest, PullOutcome)
         case pullRecordsPersisted(PullRequest, [IncidentRecord], success: Bool)
         case lossRecordsPersisted([IncidentRecord], success: Bool)
+        case deleteTapped(IncidentListItemID)
+        case deleteResponded(IncidentListItemID, success: Bool)
     }
 
     private static let cooldownID = "incident-press-cooldown"
+    private static let pullID = "incident-active-pull"
 
     static func reduce(
         state: inout State,
@@ -115,6 +119,10 @@ enum IncidentsFeature {
             state.incidents = stored.compactMap { item in
                 guard case .readable(let record, _) = item else { return nil }
                 return record
+            }
+            state.unreadableDirectoryNames = stored.compactMap { item in
+                guard case .unreadable(let directoryName, _) = item else { return nil }
+                return directoryName
             }
             return reduce(
                 state: &state,
@@ -360,6 +368,69 @@ enum IncidentsFeature {
         case .lossRecordsPersisted(let records, success: false):
             state.pendingPersistIDs.subtract(records.map(\.id))
             return .none
+
+        case .deleteTapped(let itemID):
+            var effects: [Effect<Action>] = []
+            switch itemID {
+            case .readable(let id):
+                state.pullQueue = state.pullQueue.compactMap { request in
+                    let incidentIDs = request.incidentIDs.filter { $0 != id }
+                    guard incidentIDs.isEmpty == false else { return nil }
+                    return PullRequest(seq: request.seq, etag: request.etag, incidentIDs: incidentIDs)
+                }
+                if state.activePull?.incidentIDs.contains(id) == true {
+                    state.activePull = nil
+                    effects.append(.cancel(id: pullID))
+                }
+                effects.append(.run { send in
+                    do {
+                        try await dependencies.incidentStore.delete(id)
+                        await send(.deleteResponded(itemID, success: true))
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        await send(.deleteResponded(itemID, success: false))
+                    }
+                })
+
+            case .unreadable(let directoryName):
+                effects.append(.run { send in
+                    do {
+                        try await dependencies.incidentStore.deleteUnreadable(directoryName)
+                        await send(.deleteResponded(itemID, success: true))
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        await send(.deleteResponded(itemID, success: false))
+                    }
+                })
+            }
+            return .merge(effects)
+
+        case .deleteResponded(let itemID, success: true):
+            switch itemID {
+            case .readable(let id):
+                state.incidents.removeAll { $0.id == id }
+                state.pendingPersistIDs.remove(id)
+            case .unreadable(let directoryName):
+                state.unreadableDirectoryNames.removeAll { $0 == directoryName }
+            }
+            return reduce(
+                state: &state,
+                action: .reconcile,
+                world: world,
+                clipsState: clipsState,
+                dependencies: dependencies
+            )
+
+        case .deleteResponded(_, success: false):
+            return reduce(
+                state: &state,
+                action: .reconcile,
+                world: world,
+                clipsState: clipsState,
+                dependencies: dependencies
+            )
         }
     }
 
@@ -426,7 +497,7 @@ enum IncidentsFeature {
             request.incidentIDs.contains(record.id) && record.markSeq == request.seq ? record.id : nil
         }
 
-        return .run { send in
+        return .run(id: pullID, cancelInFlight: true) { send in
             let outcome = await pull(
                 request,
                 markIncidentIDs: markIDs,
@@ -466,7 +537,11 @@ enum IncidentsFeature {
             await networkPull(request, markIncidentIDs: markIncidentIDs, dependencies: dependencies)
         }
         let token = await dependencies.incidentBackgroundTask.begin { task.cancel() }
-        let result = await task.value
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         await dependencies.incidentBackgroundTask.end(token)
         return result
     }

@@ -755,6 +755,9 @@ private extension IncidentsFeature.Action {
         case .pullRecordsPersisted(_, _, false): "pullRecordsPersisted.failure"
         case .lossRecordsPersisted(_, true): "lossRecordsPersisted.success"
         case .lossRecordsPersisted(_, false): "lossRecordsPersisted.failure"
+        case .deleteTapped: "deleteTapped"
+        case .deleteResponded(_, true): "deleteResponded.success"
+        case .deleteResponded(_, false): "deleteResponded.failure"
         }
     }
 }

@@ -3,6 +3,13 @@ import Testing
 @testable import DanCam
 
 struct FormattersTests {
+    @Test func incidentTimestampKeepsExactSeconds() throws {
+        let utc = try #require(TimeZone(secondsFromGMT: 0))
+        let date = Date(timeIntervalSince1970: 1_784_480_523)
+
+        #expect(Formatters.incidentPressedAt(date, timeZone: utc) == "Jul 19, 2026 at 17:02:03")
+    }
+
     @Test func cpuPercentageAndWarningsUseInclusiveThresholds() {
         #expect(Formatters.cpuPercentage(nil) == "--")
         #expect(Formatters.cpuPercentage(98) == "98%")

@@ -651,5 +651,5 @@ Behavioral acceptance criteria, owned by the commits above:
 - [x] 2. model, store, planner
 - [x] 3. press capture
 - [x] 4. reconciler + downloads
-- [ ] 5. tab + detail
+- [x] 5. tab + detail
 - [ ] 6. polish + nudge lifecycle

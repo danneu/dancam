@@ -71,6 +71,32 @@ nonisolated enum Formatters {
         return String(format: "Dashcam seg_%05d.mp4", clip.id)
     }
 
+    static func incidentPressedAt(_ date: Date, timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "MMM d, yyyy 'at' HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
+    static func incidentExportFilename(
+        pressedAt: Date,
+        seq: Int,
+        fileExtension: String,
+        timeZone: TimeZone = .current
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd HH-mm-ss"
+        return String(
+            format: "Dashcam Incident %@ seg_%05d.%@",
+            formatter.string(from: pressedAt),
+            seq,
+            fileExtension
+        )
+    }
+
     static func clipCreatedTime(_ clip: Clip, timeZone: TimeZone = .current) -> String? {
         guard let date = clip.resolvedStartDate else { return nil }
 
