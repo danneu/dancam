@@ -16,6 +16,7 @@ struct DiffableSnapshotApplyGateTests {
         let gate = DiffableSnapshotApplyGate(dataSource: dataSource, tableView: tableView)
         var completed = false
 
+        gate.setActive(true)
         gate.submit(snapshot(items: [1])) { completed = true }
 
         #expect(dataSource.snapshot().itemIdentifiers.isEmpty)
@@ -55,6 +56,7 @@ struct DiffableSnapshotApplyGateTests {
         let gate = DiffableSnapshotApplyGate(dataSource: dataSource, collectionView: collectionView)
         var completed = false
 
+        gate.setActive(true)
         gate.submit(snapshot(items: [1])) { completed = true }
 
         #expect(dataSource.snapshot().itemIdentifiers.isEmpty)
@@ -80,13 +82,15 @@ struct DiffableSnapshotApplyGateTests {
         #expect(completed)
     }
 
-    @Test func gatedSubmissionsCoalesceAndPreserveAllCompletions() throws {
-        let tableView = UITableView(frame: .zero)
+    @Test func inactiveSubmissionsCoalesceAndPreserveAllCompletions() throws {
+        let tableView = UITableView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         let dataSource = UITableViewDiffableDataSource<Int, Int>(tableView: tableView) { _, _, _ in
             UITableViewCell()
         }
         let gate = DiffableSnapshotApplyGate(dataSource: dataSource, tableView: tableView)
         var completions: [Int] = []
+        let window = try attach(tableView)
+        defer { window.isHidden = true }
 
         gate.submit(snapshot(items: [1])) { completions.append(1) }
         gate.submit(snapshot(items: [2, 3])) { completions.append(2) }
@@ -94,12 +98,78 @@ struct DiffableSnapshotApplyGateTests {
         #expect(dataSource.snapshot().itemIdentifiers.isEmpty)
         #expect(completions.isEmpty)
 
-        let window = try attachAtZeroSize(tableView)
-        defer { window.isHidden = true }
-        tableView.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
-        gate.flushIfReady()
+        gate.setActive(true)
 
         #expect(dataSource.snapshot().itemIdentifiers == [2, 3])
+        #expect(completions == [1, 2])
+    }
+
+    @Test func reactivationUsesReloadDataForNewestInactiveSnapshot() throws {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = try attach(view)
+        defer { window.isHidden = true }
+        var diffs: [[Int]] = []
+        var reloads: [[Int]] = []
+        let gate = DiffableSnapshotApplyGate<Int, Int>(
+            listView: view,
+            apply: { snapshot, _, completion in
+                diffs.append(snapshot.itemIdentifiers)
+                completion()
+            },
+            applyUsingReloadData: { snapshot, completion in
+                reloads.append(snapshot.itemIdentifiers)
+                completion()
+            }
+        )
+
+        gate.setActive(true)
+        gate.submit(snapshot(items: [1]))
+        gate.setActive(false)
+        gate.submit(snapshot(items: [2]))
+        gate.submit(snapshot(items: [3, 4]))
+        gate.setActive(true)
+
+        #expect(diffs == [[1]])
+        #expect(reloads == [[3, 4]])
+    }
+
+    @Test func interruptedApplyRepairsBeforeDrainingCompletionsInSubmissionOrder() throws {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = try attach(view)
+        defer { window.isHidden = true }
+        var diffCompletions: [() -> Void] = []
+        var reloadItems: [[Int]] = []
+        var reloadCompletions: [() -> Void] = []
+        var completions: [Int] = []
+        let gate = DiffableSnapshotApplyGate<Int, Int>(
+            listView: view,
+            apply: { _, _, completion in
+                diffCompletions.append(completion)
+            },
+            applyUsingReloadData: { snapshot, completion in
+                reloadItems.append(snapshot.itemIdentifiers)
+                reloadCompletions.append(completion)
+            }
+        )
+
+        gate.setActive(true)
+        gate.submit(snapshot(items: [1])) { completions.append(1) }
+        gate.setActive(false)
+        gate.submit(snapshot(items: [2])) { completions.append(2) }
+        gate.setActive(true)
+
+        #expect(reloadItems == [[2]])
+        #expect(completions.isEmpty)
+
+        let interruptedCompletion = try #require(diffCompletions.first)
+        interruptedCompletion()
+
+        #expect(reloadItems == [[2]])
+        #expect(completions.isEmpty)
+
+        let repairCompletion = try #require(reloadCompletions.first)
+        repairCompletion()
+
         #expect(completions == [1, 2])
     }
 
@@ -120,6 +190,7 @@ struct DiffableSnapshotApplyGateTests {
             }
         )
 
+        gate.setActive(true)
         gate.submit(snapshot(items: [1]))
         gate.submit(snapshot(items: [2]))
 
@@ -148,6 +219,7 @@ struct DiffableSnapshotApplyGateTests {
             }
         )
 
+        gate.setActive(true)
         gate.submit(snapshot(items: [1]), animatingDifferences: false)
         gate.submit(snapshot(items: [2]), animatingDifferences: true)
 

@@ -26,7 +26,8 @@ struct HomeViewControllerTests {
     func prefetchCancelsTheReplacedHandleBeforeStoringANewOne() async throws {
         let probe = HomeLoaderProbe()
         let controller = makeController(clips: [clipA, clipB], loader: probe.loader())
-        controller.loadViewIfNeeded()
+        let window = try embed(controller)
+        defer { window.isHidden = true }
 
         controller.tableView(UITableView(), prefetchRowsAt: [IndexPath(row: 0, section: 0)])
         controller.tableView(UITableView(), prefetchRowsAt: [IndexPath(row: 0, section: 0)])
@@ -136,7 +137,8 @@ struct HomeViewControllerTests {
             wallNow: { now },
             currentCalendar: { calendar }
         )
-        controller.loadViewIfNeeded()
+        let window = try embed(controller)
+        defer { window.isHidden = true }
 
         let firstIndexPath = try #require(controller.indexPathForTesting(rowID: .finished(10)))
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: firstIndexPath)
@@ -162,7 +164,8 @@ struct HomeViewControllerTests {
             clipsClient: fetchSpy.client(),
             nextCursor: "8"
         )
-        controller.loadViewIfNeeded()
+        let window = try embed(controller)
+        defer { window.isHidden = true }
 
         let recordingIndexPath = try #require(controller.indexPathForTesting(rowID: .recording(recording: RecordingID(bootTag: "boot-a", session: 7), occurrence: 0)))
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: recordingIndexPath)
@@ -212,23 +215,46 @@ struct HomeViewControllerTests {
         #expect(navigationController.viewControllers.count == 2)
     }
 
-    @Test func coveredUpdateStaysCurrentAndRendersAfterReattachment() throws {
-        let (controller, store) = makeControllerAndStore(clips: [clipA], loader: .noop)
+    @Test(.timeLimit(.minutes(1)))
+    func coveredUpdatesDeferUIKitAndPaginationUntilReattachment() async throws {
+        let fetchSpy = HomeFetchSpy()
+        let (controller, store) = makeControllerAndStore(
+            clips: [clipA],
+            loader: .noop,
+            clipsClient: fetchSpy.client()
+        )
         let (window, navigationController) = try embedInNavigationController(controller)
         defer { window.isHidden = true }
+        #expect(controller.presentedRowIDsForTesting == [.finished(clipA.id)])
+
         let cover = UIViewController()
         navigationController.pushViewController(cover, animated: false)
         window.layoutIfNeeded()
 
         store.send(.clips(.clipFinalized(clipB)))
+        store.send(.clips(.clipsResponse(
+            epoch: 0,
+            generation: 0,
+            .success(ClipsResponse(clips: [clipB, clipA], serverTimeMs: nil, nextCursor: "1"))
+        )))
 
         #expect(controller.rowIDsForTesting.contains(.finished(clipB.id)))
+        #expect(controller.presentedRowIDsForTesting == [.finished(clipA.id)])
+        #expect(store.state.clips.isPaging == false)
+
+        let tail = try #require(controller.indexPathForTesting(rowID: .finished(clipA.id)))
+        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: tail)
+        #expect(store.state.clips.isPaging == false)
+        #expect(await fetchSpy.requestedCursors().isEmpty)
 
         navigationController.popViewController(animated: false)
         window.layoutIfNeeded()
         controller.layoutClipsTableForTesting()
 
-        #expect(controller.clipThumbnailCellForTesting(clipID: clipB.id) != nil)
+        try await waitUntil {
+            controller.clipThumbnailCellForTesting(clipID: clipB.id) != nil
+        }
+        try await waitForCursors(fetchSpy, [Optional("1")])
     }
 
     @Test func recordingCardSwipeHasNoActions() throws {

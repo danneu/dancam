@@ -89,6 +89,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var lastFittedHeaderWidth: CGFloat?
     private var needsHeaderRefit = true
     private var prefetchHandles: [ClipThumbnailIdentity: ThumbnailLoader.PrefetchHandle] = [:]
+    private var isViewActive = false
 
     init(
         dependencies: AppDependencies,
@@ -162,17 +163,27 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        isViewActive = true
+        snapshotGate.setActive(true)
         view.setNeedsLayout()
         reconfigureVisibleThumbnails()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        isViewActive = false
+        snapshotGate.setActive(false)
         store.send(.clips(.onDisappear))
         refreshControl.endRefreshing()
         isManualRefreshing = false
         cancelAllPrefetches()
         quietVisibleThumbnailLoads()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        snapshotGate.flushIfReady()
+        reconfigureVisibleThumbnails()
     }
 
     override func viewDidLayoutSubviews() {
@@ -673,6 +684,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func refreshVisibleDayHeaders() {
+        guard isActiveAndAttached else { return }
         for sectionIndex in 0..<sections.count {
             guard let headerView = clipsTableView.headerView(forSection: sectionIndex) as? HomeDayHeaderView,
                   let section = dataSource.sectionIdentifier(for: sectionIndex) else {
@@ -765,7 +777,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         willDisplay cell: UITableViewCell,
         forRowAt indexPath: IndexPath
     ) {
-        guard let row = row(at: indexPath),
+        guard isActiveAndAttached,
+              let row = row(at: indexPath),
               paginationTailIDs.contains(row.id),
               clipsNextCursor != nil else {
             return
@@ -847,7 +860,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func loadMoreIfVisibleTail() {
-        guard clipsNextCursor != nil,
+        guard isActiveAndAttached,
+              clipsNextCursor != nil,
               let visibleRows = clipsTableView.indexPathsForVisibleRows else {
             return
         }
@@ -871,13 +885,15 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func quietVisibleThumbnailLoads() {
+        guard clipsTableView.window != nil else { return }
         for cell in clipsTableView.visibleCells {
             (cell as? ClipThumbnailCell)?.cancelLoad()
         }
     }
 
     private func visibleThumbnailImages() -> [ClipThumbnailIdentity: UIImage] {
-        guard let visibleRows = clipsTableView.indexPathsForVisibleRows else { return [:] }
+        guard isActiveAndAttached,
+              let visibleRows = clipsTableView.indexPathsForVisibleRows else { return [:] }
 
         var images: [ClipThumbnailIdentity: UIImage] = [:]
         for indexPath in visibleRows {
@@ -896,7 +912,8 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     /// in place. Diffable snapshots do not reload on appear, so a painted cell hits the
     /// same-identity no-op and a cell quieted on the way out retries once, cache-first.
     private func reconfigureVisibleThumbnails() {
-        guard let visibleRows = clipsTableView.indexPathsForVisibleRows else { return }
+        guard isActiveAndAttached,
+              let visibleRows = clipsTableView.indexPathsForVisibleRows else { return }
         for indexPath in visibleRows {
             guard let row = row(at: indexPath),
                   let cell = clipsTableView.cellForRow(at: indexPath) as? ClipThumbnailCell else {
@@ -910,6 +927,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                 cell.configure(recording: recording, loader: dependencies.thumbnailLoader)
             }
         }
+    }
+
+    private var isActiveAndAttached: Bool {
+        isViewActive && view.window != nil && clipsTableView.window != nil
     }
 
     func clipThumbnailCellForTesting(clipID: Int) -> ClipThumbnailCell? {
@@ -945,6 +966,10 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
 
     var rowIDsForTesting: [HomeRowID] {
         rows.map(\.id)
+    }
+
+    var presentedRowIDsForTesting: [HomeRowID] {
+        dataSource.snapshot().itemIdentifiers
     }
 
     func layoutClipsTableForTesting() {

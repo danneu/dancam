@@ -47,7 +47,18 @@ final class DebugViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        snapshotGate.setActive(true)
         navigationController?.setToolbarHidden(true, animated: animated)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        snapshotGate.setActive(false)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        snapshotGate.flushIfReady()
     }
 
     override func viewDidLayoutSubviews() {
@@ -283,6 +294,11 @@ final class DebugViewController: UIViewController {
 
     var rowIDsForTesting: [DebugRowID] {
         dataSource.snapshot().itemIdentifiers
+    }
+
+    func layoutCollectionForTesting() {
+        view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
     }
 
     func secondaryTextForTesting(_ id: DebugValueID) -> (text: String?, color: UIColor?)? {

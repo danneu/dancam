@@ -112,7 +112,8 @@ struct RecordingDetailViewControllerTests {
             clipsClient: blockedSpy.client(),
             nextCursor: "1"
         )
-        blockedController.loadViewIfNeeded()
+        let blockedWindow = try embed(blockedController)
+        defer { blockedWindow.isHidden = true }
         let blockedTail = try #require(blockedController.indexPathForTesting(clipID: 12))
 
         blockedController.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: blockedTail)
@@ -128,7 +129,8 @@ struct RecordingDetailViewControllerTests {
             clipsClient: fetchSpy.client(),
             nextCursor: "11"
         )
-        loadingController.loadViewIfNeeded()
+        let loadingWindow = try embed(loadingController)
+        defer { loadingWindow.isHidden = true }
         let loadingTail = try #require(loadingController.indexPathForTesting(clipID: 12))
 
         loadingController.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: loadingTail)
@@ -188,7 +190,8 @@ struct RecordingDetailViewControllerTests {
         let root = UIViewController()
         let navigationController = UINavigationController(rootViewController: root)
         navigationController.pushViewController(controller, animated: false)
-        controller.loadViewIfNeeded()
+        let window = try embed(navigationController)
+        defer { window.isHidden = true }
 
         store.send(.clips(.clipRemoved(id: 12)))
 
@@ -238,9 +241,17 @@ struct RecordingDetailViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func coveredUpdatesStayCurrentAndRenderAfterReattachment() async throws {
+    func coveredEmptyProjectionDefersPaginationUntilRepairReloadCompletes() async throws {
+        let fetchSpy = RecordingFetchSpy(responses: [
+            ClipsResponse(
+                clips: [clip(id: 10, bootTag: "target")],
+                serverTimeMs: nil,
+                nextCursor: nil
+            ),
+        ])
         let (controller, store) = makeControllerAndStore(
             clips: [clip(id: 12, bootTag: "target")],
+            clipsClient: fetchSpy.client(),
             nextCursor: nil
         )
         let root = UIViewController()
@@ -248,29 +259,40 @@ struct RecordingDetailViewControllerTests {
         navigationController.pushViewController(controller, animated: false)
         let window = try embed(navigationController)
         defer { window.isHidden = true }
+        #expect(controller.presentedClipIDsForTesting == [12])
+
         let cover = UIViewController()
         navigationController.pushViewController(cover, animated: false)
         window.layoutIfNeeded()
+        let oldTail = try #require(controller.indexPathForTesting(clipID: 12))
 
-        store.send(.clips(.clipFinalized(clip(id: 13, bootTag: "target"))))
+        store.send(.clips(.clipsResponse(
+            epoch: 0,
+            generation: 0,
+            .success(ClipsResponse(
+                clips: [clip(id: 11, bootTag: nil)],
+                serverTimeMs: nil,
+                nextCursor: "11"
+            ))
+        )))
 
-        #expect(controller.clipIDsForTesting() == [13, 12])
+        #expect(controller.clipIDsForTesting().isEmpty)
+        #expect(controller.presentedClipIDsForTesting == [12])
+        #expect(store.state.clips.isPaging == false)
+        controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: oldTail)
+        #expect(store.state.clips.isPaging == false)
+        #expect(await fetchSpy.requestedCursors().isEmpty)
 
         navigationController.popViewController(animated: false)
         window.layoutIfNeeded()
         controller.layoutTableForTesting()
 
+        try await waitForCursors(fetchSpy, [Optional("11")])
+        try await waitUntil { controller.clipIDsForTesting() == [10] }
         try await waitUntil {
-            controller.clipThumbnailCellForTesting(clipID: 13) != nil
+            controller.layoutTableForTesting()
+            return controller.clipThumbnailCellForTesting(clipID: 10) != nil
         }
-
-        navigationController.pushViewController(cover, animated: false)
-        window.layoutIfNeeded()
-        store.send(.clips(.clipRemoved(id: 13)))
-        store.send(.clips(.clipRemoved(id: 12)))
-
-        #expect(navigationController.viewControllers.contains(controller) == false)
-        #expect(navigationController.topViewController === cover)
     }
 
     @Test(.timeLimit(.minutes(1)))

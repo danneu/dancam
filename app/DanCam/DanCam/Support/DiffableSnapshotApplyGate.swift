@@ -13,7 +13,12 @@ final class DiffableSnapshotApplyGate<Section: Hashable & Sendable, Item: Hashab
     private var pendingAnimation = true
     private var pendingRequiresReload = false
     private var pendingCompletions: [() -> Void] = []
+    private var isActive = false
     private var isApplying = false
+    private var inFlightSnapshot: Snapshot?
+    private var inFlightCompletions: [() -> Void] = []
+    private var applySequence = 0
+    private var currentApplyID: Int?
 
     init(
         dataSource: UITableViewDiffableDataSource<Section, Item>,
@@ -63,13 +68,34 @@ final class DiffableSnapshotApplyGate<Section: Hashable & Sendable, Item: Hashab
         applyPendingIfReady()
     }
 
+    func setActive(_ active: Bool) {
+        isActive = active
+
+        guard active == false else {
+            applyPendingIfReady()
+            return
+        }
+
+        pendingRequiresReload = true
+        guard isApplying else { return }
+
+        if pendingSnapshot == nil {
+            pendingSnapshot = inFlightSnapshot
+        }
+        pendingCompletions = inFlightCompletions + pendingCompletions
+        currentApplyID = nil
+        inFlightSnapshot = nil
+        inFlightCompletions.removeAll()
+        isApplying = false
+    }
+
     func flushIfReady() {
         applyPendingIfReady()
     }
 
     private var isReady: Bool {
         guard let listView else { return false }
-        return listView.window != nil && listView.bounds.width > 0 && listView.bounds.height > 0
+        return isActive && listView.window != nil && listView.bounds.width > 0 && listView.bounds.height > 0
     }
 
     private func applyPendingIfReady() {
@@ -82,14 +108,22 @@ final class DiffableSnapshotApplyGate<Section: Hashable & Sendable, Item: Hashab
 
         let animation = pendingAnimation
         let requiresReload = pendingRequiresReload
-        let completions = pendingCompletions
         pendingSnapshot = nil
         pendingRequiresReload = false
+        inFlightSnapshot = snapshot
+        inFlightCompletions = pendingCompletions
         pendingCompletions.removeAll()
         isApplying = true
+        applySequence += 1
+        let applyID = applySequence
+        currentApplyID = applyID
 
         let didApply = { [weak self] in
-            guard let self else { return }
+            guard let self, self.currentApplyID == applyID else { return }
+            let completions = self.inFlightCompletions
+            self.currentApplyID = nil
+            self.inFlightSnapshot = nil
+            self.inFlightCompletions.removeAll()
             self.isApplying = false
             completions.forEach { $0() }
             self.applyPendingIfReady()

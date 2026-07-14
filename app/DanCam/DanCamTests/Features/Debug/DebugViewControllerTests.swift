@@ -108,6 +108,48 @@ struct DebugViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func coveredUpdateKeepsProjectionCurrentAndPresentsLatestSnapshotOnReturn() async throws {
+        let (controller, appStore) = makeControllerAndAppStore()
+        let navigationController = UINavigationController(rootViewController: controller)
+        let window = try embed(navigationController)
+        defer { window.isHidden = true }
+        try await waitUntil {
+            controller.layoutCollectionForTesting()
+            return controller.rowIDsForTesting.isEmpty == false
+        }
+        #expect(controller.rowIDsForTesting.contains(.gauge(.storage)) == false)
+
+        let cover = UIViewController()
+        navigationController.pushViewController(cover, animated: false)
+        window.layoutIfNeeded()
+        appStore.send(.event(.snapshot(CameraSamples.world(storage: Storage(used: 600, total: 1_000)))))
+
+        #expect(controller.rowForTesting(.gauge(.storage)) == .gauge(
+            id: .storage,
+            title: "Storage",
+            detail: "600 bytes of 1 KB -- 400 bytes free",
+            fraction: 0.6,
+            tint: .neutral
+        ))
+        #expect(controller.rowIDsForTesting.contains(.gauge(.storage)) == false)
+
+        navigationController.popViewController(animated: false)
+        window.layoutIfNeeded()
+
+        try await waitUntil {
+            controller.layoutCollectionForTesting()
+            return controller.rowIDsForTesting.contains(.gauge(.storage))
+        }
+        #expect(controller.presentedGaugeForTesting(.storage) == .gauge(
+            id: .storage,
+            title: "Storage",
+            detail: "600 bytes of 1 KB -- 400 bytes free",
+            fraction: 0.6,
+            tint: .neutral
+        ))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func liveTelemetryUpdateReconfiguresStableGaugeRows() async throws {
         let world = CameraSamples.world(
             storage: Storage(used: 100, total: 1_000),

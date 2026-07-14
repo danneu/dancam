@@ -34,6 +34,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     private var preservedThumbnailGeneration = 0
     private var prefetchHandles: [ClipThumbnailIdentity: ThumbnailLoader.PrefetchHandle] = [:]
     private var didRemoveFromNavigationStack = false
+    private var isViewActive = false
 
     init(
         dependencies: AppDependencies,
@@ -86,14 +87,24 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        isViewActive = true
+        snapshotGate.setActive(true)
         view.setNeedsLayout()
         reconfigureVisibleThumbnails()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        isViewActive = false
+        snapshotGate.setActive(false)
         cancelAllPrefetches()
         quietVisibleThumbnailLoads()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        snapshotGate.flushIfReady()
+        reconfigureVisibleThumbnails()
     }
 
     override func viewDidLayoutSubviews() {
@@ -181,7 +192,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
                     if self?.preservedThumbnailGeneration == thumbnailGeneration {
                         self?.preservedVisibleThumbnails.removeAll()
                     }
-                    self?.loadMoreIfVisibleTail()
+                    self?.resumePaginationAfterSnapshot()
                 }
             }
         )
@@ -220,7 +231,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
             makeSnapshot(reconfigure: reconfigure),
             completion: { [weak self] in
                 MainActor.assumeIsolated {
-                    self?.loadMoreIfVisibleTail()
+                    self?.resumePaginationAfterSnapshot()
                 }
             }
         )
@@ -252,9 +263,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         guard hasLoadedClips else { return }
 
         if clips.isEmpty {
-            if state.canLoadMore {
-                store.send(.clips(.loadMore))
-            } else if showsLiveRow == false {
+            if state.canLoadMore == false, showsLiveRow == false {
                 // A live/pending row with zero finished clips is legitimate (fresh boot, or the
                 // user deleted everything mid-recording); only pop once recording stops.
                 removeFromNavigationStack()
@@ -311,7 +320,8 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         willDisplay cell: UITableViewCell,
         forRowAt indexPath: IndexPath
     ) {
-        guard state.canLoadMore,
+        guard isActiveAndAttached,
+              state.canLoadMore,
               clip(at: indexPath)?.id == paginationTailID else {
             return
         }
@@ -357,7 +367,8 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     }
 
     private func loadMoreIfVisibleTail() {
-        guard state.canLoadMore,
+        guard isActiveAndAttached,
+              state.canLoadMore,
               let paginationTailID,
               let visibleRows = tableView.indexPathsForVisibleRows else {
             return
@@ -370,7 +381,8 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     }
 
     private func visibleThumbnailImages() -> [ClipThumbnailIdentity: UIImage] {
-        guard let visibleRows = tableView.indexPathsForVisibleRows else { return [:] }
+        guard isActiveAndAttached,
+              let visibleRows = tableView.indexPathsForVisibleRows else { return [:] }
 
         var images: [ClipThumbnailIdentity: UIImage] = [:]
         for indexPath in visibleRows {
@@ -385,7 +397,8 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     }
 
     private func reconfigureVisibleThumbnails() {
-        guard let visibleRows = tableView.indexPathsForVisibleRows else { return }
+        guard isActiveAndAttached,
+              let visibleRows = tableView.indexPathsForVisibleRows else { return }
         for indexPath in visibleRows {
             guard let clip = clip(at: indexPath),
                   let cell = tableView.cellForRow(at: indexPath) as? ClipThumbnailCell else {
@@ -410,13 +423,34 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     }
 
     private func quietVisibleThumbnailLoads() {
+        guard tableView.window != nil else { return }
         for cell in tableView.visibleCells {
             (cell as? ClipThumbnailCell)?.cancelLoad()
         }
     }
 
+    private func resumePaginationAfterSnapshot() {
+        guard isActiveAndAttached, state.canLoadMore else { return }
+        if clips.isEmpty {
+            store.send(.clips(.loadMore))
+        } else {
+            loadMoreIfVisibleTail()
+        }
+    }
+
+    private var isActiveAndAttached: Bool {
+        isViewActive && view.window != nil && tableView.window != nil
+    }
+
     func clipIDsForTesting() -> [Int] {
         clips.map(\.id)
+    }
+
+    var presentedClipIDsForTesting: [Int] {
+        dataSource.snapshot().itemIdentifiers.compactMap { row in
+            guard case .clip(let id) = row else { return nil }
+            return id
+        }
     }
 
     func indexPathForTesting(clipID: Int) -> IndexPath? {

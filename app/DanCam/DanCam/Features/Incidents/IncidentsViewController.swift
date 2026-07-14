@@ -14,6 +14,11 @@ final class IncidentsViewController: UIViewController, UICollectionViewDelegate 
         collectionViewLayout: makeLayout()
     )
     private lazy var dataSource = makeDataSource()
+    private lazy var snapshotGate = DiffableSnapshotApplyGate(
+        dataSource: dataSource,
+        collectionView: collectionView
+    )
+    private var isViewActive = false
 
     init(dependencies: AppDependencies, store: AppStore) {
         self.dependencies = dependencies
@@ -38,7 +43,25 @@ final class IncidentsViewController: UIViewController, UICollectionViewDelegate 
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        isViewActive = true
+        snapshotGate.setActive(true)
         navigationController?.setToolbarHidden(true, animated: animated)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        isViewActive = false
+        snapshotGate.setActive(false)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        snapshotGate.flushIfReady()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        snapshotGate.flushIfReady()
     }
 
     private func makeLayout() -> UICollectionViewLayout {
@@ -129,7 +152,7 @@ final class IncidentsViewController: UIViewController, UICollectionViewDelegate 
         snapshot.appendSections([.incidents])
         snapshot.appendItems(projection.rows.map(\.id))
         snapshot.reconfigureItems(snapshot.itemIdentifiers.filter(previousIDs.contains))
-        dataSource.apply(snapshot, animatingDifferences: view.window != nil) { [weak self] in
+        snapshotGate.submit(snapshot) { [weak self] in
             self?.refreshVisibleHeaders()
         }
     }
@@ -143,6 +166,7 @@ final class IncidentsViewController: UIViewController, UICollectionViewDelegate 
     }
 
     private func refreshVisibleHeaders() {
+        guard isViewActive, view.window != nil, collectionView.window != nil else { return }
         for case let header as UICollectionViewListCell in collectionView.visibleSupplementaryViews(
             ofKind: UICollectionView.elementKindSectionHeader
         ) {
@@ -166,6 +190,25 @@ final class IncidentsViewController: UIViewController, UICollectionViewDelegate 
     }
 
     var projectionForTesting: IncidentListProjection { projection }
+
+    var presentedItemIDsForTesting: [IncidentListItemID] {
+        dataSource.snapshot().itemIdentifiers
+    }
+
+    var presentedHeaderTextForTesting: String? {
+        view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+        return collectionView.visibleSupplementaryViews(
+            ofKind: UICollectionView.elementKindSectionHeader
+        ).compactMap { view in
+            (view as? UICollectionViewListCell)?.contentConfiguration as? UIListContentConfiguration
+        }.first?.text
+    }
+
+    func layoutCollectionForTesting() {
+        view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+    }
 }
 
 @MainActor
