@@ -111,9 +111,11 @@ see Follow-ups.
     before press, or stopped inside the post-roll) still count as `saved` --
     the footage never existed, nothing was lost; the row shows the true
     covered duration.
-  - `partial`: a witnessed segment was lost before it could be pulled (evicted
-    or user-deleted from the ring, or the mark segment vanished with a power
-    cut). Whatever was salvaged is kept.
+  - `partial`: footage that existed was lost before it could be pulled --
+    a witnessed segment evicted or user-deleted from the ring, a
+    never-witnessed interior seq proven to have existed by session
+    contiguity, or the mark segment vanishing with a power cut. Whatever
+    was salvaged is kept.
 - **Downloads are foreground-first, resumable forever.** Pulls run while the
   app is open (plus a short best-effort background-task grace); anything
   unfinished resumes on the next foreground/reconnect. A local notification
@@ -142,6 +144,22 @@ see Follow-ups.
   wall clock -- no time-provenance dependency, no "time unverified" treatment
   on incident rows. (Per-clip footage timestamps still come from clip
   metadata and stay approximate as today.)
+
+## Accepted risks
+
+- **A never-witnessed edge seq with no surviving lower same-session witness
+  is classified `clipped`, though it could have been evicted before it was
+  ever witnessed.** Absence alone cannot distinguish "session started here"
+  from "everything below was evicted" without Pi-side session-extent
+  metadata. The window is narrow (requires pressing with a stale/empty
+  clips state and then staying away long enough for eviction to reach the
+  incident's own seqs, i.e. days of driving), and misclassification fails
+  toward a quieter label on footage that was salvaged either way. Not worth
+  new wire surface in v1.
+- **Footage rolls off if the user never reconnects within retention** (days
+  to weeks of driving; see Context). Mitigated by the nudge notification;
+  the protect-only pin endpoint is the future hardening path if evidence
+  ever demands it.
 
 ## Shared design
 
@@ -172,8 +190,8 @@ see Follow-ups.
   "slack_ms": 2000,
   "status": "pending",
   "wanted": [
-    { "seq": 41, "state": "pulled", "etag": "41-38012345", "bytes": 38012345 },
-    { "seq": 42, "state": "wanted", "etag": "42-1048576" },
+    { "seq": 41, "state": "pulled", "etag": "41-38012345", "dur_ms": 30016, "bytes": 38012345 },
+    { "seq": 42, "state": "wanted", "etag": "42-1048576", "dur_ms": 29984 },
     { "seq": 43, "state": "unresolved" }
   ]
 }
@@ -186,6 +204,28 @@ removes the directory. A directory with an unreadable `incident.json` is
 surfaced in the tab as unreadable with a delete affordance, never silently
 skipped and never auto-removed (its media files may still be good; the user
 decides).
+
+The directory is a recoverable state machine, with the artifacts as ground
+truth and the record catching up to them:
+
+- **Resolution persists `dur_ms` alongside the etag.** The walks need every
+  included segment's duration; persisting it at witness time keeps relaunch
+  planning computable even after the source clip has left the ring (a fresh
+  list can no longer supply it).
+- **Artifact identity is the deterministic filename** (`seg_<seq>.mp4`, or
+  `seg_<seq>.ts` for a remux-failure fallback). No artifact metadata beyond
+  the name is needed: pulls are `(seq, etag)`-addressed and finalized
+  segments are immutable, so a present artifact is the pulled bytes.
+- **Scan reconciles artifacts into the record before any planning.** If
+  `list()` finds an artifact for an entry not marked `pulled`, the entry is
+  upgraded to `pulled` (bytes from the file) and the repaired record is
+  persisted. This heals the install-to-persist crash boundary: media is
+  installed before the record write (the safe order -- a record claiming
+  `pulled` without bytes would be a lie), so a crash between the two leaves
+  an artifact with a stale `wanted` entry. Reconciliation means no re-pull,
+  and a Pi clip that vanished in the meantime cannot demote footage already
+  on disk to `lost`. A missing `thumb.jpg` after such a crash is cosmetic
+  (placeholder row), not a correctness concern.
 
 ### Mark capture
 
@@ -216,31 +256,57 @@ set incrementally, persisting every resolution:
 - **Pre-roll walk (backward)**: `remaining = preMs + slackMs - markAgeMs`
   (clamped >= 0); for k = 1, 2, ... include `markSeq - k` while
   `remaining > 0`, subtracting each included clip's `durMs` as it is
-  witnessed in the clips list. Pre-roll segments are already finalized at
-  press, so this usually resolves fully (with etags) from the clips state at
-  press time.
+  witnessed -- and persisted to the record as `dur_ms`, so the walk stays
+  computable across relaunch without the clip still being listed. Pre-roll
+  segments are already finalized at press, so this usually resolves fully
+  (with etags) from the clips state at press time.
 - **Post-roll walk (forward)**: `remaining = markAgeMs + postMs + slackMs -
   dur(markSeq)`; include `markSeq + j` while `remaining > 0`, resolving each
   as its `clip_finalized`/listing arrives. The mark segment itself resolves
   at its own finalize (rollover, <= one segment length after press).
 - **Session clipping**: the walk stops at the recording session boundary.
   Backward: a wanted seq below the session's earliest witnessed seq that
-  never appears under full list coverage is `clipped` -- removed from the
-  wanted set, window edge honest-shrunk. Forward: when the session is over
+  never appears under cursor-floor coverage (and has no witnessed
+  same-session seq below it -- else the contiguity rule makes it `lost`)
+  is `clipped` -- removed from the wanted set, window edge honest-shrunk. Forward: when the session is over
   (folded recorder identity differs from the incident's `recordingID`, or
   the recorder is no longer recording) and the seq never appears, it is
   `clipped`. Session-over is also the signal that no further resolution can
   arrive, forcing the incident terminal once pulls settle.
-- **Witnessed-then-gone**: a seq that was resolved (has an etag) but has
-  disappeared from a fully covering list before its pull completed is
-  `lost` -- the pull is abandoned and the incident will finalize `partial`.
-  The mark segment gets one stronger rule: it was witnessed *open* at press,
-  so if the session ends and it never finalizes (power cut took the in-flight
-  segment), it is `lost`, not `clipped`.
-- **List coverage**: absence is only evidence when the paged list actually
-  covers the seq. The planner emits `page` commands (driving the existing
-  `ClipsFeature` paging) until the loaded window extends at or below the
-  incident's lowest unresolved seq; until then, absent seqs stay
+- **Loss evidence** (marks an entry `lost`; the incident will finalize
+  `partial`). Three sources, one rule, no list-diffing:
+  - **`clip_removed` fold**: the Pi emits `clip_removed` for user deletion
+    and GC eviction alike (`raspi/service/src/backend.rs#fn note_clip_removed`,
+    driven from both `clips.rs` delete and `gc.rs`), and the app already
+    consumes it (`ClipsFeature.Action.clipRemoved`). While connected, this
+    is real-time loss truth for any wanted seq; an in-flight pull for it is
+    abandoned.
+  - **Pull 404**: `ClipPullClient` fails typed (`ClipPullError.http(404)`).
+    A 404 on a *resolved* entry (we hold an etag; finalized segments never
+    un-finalize) means the clip was removed while the app was away -- the
+    pull attempt doubles as the probe, no extra requests. All other pull
+    failures stay retriable (`wanted`).
+  - **Covered contiguity gap**: seqs are contiguous within a recording
+    session, so a seq absent under list coverage with a *witnessed
+    same-session seq below it* must have existed -- gone before it was ever
+    witnessed. This is the only absence-based loss rule, and it is what
+    gives never-witnessed interior gaps a terminal answer.
+
+  The mark segment keeps its stronger rule: it was witnessed *open* at
+  press, so if the session ends and it never finalizes (power cut took the
+  in-flight segment), it is `lost`, not `clipped`. A `lost` entry whose
+  duration was never witnessed ends that direction's walk -- coverage beyond
+  it is uncomputable, and the incident is already `partial`; outer segments
+  with known durations keep being salvaged.
+- **List coverage**: absence is only evidence when the list actually covers
+  the seq, and coverage is measured by the **cursor floor** of the current
+  head epoch's response chain (`ClipsFeature.State.nextCursor` as the
+  numeric lower bound, the same bound `reconciledHead` uses) -- never by
+  merged entries. Paged responses merge without removing absent clips
+  (`ClipsFeature.reduce` `pageResponse`), so entry *presence* can be stale;
+  that is harmless, because a stale witness self-corrects through the
+  pull-404 path. The planner emits `page` commands until the floor reaches
+  the incident's lowest unresolved seq; until then, absent seqs stay
   `unresolved`. In the common case the head page covers everything.
 - **Terminal rule**: no `unresolved` or `wanted` entries remain ->
   `saved` if nothing was `lost`, else `partial`. Terminal statuses are final;
@@ -267,16 +333,18 @@ Deduplication: one pull serves every pending incident wanting that
 (`lookup(id, etag)` hit, i.e. the user already watched it), clone the cached
 `.mp4` straight into the incident directory and skip the network entirely.
 
-Failure handling: a pull that exhausts `ClipPullClient`'s bounded retries
-leaves the wanted entry `wanted`; the next reconcile trigger retries it.
+Failure handling: a pull that fails with `ClipPullError.http(404)` on a
+resolved entry is loss evidence -- the entry goes `lost` (see the planner's
+loss rules). Any other pull failure that exhausts `ClipPullClient`'s bounded
+retries leaves the entry `wanted`; the next reconcile trigger retries it.
 There is no retry counter to exhaust at the incident level -- the only
 permanent failures are `lost` (footage gone) and `clipped` (footage never
 existed), both evidence-driven.
 
 Reconcile triggers (all funnel into one `.reconcile` action):
-incident created; clips list changed (head load, page, or `clip_finalized`
-fold); snapshot folded (covers reconnect and session change); scene
-foregrounded; pull completed or failed.
+incident created; clips list changed (head load, page, `clip_finalized`
+fold, or `clip_removed` fold); snapshot folded (covers reconnect and
+session change); scene foregrounded; pull completed or failed.
 
 ### Notifications and lifecycle
 
@@ -348,9 +416,21 @@ Strict order; every commit builds and passes its side's checks standalone
     record and rides the same reconciler).
   - `raspi/docs/design/21-2026-07-10-ring-gc-drip-eviction.md`: the incident
     protection seam note stays as a seam, now unused by incidents.
+  - `app/docs/design/01-2026-06-22-carplay-integration-surface.md`: the
+    voice-marking dependency on a fast Pi "lock current buffer" control is
+    withdrawn; voice marking creates the phone-local incident record and
+    rides the same reconciler (no Pi call on the press path at all, which
+    only improves the latency story).
 - Root `AGENTS.md`: add a cross-cutting principle bullet -- incidents are
   phone-owned; the Pi serves footage, the phone keeps it -- linking app
   ADR 26. `app/AGENTS.md`: reword the incident-handling responsibility line.
+  `raspi/AGENTS.md`: reword every line that states the Pi-lock model as
+  current design -- the ring-buffer "incident-locked segments are exempt
+  from deletion" line, the control-API surface mention of "incident lock",
+  and the power/shutdown "prompt incident pull" framing -- and annotate its
+  ADR-index summaries for ADRs 02/03/21 as partially superseded by app
+  ADR 26 (living doc, so reworded in place; the append-only rule applies to
+  the ADRs themselves).
 - `docs/roadmap.md`: rewrite the `nova` entry (iPhone-only press-to-save,
   app-side checklist mirroring Parts B-F, mock-first); adjust the `sift`
   incidents-filter line (incident membership is phone-side state now) and
@@ -362,17 +442,23 @@ Exit: `just adr-check` green; the records match the decisions above.
 ### Part B -- Commit 2: `feat(app): incident model, store, and planner`
 
 - `Features/Incidents/IncidentRecord.swift`: the Codable record, wanted-entry
-  state machine (`unresolved -> wanted(etag) -> pulled | lost | clipped`),
-  status derivation, covered-duration/bytes computed properties.
-- `Features/Incidents/IncidentStore.swift`: the actor -- directory scan,
-  atomic create/update, delete, unreadable-dir surfacing; wired into
-  `AppDependencies` as a struct-of-closures client with `.noop` and `.live`
-  (root under Application Support, injectable for tests).
+  state machine (`unresolved -> wanted(etag, durMs) -> pulled | lost |
+  clipped`), status derivation, covered-duration/bytes computed properties.
+- `Features/Incidents/IncidentStore.swift`: the actor -- directory scan with
+  artifact-to-record reconciliation (an artifact present for a non-`pulled`
+  entry upgrades it to `pulled` and persists the repaired record before
+  anything plans against it), atomic create/update, delete, unreadable-dir
+  surfacing; wired into `AppDependencies` as a struct-of-closures client
+  with `.noop` and `.live` (root under Application Support, injectable for
+  tests).
 - `Features/Incidents/IncidentPlanner.swift`: the pure planner (walks,
   evidence rules, clipping, terminal rule, command emission).
 - Tests: planner table tests (the heart of the required coverage below) over
   synthetic clips lists at 30 s and 5 s segment durations; record round-trip
-  and atomicity; store scan with a corrupted `incident.json`.
+  and atomicity; store scan with a corrupted `incident.json`; the
+  crash-boundary scan (artifact on disk, record entry still `wanted`, and
+  the clip absent from every list the planner will see -> entry reconciled
+  to `pulled`, incident can still finalize `saved`).
 
 Exit: `just app-build` + `just app-test` green; no UI yet, pure logic.
 
@@ -397,10 +483,11 @@ incident record (visible on disk); reducer tests green.
 
 ### Part D -- Commit 4: `feat(app): reconciler and downloads`
 
-- Reconcile wiring: `AppFeature` forwards clips-list changes, snapshot folds,
-  foreground, and pull completions into `IncidentsFeature.reconcile`; the
-  planner's commands become effects (single-pull queue, paging requests via
-  `ClipsFeature`, persistence, finalize, nudge cancel).
+- Reconcile wiring: `AppFeature` forwards clips-list changes, `clip_removed`
+  folds, snapshot folds, foreground, and pull completions into
+  `IncidentsFeature.reconcile`; the planner's commands become effects
+  (single-pull queue, paging requests via `ClipsFeature`, persistence,
+  finalize, nudge cancel).
 - The pull pipeline: `ClipPullClient.pull` -> remux -> install-by-clone into
   each wanting incident dir -> thumbnail from TS prefix on the mark segment
   -> persist; `ClipCache.lookup` short-circuit; remux-failure raw `.ts`
@@ -408,10 +495,14 @@ incident record (visible on disk); reducer tests green.
 - Tests: end-to-end reducer tests with scripted clips/pull dependencies --
   the happy 3-segment save; resume after relaunch mid-download (no
   re-download of pulled segments); stop-recording inside the post-roll
-  (clipped, `saved`); witnessed-then-deleted pre-roll (`lost`, `partial`);
-  mark segment never finalizes after session death (`partial`); shared
-  segment across two overlapping incidents pulled once; pull failure retried
-  on next trigger.
+  (clipped, `saved`); each loss-evidence source behaviorally: a
+  `clip_removed` fold for a wanted pre-roll seq (`lost`, `partial`, pull
+  abandoned), a pull 404 on a resolved entry after a scripted reconnect
+  (`lost`, `partial`), and a covered contiguity gap that never resolves
+  (`lost`, `partial`); mark segment never finalizes after session death
+  (`partial`); lost entry with unknown duration ends that direction's walk;
+  shared segment across two overlapping incidents pulled once; non-404 pull
+  failure retried on next trigger.
 
 Exit: full save happens headlessly against `just raspi-mock` (5 s segments:
 a press resolves ~7-8 wanted segments and lands them all in the incident
@@ -457,7 +548,8 @@ Per-commit gates as listed above. End-to-end gate (after Part F): run
 3. Press, then stop recording ~5 s later; confirm `saved` with clipped
    coverage (no post-roll padding, no `partial`).
 4. Press, then delete a witnessed pre-roll clip from the Recent list before
-   its pull; confirm `partial` with the survivors saved.
+   its pull; confirm `partial` with the survivors saved (exercises the
+   `clip_removed` loss path live).
 5. Delete an incident; confirm the directory is gone and (unlike a Pi-side
    lock design) the ring is untouched throughout -- clips list identical
    before/after.
@@ -479,13 +571,18 @@ Behavioral acceptance criteria, owned by the commits above:
   successors); pre-roll reaching exactly a boundary (slack included and
   excluded); session-start and session-end clipping; rollover-race press
   attribution.
-- Evidence rules: absence without list coverage stays `unresolved`; paging
-  is requested until coverage; witnessed-then-gone is `lost`; never-existed
-  is `clipped`; mark-vanished-with-session is `lost`; terminal statuses
-  never regress on replayed events or stale lists.
+- Evidence rules: absence without cursor-floor coverage stays `unresolved`;
+  paging is requested until coverage; each loss source lands `lost`
+  (`clip_removed` fold, pull 404 on a resolved entry, covered contiguity
+  gap); never-existed is `clipped`; mark-vanished-with-session is `lost`;
+  a `lost` entry with unknown duration ends that direction's walk; terminal
+  statuses never regress on replayed events or stale lists.
 - Durability: record persisted before any post-press effect; atomic-write
   crash safety (torn temp never corrupts a readable record); relaunch resume
-  is idempotent (pulled segments never re-pulled, `(seq, etag)` keyed).
+  is idempotent (pulled segments never re-pulled, `(seq, etag)` keyed);
+  the install-to-persist crash boundary heals via scan reconciliation (an
+  installed artifact with a stale `wanted` entry and a vanished Pi clip
+  still counts as `pulled` -- no re-pull, no false `partial`).
 - Downloads: single-flight queue; dedupe across overlapping incidents;
   cache-hit clone path; remux-failure raw fallback; pull failure returns to
   `wanted` and retries on the next trigger.
