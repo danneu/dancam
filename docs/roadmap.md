@@ -250,8 +250,8 @@ mock first.
       delete + `clip_removed`. Adds no wire surface (the app already folds
       `clip_removed`); the app change bounds its stale-response suppression so
       continuous `clip_removed` traffic no longer grows an unbounded tombstone
-      set. Shapes the protection seam `nova` plugs incident hardlinks into. See
-      raspi ADR 21.
+      set. Retains an unused in-mutex protection seam for possible future clip
+      pinning; phone-owned `nova` does not use it. See raspi ADR 21 and app ADR 26.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects `/data` issues and surfaces
       them to the app (missing / unformatted / wrong filesystem); auto-format on first
       insert; format-from-app with a double-confirm (`POST /v1/storage/format`). After
@@ -276,8 +276,8 @@ mock first.
             stamped segment names so Mac-only tests cover the production path before
             real-Pi validation.
       - Scope fence: no GPS source, no correction/rebind after the first accepted
-        per-boot offset, no multi-segment timeline, and no incident pre-sync holds
-        until `nova`.
+        per-boot offset, and no multi-segment timeline. Phone-owned incidents do not
+        add Pi-side pre-sync holds.
 - [ ] **Swoop `sift` -- Find clips in the Recent list.** Make the finished-clip list
       navigable when the user knows roughly when footage happened, building on
       `moss` time provenance and the existing `/v1/clips` listing rather than adding a
@@ -289,16 +289,32 @@ mock first.
             `recorder.session`, a live widget under the record button, a REC marker on
             the recording's card, and a live row atop that recording's detail (ADRs 20, 24).
       - [ ] Add a calendar jump backed by the reserved `from`/`to` window params.
-      - [ ] Add a locked/incidents filter after `nova` defines incident state.
-- [ ] **Swoop `nova` -- Incident lock (manual).** A "save this moment" button: Pi
-      force-finalizes the open segment and protects the window, built to the storage
-      ADR (idempotency, pre-sync holds) rather than a throwaway lock we'd redo later.
+      - [ ] Add an incidents filter using phone-owned incident membership after
+            `nova`; do not depend on the Pi clip body's reserved `locked` field.
+- [ ] **Swoop `nova` -- Phone-owned incidents (manual).** While connected and
+      recording, one tap saves roughly 30 s before plus 15 s after the press by
+      pulling covering finished segments into permanent iPhone storage. The Pi and
+      wire contract stay unchanged: the app resolves the window from the existing
+      clips list, resumable ranged pull, and event stream. Build mock-first.
+      - [ ] Add the Codable incident model, Application Support directory store,
+            crash reconciliation, and pure wanted-set/evidence planner.
+      - [ ] Capture a durable phone-local mark from the folded recorder state; add
+            the enabled-only-while-connected-and-recording Home button and cooldown.
+      - [ ] Reconcile pending incidents across clip pages/events/session changes;
+            deduplicate foreground-resumable pulls, remux to per-segment MP4, retain
+            raw TS on remux failure, and classify evidence-backed partial saves.
+      - [ ] Add the Incidents tab and local detail surface for status, playback,
+            sharing, storage totals, unreadable-directory deletion, and incident
+            deletion without touching the Pi ring.
+      - [ ] Finish live saving-state polish, short background-task grace, and the
+            local reopen nudge lifecycle.
 - [ ] **Swoop `reef` -- CarPlay auto start/stop** on CarPlay connect/disconnect.
 - [ ] **Swoop `sage` -- CarPlay status panel** (Driving Task template). _Gated on the
       Apple entitlement; the product must be useful without it._
 - [x] **Swoop `tide` -- Export / share.** Save-to-Photos, AirDrop, and Save to Files
-      through the system share sheet over the cached `.mp4`; auto-save incidents is
-      deferred to `nova`.
+      through the system share sheet over the cached `.mp4`; `nova` reuses this
+      share pattern for each phone-owned incident segment rather than adding
+      automatic Photos export.
 - [ ] **Swoop `vine` -- Power-loss hardening for real.** Power-good GPIO + clean
       shutdown; supercap go/no-go; validate crash recovery in the actual car.
 - [ ] **Later / follow-on passes.** Thermal-behavior policy (what recording does at
@@ -317,10 +333,11 @@ build) -- these may or may not ever happen. They keep their codenames so a parke
 swoop can drop into the list above unchanged. Unordered.
 
 - [ ] **Swoop `pike` -- CarPlay voice incident-mark.** App Intents "save that clip,"
-      hands-free, with queue-and-flush on the cold path. No entitlement needed, but
-      **very low priority**: the on-phone "save this moment" button (swoop `nova`)
-      already covers the core need, so hands-free voice marking is just convenience on
-      top. Revisit only if voice marking proves worth it in the car.
+      hands-free, creating the same phone-local record and riding `nova`'s reconciler.
+      No Pi lock call or queue-and-flush mutation is needed. No entitlement is needed,
+      but **very low priority**: the on-phone "save this moment" button already covers
+      the core need, so hands-free voice marking is convenience on top. Revisit only
+      if voice marking proves worth it in the car.
 - [ ] **Swoop `lark` -- GPS-driven recording overlay.** Use the iPhone's GPS (speed,
       heading, coordinates, plus a verified clock) and burn/show an info overlay on the
       recorded video and the live preview. Open questions for when we get here: overlay

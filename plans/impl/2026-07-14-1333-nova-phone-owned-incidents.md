@@ -206,26 +206,34 @@ skipped and never auto-removed (its media files may still be good; the user
 decides).
 
 The directory is a recoverable state machine, with the artifacts as ground
-truth and the record catching up to them:
+truth and the record catching up to them. One ordered publication protocol
+makes a final artifact name safe to trust:
 
-- **Resolution persists `dur_ms` alongside the etag.** The walks need every
-  included segment's duration; persisting it at witness time keeps relaunch
-  planning computable even after the source clip has left the ring (a fresh
-  list can no longer supply it).
-- **Artifact identity is the deterministic filename** (`seg_<seq>.mp4`, or
-  `seg_<seq>.ts` for a remux-failure fallback). No artifact metadata beyond
-  the name is needed: pulls are `(seq, etag)`-addressed and finalized
-  segments are immutable, so a present artifact is the pulled bytes.
-- **Scan reconciles artifacts into the record before any planning.** If
-  `list()` finds an artifact for an entry not marked `pulled`, the entry is
-  upgraded to `pulled` (bytes from the file) and the repaired record is
-  persisted. This heals the install-to-persist crash boundary: media is
-  installed before the record write (the safe order -- a record claiming
-  `pulled` without bytes would be a lie), so a crash between the two leaves
-  an artifact with a stale `wanted` entry. Reconciliation means no re-pull,
-  and a Pi clip that vanished in the meantime cannot demote footage already
-  on disk to `lost`. A missing `thumb.jpg` after such a crash is cosmetic
-  (placeholder row), not a correctness concern.
+1. **Resolution is durable before install.** Witnessing persists the entry
+   as `wanted(etag, dur_ms)`, and no pull or clone for a segment starts
+   until that persist has landed (the same durable-before-side-effects
+   posture as the press itself). The walks need every included segment's
+   duration, so `dur_ms` riding the record keeps relaunch planning
+   computable after the source clip has left the ring -- and this ordering
+   makes "artifact paired with an `unresolved` entry" unrepresentable, even
+   for the fast cache-hit clone path.
+2. **Final names are published only by atomic rename.** Every install path
+   (pull + remux, raw `.ts` fallback, cache-hit clone) writes to a sibling
+   staging name in the incident directory (`seg_<seq>.mp4.part`) and
+   publishes with a same-directory rename. A partial write can therefore
+   only ever be a staging file; a present final artifact
+   (`seg_<seq>.mp4|ts`) is complete media. No metadata beyond the name is
+   needed: pulls are `(seq, etag)`-addressed and finalized segments are
+   immutable.
+3. **`pulled` is persisted after the rename.** A record claiming `pulled`
+   without bytes would be a lie; the artifact leads, the record catches up.
+4. **Scan reconciles final artifacts into the record before any planning.**
+   If `list()` finds a final artifact for an entry not marked `pulled`, the
+   entry is upgraded to `pulled` (bytes from the file) and the repaired
+   record is persisted -- no re-pull, and a Pi clip that vanished in the
+   meantime cannot demote footage already on disk to `lost`. Staging files
+   are deleted on scan and never promoted. A missing `thumb.jpg` after such
+   a crash is cosmetic (placeholder row), not a correctness concern.
 
 ### Mark capture
 
@@ -279,8 +287,17 @@ set incrementally, persisting every resolution:
     and GC eviction alike (`raspi/service/src/backend.rs#fn note_clip_removed`,
     driven from both `clips.rs` delete and `gc.rs`), and the app already
     consumes it (`ClipsFeature.Action.clipRemoved`). While connected, this
-    is real-time loss truth for any wanted seq; an in-flight pull for it is
-    abandoned.
+    is real-time loss truth for any wanted seq -- *except the active pull*.
+    `clip_removed` never preempts the pull in flight: the Pi streams from
+    an already-open file descriptor
+    (`raspi/service/src/clips.rs#fn serve_clip`), so an unlinked clip can
+    still finish serving. The active
+    entry resolves by the pull's own outcome -- `.completed` lands `pulled`
+    (salvaged; terminal statuses never regress on the replayed removal),
+    while a dropped connection resumes into a 404 and lands `lost` via the
+    pull-404 rule. No pending-loss state is kept: if the pull fails for a
+    non-404 reason, the entry returns to `wanted` and the very next retry
+    404s into `lost`.
   - **Pull 404**: `ClipPullClient` fails typed (`ClipPullError.http(404)`).
     A 404 on a *resolved* entry (we hold an etag; finalized segments never
     un-finalize) means the clip was removed while the app was away -- the
@@ -320,18 +337,22 @@ The reducer turns them into effects; the planner never touches IO.
 
 One segment pull at a time, globally (the 2.4 GHz link is the bottleneck and
 `ClipPullClient` already serializes bytes within a pull): the incidents state
-holds a queue and an `activePull`; each completion re-plans. A pull is
-`ClipPullClient.pull(seq, etag)` -> on `.completed`, remux via
-`dependencies.clipRemuxer` -> install the `.mp4` into every wanting
-incident's directory (APFS `copyItem` clones are instant and space-free) ->
-persist. The mark segment's pull also decodes `thumb.jpg` from the raw TS
-prefix via `Media/ThumbnailDecoder.swift` before the temp `.ts` is discarded.
-Remux failure keeps the raw `.ts` as that segment's artifact instead.
+holds a queue and an `activePull`; each completion re-plans. A segment is
+queue-eligible only once its resolution persist has landed (publication
+protocol step 1). A pull is `ClipPullClient.pull(seq, etag)` -> on
+`.completed`, remux via `dependencies.clipRemuxer` -> install into every
+wanting incident's directory via staging name + atomic rename (APFS
+`copyItem` clones are instant and space-free; publication protocol step 2)
+-> persist `pulled`. The mark segment's pull also decodes `thumb.jpg` from
+the raw TS prefix via `Media/ThumbnailDecoder.swift` before the temp `.ts`
+is discarded. Remux failure keeps the raw `.ts` as that segment's artifact
+instead.
 
 Deduplication: one pull serves every pending incident wanting that
 `(seq, etag)`. If a wanted clip is already resolvable from `ClipCache`
 (`lookup(id, etag)` hit, i.e. the user already watched it), clone the cached
-`.mp4` straight into the incident directory and skip the network entirely.
+`.mp4` into the incident directory (same staging + rename publication) and
+skip the network entirely.
 
 Failure handling: a pull that fails with `ClipPullError.http(404)` on a
 resolved entry is loss evidence -- the entry goes `lost` (see the planner's
@@ -423,7 +444,8 @@ Strict order; every commit builds and passes its side's checks standalone
     only improves the latency story).
 - Root `AGENTS.md`: add a cross-cutting principle bullet -- incidents are
   phone-owned; the Pi serves footage, the phone keeps it -- linking app
-  ADR 26. `app/AGENTS.md`: reword the incident-handling responsibility line.
+  ADR 26. `app/AGENTS.md`: reword the incident-handling responsibility,
+  provisional persistence, and ADR-summary lines.
   `raspi/AGENTS.md`: reword every line that states the Pi-lock model as
   current design -- the ring-buffer "incident-locked segments are exempt
   from deletion" line, the control-API surface mention of "incident lock",
@@ -433,9 +455,10 @@ Strict order; every commit builds and passes its side's checks standalone
   the ADRs themselves).
 - `docs/roadmap.md`: rewrite the `nova` entry (iPhone-only press-to-save,
   app-side checklist mirroring Parts B-F, mock-first); adjust the `sift`
-  incidents-filter line (incident membership is phone-side state now) and
-  the `tide` "auto-save incidents" note; leave `pike` parked with a note
-  that phone-owned incidents shrink it to "create the record by voice".
+  incidents-filter line (incident membership is phone-side state now), the
+  `silt` protection-seam claim, the `moss` pre-sync-hold scope fence, and the
+  `tide` "auto-save incidents" note; leave `pike` parked with a note that
+  phone-owned incidents shrink it to "create the record by voice".
 
 Exit: `just adr-check` green; the records match the decisions above.
 
@@ -458,7 +481,9 @@ Exit: `just adr-check` green; the records match the decisions above.
   and atomicity; store scan with a corrupted `incident.json`; the
   crash-boundary scan (artifact on disk, record entry still `wanted`, and
   the clip absent from every list the planner will see -> entry reconciled
-  to `pulled`, incident can still finalize `saved`).
+  to `pulled`, incident can still finalize `saved`); an interrupted staging
+  file (`seg_<seq>.mp4.part` left by a crash mid-install -> deleted on
+  scan, never promoted, entry stays `wanted`).
 
 Exit: `just app-build` + `just app-test` green; no UI yet, pure logic.
 
@@ -488,20 +513,25 @@ incident record (visible on disk); reducer tests green.
   `IncidentsFeature.reconcile`; the planner's commands become effects
   (single-pull queue, paging requests via `ClipsFeature`, persistence,
   finalize, nudge cancel).
-- The pull pipeline: `ClipPullClient.pull` -> remux -> install-by-clone into
-  each wanting incident dir -> thumbnail from TS prefix on the mark segment
-  -> persist; `ClipCache.lookup` short-circuit; remux-failure raw `.ts`
-  fallback; background-task assertion around active pulls.
+- The pull pipeline: `ClipPullClient.pull` -> remux -> install-by-clone
+  (staging name + atomic rename) into each wanting incident dir ->
+  thumbnail from TS prefix on the mark segment -> persist `pulled`;
+  `ClipCache.lookup` short-circuit; remux-failure raw `.ts` fallback;
+  background-task assertion around active pulls.
 - Tests: end-to-end reducer tests with scripted clips/pull dependencies --
   the happy 3-segment save; resume after relaunch mid-download (no
   re-download of pulled segments); stop-recording inside the post-roll
   (clipped, `saved`); each loss-evidence source behaviorally: a
-  `clip_removed` fold for a wanted pre-roll seq (`lost`, `partial`, pull
-  abandoned), a pull 404 on a resolved entry after a scripted reconnect
+  `clip_removed` fold for a queued (not active) wanted seq (`lost`,
+  `partial`), a pull 404 on a resolved entry after a scripted reconnect
   (`lost`, `partial`), and a covered contiguity gap that never resolves
-  (`lost`, `partial`); mark segment never finalizes after session death
-  (`partial`); lost entry with unknown duration ends that direction's walk;
-  shared segment across two overlapping incidents pulled once; non-404 pull
+  (`lost`, `partial`); the removal race ordering (`clip_removed` for the
+  *active* pull, then the pull completes -> `pulled`, incident `saved`, no
+  false `partial`); resolution persisted before the pull effect starts
+  (ordering asserted for a fresh witness, including the cache-hit clone
+  path); mark segment never finalizes after session death (`partial`);
+  lost entry with unknown duration ends that direction's walk; shared
+  segment across two overlapping incidents pulled once; non-404 pull
   failure retried on next trigger.
 
 Exit: full save happens headlessly against `just raspi-mock` (5 s segments:
@@ -573,16 +603,22 @@ Behavioral acceptance criteria, owned by the commits above:
   attribution.
 - Evidence rules: absence without cursor-floor coverage stays `unresolved`;
   paging is requested until coverage; each loss source lands `lost`
-  (`clip_removed` fold, pull 404 on a resolved entry, covered contiguity
-  gap); never-existed is `clipped`; mark-vanished-with-session is `lost`;
+  (`clip_removed` fold for non-active entries, pull 404 on a resolved
+  entry, covered contiguity gap); `clip_removed` never preempts the active
+  pull -- completion after removal salvages the entry as `pulled`;
+  never-existed is `clipped`; mark-vanished-with-session is `lost`;
   a `lost` entry with unknown duration ends that direction's walk; terminal
   statuses never regress on replayed events or stale lists.
-- Durability: record persisted before any post-press effect; atomic-write
-  crash safety (torn temp never corrupts a readable record); relaunch resume
-  is idempotent (pulled segments never re-pulled, `(seq, etag)` keyed);
-  the install-to-persist crash boundary heals via scan reconciliation (an
-  installed artifact with a stale `wanted` entry and a vanished Pi clip
-  still counts as `pulled` -- no re-pull, no false `partial`).
+- Durability: record persisted before any post-press effect; resolution
+  (`etag`, `dur_ms`) persisted before any pull or clone starts;
+  atomic-write crash safety (torn temp never corrupts a readable record);
+  final artifact names appear only via atomic rename from a staging
+  sibling, and scan deletes staging files without promoting them; relaunch
+  resume is idempotent (pulled segments never re-pulled, `(seq, etag)`
+  keyed); the install-to-persist crash boundary heals via scan
+  reconciliation (an installed artifact with a stale `wanted` entry and a
+  vanished Pi clip still counts as `pulled` -- no re-pull, no false
+  `partial`).
 - Downloads: single-flight queue; dedupe across overlapping incidents;
   cache-hit clone path; remux-failure raw fallback; pull failure returns to
   `wanted` and retries on the next trigger.
@@ -603,13 +639,17 @@ Behavioral acceptance criteria, owned by the commits above:
 - Save-to-Photos automation; stitched multi-segment export; notes/rename.
 - Incident membership badges in the Recent list (`sift`).
 
-## Progress
+## Implementation notes
 
-- [ ] Part A -- Commit 1: docs + ADR + roadmap
-- [ ] Part B -- Commit 2: model, store, planner
-- [ ] Part C -- Commit 3: press capture
-- [ ] Part D -- Commit 4: reconciler + downloads
-- [ ] Part E -- Commit 5: tab + detail
-- [ ] Part F -- Commit 6: polish + nudge lifecycle
+- Part A also updates the roadmap's stale `silt` protection-seam claim and
+  `moss` pre-sync-hold scope fence so the living roadmap does not contradict
+  the phone-owned incident decision.
 
-On completion, promote via the usual wip -> impl flow.
+## Commit progress
+
+- [x] 1. docs + ADR + roadmap
+- [ ] 2. model, store, planner
+- [ ] 3. press capture
+- [ ] 4. reconciler + downloads
+- [ ] 5. tab + detail
+- [ ] 6. polish + nudge lifecycle

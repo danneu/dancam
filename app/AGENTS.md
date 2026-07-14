@@ -17,8 +17,9 @@ is documented in [`../raspi/AGENTS.md`](../raspi/AGENTS.md).
   (Never on the CarPlay screen -- see the CarPlay ADR.)
 - **Browse and pull clips** on demand. The Pi holds all footage; the app pulls
   selected clips, not the entire buffer. Bulk mirroring over 2.4 GHz is a non-goal.
-- **Incident handling** -- mark/lock an incident so the Pi protects that clip from
-  the ring buffer overwriting it; review and export incidents.
+- **Incident handling** -- capture a mark while connected and recording, pull its
+  covering segments into permanent phone storage, then review, share, and delete
+  the phone-owned incident.
 - **Settings / control** -- start/stop recording, resolution, retention, time sync.
 - **CarPlay surface** -- voice control, auto start/stop, status, alerts.
 - **Time provenance** -- the Pi has no real-time clock. The app is a trusted time
@@ -35,9 +36,9 @@ direction, not settled law.
   struct-of-closures dependencies, and a hand-written `TestStore`; zero third-party
   architecture dependencies. See
   `docs/design/03-2026-06-24-app-ui-architecture.md`.
-- **Local persistence:** SwiftData for clip metadata / incident records / settings
-  (provisional; UI-agnostic, decided separately). Footage itself is pulled on demand
-  and stored as files, not in the store.
+- **Local persistence:** filesystem-backed Application Support directories for
+  phone-owned incident records and footage; SwiftData remains provisional for any
+  future clip metadata or settings store. See app ADR 26.
 - **Playback:** AVFoundation / AVKit.
 - **Networking to the Pi:** the Network framework (`NWConnection`/`NWBrowser`) for
   discovery and control; HTTP for the clip API; MJPEG over HTTP for low-res live
@@ -111,8 +112,8 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `01-2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
 - `02-2026-06-22-app-pi-transport-and-api.md` -- the app-side obligations for talking to
   the Pi (NEHotspotConfiguration join, NWConnection Wi-Fi pinning, the hand-rolled
-  per-plane HTTP/1.1 client, raw clip pull feeding local cached MP4 playback, App
-  Intents incident-lock). The
+  per-plane HTTP/1.1 client, raw clip pull feeding local cached MP4 playback). Its
+  App Intents incident-lock obligations are superseded by app ADR 26. The
   wire contract itself is delegated to the raspi-side ADR of the same name.
 - `03-2026-06-24-app-ui-architecture.md` -- UIKit programmatic UI and the bespoke
   minimal TEA core used by the app.
@@ -172,3 +173,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `25-2026-07-10-clip-share-raw-file-url.md` -- remove the unnecessary
   `UIActivityItemSource` wrapper that crashed during share discovery and return to the
   device-verified raw MP4 file URL.
+- `26-2026-07-14-phone-owned-incidents.md` -- make incidents durable phone-owned
+  artifacts assembled from the existing clip list, ranged pull, and events surfaces;
+  supersedes the Pi-side incident-lock direction.

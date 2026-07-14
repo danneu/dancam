@@ -10,6 +10,8 @@
   fail closed with `503`.
 - **Amended:** 2026-07-09 -- telemetry deltas and snapshot fields expose service-coarsened
   observed values, not full-precision samples.
+- **Amended:** 2026-07-14 -- app ADR 26 withdraws the reserved Pi-side incident
+  endpoints and `incident_saved` / `incident_resolved` events.
 - **Date:** 2026-06-22
 - **Owner:** raspi (the Pi serves the wire contract; the canonical copy lives here)
 - **Related:** root `AGENTS.md` (all five cross-cutting principles);
@@ -30,6 +32,15 @@
 > reconciling the additive fields that ADR introduced (`coverage_truncated`, the
 > `deleted` tombstone marker, lock `source`, `retention` ceiling semantics) so the two
 > docs agree. Append-only per the ADR convention.
+
+> **Note (2026-07-14): Phone-owned incidents.** App ADR 26 supersedes this ADR's
+> incident-lock wire contract. `POST /v1/incidents/lock`, `GET /v1/incidents`,
+> `POST /v1/incidents/{id}/extend`, `DELETE /v1/incidents/{id}`,
+> `incident_saved`, and `incident_resolved` are withdrawn rather than deferred.
+> Incidents use the existing read-only clips list, ranged clip pull, and events
+> surfaces; no Pi-side incident state or mutation is added. The clip body's `locked`
+> field stays reserved for a possible future protect-only pin endpoint if retention
+> evidence ever demands one. The rest of this transport contract is unchanged.
 
 > **Note (2026-06-25):** Real AP bring-up reconciled the fixed gateway examples with
 > NetworkManager shared mode. The AP profile now pins `10.42.0.1/24`, so every fixed

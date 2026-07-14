@@ -6,6 +6,8 @@
   (`app/docs/design/16-2026-07-01-client-side-clip-thumbnails.md`): thumbnails are generated
   client-side, so the Pi caches no `.jpg` and serves no `/thumb`. The `.ts` ring, incident
   lock, and GC below are unaffected.
+- **Amended:** 2026-07-14 -- app ADR 26 supersedes the Pi-side incident-lock model;
+  the ring, GC, segment witness, and crash-safety decisions remain in force.
 - **Date:** 2026-06-23
 - **Owner:** raspi
 - **Related:** root `AGENTS.md` (SD is source of truth; Wi-Fi preview + pull only;
@@ -23,6 +25,15 @@
 > The earlier provisional-then-frozen app offset model is replaced by first accepted
 > offset wins. GPS rebinding after freeze is no longer implicit; a future GPS source
 > must add an explicit source-priority rule.
+
+> **Note (2026-07-14): Phone-owned incidents.** App ADR 26 supersedes this ADR's
+> hardlink locks, Pi-side `incident.json`, `seen-keys.log`, locked-space caps,
+> pre-sync holds, incident commit sequence, and incident service interface. The Pi
+> no longer owns incident state or exposes incident mutations in v1. The segment
+> ring, stamped-filename index, high-water witness, oldest-first GC, durable deletion,
+> mutation serialization, and pull-race behavior remain active. ADR 21's protection
+> recheck remains an unused seam for a future protect-only clip pin if retention
+> evidence warrants it.
 
 ## Context
 

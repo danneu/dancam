@@ -119,6 +119,10 @@ These are settled at the system level. Side-specific ADRs must not contradict th
 
 - **SD is the source of truth.** The Pi always records locally. The phone is a
   client that reads footage on demand; a dropped Wi-Fi link must never lose video.
+- **Incidents are phone-owned.** The Pi ring buffers recent footage and serves it;
+  the app pulls a marked window into permanent phone storage and owns incident
+  lifecycle, review, sharing, and deletion. See
+  `app/docs/design/26-2026-07-14-phone-owned-incidents.md`.
 - **Wi-Fi is 2.4 GHz, preview + pull only.** The chosen Pi (Zero 2 W) has no 5 GHz
   radio. Design for a slow, congested link: low-res preview, on-demand clip pull,
   never bulk continuous streaming. See `raspi/AGENTS.md`.

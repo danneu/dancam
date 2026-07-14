@@ -34,6 +34,13 @@
 > raw `.ts` clip bytes with `Range`, Wi-Fi pinning, pull, time sync, and incident
 > content are unaffected.
 
+> **Note (2026-07-14):** App ADR 26 supersedes this ADR's App Intents incident-lock
+> and queue-and-flush obligations. Incidents are durable phone-local records resolved
+> through the existing clips list, ranged pull, and event stream; voice marking, if it
+> lands, creates that local record and rides the same reconciler. No incident
+> idempotency key, Pi mutation, or pre-sync incident resolution is part of the app's
+> active transport obligations.
+
 ## Context
 
 The iPhone app is the client of the camera unit's local API. The **wire contract** --

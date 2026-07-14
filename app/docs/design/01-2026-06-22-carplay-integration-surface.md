@@ -6,6 +6,12 @@
 - **Related:** root `AGENTS.md` (cross-cutting principle "CarPlay is a voice + status
   + control surface, NOT a video viewport")
 
+> **Note (2026-07-14):** App ADR 26 supersedes the Pi-lock dependency for voice
+> incident marking. If voice marking lands, the App Intent creates the same durable
+> phone-local incident record as the on-screen press and lets the app reconciler pull
+> it from existing clip surfaces. There is no Pi call on the press path, improving the
+> latency and offline-retry story while leaving this ADR's CarPlay surface unchanged.
+
 ## Context
 
 The iPhone is always in the car and connected to CarPlay, so CarPlay is a natural

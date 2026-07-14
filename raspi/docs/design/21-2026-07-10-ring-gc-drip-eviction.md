@@ -13,6 +13,12 @@
   `18-2026-07-04-sd-card-layout-and-readonly-root.md` (dedicated `/data`
   partition and mount witness)
 
+> **Note (2026-07-14):** App ADR 26 makes incidents phone-owned and supersedes the
+> Pi-side hardlink/protect-floor incident model. The authoritative in-mutex protection
+> recheck remains a valid, currently unused seam for a future protect-only clip pin;
+> `nova` does not implement either protection predicate. All GC policy, witness,
+> deletion, event, cache, and pull-race decisions in this ADR remain in force.
+
 ## Context
 
 The Pi writes roughly 38 MB every 30 seconds to the dedicated `/data` recording

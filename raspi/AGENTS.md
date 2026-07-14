@@ -76,9 +76,10 @@ current provisional direction until it is captured.
   The camera owner locks the lens to infinity and disables autofocus for both
   recording and preview streams; see the fixed-infinity-focus ADR. See the crash-safe
   recording ADR for why TS over raw H.264 / MP4.
-- **Storage model:** a **ring buffer** of short segments; oldest deleted as the card
-  fills; incident-locked segments are exempt from deletion. See the storage
-  ring-buffer / incident-lock ADR.
+- **Storage model:** a **ring buffer** of short segments; oldest finished segments
+  are drip-evicted as the card fills. Incidents are phone-owned and do not lock
+  Pi segments in v1; the coordinator retains an unused protection seam for future
+  evidence-driven pinning. See the ring GC ADR and app ADR 26.
 - **Access point:** a NetworkManager hotspot (`nmcli`, `ipv4.method=shared`) on
   the 2.4 GHz band so the phone can connect directly with no router. The current
   dev profile is `dancam-ap`: SSID `dancam-dev`, WPA2-PSK pinned to AES
@@ -93,13 +94,15 @@ current provisional direction until it is captured.
   it. The concrete AP decision is in
   `docs/design/06-2026-06-25-ap-networking-bring-up.md`.
 - **Control + media service:** a small **Rust** service (see the service-language
-  ADR) exposing a control API (start/stop, settings, time sync, incident lock) and a
-  media API (list/preview/pull clips) to the app.
+  ADR) exposing a control API (start/stop, settings, time sync) and a media API
+  (list/preview/pull clips) to the app. Incidents use those read surfaces and add
+  no Pi-side API in v1.
 - **Power-loss safety:** a high-endurance consumer microSD treated as a consumable,
   plus software layers that recover cleanly when power is cut. Consumer endurance
   cards in this tier do **not** provide PLP, so the remaining FTL risk is accepted and
   mitigated with a read-only OS, journaled `/data`, segment-close fsync, a 5% unwritten
-  tail, and prompt incident pull. The unit runs off a switched USB accessory source
+  tail, and oldest-first ring GC with a free-space floor. The unit runs off a switched
+  USB accessory source
   that dies with the car, so power loss is abrupt and unsignaled -- no clean-shutdown
   path and no supercapacitor. No lithium batteries -- they are a fire risk baking in a
   hot car. See `docs/design/04-2026-06-23-power-source-and-shutdown.md` and
@@ -311,11 +314,12 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   (format + filesystem + card hardware layers).
 - `02-2026-06-22-app-pi-transport-and-api.md` -- the app<->Pi wire contract: transport
   per plane (control/events/preview/clip-pull), the `/v1` API surface, connection
-  lifecycle, WPA2-only auth posture, and the incident-lock idempotency contract. The
-  Pi owns this contract; the canonical copy lives here.
-- `03-2026-06-23-storage-ring-buffer-incident-lock.md` -- the Pi storage model:
-  segment ring buffer, no-RTC ordering, incident hardlink locks, pre-sync holds,
-  caps, rebuild, and the in-process storage service interface.
+  lifecycle, and WPA2-only auth posture. Its reserved incident endpoints and events
+  are withdrawn by app ADR 26; the Pi owns the remaining canonical contract.
+- `03-2026-06-23-storage-ring-buffer-incident-lock.md` -- the Pi storage model's
+  ring, no-RTC ordering, rebuild, and mutation-serialization decisions remain;
+  app ADR 26 supersedes its incident hardlinks, pre-sync holds, caps, and incident
+  service interface.
 - `04-2026-06-23-power-source-and-shutdown.md` (Proposed) -- the v1 power topology
   (switched USB accessory source, 5V regulated, dies with the car) and the decision
   to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves
@@ -385,6 +389,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   grammar/parser canon, and ADR 16's allocation ceiling.
 - `21-2026-07-10-ring-gc-drip-eviction.md` (Accepted) -- GC drip-evicts oldest
   finished segments to an `f_bavail` byte floor, amortizes write-ahead witness
-  raises per pass, and defines the in-mutex protection seam for incident locks.
+  raises per pass, and retains an unused in-mutex protection seam for possible
+  future clip pinning; app ADR 26 removes incident locks from v1.
   The flat stamped-filename, stateless-scan layout is the end state, superseding
   ADR 03's `segments/`, `index.log`, snapshots, and in-memory index machinery.
