@@ -56,6 +56,7 @@ struct CameraEventCorpusTests {
                 detail: nil
             ),
             cameraState: .running,
+            recordingReadiness: .ready,
             bootId: "7f3a91c2-b0d4-4e15-b196-20e0416af749",
             bootTag: "7f3a91c2b0d4",
             uptimeS: 120,
@@ -97,6 +98,47 @@ struct CameraEventCorpusTests {
             CPUCore(id: 0, currentPct: 98, oneMinutePct: 74, fiveMinutePct: 52, fifteenMinutePct: 40),
             CPUCore(id: 2, currentPct: nil, oneMinutePct: nil, fiveMinutePct: nil, fifteenMinutePct: nil),
         ])))
+
+        let cameraChanged = try decoder.decode(
+            CameraEvent.self,
+            from: Data(contentsOf: corpusURL("camera_state_changed.json"))
+        )
+        let storageChanged = try decoder.decode(
+            CameraEvent.self,
+            from: Data(contentsOf: corpusURL("storage_changed.json"))
+        )
+        #expect(cameraChanged == .cameraStateChanged(state: .running, recordingReadiness: .ready))
+        #expect(storageChanged == .storageChanged(
+            storage: Storage(
+                used: 1_000_000_000,
+                total: 32_000_000_000,
+                recordingCapacityBytes: 29_000_000_000
+            ),
+            recordingReadiness: .ready
+        ))
+
+        let notReady = RecordingReadiness(
+            ready: false,
+            reason: .recordingStorageUnavailable
+        )
+        let initial = CameraSamples.world()
+        let afterCamera = World.folding(
+            initial,
+            .cameraStateChanged(
+                state: .restarting,
+                recordingReadiness: RecordingReadiness(ready: false, reason: .cameraRestarting)
+            )
+        )
+        #expect(afterCamera.cameraState == .restarting)
+        #expect(afterCamera.recordingReadiness.reason == .cameraRestarting)
+
+        let replacement = Storage(used: 4, total: 8, recordingCapacityBytes: 6)
+        let afterStorage = World.folding(
+            initial,
+            .storageChanged(storage: replacement, recordingReadiness: notReady)
+        )
+        #expect(afterStorage.storage == replacement)
+        #expect(afterStorage.recordingReadiness == notReady)
     }
 
     @Test(.tags(.networking))
@@ -115,10 +157,25 @@ struct CameraEventCorpusTests {
     func storageRequiresRecordingCapacity() {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let data = Data("{\"type\":\"storage_changed\",\"storage\":{\"used\":1,\"total\":2}}".utf8)
+        let data = Data("{\"type\":\"storage_changed\",\"storage\":{\"used\":1,\"total\":2},\"recording_readiness\":{\"ready\":true,\"reason\":null}}".utf8)
 
         #expect(throws: DecodingError.self) {
             try decoder.decode(CameraEvent.self, from: data)
+        }
+    }
+
+    @Test(.tags(.networking))
+    func readinessIsRequiredOnReadinessCarryingDeltas() {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        for data in [
+            Data("{\"type\":\"camera_state_changed\",\"state\":\"running\"}".utf8),
+            Data("{\"type\":\"storage_changed\",\"storage\":null}".utf8),
+        ] {
+            #expect(throws: DecodingError.self) {
+                try decoder.decode(CameraEvent.self, from: data)
+            }
         }
     }
 

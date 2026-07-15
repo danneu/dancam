@@ -12,6 +12,8 @@
   observed values, not full-precision samples.
 - **Amended:** 2026-07-14 -- app ADR 26 withdraws the reserved Pi-side incident
   endpoints and `incident_saved` / `incident_resolved` events.
+- **Amended:** 2026-07-15 -- ADR 24 removes `/v1/health`; canonical `/v1/status`
+  is the sole operational probe and carries recording readiness shared with SSE.
 - **Date:** 2026-06-22
 - **Owner:** raspi (the Pi serves the wire contract; the canonical copy lives here)
 - **Related:** root `AGENTS.md` (all five cross-cutting principles);

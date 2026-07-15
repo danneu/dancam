@@ -180,6 +180,12 @@ impl StorageCoordinator {
         }
         Ok(())
     }
+
+    /// Read-only form of the authoritative recording mount witness used by
+    /// mutations. An unconfigured witness succeeds by definition.
+    pub fn recording_storage_available(&self) -> io::Result<()> {
+        self.ensure_rec_mounted()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -29,12 +29,16 @@ cleanup() {
   fi
 
   # Type=exec: systemctl start returns once the binary execs, not once it serves.
-  # Confirm dancam actually answers /v1/health so a crash-looping unit is never
-  # reported as a clean restart.
-  local deadline=$(( $(date +%s) + ${DANCAM_HEALTH_TIMEOUT:-60} ))
-  until curl -fsS --max-time 5 -o /dev/null "http://localhost:${DANCAM_PORT:-8080}/v1/health" 2>/dev/null; do
+  # A clean reset is complete only when recording can start again.
+  local deadline=$(( $(date +%s) + ${DANCAM_RECORDING_READINESS_TIMEOUT:-60} ))
+  local status_body
+  while :; do
+    status_body="$(curl -fsS --max-time 5 "http://localhost:${DANCAM_PORT:-8080}/v1/status" 2>/dev/null || true)"
+    if python3 -c 'import json, sys; value = json.load(sys.stdin).get("recording_readiness", {}).get("ready"); sys.exit(0 if value is True else 1)' <<<"$status_body" 2>/dev/null; then
+      break
+    fi
     if (( $(date +%s) >= deadline )); then
-      echo "ERROR: dancam did not answer /v1/health after restart -- recording is DOWN; check journalctl -u dancam" >&2
+      echo "ERROR: dancam did not become recording-ready after restart -- recording is DOWN; check journalctl -u dancam" >&2
       exit 1
     fi
     sleep 2

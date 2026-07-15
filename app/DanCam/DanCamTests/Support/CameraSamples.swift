@@ -8,6 +8,7 @@ enum CameraSamples {
         currentSegment: RecorderSegment? = nil,
         detail: String? = nil,
         cameraState: CameraState = .running,
+        recordingReadiness: RecordingReadiness = .ready,
         storage: Storage? = Storage(used: 100, total: 1_000),
         tempC: TempC = TempC(),
         mem: Mem? = nil,
@@ -24,6 +25,7 @@ enum CameraSamples {
                 detail: detail
             ),
             cameraState: cameraState,
+            recordingReadiness: recordingReadiness,
             bootId: "boot-123",
             bootTag: bootTag,
             uptimeS: uptimeS,

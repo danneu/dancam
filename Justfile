@@ -17,10 +17,14 @@ raspi-check:
 raspi-deploy:
     ./raspi/deploy.sh
 
+# Hardware-free regression for deploy's status parser and reachability wait.
+raspi-deploy-test:
+    bash raspi/scripts/deploy-test.sh
+
 # Wipe recorded footage on the Pi: refuse unless /data is a real mount, then stop dancam,
 # delete everything under /data/rec (segments + witness/time state, so the next run
 # restarts at seq 0 / session 1), and always restart dancam and wait for it to answer
-# /v1/health -- failing loudly if it does not come back. Destructive; prompts unless
+# recording-ready /v1/status -- failing loudly if it does not come back. Destructive; prompts unless
 # DANCAM_YES=1. Override host with DANCAM_HOST=...
 raspi-reset-data:
     #!/usr/bin/env bash
@@ -29,7 +33,7 @@ raspi-reset-data:
     SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
     PORT="${DANCAM_PORT:-8080}"
-    HEALTH_TIMEOUT="${DANCAM_HEALTH_TIMEOUT:-60}"
+    READINESS_TIMEOUT="${DANCAM_RECORDING_READINESS_TIMEOUT:-60}"
     REMOTE_SCRIPT=/tmp/dancam-reset-data.sh
     # Mount witness identical to the service's stat-based ensure_required_mountpoint:
     # /data is mounted iff dev(/data) != dev(/) OR ino(/data) == ino(/); abort on the
@@ -59,9 +63,9 @@ raspi-reset-data:
       case "$ans" in y | Y) ;; *) echo "aborted"; exit 1 ;; esac
     fi
     scp -i "$SSH_KEY" raspi/scripts/reset-data.sh "${HOST}:${REMOTE_SCRIPT}"
-    remote_command="sudo DANCAM_PORT=$(printf %q "$PORT") DANCAM_HEALTH_TIMEOUT=$(printf %q "$HEALTH_TIMEOUT") bash $(printf %q "$REMOTE_SCRIPT")"
+    remote_command="sudo DANCAM_PORT=$(printf %q "$PORT") DANCAM_RECORDING_READINESS_TIMEOUT=$(printf %q "$READINESS_TIMEOUT") bash $(printf %q "$REMOTE_SCRIPT")"
     ssh -t -i "$SSH_KEY" "$HOST" "$remote_command"
-    echo "==> /data/rec cleared; dancam restarted and answering /v1/health (next run: seq 0 / session 1)"
+    echo "==> /data/rec cleared; dancam restarted and recording-ready (next run: seq 0 / session 1)"
 
 # Hardware-free behavioral regression for the recording-data reset.
 raspi-reset-data-test:
@@ -82,7 +86,7 @@ raspi-partition:
     ssh -t -i "$SSH_KEY" "$HOST" "sudo bash /tmp/dancam-partition-card.sh"
 
 # Toggle IMX708 on-sensor HDR while the camera is closed, then restart dancam and
-# wait for camera_state: running. HDR caps the sensor at 2304x1296@30 (still enough
+# wait for recording readiness. HDR caps the sensor at 2304x1296@30 (still enough
 # for 1080p30) and resets off on reboot. Override the host with DANCAM_HOST=...
 raspi-hdr mode:
     #!/usr/bin/env bash
@@ -92,10 +96,10 @@ raspi-hdr mode:
     SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
     PORT="${DANCAM_PORT:-8080}"
-    HEALTH_TIMEOUT="${DANCAM_HEALTH_TIMEOUT:-60}"
+    READINESS_TIMEOUT="${DANCAM_RECORDING_READINESS_TIMEOUT:-60}"
     REMOTE_SCRIPT=/tmp/dancam-hdr-set.sh
     scp -i "$SSH_KEY" raspi/scripts/hdr-set.sh "${HOST}:${REMOTE_SCRIPT}"
-    remote_command="sudo DANCAM_PORT=$(printf %q "$PORT") DANCAM_HEALTH_TIMEOUT=$(printf %q "$HEALTH_TIMEOUT") bash $(printf %q "$REMOTE_SCRIPT") $(printf %q "$mode")"
+    remote_command="sudo DANCAM_PORT=$(printf %q "$PORT") DANCAM_RECORDING_READINESS_TIMEOUT=$(printf %q "$READINESS_TIMEOUT") bash $(printf %q "$REMOTE_SCRIPT") $(printf %q "$mode")"
     ssh -t -i "$SSH_KEY" "$HOST" "$remote_command"
 
 # Hardware-free behavioral regression for the IMX708 HDR toggle.
@@ -160,7 +164,7 @@ raspi-ap minutes="5":
     "
 
     echo "==> AP comes up in ~2s; this Mac will drop the Pi (stay on $HOME_WIFI)."
-    echo "==> iPhone: join dancam-dev, then hit http://10.42.0.1:8080/v1/health"
+    echo "==> iPhone: join dancam-dev, then hit http://10.42.0.1:8080/v1/status"
     echo
 
     end=$(( $(date +%s) + SECS ))

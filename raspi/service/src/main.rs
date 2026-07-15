@@ -26,7 +26,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let local_addr = listener.local_addr()?;
     let boot_id = resolve_boot_id();
     let required_rec_mountpoint = env::var_os("DANCAM_REQUIRE_REC_MOUNT").map(PathBuf::from);
-    log_required_mountpoint(required_rec_mountpoint.as_deref());
     let (state, supervisor, is_mock): (AppState, Option<SupervisorControl>, bool) =
         match env::var("DANCAM_BACKEND").as_deref() {
             Ok("camera") => {
@@ -80,6 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .flatten();
     let state = state.with_filesystem_config(gc.floor_bytes, recording_capacity_override);
+    dancam::events::seed_filesystem_observation(&state).await;
     dancam::events::spawn_telemetry(
         state.backend.clone(),
         state.filesystem.clone(),
@@ -134,16 +134,6 @@ fn storage_coordinator(rec_dir: PathBuf, required_mountpoint: Option<&Path>) -> 
         storage.with_required_mountpoint(mountpoint.to_path_buf())
     } else {
         storage
-    }
-}
-
-fn log_required_mountpoint(required_mountpoint: Option<&Path>) {
-    let Some(mountpoint) = required_mountpoint else {
-        return;
-    };
-
-    if let Err(error) = dancam::storage::ensure_required_mountpoint(mountpoint) {
-        tracing::error!(%error, mountpoint = %mountpoint.display(), "required recording mountpoint is unhealthy");
     }
 }
 

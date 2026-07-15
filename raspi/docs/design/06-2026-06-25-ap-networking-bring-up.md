@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Amended:** 2026-06-25 -- cipher pinned to RSN/CCMP (AES); no TKIP/WPA1.
+- **Amended:** 2026-07-15 -- AP reachability smoke now uses canonical
+  `/v1/status`; see ADR 24.
 - **Date:** 2026-06-25
 - **Owner:** raspi
 - **Related:** root `AGENTS.md`; `02-2026-06-22-app-pi-transport-and-api.md`

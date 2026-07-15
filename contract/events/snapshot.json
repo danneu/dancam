@@ -10,6 +10,10 @@
     "detail": null
   },
   "camera_state": "running",
+  "recording_readiness": {
+    "ready": true,
+    "reason": null
+  },
   "boot_id": "7f3a91c2-b0d4-4e15-b196-20e0416af749",
   "boot_tag": "7f3a91c2b0d4",
   "uptime_s": 120,

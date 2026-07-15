@@ -255,8 +255,10 @@ shell, not `rustup target add`.
   ADR covers why musl/static).
 - Deploy: `just raspi-deploy` (wraps `./raspi/deploy.sh`) -- cross-builds, rsyncs the
   binary + the systemd unit to the Pi, installs both, enables/restarts the service,
-  and curls `/v1/health`. Idempotent; re-run on every change. Override the target with
-  `DANCAM_HOST=... just raspi-deploy`.
+  and waits for `/v1/status` to contain a JSON boolean
+  `recording_readiness.ready`. Override the 60 second reachability bound with
+  `DANCAM_STATUS_TIMEOUT`. Idempotent; re-run on every change. Override the target
+  with `DANCAM_HOST=... just raspi-deploy`.
   VS Code Remote-SSH is handy for poking around the Pi directly.
 
 ### Running
@@ -400,3 +402,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   bounded request-side admission from supervisor-owned execution, orders durable
   start allocation through one async handoff gate, and terminalizes every dispatched
   failure before acknowledgement.
+- `24-2026-07-15-operational-status-and-recording-readiness.md` (Accepted) -- removes
+  the duplicate health route, makes canonical status the sole operational probe,
+  derives recording readiness atomically across snapshot and deltas, and bounds
+  its authoritative recording-filesystem observation.

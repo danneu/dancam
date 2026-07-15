@@ -1,7 +1,7 @@
 # Raspberry Pi setup
 
 Hands-on runbook for bringing up the dancam camera unit -- from flashing the microSD
-through serving the health endpoint. These are the concrete steps we ran for the
+through serving canonical operational status. These are the concrete steps we ran for the
 `pine` swoop. For the design rationale behind each choice, see
 [`AGENTS.md`](AGENTS.md); this file is just the commands.
 
@@ -310,9 +310,9 @@ creates that system user before deploy starts the service.
 
 This ships a static aarch64 binary, the camera process
 (`/usr/local/lib/dancam/camera.py`), and the systemd unit (`dancam.service`),
-enables/restarts the service, then waits for `/v1/health` to answer (polling up
-to `DANCAM_HEALTH_TIMEOUT`s, default 60) and fires a macOS notification when the
-service is ready to test. The deployed unit sets:
+enables/restarts the service, then waits for a valid `/v1/status` readiness boolean (polling for
+up to `DANCAM_STATUS_TIMEOUT`, default 60 seconds) and fires a macOS notification when the
+service is reachable. Recording-readiness waiting is added separately. The deployed unit sets:
 
 ```ini
 Environment=DANCAM_BIND=[::]:8080
@@ -326,7 +326,7 @@ User=dancam
 process. That process owns libcamera, emits low-res MJPEG preview on stdout, and
 writes H.264 MPEG-TS recording segments under `/data/rec` as the fixed `dancam`
 service user. `DANCAM_REQUIRE_REC_MOUNT=/data` makes recording and time-sync writes
-fail closed if `/data` is not mounted; health, status, and preview still come up for
+fail closed if `/data` is not mounted; status and preview still come up for
 diagnosis. The camera process also locks the IMX708 lens to infinity with autofocus
 disabled; see
 `raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`. Local `just raspi-mock`
@@ -369,7 +369,7 @@ one-in-one-out drip produced by a realistic floor.
 Verify from the Mac over the LAN:
 
 ```sh
-curl -i http://dancam.local:8080/v1/health   # expect: 200 OK + x-dancam-proto: 1
+curl -i http://dancam.local:8080/v1/status   # expect: 200 OK + x-dancam-proto: 1
 curl -s http://dancam.local:8080/v1/status | jq .temp_c.sensor  # real IMX708 reading
 ```
 
@@ -479,10 +479,11 @@ events with `seq` and body, and TRACE adds heartbeats.
 Reset recorded footage: to clear all recordings from the Pi -- after a filename-format
 change, or just to reclaim the card -- use `just raspi-reset-data`. It stops `dancam`,
 deletes everything under `/data/rec` (segments plus the witness/time state, so the next
-run restarts at seq 0 / session 1), then restarts the service and waits for it to answer
-`/v1/health`. It refuses to run unless `/data` is a mounted filesystem, and it always
+run restarts at seq 0 / session 1), then restarts the service and waits for
+`/v1/status.recording_readiness.ready == true`. Override the 60 second wait with
+`DANCAM_RECORDING_READINESS_TIMEOUT`. It refuses to run unless `/data` is a mounted filesystem, and it always
 attempts to restart `dancam` even if the wipe or the run is interrupted -- failing loudly
-(non-zero, "recording is DOWN") if the service does not come back and answer `/v1/health`,
+(non-zero, "recording is DOWN") if the service does not become recording-ready,
 so a failed or interrupted reset is never mistaken for a clean one. It previews what will
 be deleted and prompts first; set `DANCAM_YES=1` to skip the prompt.
 
@@ -499,7 +500,8 @@ For an A/B picture comparison, `just raspi-hdr on` enables the IMX708's on-senso
 HDR and `just raspi-hdr off` disables it. The command stops `dancam` because the
 sensor accepts `wide_dynamic_range` changes only while the camera is closed, writes
 the control on the sensor subdevice, restarts the service, and waits until
-`/v1/status` reports `camera_state: running`. HDR caps the sensor mode at
+`/v1/status.recording_readiness.ready` is true. The wait uses
+`DANCAM_RECORDING_READINESS_TIMEOUT` (default 60 seconds). HDR caps the sensor mode at
 2304x1296@30, which still covers the 1080p30 recording ceiling. The setting resets
 to off when the Pi reboots.
 
@@ -509,17 +511,16 @@ With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, joi
 `dancam-dev` from the iPhone, and fetch:
 
 ```text
-http://10.42.0.1:8080/v1/health
+http://10.42.0.1:8080/v1/status
 ```
 
-The expected response is the same JSON health payload as the home-LAN
-`dancam.local` URL. The iPhone app's first AP health slice also targets
-`http://10.42.0.1:8080`.
+The expected response is the same canonical status snapshot as the home-LAN
+`dancam.local` URL. The iPhone app targets `http://10.42.0.1:8080`.
 
 For app testing from Xcode, install/run the app on the iPhone while the phone is still
 on the home Wi-Fi network, then switch only the iPhone to `dancam-dev`. Leave the
 shared scheme without a `DANCAM_PIN_WIFI` override for the real AP path: the default
-`http://10.42.0.1:8080` base URL derives to Wi-Fi pinning for both health and preview.
+`http://10.42.0.1:8080` base URL derives to Wi-Fi pinning for events and preview.
 Use `DANCAM_PIN_WIFI=0` only for an explicit unpinned diagnostic pass.
 
 The app target also carries `NSAppTransportSecurity` / `NSAllowsLocalNetworking` so
@@ -527,8 +528,8 @@ the clip viewer can serve progressive playback fragments over cleartext loopback
 This is app bundle configuration; it does not require Pi provisioning or a router
 change.
 
-In the app, verify that the home screen health fetch succeeds, then open Live preview
-and confirm that the camera feed is moving. Stop then Start should resume the stream.
+In the app, verify that the event stream connects, then open Live preview and confirm
+that the camera feed is moving. Stop then Start should resume the stream.
 In the 2026-06-25 `fox` spike, this worked over `dancam-dev` with cellular left on; no
 captive sheet was observed.
 

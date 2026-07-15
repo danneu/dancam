@@ -7,7 +7,7 @@ struct EventsClientTests {
     func emitsDecodedEvents() async throws {
         var body = SSEWireBuilder.event(
             id: 1,
-            data: Data("{\"type\":\"snapshot\",\"recorder\":{\"phase\":\"idle\",\"session\":7,\"current_segment\":null,\"detail\":null},\"camera_state\":\"running\",\"boot_id\":\"boot-123\",\"uptime_s\":1,\"storage\":null,\"temp_c\":{\"soc\":{\"current\":null,\"max\":null},\"sensor\":{\"current\":null,\"max\":null}},\"mem\":null,\"cpu\":{\"cores\":[]}}".utf8)
+            data: Data("{\"type\":\"snapshot\",\"recorder\":{\"phase\":\"idle\",\"session\":7,\"current_segment\":null,\"detail\":null},\"camera_state\":\"running\",\"recording_readiness\":{\"ready\":true,\"reason\":null},\"boot_id\":\"boot-123\",\"uptime_s\":1,\"storage\":null,\"temp_c\":{\"soc\":{\"current\":null,\"max\":null},\"sensor\":{\"current\":null,\"max\":null}},\"mem\":null,\"cpu\":{\"cores\":[]}}".utf8)
         )
         body.append(SSEWireBuilder.event(
             id: 2,
@@ -26,7 +26,7 @@ struct EventsClientTests {
     @Test(.tags(.networking))
     func deChunksEventsBeforeSSEParsing() async throws {
         let body = SSEWireBuilder.event(
-            data: Data("{\"type\":\"storage_changed\",\"storage\":{\"used\":1,\"total\":2,\"recording_capacity_bytes\":3}}".utf8)
+            data: Data("{\"type\":\"storage_changed\",\"storage\":{\"used\":1,\"total\":2,\"recording_capacity_bytes\":3},\"recording_readiness\":{\"ready\":true,\"reason\":null}}".utf8)
         )
         let chunkedBody = MJPEGWireBuilder.chunked(body, chunkSizes: [3, 2])
         let wire = SSEWireBuilder.response(
@@ -40,7 +40,10 @@ struct EventsClientTests {
 
         let events = try await collect(client.connect(), count: 1)
 
-        #expect(events == [.storageChanged(Storage(used: 1, total: 2, recordingCapacityBytes: 3))])
+        #expect(events == [.storageChanged(
+            storage: Storage(used: 1, total: 2, recordingCapacityBytes: 3),
+            recordingReadiness: .ready
+        )])
     }
 
     @Test(.tags(.networking))

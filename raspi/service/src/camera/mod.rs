@@ -270,15 +270,18 @@ impl Backend for CameraBackend {
     fn update_telemetry(
         &self,
         storage: Option<DiskUsage>,
+        recording_storage_available: bool,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
     ) {
-        self.hub.update_telemetry(storage, soc_temp_c, mem, cpu);
+        self.hub
+            .update_telemetry(storage, recording_storage_available, soc_temp_c, mem, cpu);
     }
 
-    fn update_storage(&self, storage: Option<DiskUsage>) {
-        self.hub.update_storage(storage);
+    fn update_storage(&self, storage: Option<DiskUsage>, recording_storage_available: bool) {
+        self.hub
+            .update_storage(storage, recording_storage_available);
     }
 }
 

@@ -71,8 +71,8 @@ mock first.
       operational surface instead of a health/check screen: live preview is always on
       top when connected, recording state + one Start/Stop control sit with the
       preview, and a simple non-interactive list of finished segment files appears
-      below. Drive the API from that UI; keep `/v1/health` small and boring as a
-      cheap liveness probe, not a user screen.
+      below. Drive the API from that UI; use the small canonical `/v1/status`
+      snapshot as the one-shot operational probe, not a user screen.
       - [x] Replace the health-first root with a home dashboard that starts preview
             immediately and keeps recording controls on that same screen.
       - [x] Add `GET /v1/status` for dashboard facts: recording state, camera state,

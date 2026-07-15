@@ -6,13 +6,17 @@ use std::{
 
 use tokio::sync::Semaphore;
 
-use crate::{clips::resolve_segment, recorder::SegmentId, sysfacts::DiskUsage, DurationCache};
+use crate::{
+    clips::resolve_segment, recorder::SegmentId, storage::StorageCoordinator, sysfacts::DiskUsage,
+    DurationCache,
+};
 
 const OBSERVATION_DEADLINE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FilesystemObservation {
     pub storage: Option<DiskUsage>,
+    pub recording_storage_available: bool,
     pub current_segment: Option<ObservedSegment>,
 }
 
@@ -39,27 +43,48 @@ where
 pub struct FilesystemObserver {
     permit: Arc<Semaphore>,
     probe: Arc<dyn FilesystemProbe>,
+    recording_mount_required: bool,
 }
 
 impl FilesystemObserver {
     pub fn new(
-        rec_dir: Arc<Path>,
+        storage: Arc<StorageCoordinator>,
         duration_cache: Arc<DurationCache>,
         gc_floor_bytes: u64,
         recording_capacity_override: Option<u64>,
     ) -> Self {
-        Self::with_probe(DefaultProbe {
-            rec_dir,
-            duration_cache,
-            gc_floor_bytes,
-            recording_capacity_override,
-        })
+        Self::with_probe_and_mount_requirement(
+            DefaultProbe {
+                rec_dir: storage.rec_dir(),
+                storage: storage.clone(),
+                duration_cache,
+                gc_floor_bytes,
+                recording_capacity_override,
+            },
+            storage.required_mountpoint().is_some(),
+        )
     }
 
     pub fn with_probe(probe: impl FilesystemProbe) -> Self {
+        Self::with_probe_and_mount_requirement(probe, false)
+    }
+
+    pub fn with_probe_and_mount_requirement(
+        probe: impl FilesystemProbe,
+        recording_mount_required: bool,
+    ) -> Self {
         Self {
             permit: Arc::new(Semaphore::new(1)),
             probe: Arc::new(probe),
+            recording_mount_required,
+        }
+    }
+
+    pub fn unavailable_observation(&self) -> FilesystemObservation {
+        FilesystemObservation {
+            storage: None,
+            recording_storage_available: !self.recording_mount_required,
+            current_segment: None,
         }
     }
 
@@ -91,6 +116,7 @@ impl FilesystemObserver {
 
 struct DefaultProbe {
     rec_dir: Arc<Path>,
+    storage: Arc<StorageCoordinator>,
     duration_cache: Arc<DurationCache>,
     gc_floor_bytes: u64,
     recording_capacity_override: Option<u64>,
@@ -112,6 +138,7 @@ impl FilesystemProbe for DefaultProbe {
 
         FilesystemObservation {
             storage,
+            recording_storage_available: self.storage.recording_storage_available().is_ok(),
             current_segment,
         }
     }
@@ -209,6 +236,7 @@ mod tests {
                 total: 10,
                 recording_capacity_bytes: 10,
             }),
+            recording_storage_available: true,
             current_segment: None,
         }
     }

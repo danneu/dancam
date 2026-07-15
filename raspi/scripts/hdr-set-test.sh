@@ -51,11 +51,19 @@ count=0
 count=$((count + 1))
 echo "$count" >"$count_file"
 echo "curl $count" >>"$HDR_TEST_LOG"
-if [ "$count" -ge "${HDR_RUNNING_AFTER:-1}" ]; then
-  echo '{ "camera_state" : "running" }'
-else
-  echo '{"camera_state":"starting"}'
-fi
+case "${HDR_STATUS_KIND:-ready}" in
+  malformed) echo 'not json' ;;
+  missing) echo '{}' ;;
+  nonboolean) echo '{"recording_readiness":{"ready":1}}' ;;
+  false) echo '{"recording_readiness":{"ready":false}}' ;;
+  ready)
+    if [ "$count" -ge "${HDR_READY_AFTER:-1}" ]; then
+      echo '{"recording_readiness":{"ready":true}}'
+    else
+      echo '{"recording_readiness":{"ready":false}}'
+    fi
+    ;;
+esac
 EOF
   chmod +x "$CASE_DIR/bin/systemctl" "$CASE_DIR/bin/v4l2-ctl" "$CASE_DIR/bin/curl"
 }
@@ -69,7 +77,7 @@ run_case() {
   make_mocks
   set +e
   OUTPUT="$(env PATH="$CASE_DIR/bin:$PATH" HDR_TEST_LOG="$CASE_DIR/log" \
-    DANCAM_V4L_SYSFS_ROOT="$CASE_DIR/sysfs" DANCAM_HEALTH_TIMEOUT="${HDR_TIMEOUT:-2}" \
+    DANCAM_V4L_SYSFS_ROOT="$CASE_DIR/sysfs" DANCAM_RECORDING_READINESS_TIMEOUT="${HDR_TIMEOUT:-2}" \
     "$@" bash "$HDR_SCRIPT" $hdr_args 2>&1)"
   STATUS=$?
   set -e
@@ -83,6 +91,10 @@ run_case off off env
 [ "$STATUS" -eq 0 ] || fail "off failed: $OUTPUT"
 assert_contains "$OUTPUT" "wide_dynamic_range: 0"
 assert_log $'systemctl stop dancam\nv4l2-ctl -d /dev/v4l-subdev0 --set-ctrl wide_dynamic_range=0\nv4l2-ctl -d /dev/v4l-subdev0 --get-ctrl wide_dynamic_range\nsystemctl start dancam\ncurl 1'
+
+run_case transient on env HDR_READY_AFTER=3
+[ "$STATUS" -eq 0 ] || fail "transient readiness did not recover: $OUTPUT"
+[ "$(cat "$CASE_DIR/log.polls")" -eq 3 ] || fail "expected three readiness polls"
 
 run_case invalid bogus env
 [ "$STATUS" -ne 0 ] || fail "invalid mode succeeded"
@@ -125,7 +137,12 @@ run_case reinterrupt on env HDR_INTERRUPT_AT=stop HDR_SIGNAL=TERM HDR_REINTERRUP
 [ "$STATUS" -eq 143 ] || fail "re-interrupted recovery returned $STATUS instead of 143: $OUTPUT"
 assert_log $'systemctl stop dancam\nsystemctl start dancam\ncurl 1'
 
-run_case readiness_timeout on env DANCAM_HEALTH_TIMEOUT=0 HDR_RUNNING_AFTER=999
+for kind in malformed missing nonboolean false; do
+  run_case "${kind}_timeout" on env DANCAM_RECORDING_READINESS_TIMEOUT=0 HDR_STATUS_KIND="$kind"
+  [ "$STATUS" -ne 0 ] || fail "$kind readiness input succeeded"
+done
+
+run_case readiness_timeout on env DANCAM_RECORDING_READINESS_TIMEOUT=0 HDR_READY_AFTER=999
 [ "$STATUS" -ne 0 ] || fail "readiness timeout succeeded"
 assert_contains "$OUTPUT" "recording is DOWN"
 assert_log $'systemctl stop dancam\nv4l2-ctl -d /dev/v4l-subdev0 --set-ctrl wide_dynamic_range=1\nv4l2-ctl -d /dev/v4l-subdev0 --get-ctrl wide_dynamic_range\nsystemctl start dancam\ncurl 1'

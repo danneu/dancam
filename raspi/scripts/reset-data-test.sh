@@ -60,7 +60,19 @@ count=0
 count=$((count + 1))
 echo "$count" >"$count_file"
 echo "curl $count $*" >>"$RESET_TEST_LOG"
-if [ "$count" -lt "${RESET_HEALTHY_AFTER:-1}" ]; then exit 22; fi
+case "${RESET_STATUS_KIND:-ready}" in
+  malformed) printf 'not json\n' ;;
+  missing) printf '{}\n' ;;
+  nonboolean) printf '{"recording_readiness":{"ready":"yes"}}\n' ;;
+  false) printf '{"recording_readiness":{"ready":false}}\n' ;;
+  ready)
+    if [ "$count" -lt "${RESET_READY_AFTER:-1}" ]; then
+      printf '{"recording_readiness":{"ready":false}}\n'
+    else
+      printf '{"recording_readiness":{"ready":true}}\n'
+    fi
+    ;;
+esac
 EOF
   cat >"$CASE_DIR/bin/date" <<'EOF'
 #!/usr/bin/env bash
@@ -85,7 +97,7 @@ run_case() {
   make_mocks
   set +e
   OUTPUT="$(env PATH="$CASE_DIR/bin:$PATH" RESET_TEST_LOG="$CASE_DIR/log" \
-    DANCAM_DATA_DIR="$CASE_DIR/data" DANCAM_HEALTH_TIMEOUT=5 "$@" \
+    DANCAM_DATA_DIR="$CASE_DIR/data" DANCAM_RECORDING_READINESS_TIMEOUT=5 "$@" \
     bash "$RESET_SCRIPT" 2>&1)"
   STATUS=$?
   set -e
@@ -97,7 +109,7 @@ mounted_log() {
 
 run_case success env
 [ "$STATUS" -eq 0 ] || fail "successful reset failed: $OUTPUT"
-assert_log "$(mounted_log)"$'\nsystemctl stop dancam\nfind '"$CASE_DIR"$'/data/rec -mindepth 1 -delete\nsystemctl start dancam\ncurl 1 -fsS --max-time 5 -o /dev/null http://localhost:8080/v1/health'
+assert_log "$(mounted_log)"$'\nsystemctl stop dancam\nfind '"$CASE_DIR"$'/data/rec -mindepth 1 -delete\nsystemctl start dancam\ncurl 1 -fsS --max-time 5 http://localhost:8080/v1/status'
 
 run_case missing env
 rm -rf "$CASE_DIR/data"
@@ -132,25 +144,30 @@ assert_log "$(printf 'stat -c %%d %s/data' "$CASE_DIR")"
 
 run_case delete_failure env RESET_DELETE_FAIL=1
 [ "$STATUS" -eq 23 ] || fail "delete failure returned $STATUS instead of 23: $OUTPUT"
-assert_log "$(mounted_log)"$'\nsystemctl stop dancam\nfind '"$CASE_DIR"$'/data/rec -mindepth 1 -delete\nsystemctl start dancam\ncurl 1 -fsS --max-time 5 -o /dev/null http://localhost:8080/v1/health'
+assert_log "$(mounted_log)"$'\nsystemctl stop dancam\nfind '"$CASE_DIR"$'/data/rec -mindepth 1 -delete\nsystemctl start dancam\ncurl 1 -fsS --max-time 5 http://localhost:8080/v1/status'
 
 run_case interrupted env RESET_SIGNAL=TERM
 [ "$STATUS" -eq 143 ] || fail "SIGTERM returned $STATUS instead of 143: $OUTPUT"
-assert_log "$(mounted_log)"$'\nsystemctl stop dancam\nsystemctl start dancam\ncurl 1 -fsS --max-time 5 -o /dev/null http://localhost:8080/v1/health'
+assert_log "$(mounted_log)"$'\nsystemctl stop dancam\nsystemctl start dancam\ncurl 1 -fsS --max-time 5 http://localhost:8080/v1/status'
 
-run_case transient_health env RESET_HEALTHY_AFTER=3
-[ "$STATUS" -eq 0 ] || fail "transient health failures did not recover: $OUTPUT"
-[ "$(cat "$CASE_DIR/log.polls")" -eq 3 ] || fail "expected three health polls"
+run_case transient_readiness env RESET_READY_AFTER=3
+[ "$STATUS" -eq 0 ] || fail "transient readiness failures did not recover: $OUTPUT"
+[ "$(cat "$CASE_DIR/log.polls")" -eq 3 ] || fail "expected three readiness polls"
 assert_contains "$(cat "$CASE_DIR/log")" "curl 3"
 
-run_case health_timeout env DANCAM_HEALTH_TIMEOUT=0 RESET_HEALTHY_AFTER=999
-[ "$STATUS" -ne 0 ] || fail "health timeout succeeded"
+for kind in malformed missing nonboolean false; do
+  run_case "${kind}_timeout" env DANCAM_RECORDING_READINESS_TIMEOUT=0 RESET_STATUS_KIND="$kind"
+  [ "$STATUS" -ne 0 ] || fail "$kind readiness input succeeded"
+done
+
+run_case readiness_timeout env DANCAM_RECORDING_READINESS_TIMEOUT=0 RESET_READY_AFTER=999
+[ "$STATUS" -ne 0 ] || fail "readiness timeout succeeded"
 assert_contains "$OUTPUT" "recording is DOWN"
-[ "$(cat "$CASE_DIR/log.polls")" -eq 1 ] || fail "health timeout was not bounded"
+[ "$(cat "$CASE_DIR/log.polls")" -eq 1 ] || fail "readiness timeout was not bounded"
 
 run_case start_failure env RESET_START_FAIL=1
 [ "$STATUS" -ne 0 ] || fail "restart failure succeeded"
 assert_contains "$OUTPUT" "restart it manually"
-[ ! -f "$CASE_DIR/log.polls" ] || fail "health polling ran after restart failure"
+[ ! -f "$CASE_DIR/log.polls" ] || fail "readiness polling ran after restart failure"
 
 echo "reset-data behavioral tests OK"

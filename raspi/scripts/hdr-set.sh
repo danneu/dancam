@@ -45,11 +45,11 @@ cleanup() {
     exit 1
   fi
 
-  local deadline=$((SECONDS + ${DANCAM_HEALTH_TIMEOUT:-60}))
+  local deadline=$((SECONDS + ${DANCAM_RECORDING_READINESS_TIMEOUT:-60}))
   local status
   while :; do
     status="$(curl -fsS --max-time 5 "http://localhost:${DANCAM_PORT:-8080}/v1/status" 2>/dev/null || true)"
-    if grep -Eq '"camera_state"[[:space:]]*:[[:space:]]*"running"' <<<"$status"; then
+    if python3 -c 'import json, sys; value = json.load(sys.stdin).get("recording_readiness", {}).get("ready"); sys.exit(0 if value is True else 1)' <<<"$status" 2>/dev/null; then
       exit "$rc"
     fi
     if (( SECONDS >= deadline )); then

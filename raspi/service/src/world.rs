@@ -15,6 +15,21 @@ pub enum CameraState {
     Offline,
 }
 
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct RecordingReadiness {
+    pub ready: bool,
+    pub reason: Option<RecordingReadinessReason>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordingReadinessReason {
+    CameraStarting,
+    CameraRestarting,
+    CameraOffline,
+    RecordingStorageUnavailable,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct TempReading {
     pub current: Option<f32>,
@@ -67,6 +82,7 @@ pub struct World {
     recorder: RecorderState,
     camera_state: CameraState,
     storage: Option<DiskUsage>,
+    recording_storage_available: bool,
     temp_c: TempC,
     mem: Option<MemInfo>,
     cpu: Cpu,
@@ -79,6 +95,7 @@ impl World {
             recorder: RecorderState::new(),
             camera_state,
             storage: None,
+            recording_storage_available: true,
             temp_c: TempC::empty(),
             mem: None,
             cpu: Cpu::empty(),
@@ -90,6 +107,7 @@ impl World {
         Snapshot {
             recorder: self.recorder.snapshot(),
             camera_state: self.camera_state,
+            recording_readiness: self.recording_readiness(),
             boot_id: boot_id.to_string(),
             boot_tag: crate::recorder::boot_tag(boot_id),
             uptime_s,
@@ -148,7 +166,10 @@ impl World {
                     Vec::new()
                 } else {
                     self.camera_state = state;
-                    let mut events = vec![Event::CameraStateChanged { state }];
+                    let mut events = vec![Event::CameraStateChanged {
+                        state,
+                        recording_readiness: self.recording_readiness(),
+                    }];
                     if state != CameraState::Running && self.temp_c.sensor.clear_current() {
                         events.push(Event::TempChanged {
                             soc: self.temp_c.soc.clone(),
@@ -160,11 +181,15 @@ impl World {
             }
             Input::Telemetry {
                 storage,
+                recording_storage_available,
                 soc_temp_c,
                 mem,
                 cpu,
-            } => self.apply_telemetry(storage, soc_temp_c, mem, cpu),
-            Input::Storage { storage } => self.apply_storage(storage),
+            } => self.apply_telemetry(storage, recording_storage_available, soc_temp_c, mem, cpu),
+            Input::Storage {
+                storage,
+                recording_storage_available,
+            } => self.apply_storage(storage, recording_storage_available),
             Input::SensorTemp { celsius } => self.apply_sensor_temp(celsius),
             Input::TimeSynced => {
                 if self.time_synced {
@@ -286,11 +311,12 @@ impl World {
     fn apply_telemetry(
         &mut self,
         storage: Option<DiskUsage>,
+        recording_storage_available: bool,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
     ) -> Vec<Event> {
-        let mut events = self.apply_storage(storage);
+        let mut events = self.apply_storage(storage, recording_storage_available);
         if self.temp_c.soc.observe(soc_temp_c) {
             events.push(Event::TempChanged {
                 soc: self.temp_c.soc.clone(),
@@ -319,14 +345,40 @@ impl World {
         events
     }
 
-    fn apply_storage(&mut self, storage: Option<DiskUsage>) -> Vec<Event> {
+    fn apply_storage(
+        &mut self,
+        storage: Option<DiskUsage>,
+        recording_storage_available: bool,
+    ) -> Vec<Event> {
         let storage = storage.map(quantize_storage);
-        if self.storage == storage {
+        let prior_readiness = self.recording_readiness();
+        self.recording_storage_available = recording_storage_available;
+        let readiness = self.recording_readiness();
+        if self.storage == storage && prior_readiness == readiness {
             return Vec::new();
         }
 
         self.storage = storage.clone();
-        vec![Event::StorageChanged { storage }]
+        vec![Event::StorageChanged {
+            storage,
+            recording_readiness: readiness,
+        }]
+    }
+
+    fn recording_readiness(&self) -> RecordingReadiness {
+        let reason = match self.camera_state {
+            CameraState::Starting => Some(RecordingReadinessReason::CameraStarting),
+            CameraState::Restarting => Some(RecordingReadinessReason::CameraRestarting),
+            CameraState::Offline => Some(RecordingReadinessReason::CameraOffline),
+            CameraState::Running if !self.recording_storage_available => {
+                Some(RecordingReadinessReason::RecordingStorageUnavailable)
+            }
+            CameraState::Running => None,
+        };
+        RecordingReadiness {
+            ready: reason.is_none(),
+            reason,
+        }
     }
 
     fn apply_sensor_temp(&mut self, celsius: Option<f32>) -> Vec<Event> {
@@ -376,12 +428,14 @@ pub enum Input {
     CameraState(CameraState),
     Telemetry {
         storage: Option<DiskUsage>,
+        recording_storage_available: bool,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
     },
     Storage {
         storage: Option<DiskUsage>,
+        recording_storage_available: bool,
     },
     SensorTemp {
         celsius: Option<f32>,
@@ -469,7 +523,11 @@ mod tests {
         assert_eq!(
             world.apply(Input::CameraState(CameraState::Offline), 9000),
             vec![Event::CameraStateChanged {
-                state: CameraState::Offline
+                state: CameraState::Offline,
+                recording_readiness: super::RecordingReadiness {
+                    ready: false,
+                    reason: Some(super::RecordingReadinessReason::CameraOffline),
+                },
             }]
         );
         assert_eq!(
@@ -488,6 +546,67 @@ mod tests {
         assert_eq!(world.phase(), RecorderPhase::Error);
         assert_eq!(world.current_segment(), None);
         assert_eq!(world.unpullable_from(), Some(43));
+    }
+
+    #[test]
+    fn readiness_is_atomic_and_mount_only_changes_emit_storage_delta() {
+        let mut world = World::new(CameraState::Running);
+        let storage = Some(sample_storage());
+        world.apply(
+            Input::Storage {
+                storage: storage.clone(),
+                recording_storage_available: true,
+            },
+            1,
+        );
+
+        let events = world.apply(
+            Input::Storage {
+                storage,
+                recording_storage_available: false,
+            },
+            2,
+        );
+        assert_eq!(events.len(), 1);
+        let Event::StorageChanged {
+            recording_readiness,
+            ..
+        } = &events[0]
+        else {
+            panic!("mount-only transition did not emit storage_changed");
+        };
+        assert_eq!(
+            recording_readiness.reason,
+            Some(super::RecordingReadinessReason::RecordingStorageUnavailable)
+        );
+
+        let events = world.apply(Input::CameraState(CameraState::Restarting), 3);
+        let Event::CameraStateChanged {
+            recording_readiness,
+            ..
+        } = &events[0]
+        else {
+            panic!("camera transition did not emit camera_state_changed");
+        };
+        assert_eq!(
+            recording_readiness.reason,
+            Some(super::RecordingReadinessReason::CameraRestarting)
+        );
+    }
+
+    #[test]
+    fn recorder_error_does_not_block_readiness_when_camera_and_storage_are_ready() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(Input::StartCommand { start_segment: 1 }, 1);
+        world.apply(
+            Input::Fail {
+                detail: "retryable".to_string(),
+            },
+            2,
+        );
+
+        assert_eq!(world.phase(), RecorderPhase::Error);
+        assert!(world.snapshot("boot", 1).recording_readiness.ready);
     }
 
     #[test]
@@ -601,6 +720,7 @@ mod tests {
 
         let events = world.apply(
             Input::Telemetry {
+                recording_storage_available: true,
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
@@ -618,6 +738,10 @@ mod tests {
                         total: 476 * STORAGE_QUANTUM,
                         recording_capacity_bytes: sample_storage().recording_capacity_bytes,
                     }),
+                    recording_readiness: super::RecordingReadiness {
+                        ready: true,
+                        reason: None,
+                    },
                 },
                 Event::TempChanged {
                     soc: reading(Some(51.5), Some(51.5)),
@@ -664,6 +788,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
+                recording_storage_available: true,
                 storage: Some(sample_storage()),
                 soc_temp_c: None,
                 mem: None,
@@ -675,6 +800,7 @@ mod tests {
         assert_eq!(
             world.apply(
                 Input::Telemetry {
+                    recording_storage_available: true,
                     storage: None,
                     soc_temp_c: None,
                     mem: None,
@@ -682,7 +808,13 @@ mod tests {
                 },
                 1100,
             ),
-            vec![Event::StorageChanged { storage: None }]
+            vec![Event::StorageChanged {
+                storage: None,
+                recording_readiness: super::RecordingReadiness {
+                    ready: true,
+                    reason: None,
+                },
+            }]
         );
         assert_eq!(world.snapshot("boot", 1).storage, None);
     }
@@ -692,6 +824,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
+                recording_storage_available: true,
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
@@ -703,6 +836,7 @@ mod tests {
         assert!(world
             .apply(
                 Input::Telemetry {
+                    recording_storage_available: true,
                     storage: Some(DiskUsage {
                         used: 149 * STORAGE_QUANTUM + 60_012_345,
                         total: 476 * STORAGE_QUANTUM + 1,
@@ -733,6 +867,7 @@ mod tests {
             }],
         };
         let input = |cpu| Input::Telemetry {
+            recording_storage_available: true,
             storage: None,
             soc_temp_c: None,
             mem: None,
@@ -773,6 +908,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
+                recording_storage_available: true,
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
@@ -784,6 +920,7 @@ mod tests {
         assert_eq!(
             world.apply(
                 Input::Telemetry {
+                    recording_storage_available: true,
                     storage: Some(DiskUsage {
                         used: 152 * STORAGE_QUANTUM + 7,
                         total: 476 * STORAGE_QUANTUM + 1,
@@ -805,6 +942,10 @@ mod tests {
                         total: 476 * STORAGE_QUANTUM,
                         recording_capacity_bytes: sample_storage().recording_capacity_bytes,
                     }),
+                    recording_readiness: super::RecordingReadiness {
+                        ready: true,
+                        reason: None,
+                    },
                 },
                 Event::TempChanged {
                     soc: reading(Some(52.0), Some(52.0)),
@@ -826,6 +967,7 @@ mod tests {
         for current in [51.5, 62.0] {
             world.apply(
                 Input::Telemetry {
+                    recording_storage_available: true,
                     storage: None,
                     soc_temp_c: Some(current),
                     mem: None,
@@ -838,6 +980,7 @@ mod tests {
         assert_eq!(
             world.apply(
                 Input::Telemetry {
+                    recording_storage_available: true,
                     storage: None,
                     soc_temp_c: Some(51.5),
                     mem: None,
@@ -903,6 +1046,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
+                recording_storage_available: true,
                 storage: None,
                 soc_temp_c: Some(51.5),
                 mem: None,
@@ -983,6 +1127,10 @@ mod tests {
             vec![
                 Event::CameraStateChanged {
                     state: CameraState::Restarting,
+                    recording_readiness: super::RecordingReadiness {
+                        ready: false,
+                        reason: Some(super::RecordingReadinessReason::CameraRestarting),
+                    },
                 },
                 Event::TempChanged {
                     soc: reading(None, None),
@@ -1042,6 +1190,10 @@ mod tests {
             world.apply(Input::CameraState(CameraState::Restarting), 1100),
             vec![Event::CameraStateChanged {
                 state: CameraState::Restarting,
+                recording_readiness: super::RecordingReadiness {
+                    ready: false,
+                    reason: Some(super::RecordingReadinessReason::CameraRestarting),
+                },
             }]
         );
     }
@@ -1051,6 +1203,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
+                recording_storage_available: true,
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),

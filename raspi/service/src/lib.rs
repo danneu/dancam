@@ -32,7 +32,6 @@ pub mod event_hub;
 pub mod events;
 pub mod filesystem_observer;
 pub mod gc;
-mod health;
 mod jpeg;
 mod mutation;
 pub mod preview;
@@ -79,7 +78,7 @@ impl AppState {
         let clip_durations = backend.clip_durations();
         let storage = Arc::new(StorageCoordinator::new(PathBuf::from(DEFAULT_REC_DIR)));
         let filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
-            storage.rec_dir(),
+            storage.clone(),
             clip_durations.clone(),
             0,
             None,
@@ -100,7 +99,7 @@ impl AppState {
 
     pub fn with_storage(mut self, storage: Arc<StorageCoordinator>) -> Self {
         self.filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
-            storage.rec_dir(),
+            storage.clone(),
             self.clip_durations.clone(),
             0,
             None,
@@ -123,7 +122,7 @@ impl AppState {
         recording_capacity_override: Option<u64>,
     ) -> Self {
         self.filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
-            self.storage.rec_dir(),
+            self.storage.clone(),
             self.clip_durations.clone(),
             gc_floor_bytes,
             recording_capacity_override,
@@ -139,7 +138,6 @@ impl AppState {
 
 pub fn app(state: AppState) -> Router {
     Router::new()
-        .route("/v1/health", get(health::health))
         .route("/v1/status", get(events::status))
         .route("/v1/events", get(events::events))
         .route("/v1/clips", get(clips::list_clips))

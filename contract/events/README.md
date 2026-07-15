@@ -38,7 +38,19 @@ SSE framing.
   has been durably deleted from the Pi.
 - `recording_starting` and `recording_stopping` are authoritative accepted
   command transitions, not just local app optimism.
+- `recording_readiness` is a complete required replacement in the snapshot and
+  in both `camera_state_changed` and `storage_changed`. Camera lifecycle reasons
+  take precedence over `recording_storage_unavailable`, so clients never fold a
+  changed camera or storage fact beside stale readiness.
 - Clients must ignore unknown event `type` values.
+
+## Recording Readiness
+
+The top-level `recording_readiness` capability says whether a recording command
+can be attempted now. Ready is exactly `{ "ready": true, "reason": null }`.
+Not-ready reasons are `camera_starting`, `camera_restarting`, `camera_offline`,
+and `recording_storage_unavailable`. Recorder lifecycle error is retryable and is
+therefore not itself a readiness reason.
 
 ## Storage Telemetry
 

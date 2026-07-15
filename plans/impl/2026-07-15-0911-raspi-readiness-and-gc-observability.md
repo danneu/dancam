@@ -267,13 +267,10 @@ deploy artifacts already owned by the repo.
   liveness remains SSE heartbeat presence.
 - Current documentation records that need forward reconciliation are raspi ADR 02
   (the historical transport table), raspi ADR 06 (the AP reachability probe), and
-  app ADR 23 (the claim that Pi operations retain `/v1/health`). The two actionable
-  WIP references are
-  `plans/wip/recorder-state-machine-source-of-truth.md` (the old health recording
-  field) and `plans/wip/no-just-assume-they-humming-eclipse.md` (the AP smoke URL).
-  Completed `pine`/`jet` roadmap prose, archived `plans/impl/*`, and dated ADR
-  validation logs are point-in-time history and remain intact, with forward notes
-  where needed.
+  app ADR 23 (the claim that Pi operations retain `/v1/health`). Completed
+  `pine`/`jet` roadmap prose, archived `plans/impl/*`, dated ADR validation logs,
+  and unrelated WIP plans are point-in-time or pre-implementation material and
+  remain intact, with forward notes added only to the active records named above.
 - `raspi/service/tests/recording.rs#recording_start_and_stop_update_health_recording_flag`
   is not a generic GET fixture: it verifies command state through the old health
   payload and must move to `/v1/status`, asserting recorder phase after both start
@@ -409,11 +406,9 @@ Verification: `just raspi-test` and `just raspi-build`.
 - Reconcile current documentation atomically: update README/AGENTS operational
   commands, reset/HDR guidance, and timeout names; repoint `fern`'s present-tense
   roadmap guidance to the small canonical `/v1/status` probe; add dated forward
-  notes to raspi ADR 02, raspi ADR 06, and app ADR 23; remove the obsolete health
-  derivation from `plans/wip/recorder-state-machine-source-of-truth.md`; and change
-  `plans/wip/no-just-assume-they-humming-eclipse.md`'s AP smoke URL to status.
-  Preserve completed roadmap history, archived implementation plans, and dated
-  validation logs.
+  notes to raspi ADR 02, raspi ADR 06, and app ADR 23. Preserve completed roadmap
+  history, archived implementation plans, dated validation logs, and unrelated
+  WIP plans; stale WIP plans are reconciled when they are refined for implementation.
 
 Behavioral tests:
 
@@ -640,7 +635,7 @@ Behavioral tests and verification:
 
 - [x] 1. Extract raspi-reset-data remote body into a testable script
 - [x] 2. Bound operational filesystem observation
-- [ ] 3. Make recording readiness part of canonical status
+- [x] 3. Make recording readiness part of canonical status
 - [ ] 4. Return typed recording-command errors
 - [ ] 5. Add decision-grade ring GC diagnostics
 - [ ] 6. Wait for recording readiness after deploy

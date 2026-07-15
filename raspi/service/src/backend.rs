@@ -95,13 +95,14 @@ pub trait Backend: Send + Sync + 'static {
     fn update_telemetry(
         &self,
         _storage: Option<DiskUsage>,
+        _recording_storage_available: bool,
         _soc_temp_c: Option<f32>,
         _mem: Option<MemInfo>,
         _cpu: Cpu,
     ) {
     }
 
-    fn update_storage(&self, _storage: Option<DiskUsage>) {}
+    fn update_storage(&self, _storage: Option<DiskUsage>, _recording_storage_available: bool) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,15 +294,18 @@ impl Backend for MockBackend {
     fn update_telemetry(
         &self,
         storage: Option<DiskUsage>,
+        recording_storage_available: bool,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
     ) {
-        self.hub.update_telemetry(storage, soc_temp_c, mem, cpu);
+        self.hub
+            .update_telemetry(storage, recording_storage_available, soc_temp_c, mem, cpu);
     }
 
-    fn update_storage(&self, storage: Option<DiskUsage>) {
-        self.hub.update_storage(storage);
+    fn update_storage(&self, storage: Option<DiskUsage>, recording_storage_available: bool) {
+        self.hub
+            .update_storage(storage, recording_storage_available);
     }
 }
 

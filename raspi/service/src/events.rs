@@ -13,7 +13,7 @@ use crate::{
     event_hub::EventConnection,
     recorder::{CurrentSegment, RecorderSnapshot},
     sysfacts::{DiskUsage, MemInfo},
-    world::{CameraState, TempC, TempReading},
+    world::{CameraState, RecordingReadiness, TempC, TempReading},
     AppState,
 };
 
@@ -53,9 +53,11 @@ pub enum Event {
     },
     CameraStateChanged {
         state: CameraState,
+        recording_readiness: RecordingReadiness,
     },
     StorageChanged {
         storage: Option<DiskUsage>,
+        recording_readiness: RecordingReadiness,
     },
     TempChanged {
         soc: TempReading,
@@ -82,6 +84,7 @@ pub enum Event {
 pub struct Snapshot {
     pub recorder: RecorderSnapshot,
     pub camera_state: CameraState,
+    pub recording_readiness: RecordingReadiness,
     pub boot_id: String,
     pub boot_tag: Option<String>,
     pub uptime_s: u64,
@@ -144,18 +147,30 @@ pub fn spawn_telemetry(
         let mut cpu_sampler = CpuSampler::new();
         loop {
             interval.tick().await;
-            let storage = filesystem
+            let observation = filesystem
                 .observe(None)
                 .await
-                .and_then(|observation| observation.storage);
+                .unwrap_or_else(|| filesystem.unavailable_observation());
             backend.update_telemetry(
-                storage,
+                observation.storage,
+                observation.recording_storage_available,
                 crate::sysfacts::soc_temp_c(),
                 crate::sysfacts::mem_info(),
                 cpu_sampler.sample(),
             );
         }
     });
+}
+
+pub async fn seed_filesystem_observation(state: &AppState) {
+    let observation = state
+        .filesystem
+        .observe(None)
+        .await
+        .unwrap_or_else(|| state.filesystem.unavailable_observation());
+    state
+        .backend
+        .update_storage(observation.storage, observation.recording_storage_available);
 }
 
 async fn materialize_snapshot<T>(state: &AppState, finalize: impl FnOnce() -> T) -> T
@@ -198,8 +213,11 @@ async fn observe_filesystem(
         .filesystem
         .observe(current_segment)
         .await
-        .unwrap_or_default();
-    state.backend.update_storage(observation.storage.clone());
+        .unwrap_or_else(|| state.filesystem.unavailable_observation());
+    state.backend.update_storage(
+        observation.storage.clone(),
+        observation.recording_storage_available,
+    );
     observation
 }
 
@@ -231,7 +249,7 @@ mod tests {
         filesystem_observer::{FilesystemObservation, ObservedSegment},
         recorder::{CurrentSegment, RecorderPhase, RecorderSnapshot},
         sysfacts::{DiskUsage, MemInfo},
-        world::{CameraState, TempC, TempReading},
+        world::{CameraState, RecordingReadiness, TempC, TempReading},
     };
 
     #[test]
@@ -256,6 +274,7 @@ mod tests {
             &mut snapshot,
             &FilesystemObservation {
                 storage: None,
+                recording_storage_available: true,
                 current_segment: Some(ObservedSegment {
                     id: 44,
                     dur_ms: Some(30000),
@@ -281,6 +300,10 @@ mod tests {
                     detail: None,
                 },
                 camera_state: CameraState::Running,
+                recording_readiness: RecordingReadiness {
+                    ready: true,
+                    reason: None,
+                },
                 boot_id: "7f3a91c2-b0d4-4e15-b196-20e0416af749".to_string(),
                 boot_tag: Some("7f3a91c2b0d4".to_string()),
                 uptime_s: 120,
@@ -365,6 +388,10 @@ mod tests {
             },
             Event::CameraStateChanged {
                 state: CameraState::Running,
+                recording_readiness: RecordingReadiness {
+                    ready: true,
+                    reason: None,
+                },
             },
             Event::StorageChanged {
                 storage: Some(DiskUsage {
@@ -372,6 +399,10 @@ mod tests {
                     total: 32_000_000_000,
                     recording_capacity_bytes: 29_000_000_000,
                 }),
+                recording_readiness: RecordingReadiness {
+                    ready: true,
+                    reason: None,
+                },
             },
             Event::TempChanged {
                 soc: TempReading {

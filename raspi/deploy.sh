@@ -10,7 +10,7 @@
 # env, e.g.:
 #   DANCAM_HOST=pi@192.168.1.50 ./raspi/deploy.sh
 #   DANCAM_HOST=<user>@10.42.0.1 ./raspi/deploy.sh # while joined to the Pi AP
-#   DANCAM_HEALTH_TIMEOUT=120 ./raspi/deploy.sh    # seconds to wait for /v1/health after restart (default 60)
+#   DANCAM_STATUS_TIMEOUT=120 ./raspi/deploy.sh    # seconds to wait for valid /v1/status after restart (default 60)
 #
 # Requires: nix (flakes) on the Mac; SSH access to the Pi; passwordless or
 # interactive sudo on the Pi (the install step uses `ssh -t` so sudo can prompt).
@@ -25,7 +25,7 @@ PORT="${DANCAM_PORT:-8080}"
 # macOS desktop notification on exit, so a long deploy can be backgrounded and
 # still ping when it's actually ready to test. The EXIT trap fires once on any
 # exit path: a clean finish notifies success, a failed build/rsync/install or a
-# health-timeout notifies failure, and a Ctrl-C abort stays silent.
+# status-timeout notifies failure, and a Ctrl-C abort stays silent.
 #
 # IMPORTANT: `local rc=$?` must be the first statement -- any command before it
 # (even `command -v`) clobbers $? to its own status (0), so a *failed* deploy
@@ -90,13 +90,13 @@ ssh -t -i "$SSH_KEY" "$HOST" '
   rm -f /tmp/dancam.new /tmp/dancam.service /tmp/dancam-camera.py
 '
 
-HEALTH_TIMEOUT="${DANCAM_HEALTH_TIMEOUT:-60}"
-echo "==> waiting up to ${HEALTH_TIMEOUT}s for dancam to answer /v1/health on $HOST"
-deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+STATUS_TIMEOUT="${DANCAM_STATUS_TIMEOUT:-60}"
+echo "==> waiting up to ${STATUS_TIMEOUT}s for valid dancam /v1/status on $HOST"
+deadline=$(( $(date +%s) + STATUS_TIMEOUT ))
 until ssh -i "$SSH_KEY" -o ConnectTimeout=5 "$HOST" \
-        "curl -fsS --max-time 5 -o /dev/null http://localhost:$PORT/v1/health" 2>/dev/null; do
+        "curl -fsS --max-time 5 http://localhost:$PORT/v1/status | python3 -c 'import json, sys; value = json.load(sys.stdin).get(\"recording_readiness\", {}).get(\"ready\"); sys.exit(0 if isinstance(value, bool) else 1)'" 2>/dev/null; do
   if (( $(date +%s) >= deadline )); then
-    echo "!! dancam did not answer /v1/health within ${HEALTH_TIMEOUT}s" >&2
+    echo "!! dancam did not return valid /v1/status within ${STATUS_TIMEOUT}s" >&2
     exit 1
   fi
   sleep 2

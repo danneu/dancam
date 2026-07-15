@@ -18,15 +18,15 @@ struct LinkTests {
         let world = CameraSamples.world(storage: nil)
 
         var online = Link.online(world)
-        online.fold(.storageChanged(Storage(used: 10, total: 20, recordingCapacityBytes: 15)))
+        online.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
         #expect(online.world?.storage == Storage(used: 10, total: 20, recordingCapacityBytes: 15))
 
         var connecting = Link.connecting
-        connecting.fold(.storageChanged(Storage(used: 10, total: 20, recordingCapacityBytes: 15)))
+        connecting.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
         #expect(connecting == .connecting)
 
         var offline = Link.offline(last: world)
-        offline.fold(.storageChanged(Storage(used: 10, total: 20, recordingCapacityBytes: 15)))
+        offline.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
         #expect(offline == .offline(last: world))
     }
 

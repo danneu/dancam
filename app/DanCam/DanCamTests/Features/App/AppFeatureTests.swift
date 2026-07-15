@@ -1010,7 +1010,10 @@ struct AppFeatureTests {
             reduce: AppFeature.reduce
         )
 
-        await store.send(.event(.storageChanged(Storage(used: 1, total: 2, recordingCapacityBytes: 3)))) {
+        await store.send(.event(.storageChanged(
+            storage: Storage(used: 1, total: 2, recordingCapacityBytes: 3),
+            recordingReadiness: .ready
+        ))) {
             var nextWorld = world
             nextWorld.storage = Storage(used: 1, total: 2, recordingCapacityBytes: 3)
             $0.link = .online(nextWorld)

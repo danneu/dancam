@@ -64,7 +64,7 @@ struct SettingsViewControllerTests {
 
         _ = AppFeature.reduce(
             state: &state,
-            action: .event(.storageChanged(nil)),
+            action: .event(.storageChanged(storage: nil, recordingReadiness: .ready)),
             dependencies: dependencies
         )
 

@@ -40,7 +40,7 @@ fn assert_generated_request_id(response: &Response<Body>) {
 #[tokio::test]
 async fn generates_request_id_when_absent() {
     let response = dancam::app(state())
-        .oneshot(get("/v1/health").body(Body::empty()).unwrap())
+        .oneshot(get("/v1/status").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -54,11 +54,11 @@ async fn generated_request_ids_increment_from_one_per_state() {
 
     let first = app
         .clone()
-        .oneshot(get("/v1/health").body(Body::empty()).unwrap())
+        .oneshot(get("/v1/status").body(Body::empty()).unwrap())
         .await
         .unwrap();
     let second = app
-        .oneshot(get("/v1/health").body(Body::empty()).unwrap())
+        .oneshot(get("/v1/status").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -72,7 +72,7 @@ async fn generated_request_ids_increment_from_one_per_state() {
 async fn echoes_valid_inbound_request_id() {
     let response = dancam::app(state())
         .oneshot(
-            get("/v1/health")
+            get("/v1/status")
                 .header("x-request-id", "corr-123")
                 .body(Body::empty())
                 .unwrap(),
@@ -100,7 +100,7 @@ async fn host_rejection_still_carries_request_id() {
     let response = dancam::app(state())
         .oneshot(
             Request::builder()
-                .uri("/v1/health")
+                .uri("/v1/status")
                 .header("Host", "evil.example:8080")
                 .body(Body::empty())
                 .unwrap(),
@@ -118,7 +118,7 @@ async fn rejects_unsafe_inbound_request_id() {
 
     let response = dancam::app(state())
         .oneshot(
-            get("/v1/health")
+            get("/v1/status")
                 .header("x-request-id", unsafe_request_id.as_str())
                 .body(Body::empty())
                 .unwrap(),

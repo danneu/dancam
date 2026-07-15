@@ -52,7 +52,7 @@ async fn start_recording_requires_idempotency_key() {
 }
 
 #[tokio::test]
-async fn recording_start_and_stop_update_health_recording_flag() {
+async fn recording_start_and_stop_update_status_recorder_phase() {
     let app = dancam::app(state());
 
     let response = app
@@ -72,7 +72,7 @@ async fn recording_start_and_stop_update_health_recording_flag() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/v1/health")
+                .uri("/v1/status")
                 .header("Host", "10.42.0.1:8080")
                 .body(Body::empty())
                 .unwrap(),
@@ -81,9 +81,10 @@ async fn recording_start_and_stop_update_health_recording_flag() {
         .unwrap();
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["recording"], true);
+    assert_eq!(json["recorder"]["phase"], "recording");
 
     let response = app
+        .clone()
         .oneshot(
             recording_request("/v1/recording/stop")
                 .header("Content-Type", "application/json")
@@ -94,6 +95,20 @@ async fn recording_start_and_stop_update_health_recording_flag() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/status")
+                .header("Host", "10.42.0.1:8080")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["recorder"]["phase"], "idle");
 }
 
 #[tokio::test]
@@ -107,7 +122,7 @@ async fn host_allowlist_allows_expected_hosts() {
         let response = dancam::app(state())
             .oneshot(
                 Request::builder()
-                    .uri("/v1/health")
+                    .uri("/v1/status")
                     .header("Host", host)
                     .body(Body::empty())
                     .unwrap(),
@@ -124,7 +139,7 @@ async fn host_allowlist_rejects_missing_bad_and_wrong_port_hosts() {
     let response = dancam::app(state())
         .oneshot(
             Request::builder()
-                .uri("/v1/health")
+                .uri("/v1/status")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -136,7 +151,7 @@ async fn host_allowlist_rejects_missing_bad_and_wrong_port_hosts() {
         let response = dancam::app(state())
             .oneshot(
                 Request::builder()
-                    .uri("/v1/health")
+                    .uri("/v1/status")
                     .header("Host", host)
                     .body(Body::empty())
                     .unwrap(),

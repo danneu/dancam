@@ -1,4 +1,8 @@
 {
   "type": "camera_state_changed",
-  "state": "running"
+  "state": "running",
+  "recording_readiness": {
+    "ready": true,
+    "reason": null
+  }
 }

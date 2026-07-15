@@ -10,8 +10,8 @@ nonisolated enum CameraEvent: Decodable, Equatable, Sendable {
     case recordingStopping(session: UInt64, atMs: UInt64)
     case recordingStopped(session: UInt64, atMs: UInt64)
     case recorderFailed(session: UInt64, detail: String, atMs: UInt64)
-    case cameraStateChanged(state: CameraState)
-    case storageChanged(Storage?)
+    case cameraStateChanged(state: CameraState, recordingReadiness: RecordingReadiness)
+    case storageChanged(storage: Storage?, recordingReadiness: RecordingReadiness)
     case tempChanged(TempC)
     case memChanged(total: UInt64, available: UInt64, swapTotal: UInt64, swapUsed: UInt64)
     case cpuChanged(CPU)
@@ -52,10 +52,12 @@ extension CameraEvent {
 
     nonisolated private struct CameraStateChangedPayload: Decodable {
         var state: CameraState
+        var recordingReadiness: RecordingReadiness
     }
 
     nonisolated private struct StorageChangedPayload: Decodable {
         var storage: Storage?
+        var recordingReadiness: RecordingReadiness
     }
 
     nonisolated private struct TempChangedPayload: Decodable {
@@ -107,10 +109,17 @@ extension CameraEvent {
             let payload = try RecorderFailedPayload(from: decoder)
             self = .recorderFailed(session: payload.session, detail: payload.detail, atMs: payload.atMs)
         case "camera_state_changed":
-            self = .cameraStateChanged(state: try CameraStateChangedPayload(from: decoder).state)
+            let payload = try CameraStateChangedPayload(from: decoder)
+            self = .cameraStateChanged(
+                state: payload.state,
+                recordingReadiness: payload.recordingReadiness
+            )
         case "storage_changed":
             let payload = try StorageChangedPayload(from: decoder)
-            self = .storageChanged(payload.storage)
+            self = .storageChanged(
+                storage: payload.storage,
+                recordingReadiness: payload.recordingReadiness
+            )
         case "temp_changed":
             let payload = try TempChangedPayload(from: decoder)
             self = .tempChanged(TempC(soc: payload.soc, sensor: payload.sensor))
@@ -137,6 +146,7 @@ extension CameraEvent {
 nonisolated struct World: Codable, Equatable, Sendable {
     var recorder: RecorderSnapshot
     var cameraState: CameraState
+    var recordingReadiness: RecordingReadiness
     var bootId: String
     var bootTag: String? = nil
     var uptimeS: UInt64
@@ -183,10 +193,12 @@ extension World {
             next.recorder.session = session
             next.recorder.currentSegment = nil
             next.recorder.detail = detail
-        case .cameraStateChanged(let state):
+        case .cameraStateChanged(let state, let recordingReadiness):
             next.cameraState = state
-        case .storageChanged(let storage):
+            next.recordingReadiness = recordingReadiness
+        case .storageChanged(let storage, let recordingReadiness):
             next.storage = storage
+            next.recordingReadiness = recordingReadiness
         case .tempChanged(let tempC):
             next.tempC = tempC
         case .memChanged(let total, let available, let swapTotal, let swapUsed):
@@ -203,6 +215,20 @@ extension World {
 
         return next
     }
+}
+
+nonisolated struct RecordingReadiness: Codable, Equatable, Sendable {
+    var ready: Bool
+    var reason: RecordingReadinessReason?
+
+    static let ready = RecordingReadiness(ready: true, reason: nil)
+}
+
+nonisolated enum RecordingReadinessReason: String, Codable, Equatable, Sendable {
+    case cameraStarting
+    case cameraRestarting
+    case cameraOffline
+    case recordingStorageUnavailable
 }
 
 nonisolated struct RecorderSnapshot: Codable, Equatable, Sendable {
