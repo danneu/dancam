@@ -40,6 +40,7 @@
 
 - [Rust camera owner](research/1-rust-camera-owner.md)
 - [fMP4 container measurement](research/2-fmp4-container-measurement.md)
+- [fMP4 crash recovery deep dive](research/4-fmp4-crash-recovery-deep-dive.md)
 
 # Battle notes
 
