@@ -637,5 +637,5 @@ Behavioral tests and verification:
 - [x] 2. Bound operational filesystem observation
 - [x] 3. Make recording readiness part of canonical status
 - [x] 4. Return typed recording-command errors
-- [ ] 5. Add decision-grade ring GC diagnostics
+- [x] 5. Add decision-grade ring GC diagnostics
 - [ ] 6. Wait for recording readiness after deploy

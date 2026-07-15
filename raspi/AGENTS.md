@@ -272,6 +272,14 @@ shell, not `rustup target add`.
 - Logs: `journalctl -u dancam -f`. Persistent journald is backed by
   `/persist/journal` and bind-mounted at `/var/log/journal`, so previous-boot logs
   survive without making `/data` carry OS state.
+- Ring GC emits a structured `ring_gc_outcome` event only when it deletes footage
+  or enters its 30-second backoff. `outcome` distinguishes `reached_floor`,
+  `batch_capped`, `exhausted`, `probe_unavailable`, and `failed`;
+  `deleted_count`, ordered bounded `deleted_ids`, `avail_before`, `avail_after`, and
+  `floor_bytes` preserve the decision evidence. Backoff events add
+  `retry_after_s=30`, and failures add `error`. Healthy above-floor polling stays
+  silent. Use `journalctl -u dancam --grep ring_gc_outcome` for recent decisions,
+  or `journalctl -b -1 -u dancam --grep ring_gc_outcome` after a reboot.
 - Request/response access logs include `x-request-id` for app/Pi correlation; grep
   `journalctl -u dancam` for the response id. Pi-generated ids are a per-process
   incrementing counter that resets on service start; safe inbound ids are still echoed.
