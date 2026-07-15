@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 use axum::{
     extract::State,
@@ -8,8 +8,9 @@ use axum::{
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::{
-    clips::{resolve_segment, ClipMeta},
+    clips::ClipMeta,
     cpu::{Cpu, CpuCore, CpuSampler},
+    event_hub::EventConnection,
     recorder::{CurrentSegment, RecorderSnapshot},
     sysfacts::{DiskUsage, MemInfo},
     world::{CameraState, TempC, TempReading},
@@ -97,14 +98,14 @@ pub struct TimeStatus {
 }
 
 pub async fn status(State(state): State<AppState>) -> Json<Snapshot> {
-    Json(enrich_current_segment(state.backend.snapshot(), &state).await)
+    Json(materialize_snapshot(&state, || state.backend.snapshot()).await)
 }
 
 pub async fn events(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<SseEvent, axum::Error>>> {
-    let connection = state.backend.connect();
-    let snapshot = enrich_current_segment(connection.snapshot, &state).await;
+    let connection = materialize_snapshot(&state, || state.backend.connect()).await;
+    let snapshot = connection.snapshot;
     let first_event = Event::Snapshot(snapshot);
     tracing::debug!(seq = connection.seq, event = ?first_event, "emit");
     let first = tokio_stream::once(sse_frame(connection.seq, first_event));
@@ -135,23 +136,18 @@ pub fn spawn_heartbeat(backend: std::sync::Arc<dyn crate::backend::Backend>, int
 
 pub fn spawn_telemetry(
     backend: std::sync::Arc<dyn crate::backend::Backend>,
-    rec_dir: std::sync::Arc<Path>,
+    filesystem: std::sync::Arc<crate::filesystem_observer::FilesystemObserver>,
     interval: Duration,
-    gc_floor_bytes: u64,
-    recording_capacity_override: Option<u64>,
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(interval);
         let mut cpu_sampler = CpuSampler::new();
         loop {
             interval.tick().await;
-            let storage =
-                crate::sysfacts::disk_usage(&rec_dir, gc_floor_bytes).map(|mut storage| {
-                    if let Some(capacity) = recording_capacity_override {
-                        storage.recording_capacity_bytes = capacity;
-                    }
-                    storage
-                });
+            let storage = filesystem
+                .observe(None)
+                .await
+                .and_then(|observation| observation.storage);
             backend.update_telemetry(
                 storage,
                 crate::sysfacts::soc_temp_c(),
@@ -162,35 +158,64 @@ pub fn spawn_telemetry(
     });
 }
 
-async fn enrich_current_segment(mut snapshot: Snapshot, state: &AppState) -> Snapshot {
+async fn materialize_snapshot<T>(state: &AppState, finalize: impl FnOnce() -> T) -> T
+where
+    T: SnapshotMaterialization,
+{
+    let preliminary = state.backend.snapshot();
+    let observation = observe_filesystem(state, &preliminary).await;
+    let mut materialized = finalize();
+    apply_duration(materialized.snapshot_mut(), &observation);
+    materialized
+}
+
+trait SnapshotMaterialization {
+    fn snapshot_mut(&mut self) -> &mut Snapshot;
+}
+
+impl SnapshotMaterialization for Snapshot {
+    fn snapshot_mut(&mut self) -> &mut Snapshot {
+        self
+    }
+}
+
+impl SnapshotMaterialization for EventConnection {
+    fn snapshot_mut(&mut self) -> &mut Snapshot {
+        &mut self.snapshot
+    }
+}
+
+async fn observe_filesystem(
+    state: &AppState,
+    preliminary: &Snapshot,
+) -> crate::filesystem_observer::FilesystemObservation {
+    let current_segment = preliminary
+        .recorder
+        .current_segment
+        .as_ref()
+        .map(|segment| segment.id);
+    let observation = state
+        .filesystem
+        .observe(current_segment)
+        .await
+        .unwrap_or_default();
+    state.backend.update_storage(observation.storage.clone());
+    observation
+}
+
+fn apply_duration(
+    snapshot: &mut Snapshot,
+    observation: &crate::filesystem_observer::FilesystemObservation,
+) {
     let Some(current) = snapshot.recorder.current_segment.clone() else {
-        return snapshot;
+        return;
     };
-
-    let rec_dir = state.storage.rec_dir();
-    let duration_cache = state.clip_durations.clone();
-    let id = current.id;
-    let dur_ms = match tokio::task::spawn_blocking(move || {
-        let Some(segment) = resolve_segment(rec_dir.as_ref(), id)? else {
-            return Ok::<Option<u64>, std::io::Error>(None);
-        };
-        Ok(duration_cache.duration_ms(id, &segment.path, segment.bytes))
-    })
-    .await
-    {
-        Ok(Ok(dur_ms)) => dur_ms,
-        Ok(Err(error)) => {
-            tracing::debug!(%error, id, "skipping current segment duration enrichment");
-            None
-        }
-        Err(error) => {
-            tracing::error!(%error, "current segment duration task failed");
-            None
-        }
-    };
-
+    let dur_ms = observation
+        .current_segment
+        .as_ref()
+        .filter(|observed| observed.id == current.id)
+        .and_then(|observed| observed.dur_ms);
     snapshot.recorder.current_segment = Some(CurrentSegment { dur_ms, ..current });
-    snapshot
 }
 
 fn sse_frame(seq: u64, event: Event) -> Result<SseEvent, axum::Error> {
@@ -199,10 +224,11 @@ fn sse_frame(seq: u64, event: Event) -> Result<SseEvent, axum::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Event, Snapshot, TimeStatus};
+    use super::{apply_duration, Event, Snapshot, TimeStatus};
     use crate::{
         clips::ClipMeta,
         cpu::{Cpu, CpuCore},
+        filesystem_observer::{FilesystemObservation, ObservedSegment},
         recorder::{CurrentSegment, RecorderPhase, RecorderSnapshot},
         sysfacts::{DiskUsage, MemInfo},
         world::{CameraState, TempC, TempReading},
@@ -219,6 +245,27 @@ mod tests {
             let decoded: Event = serde_json::from_str(&fixture).unwrap();
             assert_eq!(decoded, event, "{}", canonical_name(&event));
         }
+    }
+
+    #[test]
+    fn duration_observed_for_a_rolled_segment_is_discarded() {
+        let Event::Snapshot(mut snapshot) = canonical_events().remove(0) else {
+            panic!("first canonical event was not a snapshot");
+        };
+        apply_duration(
+            &mut snapshot,
+            &FilesystemObservation {
+                storage: None,
+                current_segment: Some(ObservedSegment {
+                    id: 44,
+                    dur_ms: Some(30000),
+                }),
+            },
+        );
+
+        let current = snapshot.recorder.current_segment.unwrap();
+        assert_eq!(current.id, 43);
+        assert_eq!(current.dur_ms, None);
     }
 
     fn canonical_events() -> Vec<Event> {

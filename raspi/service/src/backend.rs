@@ -100,6 +100,8 @@ pub trait Backend: Send + Sync + 'static {
         _cpu: Cpu,
     ) {
     }
+
+    fn update_storage(&self, _storage: Option<DiskUsage>) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,6 +298,10 @@ impl Backend for MockBackend {
         cpu: Cpu,
     ) {
         self.hub.update_telemetry(storage, soc_temp_c, mem, cpu);
+    }
+
+    fn update_storage(&self, storage: Option<DiskUsage>) {
+        self.hub.update_storage(storage);
     }
 }
 

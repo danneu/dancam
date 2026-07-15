@@ -79,12 +79,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .ok()
         })
         .flatten();
+    let state = state.with_filesystem_config(gc.floor_bytes, recording_capacity_override);
     dancam::events::spawn_telemetry(
         state.backend.clone(),
-        state.storage.rec_dir(),
+        state.filesystem.clone(),
         Duration::from_secs(2),
-        gc.floor_bytes,
-        recording_capacity_override,
     );
     if gc.floor_bytes > 0 {
         tracing::info!(floor_bytes = gc.floor_bytes, "segment gc enabled");

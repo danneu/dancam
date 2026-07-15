@@ -639,7 +639,7 @@ Behavioral tests and verification:
 ## Commit progress
 
 - [x] 1. Extract raspi-reset-data remote body into a testable script
-- [ ] 2. Bound operational filesystem observation
+- [x] 2. Bound operational filesystem observation
 - [ ] 3. Make recording readiness part of canonical status
 - [ ] 4. Return typed recording-command errors
 - [ ] 5. Add decision-grade ring GC diagnostics

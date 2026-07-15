@@ -164,6 +164,7 @@ impl World {
                 mem,
                 cpu,
             } => self.apply_telemetry(storage, soc_temp_c, mem, cpu),
+            Input::Storage { storage } => self.apply_storage(storage),
             Input::SensorTemp { celsius } => self.apply_sensor_temp(celsius),
             Input::TimeSynced => {
                 if self.time_synced {
@@ -289,12 +290,7 @@ impl World {
         mem: Option<MemInfo>,
         cpu: Cpu,
     ) -> Vec<Event> {
-        let storage = storage.map(quantize_storage);
-        let mut events = Vec::new();
-        if self.storage != storage {
-            self.storage = storage.clone();
-            events.push(Event::StorageChanged { storage });
-        }
+        let mut events = self.apply_storage(storage);
         if self.temp_c.soc.observe(soc_temp_c) {
             events.push(Event::TempChanged {
                 soc: self.temp_c.soc.clone(),
@@ -321,6 +317,16 @@ impl World {
         }
 
         events
+    }
+
+    fn apply_storage(&mut self, storage: Option<DiskUsage>) -> Vec<Event> {
+        let storage = storage.map(quantize_storage);
+        if self.storage == storage {
+            return Vec::new();
+        }
+
+        self.storage = storage.clone();
+        vec![Event::StorageChanged { storage }]
     }
 
     fn apply_sensor_temp(&mut self, celsius: Option<f32>) -> Vec<Event> {
@@ -373,6 +379,9 @@ pub enum Input {
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
+    },
+    Storage {
+        storage: Option<DiskUsage>,
     },
     SensorTemp {
         celsius: Option<f32>,

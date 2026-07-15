@@ -276,6 +276,10 @@ impl Backend for CameraBackend {
     ) {
         self.hub.update_telemetry(storage, soc_temp_c, mem, cpu);
     }
+
+    fn update_storage(&self, storage: Option<DiskUsage>) {
+        self.hub.update_storage(storage);
+    }
 }
 
 impl CameraBackend {

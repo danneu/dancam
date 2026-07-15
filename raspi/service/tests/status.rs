@@ -1,4 +1,13 @@
-use std::{fs, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
+use std::{
+    fs,
+    path::PathBuf,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Condvar, Mutex,
+    },
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use axum::{
@@ -15,6 +24,7 @@ use dancam::{
     backend::{Backend, BackendError, FrameStream},
     event_hub::{EventConnection, EventHub},
     events::Snapshot,
+    filesystem_observer::{FilesystemObservation, FilesystemObserver, ObservedSegment},
     recorder::{stamped_segment_filename, RecorderEvent, SegmentFacts, SegmentId},
     storage::StorageCoordinator,
     world::{CameraState, Input},
@@ -23,8 +33,10 @@ use dancam::{
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 
+#[derive(Clone)]
 struct StubBackend {
-    hub: EventHub,
+    hub: Arc<EventHub>,
+    telemetry_updates: Arc<AtomicUsize>,
 }
 
 #[async_trait]
@@ -61,6 +73,21 @@ impl Backend for StubBackend {
 
     fn set_context(&self, boot_id: Arc<str>, started: Instant) {
         self.hub.set_context(boot_id, started);
+    }
+
+    fn update_telemetry(
+        &self,
+        storage: Option<dancam::sysfacts::DiskUsage>,
+        soc_temp_c: Option<f32>,
+        mem: Option<dancam::sysfacts::MemInfo>,
+        cpu: dancam::cpu::Cpu,
+    ) {
+        self.telemetry_updates.fetch_add(1, Ordering::SeqCst);
+        self.hub.update_telemetry(storage, soc_temp_c, mem, cpu);
+    }
+
+    fn update_storage(&self, storage: Option<dancam::sysfacts::DiskUsage>) {
+        self.hub.update_storage(storage);
     }
 }
 
@@ -167,6 +194,191 @@ async fn status_reports_fsm_owned_open_segment_metadata_while_recording() {
     );
 }
 
+#[tokio::test]
+async fn stalled_observation_bounds_status_events_and_telemetry_without_fanout() {
+    let rec_dir = TempRecDir::new();
+    let backend = StubBackend::recording_segment(0);
+    backend
+        .hub
+        .update_storage(Some(disk_usage(64 * 1024 * 1024)));
+
+    let entered = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let observer = Arc::new(FilesystemObserver::with_probe({
+        let entered = entered.clone();
+        let gate = gate.clone();
+        move |current_segment| {
+            let invocation = entered.fetch_add(1, Ordering::SeqCst) + 1;
+            if invocation == 1 {
+                let (lock, ready) = &*gate;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    let (next, timeout) = ready
+                        .wait_timeout(released, Duration::from_secs(5))
+                        .unwrap();
+                    released = next;
+                    if timeout.timed_out() {
+                        break;
+                    }
+                }
+                return filesystem_observation(current_segment, 1, 111);
+            }
+            filesystem_observation(current_segment, 128 * 1024 * 1024, 222)
+        }
+    }));
+    let state =
+        state(rec_dir.path.clone(), backend.clone()).with_filesystem_observer(observer.clone());
+    dancam::events::spawn_telemetry(state.backend.clone(), observer, Duration::from_millis(25));
+    let app = dancam::app(state);
+
+    let started = Instant::now();
+    let status = tokio::spawn(app.clone().oneshot(status_request()));
+    wait_until(|| entered.load(Ordering::SeqCst) == 1).await;
+    let repeated_status = app.clone().oneshot(status_request());
+    let events = app.clone().oneshot(events_request());
+    let (status, repeated_status, events) = tokio::join!(status, repeated_status, events);
+    assert!(started.elapsed() < Duration::from_millis(1400));
+    assert_eq!(entered.load(Ordering::SeqCst), 1);
+
+    for response in [status.unwrap().unwrap(), repeated_status.unwrap()] {
+        let json = response_json(response).await;
+        assert_eq!(json["storage"], Value::Null);
+        assert_eq!(json["recorder"]["current_segment"]["dur_ms"], Value::Null);
+    }
+    let event_json = first_sse_json(events.unwrap()).await;
+    assert_eq!(event_json["type"], "snapshot");
+    assert_eq!(event_json["storage"], Value::Null);
+    assert_eq!(
+        event_json["recorder"]["current_segment"]["dur_ms"],
+        Value::Null
+    );
+    wait_until(|| backend.telemetry_updates.load(Ordering::SeqCst) > 0).await;
+
+    {
+        let (lock, ready) = &*gate;
+        *lock.lock().unwrap() = true;
+        ready.notify_one();
+    }
+    wait_until(|| entered.load(Ordering::SeqCst) >= 2).await;
+
+    let restored = response_json(app.clone().oneshot(status_request()).await.unwrap()).await;
+    assert_eq!(restored["storage"]["used"], 128 * 1024 * 1024);
+    assert_eq!(restored["recorder"]["current_segment"]["dur_ms"], 222);
+
+    let restored_event = first_sse_json(app.oneshot(events_request()).await.unwrap()).await;
+    assert_eq!(restored_event["storage"]["used"], 128 * 1024 * 1024);
+    assert_eq!(restored_event["recorder"]["current_segment"]["dur_ms"], 222);
+}
+
+#[tokio::test]
+async fn stalled_telemetry_clears_stale_storage_then_a_fresh_probe_restores_it() {
+    let rec_dir = TempRecDir::new();
+    let backend = StubBackend::idle();
+    backend
+        .hub
+        .update_storage(Some(disk_usage(64 * 1024 * 1024)));
+    let entered = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let observer = Arc::new(FilesystemObserver::with_probe({
+        let entered = entered.clone();
+        let gate = gate.clone();
+        move |_| {
+            let invocation = entered.fetch_add(1, Ordering::SeqCst) + 1;
+            if invocation == 1 {
+                let (lock, ready) = &*gate;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    let (next, timeout) = ready
+                        .wait_timeout(released, Duration::from_secs(5))
+                        .unwrap();
+                    released = next;
+                    if timeout.timed_out() {
+                        break;
+                    }
+                }
+                return filesystem_observation(None, 1, 0);
+            }
+            filesystem_observation(None, 128 * 1024 * 1024, 0)
+        }
+    }));
+    let state =
+        state(rec_dir.path.clone(), backend.clone()).with_filesystem_observer(observer.clone());
+
+    let started = Instant::now();
+    dancam::events::spawn_telemetry(state.backend.clone(), observer, Duration::from_millis(25));
+    wait_until(|| entered.load(Ordering::SeqCst) == 1).await;
+    wait_until(|| backend.telemetry_updates.load(Ordering::SeqCst) > 0).await;
+    assert!(started.elapsed() < Duration::from_millis(1400));
+    assert_eq!(backend.snapshot().storage, None);
+    assert_eq!(entered.load(Ordering::SeqCst), 1);
+
+    {
+        let (lock, ready) = &*gate;
+        *lock.lock().unwrap() = true;
+        ready.notify_one();
+    }
+    wait_until(|| {
+        backend
+            .snapshot()
+            .storage
+            .is_some_and(|storage| storage.used == 128 * 1024 * 1024)
+    })
+    .await;
+}
+
+fn disk_usage(used: u64) -> dancam::sysfacts::DiskUsage {
+    dancam::sysfacts::DiskUsage {
+        used,
+        total: 512 * 1024 * 1024,
+        recording_capacity_bytes: 448 * 1024 * 1024,
+    }
+}
+
+fn filesystem_observation(
+    current_segment: Option<SegmentId>,
+    used: u64,
+    dur_ms: u64,
+) -> FilesystemObservation {
+    FilesystemObservation {
+        storage: Some(disk_usage(used)),
+        current_segment: current_segment.map(|id| ObservedSegment {
+            id,
+            dur_ms: Some(dur_ms),
+        }),
+    }
+}
+
+async fn response_json(response: axum::response::Response) -> Value {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+async fn first_sse_json(response: axum::response::Response) -> Value {
+    let mut body = response.into_body();
+    let frame = tokio::time::timeout(Duration::from_secs(1), body.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let data = frame.into_data().unwrap();
+    let text = std::str::from_utf8(&data).unwrap();
+    let data = text
+        .lines()
+        .find_map(|line| line.strip_prefix("data:").map(str::trim_start))
+        .expect("SSE frame omitted data");
+    serde_json::from_str(data).unwrap()
+}
+
+async fn wait_until(predicate: impl Fn() -> bool) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !predicate() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("condition did not become true");
+}
+
 fn stamped_name(seq: u32) -> String {
     stamped_segment_filename(
         seq,
@@ -181,18 +393,22 @@ fn stamped_name(seq: u32) -> String {
 impl StubBackend {
     fn idle() -> Self {
         Self {
-            hub: EventHub::new(CameraState::Running),
+            hub: Arc::new(EventHub::new(CameraState::Running)),
+            telemetry_updates: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     fn starting_at(start_segment: SegmentId) -> Self {
-        let hub = EventHub::new(CameraState::Running);
+        let hub = Arc::new(EventHub::new(CameraState::Running));
         hub.drive(Input::StartCommand { start_segment }, 1000);
-        Self { hub }
+        Self {
+            hub,
+            telemetry_updates: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     fn recording_segment(id: SegmentId) -> Self {
-        let hub = EventHub::new(CameraState::Running);
+        let hub = Arc::new(EventHub::new(CameraState::Running));
         hub.drive(Input::StartCommand { start_segment: id }, 1000);
         // Session derives from the start segment: start_segment `id` -> session `id + 1`.
         let session = u64::from(id) + 1;
@@ -200,13 +416,24 @@ impl StubBackend {
             Input::Recorder(RecorderEvent::SegmentOpened { session, id }),
             1100,
         );
-        Self { hub }
+        Self {
+            hub,
+            telemetry_updates: Arc::new(AtomicUsize::new(0)),
+        }
     }
 }
 
 fn status_request() -> Request<Body> {
     Request::builder()
         .uri("/v1/status")
+        .header("Host", "localhost:8080")
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn events_request() -> Request<Body> {
+    Request::builder()
+        .uri("/v1/events")
         .header("Host", "localhost:8080")
         .body(Body::empty())
         .unwrap()

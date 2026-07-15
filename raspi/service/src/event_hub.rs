@@ -168,6 +168,10 @@ impl EventHub {
         });
     }
 
+    pub fn update_storage(&self, storage: Option<crate::sysfacts::DiskUsage>) {
+        self.drive_now(Input::Storage { storage });
+    }
+
     pub fn tick(&self) {
         self.drive_now(Input::Tick);
     }

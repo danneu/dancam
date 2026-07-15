@@ -45,7 +45,7 @@ async fn events_stream_starts_with_snapshot_and_proto_headers() {
 
     let mut reader = SseReader::new(response.into_body());
     let frame = reader.next().await;
-    assert_eq!(frame.id, "0");
+    assert!(frame.id.parse::<u64>().is_ok());
     assert_eq!(frame.json["type"], "snapshot");
     assert_eq!(frame.json["boot_id"], BOOT_ID);
     assert_eq!(frame.json["time"]["synced"], false);

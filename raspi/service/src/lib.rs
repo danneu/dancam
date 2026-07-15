@@ -30,6 +30,7 @@ mod clock;
 pub mod cpu;
 pub mod event_hub;
 pub mod events;
+pub mod filesystem_observer;
 pub mod gc;
 mod health;
 mod jpeg;
@@ -38,7 +39,7 @@ pub mod preview;
 pub mod recorder;
 mod recording;
 pub mod storage;
-mod sysfacts;
+pub mod sysfacts;
 pub mod time_sync;
 mod ts_duration;
 pub mod world;
@@ -55,6 +56,7 @@ pub struct AppState {
     pub started: Instant,
     pub backend: Arc<dyn Backend>,
     pub storage: Arc<StorageCoordinator>,
+    pub filesystem: Arc<filesystem_observer::FilesystemObserver>,
     pub(crate) time_store: Arc<time_sync::TimeStore>,
     pub(crate) clip_durations: Arc<DurationCache>,
     request_seq: Arc<AtomicU64>,
@@ -75,12 +77,20 @@ impl AppState {
             backend.mark_time_synced();
         }
         let clip_durations = backend.clip_durations();
+        let storage = Arc::new(StorageCoordinator::new(PathBuf::from(DEFAULT_REC_DIR)));
+        let filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
+            storage.rec_dir(),
+            clip_durations.clone(),
+            0,
+            None,
+        ));
 
         Self {
             boot_id,
             started,
             backend: Arc::new(backend),
-            storage: Arc::new(StorageCoordinator::new(PathBuf::from(DEFAULT_REC_DIR))),
+            storage,
+            filesystem,
             time_store,
             clip_durations,
             request_seq: Arc::new(AtomicU64::new(1)),
@@ -89,7 +99,35 @@ impl AppState {
     }
 
     pub fn with_storage(mut self, storage: Arc<StorageCoordinator>) -> Self {
+        self.filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
+            storage.rec_dir(),
+            self.clip_durations.clone(),
+            0,
+            None,
+        ));
         self.storage = storage;
+        self
+    }
+
+    pub fn with_filesystem_observer(
+        mut self,
+        observer: Arc<filesystem_observer::FilesystemObserver>,
+    ) -> Self {
+        self.filesystem = observer;
+        self
+    }
+
+    pub fn with_filesystem_config(
+        mut self,
+        gc_floor_bytes: u64,
+        recording_capacity_override: Option<u64>,
+    ) -> Self {
+        self.filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
+            self.storage.rec_dir(),
+            self.clip_durations.clone(),
+            gc_floor_bytes,
+            recording_capacity_override,
+        ));
         self
     }
 
