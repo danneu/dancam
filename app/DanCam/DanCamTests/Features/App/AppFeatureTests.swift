@@ -77,6 +77,7 @@ struct AppFeatureTests {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.lastSuccessfulHeadEpoch = 1
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
@@ -236,6 +237,7 @@ struct AppFeatureTests {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.lastSuccessfulHeadEpoch = 2
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
@@ -478,6 +480,7 @@ struct AppFeatureTests {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.lastSuccessfulHeadEpoch = 2
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
@@ -533,6 +536,7 @@ struct AppFeatureTests {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.lastSuccessfulHeadEpoch = 2
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
@@ -667,6 +671,7 @@ struct AppFeatureTests {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.lastSuccessfulHeadEpoch = 1
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
@@ -714,6 +719,7 @@ struct AppFeatureTests {
             $0.clips.clips = [folded] + stale.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.lastSuccessfulHeadEpoch = 1
             $0.clips.clipFinalizeEpoch = [3: 1]
         }
         await store.finishEffects()
@@ -844,6 +850,7 @@ struct AppFeatureTests {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.lastSuccessfulHeadEpoch = 1
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
@@ -885,6 +892,7 @@ struct AppFeatureTests {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
+            $0.clips.lastSuccessfulHeadEpoch = 1
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }

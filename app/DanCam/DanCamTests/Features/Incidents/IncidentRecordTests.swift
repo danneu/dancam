@@ -18,7 +18,7 @@ struct IncidentRecordTests {
 
         #expect(object["pressed_at_ms"] as? UInt64 == record.pressedAtMs)
         #expect(object["mark_seq"] as? Int == 43)
-        #expect(object["status"] as? String == "pending")
+        #expect(object["status"] == nil)
 
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -35,10 +35,70 @@ struct IncidentRecordTests {
 
         #expect(record.coveredDurationMs == 35_000)
         #expect(record.pulledBytes == 150)
-        #expect(record.derivedTerminalStatus == .partial)
+        #expect(record.status == .partial)
 
         record.wanted[1].state = .clipped
-        #expect(record.derivedTerminalStatus == .saved)
+        #expect(record.status == .saved)
+    }
+
+    @Test(arguments: [
+        LegacyLossCase(etag: nil, durMs: nil, expected: .inferredAbsence),
+        LegacyLossCase(etag: "445-31098020", durMs: 24_100, expected: .confirmedMissing),
+    ])
+    func legacyStatusIsIgnoredAndLostEvidenceIsInferred(testCase: LegacyLossCase) throws {
+        let etag = testCase.etag.map { "\"etag\": \"\($0)\"," } ?? ""
+        let duration = testCase.durMs.map { "\"dur_ms\": \($0)," } ?? ""
+        let json = """
+        {
+          "id": "00000000-0000-0000-0000-000000000445",
+          "pressed_at_ms": 1784480523000,
+          "boot_tag": "boot",
+          "session": 194,
+          "mark_seq": 445,
+          "mark_age_ms": 12000,
+          "pre_ms": 30000,
+          "post_ms": 15000,
+          "slack_ms": 2000,
+          "status": "partial",
+          "wanted": [{
+            "seq": 445,
+            "state": "lost",
+            \(etag)
+            \(duration)
+            "bytes": null
+          }]
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        let record = try decoder.decode(IncidentRecord.self, from: Data(json.utf8))
+
+        #expect(record.status == .partial)
+        #expect(record.wanted[0].lossEvidence == testCase.expected)
+    }
+
+    @Test func newLossEvidenceRoundTripsWithoutPersistingStatus() throws {
+        var record = fixtureRecord()
+        record.wanted = [IncidentSegment(
+            seq: 43,
+            state: .lost,
+            etag: "43-etag",
+            durMs: 30_000,
+            lossEvidence: .confirmedMissing
+        )]
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(record)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let wanted = try #require((object["wanted"] as? [[String: Any]])?.first)
+
+        #expect(object["status"] == nil)
+        #expect(wanted["loss_evidence"] as? String == "confirmed_missing")
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        #expect(try decoder.decode(IncidentRecord.self, from: data) == record)
     }
 
     private func fixtureRecord() -> IncidentRecord {
@@ -50,4 +110,10 @@ struct IncidentRecordTests {
             markAgeMs: 12_000
         )
     }
+}
+
+struct LegacyLossCase: Sendable {
+    var etag: String?
+    var durMs: UInt64?
+    var expected: IncidentLossEvidence
 }

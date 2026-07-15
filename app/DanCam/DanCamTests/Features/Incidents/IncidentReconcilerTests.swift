@@ -59,20 +59,7 @@ struct IncidentReconcilerTests {
             )
         }
 
-        let terminalAction = try #require(await actions(from: effect).first)
-        guard case .recordPersisted(let terminal, true, true) = terminalAction else {
-            Issue.record("Expected durable saved transition.")
-            return
-        }
-        #expect(terminal.status == .saved)
-        let cancelEffect = IncidentsFeature.reduce(
-            state: &state,
-            action: terminalAction,
-            world: recordingWorld(),
-            clipsState: clips,
-            dependencies: dependencies
-        )
-        _ = await actions(from: cancelEffect)
+        #expect(await actions(from: effect).isEmpty)
         #expect(state.incidents[0].status == .saved)
         #expect(await ledger.values() == ["cancel"])
     }
@@ -111,7 +98,7 @@ struct IncidentReconcilerTests {
         #expect(state.pendingPersistIDs == [id])
         let firstActions = await actions(from: first)
         let resolved = try #require(firstActions.first)
-        guard case .recordPersisted(let resolvedRecord, false, true) = resolved else {
+        guard case .recordPersisted(let resolvedRecord, true) = resolved else {
             Issue.record("Expected the witnessed resolution to persist.")
             return
         }
@@ -119,7 +106,7 @@ struct IncidentReconcilerTests {
 
         let second = IncidentsFeature.reduce(
             state: &state,
-            action: .recordPersisted(resolvedRecord, cancelNudge: false, success: true),
+            action: .recordPersisted(resolvedRecord, success: true),
             world: recordingWorld(),
             clipsState: clips,
             dependencies: dependencies
@@ -208,6 +195,35 @@ struct IncidentReconcilerTests {
             return
         }
         #expect(records[0].segment(seq: 11)?.state == .lost)
+    }
+
+    @Test func removalUpgradesInferredLossSoStaleListCannotReopenIt() async throws {
+        let id = UUID(uuidString: "45454545-4545-4545-4545-454545454545")!
+        var inferred = record(id: id, states: [.lost])
+        inferred.wanted[0].lossEvidence = .inferredAbsence
+        var state = IncidentsFeature.State(incidents: [inferred])
+
+        let effect = IncidentsFeature.reduce(
+            state: &state,
+            action: .clipRemoved(seq: 10),
+            world: recordingWorld(),
+            clipsState: clipsState([]),
+            dependencies: AppDependencies(incidentStore: store { _ in })
+        )
+        let emitted = await actions(from: effect)
+        guard case .lossRecordsPersisted(let records, true) = try #require(emitted.first) else {
+            Issue.record("Expected removal to persist confirmed loss evidence.")
+            return
+        }
+
+        let confirmed = try #require(records.first)
+        #expect(confirmed.segment(seq: 10)?.lossEvidence == .confirmedMissing)
+        #expect(IncidentPlanner.plan(
+            incidents: [confirmed],
+            clips: [clip(seq: 10)],
+            listCoverage: .loaded(nextCursor: nil),
+            recorder: .notRecording
+        ).isEmpty)
     }
 
     @Test func activeRemovalFollowedByCompletionSalvagesIncident() async throws {
@@ -316,9 +332,17 @@ struct IncidentReconcilerTests {
             Issue.record("Expected stored incidents to load.")
             return
         }
-        _ = IncidentsFeature.reduce(
+        let install = IncidentsFeature.reduce(
             state: &state,
             action: .storeLoaded(stored),
+            world: recordingWorld(),
+            clipsState: clipsState([clip(seq: 10), clip(seq: 11)]),
+            dependencies: dependencies
+        )
+        let reconcile = try #require(await actions(from: install).first)
+        _ = IncidentsFeature.reduce(
+            state: &state,
+            action: reconcile,
             world: recordingWorld(),
             clipsState: clipsState([clip(seq: 10), clip(seq: 11)]),
             dependencies: dependencies

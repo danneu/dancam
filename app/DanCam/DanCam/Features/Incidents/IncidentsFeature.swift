@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 enum IncidentsFeature {
     nonisolated struct OpenSegmentAnchor: Equatable, Sendable {
@@ -33,6 +34,7 @@ enum IncidentsFeature {
         var lockoutResolvedRecordingID: RecordingID?
         var persistenceFailed = false
         var hasRequestedProvisionalAuth = false
+        var pendingProvisionalAuthRecordID: UUID?
         var pendingRecords: [RecordingID: IncidentRecord] = [:]
         var pullQueue: [PullRequest] = []
         var activePull: PullRequest?
@@ -118,7 +120,7 @@ enum IncidentsFeature {
         case createResponded(IncidentRecord, success: Bool)
         case persistenceAlertDismissed
         case reconcile
-        case recordPersisted(IncidentRecord, cancelNudge: Bool, success: Bool)
+        case recordPersisted(IncidentRecord, success: Bool)
         case pageRequested
         case pullFinished(PullRequest, PullOutcome)
         case pullRecordsPersisted(PullRequest, [IncidentRecord], success: Bool)
@@ -203,13 +205,13 @@ enum IncidentsFeature {
                 wallNow: dependencies.wallNow(),
                 continuousNow: dependencies.continuousNow()
             )
-            return reduce(
-                state: &state,
-                action: .reconcile,
-                world: world,
-                clipsState: clipsState,
-                dependencies: dependencies
-            )
+            let terminalIDs = state.incidents.filter { $0.status.isTerminal }.map(\.id)
+            return .run { send in
+                for id in terminalIDs {
+                    await dependencies.incidentNotifier.cancelNudge(id)
+                }
+                await send(.reconcile)
+            }
 
         case .clipsChanged:
             state.isPageRequestPending = false
@@ -225,10 +227,12 @@ enum IncidentsFeature {
             guard state.activePull?.seq != seq else { return .none }
 
             var changed: [IncidentRecord] = []
-            for original in state.incidents where original.status == .pending {
-                guard var segment = original.segment(seq: seq), segment.state == .wanted else { continue }
+            for original in state.incidents {
+                guard var segment = original.segment(seq: seq),
+                      segment.state == .wanted
+                        || (segment.state == .lost && segment.lossEvidence == .inferredAbsence) else { continue }
                 var record = original
-                segment.markLost()
+                segment.confirmMissing()
                 record.updateSegment(segment)
                 changed.append(record)
             }
@@ -251,7 +255,7 @@ enum IncidentsFeature {
                 guard remaining.isEmpty == false else { return nil }
                 return PullRequest(seq: request.seq, etag: request.etag, incidentIDs: remaining)
             }
-            return persist(records: records, dependencies: dependencies) {
+            return persist(records: records, previous: state.incidents, dependencies: dependencies) {
                 .lossRecordsPersisted(records, success: $0)
             }
 
@@ -278,9 +282,19 @@ enum IncidentsFeature {
             )
             state.persistenceFailed = false
 
+            let shouldRequestAuth = state.hasRequestedProvisionalAuth == false
+            state.hasRequestedProvisionalAuth = true
+            if shouldRequestAuth {
+                state.pendingProvisionalAuthRecordID = record.id
+            }
+
             return .run { send in
                 do {
                     try await dependencies.incidentStore.create(record)
+                    if shouldRequestAuth {
+                        await dependencies.incidentNotifier.requestProvisionalAuth()
+                    }
+                    await dependencies.incidentNotifier.scheduleNudge(record.id, .seconds(180))
                     await send(.createResponded(record, success: true))
                 } catch is CancellationError {
                     return
@@ -292,21 +306,19 @@ enum IncidentsFeature {
         case .createResponded(let record, success: true):
             guard state.pendingRecords[record.recordingID]?.id == record.id else { return .none }
             state.pendingRecords[record.recordingID] = nil
-            state.incidents.append(record)
-
-            let shouldRequestAuth = state.hasRequestedProvisionalAuth == false
-            state.hasRequestedProvisionalAuth = true
-            return .run { send in
-                if shouldRequestAuth {
-                    await dependencies.incidentNotifier.requestProvisionalAuth()
-                }
-                await dependencies.incidentNotifier.scheduleNudge(record.id, .seconds(180))
-                await send(.reconcile)
+            if state.pendingProvisionalAuthRecordID == record.id {
+                state.pendingProvisionalAuthRecordID = nil
             }
+            state.incidents.append(record)
+            return send(.reconcile)
 
         case .createResponded(let record, success: false):
             guard state.pendingRecords[record.recordingID]?.id == record.id else { return .none }
             state.pendingRecords[record.recordingID] = nil
+            if state.pendingProvisionalAuthRecordID == record.id {
+                state.pendingProvisionalAuthRecordID = nil
+                state.hasRequestedProvisionalAuth = false
+            }
             if state.runtimeLockout?.recordingID == record.recordingID {
                 state.runtimeLockout = nil
             }
@@ -332,7 +344,12 @@ enum IncidentsFeature {
                 switch command {
                 case .persist(let record):
                     guard state.pendingPersistIDs.insert(record.id).inserted else { continue }
-                    effects.append(persist(record: record, cancelNudge: false, dependencies: dependencies))
+                    let previousRecord = state.incidents.first(where: { $0.id == record.id }) ?? record
+                    effects.append(persist(
+                        record: record,
+                        previousRecord: previousRecord,
+                        dependencies: dependencies
+                    ))
 
                 case .pull(let seq, let etag, let incidentIDs):
                     enqueue(
@@ -347,15 +364,6 @@ enum IncidentsFeature {
                     state.isPageRequestPending = true
                     effects.append(send(.pageRequested))
 
-                case .finalize(let incidentID, let status):
-                    guard state.pendingPersistIDs.insert(incidentID).inserted,
-                          var record = state.incidents.first(where: { $0.id == incidentID }) else { continue }
-                    record.status = status
-                    effects.append(persist(record: record, cancelNudge: true, dependencies: dependencies))
-
-                case .cancelNudge:
-                    // Cancellation follows the durable terminal write above.
-                    continue
                 }
             }
 
@@ -364,24 +372,18 @@ enum IncidentsFeature {
             }
             return .merge(effects)
 
-        case .recordPersisted(let record, let cancelNudge, success: true):
+        case .recordPersisted(let record, success: true):
             state.pendingPersistIDs.remove(record.id)
             replace(record, in: &state)
-            var effects: [Effect<Action>] = [reduce(
+            return reduce(
                 state: &state,
                 action: .reconcile,
                 world: world,
                 clipsState: clipsState,
                 dependencies: dependencies
-            )]
-            if cancelNudge {
-                effects.insert(.run { _ in
-                    await dependencies.incidentNotifier.cancelNudge(record.id)
-                }, at: 0)
-            }
-            return .merge(effects)
+            )
 
-        case .recordPersisted(let record, _, success: false):
+        case .recordPersisted(let record, success: false):
             state.pendingPersistIDs.remove(record.id)
             return .none
 
@@ -394,13 +396,13 @@ enum IncidentsFeature {
             case .completed(let bytes):
                 let records = updatedRecords(for: request, state: state, bytes: bytes, lost: false)
                 state.pendingPersistIDs.formUnion(records.map(\.id))
-                return persist(records: records, dependencies: dependencies) {
+                return persist(records: records, previous: state.incidents, dependencies: dependencies) {
                     .pullRecordsPersisted(request, records, success: $0)
                 }
             case .notFound:
                 let records = updatedRecords(for: request, state: state, bytes: [:], lost: true)
                 state.pendingPersistIDs.formUnion(records.map(\.id))
-                return persist(records: records, dependencies: dependencies) {
+                return persist(records: records, previous: state.incidents, dependencies: dependencies) {
                     .pullRecordsPersisted(request, records, success: $0)
                 }
             case .failed:
@@ -521,30 +523,47 @@ enum IncidentsFeature {
 
     private static func persist(
         record: IncidentRecord,
-        cancelNudge: Bool,
+        previousRecord: IncidentRecord,
         dependencies: AppDependencies
     ) -> Effect<Action> {
         .run { send in
             do {
                 try await dependencies.incidentStore.update(record)
-                await send(.recordPersisted(record, cancelNudge: cancelNudge, success: true))
+                await updateNudge(
+                    incidentID: record.id,
+                    from: previousRecord.status,
+                    to: record.status,
+                    dependencies: dependencies
+                )
+                logTransition(record: record, previousRecord: previousRecord)
+                await send(.recordPersisted(record, success: true))
             } catch is CancellationError {
                 return
             } catch {
-                await send(.recordPersisted(record, cancelNudge: cancelNudge, success: false))
+                await send(.recordPersisted(record, success: false))
             }
         }
     }
 
     private static func persist(
         records: [IncidentRecord],
+        previous: [IncidentRecord],
         dependencies: AppDependencies,
         response: @escaping @Sendable (Bool) -> Action
     ) -> Effect<Action> {
-        .run { send in
+        let previousRecords = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        return .run { send in
             do {
                 for record in records {
                     try await dependencies.incidentStore.update(record)
+                    let previousRecord = previousRecords[record.id] ?? record
+                    await updateNudge(
+                        incidentID: record.id,
+                        from: previousRecord.status,
+                        to: record.status,
+                        dependencies: dependencies
+                    )
+                    logTransition(record: record, previousRecord: previousRecord)
                 }
                 await send(response(true))
             } catch is CancellationError {
@@ -552,6 +571,46 @@ enum IncidentsFeature {
             } catch {
                 await send(response(false))
             }
+        }
+    }
+
+    private static func updateNudge(
+        incidentID: UUID,
+        from previousStatus: IncidentStatus,
+        to status: IncidentStatus,
+        dependencies: AppDependencies
+    ) async {
+        guard previousStatus != status else { return }
+        if previousStatus.isTerminal, status == .pending {
+            await dependencies.incidentNotifier.scheduleNudge(incidentID, .seconds(180))
+        } else if previousStatus == .pending, status.isTerminal {
+            await dependencies.incidentNotifier.cancelNudge(incidentID)
+        }
+    }
+
+    private static func logTransition(record: IncidentRecord, previousRecord: IncidentRecord) {
+        let previousBySeq = Dictionary(uniqueKeysWithValues: previousRecord.wanted.map { ($0.seq, $0) })
+        for segment in record.wanted where
+            segment.state == .lost
+                && segment.lossEvidence == .inferredAbsence
+                && previousBySeq[segment.seq]?.state != .lost {
+            Log.incident.notice("inferred loss clip_id=\(segment.seq, privacy: .public) incident_id=\(record.id.uuidString, privacy: .public)")
+        }
+        for segment in record.wanted where
+            segment.state == .lost
+                && segment.lossEvidence == .confirmedMissing
+                && previousBySeq[segment.seq]?.state != .lost {
+            Log.incident.notice("confirmed loss clip_id=\(segment.seq, privacy: .public) incident_id=\(record.id.uuidString, privacy: .public)")
+        }
+        for segment in record.wanted where
+            segment.state == .pulled && previousBySeq[segment.seq]?.state != .pulled {
+            Log.incident.notice("pull completion clip_id=\(segment.seq, privacy: .public) incident_id=\(record.id.uuidString, privacy: .public)")
+        }
+        let previousStatus = previousRecord.status
+        if previousStatus.isTerminal, record.status == .pending {
+            Log.incident.notice("corrective reopening incident_id=\(record.id.uuidString, privacy: .public)")
+        } else if previousStatus != record.status, record.status.isTerminal {
+            Log.incident.notice("terminal state incident_id=\(record.id.uuidString, privacy: .public) status=\(record.status.rawValue, privacy: .public)")
         }
     }
 
@@ -700,7 +759,7 @@ enum IncidentsFeature {
                   segment.state == .wanted else { return nil }
             var record = original
             if lost {
-                segment.markLost()
+                segment.markLost(.confirmedMissing)
             } else {
                 segment.markPulled(bytes: bytes[record.id] ?? 0)
             }
@@ -715,12 +774,18 @@ enum IncidentsFeature {
     }
 
     private static func coverage(_ clips: ClipsFeature.State) -> IncidentListCoverage {
-        clips.hasLoadedOnce ? .loaded(nextCursor: clips.nextCursor) : .unloaded
+        guard clips.hasLoadedOnce, clips.lastSuccessfulHeadEpoch >= clips.headEpoch else {
+            if clips.hasLoadedOnce {
+                Log.incident.debug("negative inference waiting required_epoch=\(clips.headEpoch, privacy: .public) successful_epoch=\(clips.lastSuccessfulHeadEpoch, privacy: .public)")
+            }
+            return .unloaded
+        }
+        return .loaded(nextCursor: clips.nextCursor)
     }
 
     private static func recorderState(_ world: World?) -> IncidentRecorderState {
         guard let world else { return .unknown }
-        guard world.recorder.phase.claimsRecording,
+        guard world.recorder.phase.isActive,
               let bootTag = world.bootTag else { return .notRecording }
         return .recording(RecordingID(bootTag: bootTag, session: world.recorder.session))
     }

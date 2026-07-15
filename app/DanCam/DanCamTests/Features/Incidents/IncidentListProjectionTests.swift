@@ -51,14 +51,26 @@ struct IncidentListProjectionTests {
         status: IncidentStatus,
         segments: [IncidentSegment]
     ) -> IncidentRecord {
-        IncidentRecord(
+        var adjusted = segments
+        switch status {
+        case .pending:
+            adjusted.append(IncidentSegment(seq: (segments.last?.seq ?? 0) + 1))
+        case .partial:
+            adjusted.append(IncidentSegment(
+                seq: (segments.last?.seq ?? 0) + 1,
+                state: .lost,
+                lossEvidence: .inferredAbsence
+            ))
+        case .saved:
+            break
+        }
+        return IncidentRecord(
             id: id,
             pressedAtMs: pressedAtMs,
             recordingID: RecordingID(bootTag: "boot", session: 1),
             markSeq: segments.first?.seq ?? 1,
             markAgeMs: 0,
-            status: status,
-            wanted: segments
+            wanted: adjusted
         )
     }
 }

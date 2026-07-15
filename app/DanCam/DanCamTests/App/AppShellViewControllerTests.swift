@@ -32,8 +32,8 @@ struct AppShellViewControllerTests {
 
         #expect(tabs[1].tabBarItem.badgeValue == "1")
 
-        pending.status = .saved
-        store.send(.incidents(.recordPersisted(pending, cancelNudge: false, success: true)))
+        pending.wanted[0].markClipped()
+        store.send(.incidents(.recordPersisted(pending, success: true)))
         #expect(tabs[1].tabBarItem.badgeValue == nil)
     }
 

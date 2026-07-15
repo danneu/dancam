@@ -46,8 +46,6 @@ nonisolated enum IncidentPlannerCommand: Equatable, Sendable {
     case persist(IncidentRecord)
     case pull(seq: Int, etag: String, incidentIDs: [UUID])
     case page(cursor: String?)
-    case finalize(incidentID: UUID, status: IncidentStatus)
-    case cancelNudge(incidentID: UUID)
 }
 
 nonisolated enum IncidentPlanner {
@@ -62,7 +60,7 @@ nonisolated enum IncidentPlanner {
         var pullRequests: [PullKey: Set<UUID>] = [:]
         var requestedPage = false
 
-        for original in incidents where original.status == .pending {
+        for original in incidents {
             var record = original
             var changed = false
             var needsPage = false
@@ -87,10 +85,7 @@ nonisolated enum IncidentPlanner {
             if changed {
                 commands.append(.persist(record))
             } else {
-                if let terminal = record.derivedTerminalStatus {
-                    commands.append(.finalize(incidentID: record.id, status: terminal))
-                    commands.append(.cancelNudge(incidentID: record.id))
-                } else {
+                if record.status == .pending {
                     for segment in record.wanted where segment.state == .wanted {
                         guard let etag = segment.etag else { continue }
                         pullRequests[PullKey(seq: segment.seq, etag: etag), default: []].insert(record.id)
@@ -136,7 +131,7 @@ nonisolated enum IncidentPlanner {
                     break
                 }
                 if hasWitnessBeyond(seq: seq, direction: .backward, record: record, clips: clipsBySeq) {
-                    segment.markLost()
+                    segment.markLost(.inferredAbsence)
                 } else {
                     segment.markClipped()
                 }
@@ -162,7 +157,7 @@ nonisolated enum IncidentPlanner {
         guard var mark = record.segment(seq: record.markSeq) else { return }
         if mark.state == .unresolved {
             if recorder.provesSessionEnded(record.recordingID) && coverage.covers(record.markSeq) {
-                mark.markLost()
+                mark.markLost(.inferredAbsence)
                 record.updateSegment(mark)
                 changed = true
             } else if coverage.covers(record.markSeq) == false {
@@ -192,7 +187,7 @@ nonisolated enum IncidentPlanner {
                     break
                 }
                 if hasWitnessBeyond(seq: seq, direction: .forward, record: record, clips: clipsBySeq) {
-                    segment.markLost()
+                    segment.markLost(.inferredAbsence)
                 } else {
                     segment.markClipped()
                 }
@@ -213,10 +208,21 @@ nonisolated enum IncidentPlanner {
         clipsBySeq: [Int: Clip],
         changed: inout Bool
     ) {
-        guard var segment = record.segment(seq: seq), segment.state == .unresolved,
+        guard var segment = record.segment(seq: seq),
               let clip = clipsBySeq[seq], clip.recordingID == record.recordingID,
               let duration = clip.durMs else { return }
-        segment.resolve(etag: clip.etag, durMs: duration)
+        switch segment.state {
+        case .unresolved:
+            segment.resolve(etag: clip.etag, durMs: duration)
+        case .clipped:
+            segment.reopen(etag: clip.etag, durMs: duration)
+        case .lost where segment.lossEvidence == .inferredAbsence:
+            segment.reopen(etag: clip.etag, durMs: duration)
+        case .lost:
+            return
+        case .wanted, .pulled:
+            return
+        }
         record.updateSegment(segment)
         changed = true
     }

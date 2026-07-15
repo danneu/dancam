@@ -77,7 +77,7 @@ struct IncidentPlannerTests {
 
         #expect(persisted.segment(seq: 42)?.state == .clipped)
         #expect(persisted.segment(seq: 44)?.state == .clipped)
-        #expect(persisted.derivedTerminalStatus == .saved)
+        #expect(persisted.status == .saved)
     }
 
     @Test func coveredInteriorGapIsLostWhenAnOutwardSameSessionWitnessExists() throws {
@@ -92,7 +92,7 @@ struct IncidentPlannerTests {
         ))
 
         #expect(persisted.segment(seq: 41)?.state == .lost)
-        #expect(persisted.derivedTerminalStatus == nil)
+        #expect(persisted.status == .pending)
     }
 
     @Test func vanishedOpenMarkPersistsLossBeforeFinalizingPartial() throws {
@@ -106,7 +106,6 @@ struct IncidentPlannerTests {
         )
         let persisted = try persistedRecord(from: firstPass)
         #expect(persisted.segment(seq: 43)?.state == .lost)
-        #expect(firstPass.contains { if case .finalize = $0 { true } else { false } } == false)
 
         let secondPass = IncidentPlanner.plan(
             incidents: [persisted],
@@ -115,10 +114,7 @@ struct IncidentPlannerTests {
             recorder: .notRecording
         )
 
-        #expect(secondPass == [
-            .finalize(incidentID: record.id, status: .partial),
-            .cancelNudge(incidentID: record.id)
-        ])
+        #expect(secondPass.isEmpty)
     }
 
     @Test func unknownDurationLossStopsWalkButKnownOuterArtifactsRemainSalvageable() throws {
@@ -168,8 +164,7 @@ struct IncidentPlannerTests {
     }
 
     @Test func terminalStatusNeverRegressesOnReplay() {
-        var record = fixtureRecord()
-        record.status = .saved
+        var record = fixtureRecord(markAge: 0, preMs: 0, postMs: 0, slackMs: 0)
         record.wanted = [IncidentSegment(seq: 43, state: .pulled, etag: "old", durMs: 30_000, bytes: 10)]
 
         #expect(IncidentPlanner.plan(
@@ -178,6 +173,69 @@ struct IncidentPlannerTests {
             listCoverage: .loaded(nextCursor: nil),
             recorder: .notRecording
         ).isEmpty)
+    }
+
+    @Test func finalizingSameRecordingDoesNotProveOpenMarkMissing() {
+        let record = fixtureRecord(markSeq: 43, markAge: 1_000, preMs: 0, postMs: 0, slackMs: 0)
+
+        let commands = IncidentPlanner.plan(
+            incidents: [record],
+            clips: [],
+            listCoverage: .loaded(nextCursor: nil),
+            recorder: .recording(recordingID)
+        )
+
+        #expect(commands.isEmpty)
+        #expect(record.status == .pending)
+    }
+
+    @Test(arguments: [IncidentSegmentState.lost, .clipped])
+    func positiveWitnessReopensCorrectableTerminalFactBeforePull(state: IncidentSegmentState) throws {
+        var segment = IncidentSegment(seq: 43, state: state)
+        if state == .lost {
+            segment.lossEvidence = .inferredAbsence
+        }
+        var record = fixtureRecord(markSeq: 43, markAge: 1_000, preMs: 0, postMs: 0, slackMs: 0)
+        record.wanted = [segment]
+
+        let firstPass = IncidentPlanner.plan(
+            incidents: [record],
+            clips: [clip(seq: 43)],
+            listCoverage: .unloaded,
+            recorder: .notRecording
+        )
+        let reopened = try persistedRecord(from: firstPass)
+
+        #expect(reopened.status == .pending)
+        #expect(reopened.segment(seq: 43)?.state == .wanted)
+        #expect(pullSeqs(firstPass).isEmpty)
+
+        let secondPass = IncidentPlanner.plan(
+            incidents: [reopened],
+            clips: [clip(seq: 43)],
+            listCoverage: .unloaded,
+            recorder: .notRecording
+        )
+        #expect(pullSeqs(secondPass) == [43])
+    }
+
+    @Test func confirmedMissingNeverReopensFromListWitness() {
+        var record = fixtureRecord(markSeq: 43, markAge: 1_000, preMs: 0, postMs: 0, slackMs: 0)
+        record.wanted = [IncidentSegment(
+            seq: 43,
+            state: .lost,
+            etag: "43-etag",
+            durMs: 30_000,
+            lossEvidence: .confirmedMissing
+        )]
+
+        #expect(IncidentPlanner.plan(
+            incidents: [record],
+            clips: [clip(seq: 43)],
+            listCoverage: .loaded(nextCursor: nil),
+            recorder: .notRecording
+        ).isEmpty)
+        #expect(record.status == .partial)
     }
 
     private let recordingID = RecordingID(bootTag: "boot", session: 7)

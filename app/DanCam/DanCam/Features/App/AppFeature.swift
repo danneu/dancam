@@ -76,12 +76,20 @@ enum AppFeature {
             state.link.fold(event)
 
             if case .snapshot = event {
+                effects.append(
+                    ClipsFeature.reduce(
+                        state: &state.clips,
+                        action: .load,
+                        dependencies: dependencies
+                    )
+                    .map(Action.clips)
+                )
                 effects.append(reduceIncidents(
                     state: &state,
                     action: .worldObserved(state.link.onlineWorld),
                     dependencies: dependencies
                 ))
-            } else if case .segmentOpened = event {
+            } else if event.isRecorderLifecycleTransition {
                 effects.append(reduceIncidents(
                     state: &state,
                     action: .worldObserved(state.link.onlineWorld),
@@ -103,14 +111,6 @@ enum AppFeature {
             if case .snapshot = event {
                 isSnapshot = true
                 state.streamReconnectAttempt = 0
-                effects.append(
-                    ClipsFeature.reduce(
-                        state: &state.clips,
-                        action: .load,
-                        dependencies: dependencies
-                    )
-                    .map(Action.clips)
-                )
                 effects.append(timeSyncEffectIfNeeded(state: state, dependencies: dependencies))
             }
 
@@ -465,6 +465,18 @@ enum AppFeature {
     }
 }
 
+private extension CameraEvent {
+    var isRecorderLifecycleTransition: Bool {
+        switch self {
+        case .recordingStarting, .recordingStarted, .segmentOpened, .recordingStopping,
+             .recordingStopped, .recorderFailed:
+            true
+        default:
+            false
+        }
+    }
+}
+
 extension AppFeature.Action {
     var logLabel: String {
         switch self {
@@ -766,8 +778,8 @@ private extension IncidentsFeature.Action {
         case .createResponded(_, false): "createResponded.failure"
         case .persistenceAlertDismissed: "persistenceAlertDismissed"
         case .reconcile: "reconcile"
-        case .recordPersisted(_, _, true): "recordPersisted.success"
-        case .recordPersisted(_, _, false): "recordPersisted.failure"
+        case .recordPersisted(_, true): "recordPersisted.success"
+        case .recordPersisted(_, false): "recordPersisted.failure"
         case .pageRequested: "pageRequested"
         case .pullFinished: "pullFinished"
         case .pullRecordsPersisted(_, _, true): "pullRecordsPersisted.success"

@@ -47,8 +47,10 @@ struct IncidentDetailViewControllerTests {
             recordingID: RecordingID(bootTag: "boot", session: 7),
             markSeq: 43,
             markAgeMs: 12_000,
-            status: .partial,
-            wanted: [IncidentSegment(seq: 43, state: .pulled, durMs: 30_000, bytes: 2)]
+            wanted: [
+                IncidentSegment(seq: 42, state: .lost, lossEvidence: .inferredAbsence),
+                IncidentSegment(seq: 43, state: .pulled, durMs: 30_000, bytes: 2),
+            ]
         )
     }
 }

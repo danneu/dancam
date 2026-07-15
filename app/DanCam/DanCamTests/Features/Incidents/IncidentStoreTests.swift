@@ -65,10 +65,7 @@ struct IncidentStoreTests {
             listCoverage: .loaded(nextCursor: nil),
             recorder: .notRecording
         )
-        #expect(commands == [
-            .finalize(incidentID: record.id, status: .saved),
-            .cancelNudge(incidentID: record.id)
-        ])
+        #expect(commands.isEmpty)
 
         let rescanned = try await store.list()
         #expect(rescanned.first?.record == repaired)

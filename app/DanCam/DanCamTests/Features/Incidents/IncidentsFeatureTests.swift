@@ -71,6 +71,133 @@ struct IncidentsFeatureTests {
         ))
     }
 
+    @Test func negativeInferenceWaitsForSuccessfulHeadFromCurrentEpoch() async {
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000445")!
+        let incident = record(
+            id: id,
+            markSeq: 445,
+            markAgeMs: 1_000,
+            preMs: 0,
+            postMs: 0,
+            slackMs: 0
+        )
+        let idle = world(phase: .idle, segment: nil)
+        let staleClips = ClipsFeature.State(
+            headEpoch: 2,
+            lastSuccessfulHeadEpoch: 1,
+            hasLoadedOnce: true
+        )
+        let staleStore = TestStore(
+            initialState: IncidentsFeature.State(incidents: [incident]),
+            dependencies: AppDependencies(),
+            reduce: { state, action, dependencies in
+                IncidentsFeature.reduce(
+                    state: &state,
+                    action: action,
+                    world: idle,
+                    clipsState: staleClips,
+                    dependencies: dependencies
+                )
+            }
+        )
+
+        await staleStore.send(.reconcile)
+        #expect(staleStore.state.incidents[0].status == .pending)
+
+        let freshClips = ClipsFeature.State(
+            headEpoch: 2,
+            lastSuccessfulHeadEpoch: 2,
+            hasLoadedOnce: true
+        )
+        let freshStore = TestStore(
+            initialState: IncidentsFeature.State(incidents: [incident]),
+            dependencies: AppDependencies(),
+            reduce: { state, action, dependencies in
+                IncidentsFeature.reduce(
+                    state: &state,
+                    action: action,
+                    world: idle,
+                    clipsState: freshClips,
+                    dependencies: dependencies
+                )
+            }
+        )
+        var lost = incident
+        lost.wanted[0].markLost(.inferredAbsence)
+
+        await freshStore.send(.reconcile) {
+            $0.pendingPersistIDs = [id]
+        }
+        await freshStore.receive(.recordPersisted(lost, success: true)) {
+            $0.incidents = [lost]
+            $0.pendingPersistIDs = []
+        }
+        #expect(freshStore.state.incidents[0].status == .partial)
+    }
+
+    @Test func stoppingLifecycleKeepsOpenMarkPendingUntilFinalizationEvidenceArrives() {
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000445")!
+        var state = AppFeature.State()
+        state.link = .online(world(
+            phase: .recording,
+            segment: RecorderSegment(id: 445, durMs: 1_000)
+        ))
+        state.clips = ClipsFeature.State(
+            headEpoch: 1,
+            lastSuccessfulHeadEpoch: 1,
+            hasLoadedOnce: true
+        )
+        state.incidents.incidents = [record(
+            id: id,
+            markSeq: 445,
+            markAgeMs: 1_000,
+            preMs: 0,
+            postMs: 0,
+            slackMs: 0
+        )]
+
+        _ = AppFeature.reduce(
+            state: &state,
+            action: .event(.recordingStopping(session: 7, atMs: 1_000)),
+            dependencies: .init()
+        )
+
+        #expect(state.incidents.incidents[0].status == .pending)
+        #expect(state.incidents.pendingPersistIDs.isEmpty)
+    }
+
+    @Test(arguments: [RecorderEndWitness.failed, .differentSession])
+    func recorderEndWitnessesAreForwardedToReconciliation(witness: RecorderEndWitness) {
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000445")!
+        var state = AppFeature.State()
+        state.link = .online(world(
+            phase: .recording,
+            segment: RecorderSegment(id: 445, durMs: 1_000)
+        ))
+        state.clips = ClipsFeature.State(
+            headEpoch: 1,
+            lastSuccessfulHeadEpoch: 1,
+            hasLoadedOnce: true
+        )
+        state.incidents.incidents = [record(
+            id: id,
+            markSeq: 445,
+            markAgeMs: 1_000,
+            postMs: 0,
+            slackMs: 0
+        )]
+        let event: CameraEvent = switch witness {
+        case .failed:
+            .recorderFailed(session: 7, detail: "camera", atMs: 1_000)
+        case .differentSession:
+            .recordingStarting(session: 8, atMs: 1_000)
+        }
+
+        _ = AppFeature.reduce(state: &state, action: .event(event), dependencies: .init())
+
+        #expect(state.incidents.pendingPersistIDs == [id])
+    }
+
     @Test func persistedRecordPrecedesAuthNudgeAndReconcile() async throws {
         let ledger = IncidentEffectLedger()
         let id = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
@@ -121,11 +248,13 @@ struct IncidentsFeatureTests {
                 recordingID: record.recordingID,
                 deadline: now.advanced(by: .seconds(18))
             )
+            $0.hasRequestedProvisionalAuth = true
+            $0.pendingProvisionalAuthRecordID = id
         }
         await store.receive(.createResponded(record(id: id, markAgeMs: 3_000), success: true)) {
             $0.pendingRecords = [:]
             $0.incidents = [self.record(id: id, markAgeMs: 3_000)]
-            $0.hasRequestedProvisionalAuth = true
+            $0.pendingProvisionalAuthRecordID = nil
         }
         await store.receive(.reconcile)
         await ledger.waitForCount(3)
@@ -162,14 +291,14 @@ struct IncidentsFeatureTests {
         var state = IncidentsFeature.State()
         state.incidents = [pending]
         let store = makeLifecycleStore(state: state, ledger: ledger)
-        pending.status = .saved
+        pending.wanted[0].markClipped()
 
-        await store.send(.recordPersisted(pending, cancelNudge: true, success: true)) {
+        await store.send(.recordPersisted(pending, success: true)) {
             $0.incidents = [pending]
         }
         await store.finishEffects()
 
-        #expect(await ledger.events() == ["cancel:\(id)"])
+        #expect(await ledger.events().isEmpty)
     }
 
     @Test func deletingPendingIncidentCancelsNudgeAfterDeleteSucceeds() async {
@@ -233,11 +362,13 @@ struct IncidentsFeatureTests {
                 recordingID: record.recordingID,
                 deadline: observedAt.advanced(by: .seconds(19))
             )
+            $0.hasRequestedProvisionalAuth = true
+            $0.pendingProvisionalAuthRecordID = id
         }
         await store.receive(.createResponded(record(id: id, markSeq: 41, markAgeMs: 31_500), success: true)) {
             $0.pendingRecords = [:]
             $0.incidents = [self.record(id: id, markSeq: 41, markAgeMs: 31_500)]
-            $0.hasRequestedProvisionalAuth = true
+            $0.pendingProvisionalAuthRecordID = nil
         }
         await store.receive(.reconcile)
         await store.finishEffects()
@@ -441,6 +572,8 @@ struct IncidentsFeatureTests {
                 recordingID: record.recordingID,
                 deadline: start.advanced(by: .seconds(34.1))
             )
+            $0.hasRequestedProvisionalAuth = true
+            $0.pendingProvisionalAuthRecordID = id
         }
         await store.receive(.createResponded(
             record(id: id, markAgeMs: 18_100, pressedAtMs: 50_000_000),
@@ -448,7 +581,7 @@ struct IncidentsFeatureTests {
         )) {
             $0.pendingRecords = [:]
             $0.incidents = [self.record(id: id, markAgeMs: 18_100, pressedAtMs: 50_000_000)]
-            $0.hasRequestedProvisionalAuth = true
+            $0.pendingProvisionalAuthRecordID = nil
         }
         await store.receive(.reconcile)
         await store.finishEffects()
@@ -608,6 +741,8 @@ struct IncidentsFeatureTests {
                 recordingID: firstRecord.recordingID,
                 deadline: start.advanced(by: .seconds(17))
             )
+            $0.hasRequestedProvisionalAuth = true
+            $0.pendingProvisionalAuthRecordID = firstID
         }
         await creates.waitUntilStarted(firstRecord.recordingID)
 
@@ -638,7 +773,6 @@ struct IncidentsFeatureTests {
         await store.receive(.createResponded(secondRecord, success: true)) {
             $0.pendingRecords[secondRecordingID] = nil
             $0.incidents = [secondRecord]
-            $0.hasRequestedProvisionalAuth = true
         }
         await store.receive(.reconcile)
 
@@ -646,6 +780,7 @@ struct IncidentsFeatureTests {
         await store.receive(.createResponded(firstRecord, success: true)) {
             $0.pendingRecords[firstRecord.recordingID] = nil
             $0.incidents = [secondRecord, firstRecord]
+            $0.pendingProvisionalAuthRecordID = nil
         }
         await store.receive(.reconcile)
         #expect(store.state.pendingRecords.isEmpty)
@@ -717,19 +852,29 @@ struct IncidentsFeatureTests {
         status: IncidentStatus = .pending,
         recordingID: RecordingID = RecordingID(bootTag: "boot-a", session: 7),
         pressedAtMs: UInt64 = 1_784_480_523_000,
+        preMs: UInt64 = IncidentRecord.defaultPreMs,
         postMs: UInt64 = IncidentRecord.defaultPostMs,
         slackMs: UInt64 = IncidentRecord.defaultSlackMs
     ) -> IncidentRecord {
-        IncidentRecord(
+        var record = IncidentRecord(
             id: id,
             pressedAtMs: pressedAtMs,
             recordingID: recordingID,
             markSeq: markSeq,
             markAgeMs: markAgeMs,
+            preMs: preMs,
             postMs: postMs,
-            slackMs: slackMs,
-            status: status
+            slackMs: slackMs
         )
+        switch status {
+        case .pending:
+            break
+        case .saved:
+            record.wanted[0].markClipped()
+        case .partial:
+            record.wanted[0].markLost(.inferredAbsence)
+        }
+        return record
     }
 
     private func makeLifecycleStore(
@@ -765,6 +910,11 @@ struct IncidentsFeatureTests {
             }
         )
     }
+}
+
+enum RecorderEndWitness: Sendable {
+    case failed
+    case differentSession
 }
 
 private final class InstantSequence: @unchecked Sendable {

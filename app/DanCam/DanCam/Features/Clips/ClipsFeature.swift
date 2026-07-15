@@ -13,6 +13,7 @@ enum ClipsFeature {
         var headRequest: Int?
         var pageRequest: Int?
         var headEpoch = 0
+        var lastSuccessfulHeadEpoch = 0
         var hasLoadedOnce = false
         var clipFinalizeEpoch: [Int: Int] = [:]
 
@@ -142,6 +143,7 @@ enum ClipsFeature {
             )
             state.status = .idle
             state.hasLoadedOnce = true
+            state.lastSuccessfulHeadEpoch = epoch
             state.nextCursor = response.nextCursor
             state.isPaging = false
             state.clipFinalizeEpoch = state.clipFinalizeEpoch.filter { $0.value >= epoch }
@@ -171,10 +173,11 @@ enum ClipsFeature {
             settlePage(generation, state: &state)
             return .none
 
-        case .pageResponse(let epoch, let generation, .failure):
+        case .pageResponse(let epoch, let generation, .failure(let error)):
             settlePage(generation, state: &state)
             guard epoch == state.headEpoch else { return .none }
             state.isPaging = false
+            state.status = .failed(error)
             return .none
         }
     }

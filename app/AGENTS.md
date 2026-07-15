@@ -182,3 +182,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `28-2026-07-14-estimated-recording-capacity.md` -- estimate footage retention from
   freshly finalized clips and Pi-provided recorder-writable capacity, scoped to one
   live connection epoch and presented in Settings.
+- `29-2026-07-14-evidence-ordered-self-healing-incidents.md` -- order positive and
+  negative incident evidence, treat stopping as finalization, derive status from
+  segment facts, and reopen inferred losses when later clip evidence contradicts them.

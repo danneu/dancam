@@ -10,4 +10,5 @@ nonisolated enum Log {
     static let h264 = Logger(subsystem: subsystem, category: "h264-au")
     static let playback = Logger(subsystem: subsystem, category: "playback")
     static let nav = Logger(subsystem: subsystem, category: "nav")
+    static let incident = Logger(subsystem: subsystem, category: "incident")
 }

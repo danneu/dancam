@@ -25,6 +25,7 @@ struct ClipsFeatureTests {
             $0.clips = response.clips
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.nextCursor = "1"
             $0.inFlightRequests = []
             $0.headRequest = nil
@@ -82,6 +83,7 @@ struct ClipsFeatureTests {
             $0.clips = [folded] + staleResponse.clips
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.clipFinalizeEpoch = [3: 1]
             $0.inFlightRequests = []
             $0.headRequest = nil
@@ -149,6 +151,7 @@ struct ClipsFeatureTests {
             $0.pageRequest = 1
         }
         await store.receive(.pageResponse(epoch: 0, generation: 1, .failure(.http(503)))) {
+            $0.status = .failed(.http(503))
             $0.isPaging = false
             $0.inFlightRequests = []
             $0.pageRequest = nil
@@ -225,6 +228,7 @@ struct ClipsFeatureTests {
         await store.receive(.clipsResponse(epoch: 1, generation: 1, .success(staleHead))) {
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.inFlightRequests = []
             $0.headRequest = nil
         }
@@ -280,6 +284,7 @@ struct ClipsFeatureTests {
         await store.send(.clipsResponse(epoch: 1, generation: 1, .success(response))) {
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.inFlightRequests = []
             $0.removalTombstones = [:]
             $0.headRequest = nil
@@ -337,6 +342,7 @@ struct ClipsFeatureTests {
         ) {
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.inFlightRequests = []
             $0.headRequest = nil
         }
@@ -375,6 +381,7 @@ struct ClipsFeatureTests {
         await headCancelsPage.send(.clipsResponse(epoch: 1, generation: 2, .success(response))) {
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.inFlightRequests = []
             $0.removalTombstones = [:]
             $0.headRequest = nil
@@ -458,6 +465,7 @@ struct ClipsFeatureTests {
             $0.clips = response.clips
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.pendingDeleteIDs = []
         }
         await store.send(.deleteResponse(clip: clip, .failure(.http(500))))
@@ -478,6 +486,7 @@ struct ClipsFeatureTests {
         await store.send(.clipsResponse(epoch: 1, generation: 0, .success(response))) {
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
         }
         await store.send(.pageResponse(epoch: 1, generation: 0, .success(response)))
         await store.send(.clipFinalized(clip)) {
@@ -509,6 +518,7 @@ struct ClipsFeatureTests {
             $0.clips = response.clips
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
         }
     }
 
@@ -528,6 +538,7 @@ struct ClipsFeatureTests {
             $0.clips = response.clips + older
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.nextCursor = "6"
         }
     }
@@ -548,6 +559,7 @@ struct ClipsFeatureTests {
             $0.clips = response.clips
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 2
             $0.clipFinalizeEpoch = [:]
         }
     }
@@ -567,6 +579,7 @@ struct ClipsFeatureTests {
             $0.clips = []
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
         }
     }
 
@@ -612,6 +625,7 @@ struct ClipsFeatureTests {
             $0.clips = freshHead.clips + CameraSamples.clipsResponse(ids: [500, 499]).clips
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 6
             $0.nextCursor = "601"
             $0.isPaging = false
             $0.inFlightRequests = []
@@ -654,6 +668,7 @@ struct ClipsFeatureTests {
             $0.clips = response.clips
             $0.status = .idle
             $0.hasLoadedOnce = true
+            $0.lastSuccessfulHeadEpoch = 1
             $0.inFlightRequests = []
             $0.headRequest = nil
         }
