@@ -1,60 +1,55 @@
 # dancam
 
-dancam is my DIY dashcam built around an Raspberry Pi 2 W ($15) and an iPhone (live camera preview, clip viewing/pulling, and CarPlay).
+dancam is a do-it-yourself, iPhone-only dashcam. A Raspberry Pi camera unit
+records safely to its own microSD card, the iPhone app owns the product
+experience, and CarPlay provides a constrained voice, status, and control surface.
 
-- The full system overview, working stance, and design docs conventions live in [`AGENTS.md`](AGENTS.md).
-- Planned roadmap: [`docs/roadmap.md`](docs/roadmap.md).
+## The system
 
-## The three parts
+- **Camera unit (`raspi/`)** -- captures, encodes, and stores footage locally,
+  then serves status, preview, and requested clips over its direct Wi-Fi network.
+- **iPhone app (`app/`)** -- controls recording, shows live preview, browses and
+  pulls clips, manages settings, and permanently owns incident footage.
+- **CarPlay integration** -- lives inside the app and provides voice control,
+  automatic start/stop, status, and alerts. Live video stays on the phone.
 
-- **Camera unit (`raspi/`)** -- a Raspberry Pi + wide-angle camera that records
-  continuously to its own microSD card and serves footage on request.
-- **iPhone app (`app/`)** -- the primary UI and brains for preview, clip browsing,
-  downloads, settings, and incidents.
-- **CarPlay integration** -- a safe surface inside the iPhone app for voice
-  incident-marking, status, alerts, and start/stop control.
+The Pi is deliberately narrow and reliable; the app is the brains. Wi-Fi is never
+part of the recording path. Read the [system overview](docs/overview.md) for the
+full architecture and cross-cutting principles.
 
-The project is iPhone-only. The app owns the experience; the Pi stays deliberately
-dumb: capture, encode, store safely, and serve footage.
+## Documentation
 
-## Hardware
+Browse the documentation book locally:
 
-The v1 camera unit is a Raspberry Pi Zero 2 W with an Arducam IMX708
-Autofocus Wide camera. See [`raspi/AGENTS.md`](raspi/AGENTS.md) for the full spec,
-constraints, and part links.
+```sh
+just docs-serve
+```
 
-## Design principles
+`just docs-build` builds the book and checks its links. Useful entry points:
 
-- **SD is the source of truth.** The Pi always records locally; Wi-Fi is never on
-  the recording path.
-- **Wi-Fi is 2.4 GHz preview + pull only.** The phone gets low-res preview and
-  on-demand clip pulls, not continuous full-quality streaming.
-- **CarPlay is not a video viewport.** Live preview stays on the iPhone screen;
-  CarPlay gets voice, status, alerts, and control.
-- **Recording survives abrupt power loss.** The car can cut power at any time, so
-  corruption resilience is designed in layers.
-- **Thermals are a real constraint.** Windshield heat and the camera sensor's 50 C
-  limit shape the hardware and operating model.
+- [Roadmap](docs/roadmap.md) -- current build sequence and Icebox.
+- [Hardware](docs/hardware.md) -- selected parts and physical constraints.
+- [Pi setup runbook](docs/setup/pi-runbook.md) -- flash, provision, deploy,
+  verify, and operate the camera unit.
+- [App-Pi transport boundary](docs/design/boundary/transport.md) -- local API,
+  events, preview, clip pull, Wi-Fi pinning, and trust.
+- [Pi recording](docs/design/pi/recording.md) and
+  [storage](docs/design/pi/storage.md) -- capture durability and the footage ring.
+- [App architecture](docs/design/app/architecture.md) and
+  [incidents](docs/design/app/incidents.md) -- product state and permanent evidence.
 
-See [`AGENTS.md`](AGENTS.md) for the full cross-cutting principles and links to the
-owning ADRs.
+Developer and agent conventions start in [`AGENTS.md`](AGENTS.md), with focused
+guidance in [`app/AGENTS.md`](app/AGENTS.md) and
+[`raspi/AGENTS.md`](raspi/AGENTS.md).
 
 ## Repository layout
 
 ```text
 dancam/
-  AGENTS.md              whole-system overview and conventions
-  Justfile               common build/test/run tasks
-  docs/roadmap.md        build plan and parked future work
-  app/                   iPhone app
-  raspi/                 Raspberry Pi camera-unit software and runbook
-  references/            gitignored upstream source clones
+  docs/                  mdBook source: overview, design, setup, and research
+  contract/events/       canonical shared event bodies and SSE framing
+  app/                   Swift/UIKit iPhone app
+  raspi/                 Pi camera owner, Rust service, and provisioning
+  references/            gitignored, pinned upstream source clones
+  Justfile               common build, test, docs, and deploy tasks
 ```
-
-## Where to go next
-
-- Pi setup and operations runbook: [`raspi/README.md`](raspi/README.md)
-- Camera-unit design and development notes: [`raspi/AGENTS.md`](raspi/AGENTS.md)
-- iPhone app design and development notes: [`app/AGENTS.md`](app/AGENTS.md)
-- Whole-system overview and design decision process: [`AGENTS.md`](AGENTS.md)
-- Build plan: [`docs/roadmap.md`](docs/roadmap.md)

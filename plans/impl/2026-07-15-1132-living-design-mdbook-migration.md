@@ -411,7 +411,7 @@ End state:
 - [x] 18. Extract hardware and references pages
 - [x] 19. Retire ADR tooling
 - [x] 20. Slim AGENTS.md files to the lean layout
-- [ ] 21. Refresh the root README
+- [x] 21. Refresh the root README
 
 ## Implementation notes
 
@@ -423,3 +423,5 @@ End state:
 - Commit 17 also retargeted the provisioning page's runbook ownership boundary and
   appended its move to the Decision log so the living design did not retain the old
   `raspi/README.md` location as current behavior.
+- Commit 21's final whole-plan pass added the missing app-architecture and Pi-recording
+  ownership links to the non-owning event reference projection.
