@@ -24,6 +24,10 @@
 - [Pi storage](design/pi/storage.md)
 - [Pi operational telemetry and recording readiness](design/pi/telemetry.md)
 
+# Setup
+
+- [Raspberry Pi setup](setup/pi-runbook.md)
+
 # Reference
 
 - [Event wire reference](reference/events.md)

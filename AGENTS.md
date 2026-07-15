@@ -65,7 +65,8 @@ workstation.
   is required for current iOS toolchains and the simulator).
 - **Raspberry Pi:** flash the microSD from the laptop with Raspberry Pi Imager 2.0.10+
   (headless OS-customization sets Wi-Fi/SSH/hostname for first-boot without a monitor,
-  then iterate over SSH); see [`raspi/README.md`](raspi/README.md) for the full runbook.
+  then iterate over SSH); see
+  [`docs/setup/pi-runbook.md`](docs/setup/pi-runbook.md) for the full runbook.
 
 ## Repository layout
 
@@ -202,10 +203,11 @@ During the migration from ADRs to living pages:
   `just --list` to discover tasks, and prefer those tasks over spelling out raw
   `cargo`/Xcode/etc. commands unless you are deliberately testing the lower-level
   command.
-- **Raspberry Pi setup runbook:** [`raspi/README.md`](raspi/README.md) is the
-  reproducible fresh-Pi bootstrap, verification, and operations guide. Changes to
-  human-facing setup/verify/ops steps must update it in the same change. Changes to
-  onboard system state -- packages, `/boot/firmware/config.txt`, Avahi,
+- **Raspberry Pi setup runbook:**
+  [`docs/setup/pi-runbook.md`](docs/setup/pi-runbook.md) is the reproducible fresh-Pi
+  bootstrap, verification, and operations guide. Changes to human-facing
+  setup/verify/ops steps must update it in the same change. Changes to onboard system
+  state -- packages, `/boot/firmware/config.txt`, Avahi,
   NetworkManager profiles, systemd units, deploy paths, AP/mDNS behavior, or other
   config files -- belong in the owning playbook/unit/deploy artifact and its comments;
   see [`raspi/AGENTS.md`](raspi/AGENTS.md) and

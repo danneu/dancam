@@ -406,7 +406,7 @@ End state:
 - [x] 14. Fold app browsing ADRs into a living browsing page
 - [x] 15. Fold app incident ADRs into a living incidents page
 - [x] 16. Fold app sharing, capacity, CarPlay, and logging ADRs
-- [ ] 17. Move the Pi runbook into the book
+- [x] 17. Move the Pi runbook into the book
 - [ ] 18. Extract hardware and references pages
 - [ ] 19. Retire ADR tooling
 - [ ] 20. Slim AGENTS.md files to the lean layout
@@ -419,3 +419,6 @@ End state:
   app issues `/v1/recording/start`. The living recording page and nearby operational
   comments now state the implemented behavior instead of carrying the stale claim
   forward.
+- Commit 17 also retargeted the provisioning page's runbook ownership boundary and
+  appended its move to the Decision log so the living design did not retain the old
+  `raspi/README.md` location as current behavior.

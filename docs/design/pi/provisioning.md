@@ -23,9 +23,10 @@ The repository has four distinct configuration owners:
   loop. Provisioning does not render or deploy the unit.
 - `raspi/scripts/partition-card.sh` owns SD-card geometry and filesystem
   creation. The playbook owns the resulting mounts and directory ownership.
-- `raspi/README.md` owns human and runtime operations that cannot be expressed
-  as converged system state: flashing, first boot, smoke tests, the manual AP
-  secret, safe AP toggling, and car-image sequencing.
+- The [Pi setup runbook](../../setup/pi-runbook.md) owns human and runtime
+  operations that cannot be expressed as converged system state: flashing,
+  first boot, smoke tests, the manual AP secret, safe AP toggling, and
+  car-image sequencing.
 
 A command belongs in the artifact that executes it. The hard-won reason for an
 Ansible action belongs in the adjacent task comment, while a concise task or
@@ -253,3 +254,10 @@ change the ownership split: Ansible still owns converged system state, deploy
 owns service artifacts, and the runbook owns human-only and runtime-only steps.
 The runbook will move into the book in a later migration commit; until then this
 page links to its current location.
+
+### 2026-07-15 -- Move the operator runbook into the book
+
+The bootstrap, verification, and operations guide moved to the book's
+[Pi setup runbook](../../setup/pi-runbook.md) chapter so operators and readers
+have one browsable documentation site. `raspi/README.md` remains a short pointer
+from the Pi entry point rather than a second copy that could drift.
