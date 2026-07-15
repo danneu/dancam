@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::pin::Pin;
 
 use async_trait::async_trait;
 use axum::{
@@ -17,7 +17,7 @@ use dancam::{
     preview::frame_part,
     recorder::SegmentId,
     world::CameraState,
-    AppState, DurationCache,
+    AppState,
 };
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
@@ -55,10 +55,6 @@ impl Backend for StubBackend {
     }
 
     fn note_clip_removed(&self, _id: SegmentId) {}
-
-    fn clip_durations(&self) -> Arc<DurationCache> {
-        Arc::new(DurationCache::default())
-    }
 }
 
 fn state(frames: Vec<Bytes>) -> AppState {

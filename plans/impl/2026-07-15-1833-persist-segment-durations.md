@@ -473,4 +473,4 @@ the investigation lacked.
 ## Commit progress
 
 - [x] 1. feat(raspi): persist segment durations in finalized filenames
-- [ ] 2. refactor(raspi): remove the in-memory DurationCache
+- [x] 2. refactor(raspi): remove the in-memory DurationCache

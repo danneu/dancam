@@ -28,7 +28,6 @@ use crate::{
     storage::StorageCoordinator,
     sysfacts::{DiskUsage, MemInfo},
     time_sync::TimeStore,
-    ts_duration::DurationCache,
     world::{CameraState, Input},
 };
 
@@ -110,7 +109,6 @@ pub struct CameraBackend {
     start_handoff: Arc<Mutex<()>>,
     #[cfg(test)]
     start_handoff_pause: Option<Arc<StartHandoffPause>>,
-    clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
 }
 
@@ -125,7 +123,6 @@ impl CameraProcess {
         let hub = Arc::new(EventHub::new(CameraState::Starting));
         let (commands_tx, commands_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let clip_durations = Arc::new(DurationCache::new());
         let time_store = {
             let mut store = TimeStore::load(config.rec_dir.join("time"));
             if let Some(mountpoint) = storage.required_mountpoint() {
@@ -152,7 +149,6 @@ impl CameraProcess {
             start_handoff: Arc::new(Mutex::new(())),
             #[cfg(test)]
             start_handoff_pause: None,
-            clip_durations,
             time_store,
         };
         let control = SupervisorControl {
@@ -239,12 +235,7 @@ impl Backend for CameraBackend {
     }
 
     fn note_clip_removed(&self, id: SegmentId) {
-        self.clip_durations.forget(id);
         self.hub.drive_now(Input::ClipRemoved { id });
-    }
-
-    fn clip_durations(&self) -> Arc<DurationCache> {
-        self.clip_durations.clone()
     }
 
     fn time_store(&self) -> Arc<TimeStore> {
@@ -1213,7 +1204,6 @@ mod tests {
         recorder::RecorderPhase,
         storage::StorageCoordinator,
         time_sync::TimeStore,
-        ts_duration::DurationCache,
         world::CameraState,
     };
 
@@ -1721,7 +1711,6 @@ for line in sys.stdin:
             commands_tx,
             start_handoff: Arc::new(Mutex::new(())),
             start_handoff_pause: None,
-            clip_durations: Arc::new(DurationCache::new()),
             time_store: Arc::new(TimeStore::in_memory()),
         }
     }

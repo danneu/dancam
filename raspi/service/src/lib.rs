@@ -43,8 +43,6 @@ pub mod time_sync;
 mod ts_duration;
 pub mod world;
 
-pub use ts_duration::DurationCache;
-
 // Fallback only. The deployed unit sets DANCAM_REC_DIR to the same path via
 // StateDirectory=dancam.
 pub const DEFAULT_REC_DIR: &str = "/var/lib/dancam/rec";
@@ -57,7 +55,6 @@ pub struct AppState {
     pub storage: Arc<StorageCoordinator>,
     pub filesystem: Arc<filesystem_observer::FilesystemObserver>,
     pub(crate) time_store: Arc<time_sync::TimeStore>,
-    pub(crate) clip_durations: Arc<DurationCache>,
     request_seq: Arc<AtomicU64>,
     host_policy: Arc<HostPolicy>,
 }
@@ -75,11 +72,9 @@ impl AppState {
         if time_store.current_boot_synced() {
             backend.mark_time_synced();
         }
-        let clip_durations = backend.clip_durations();
         let storage = Arc::new(StorageCoordinator::new(PathBuf::from(DEFAULT_REC_DIR)));
         let filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
             storage.clone(),
-            clip_durations.clone(),
             0,
             None,
         ));
@@ -91,7 +86,6 @@ impl AppState {
             storage,
             filesystem,
             time_store,
-            clip_durations,
             request_seq: Arc::new(AtomicU64::new(1)),
             host_policy: Arc::new(HostPolicy::default()),
         }
@@ -100,7 +94,6 @@ impl AppState {
     pub fn with_storage(mut self, storage: Arc<StorageCoordinator>) -> Self {
         self.filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
             storage.clone(),
-            self.clip_durations.clone(),
             0,
             None,
         ));
@@ -123,7 +116,6 @@ impl AppState {
     ) -> Self {
         self.filesystem = Arc::new(filesystem_observer::FilesystemObserver::new(
             self.storage.clone(),
-            self.clip_durations.clone(),
             gc_floor_bytes,
             recording_capacity_override,
         ));

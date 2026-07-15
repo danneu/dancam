@@ -8,7 +8,7 @@ use tokio::sync::Semaphore;
 
 use crate::{
     clips::resolve_segment, recorder::SegmentId, storage::StorageCoordinator, sysfacts::DiskUsage,
-    DurationCache,
+    ts_duration::segment_duration_ms,
 };
 
 const OBSERVATION_DEADLINE: Duration = Duration::from_secs(1);
@@ -49,7 +49,6 @@ pub struct FilesystemObserver {
 impl FilesystemObserver {
     pub fn new(
         storage: Arc<StorageCoordinator>,
-        duration_cache: Arc<DurationCache>,
         gc_floor_bytes: u64,
         recording_capacity_override: Option<u64>,
     ) -> Self {
@@ -57,7 +56,6 @@ impl FilesystemObserver {
             DefaultProbe {
                 rec_dir: storage.rec_dir(),
                 storage: storage.clone(),
-                duration_cache,
                 gc_floor_bytes,
                 recording_capacity_override,
             },
@@ -117,7 +115,6 @@ impl FilesystemObserver {
 struct DefaultProbe {
     rec_dir: Arc<Path>,
     storage: Arc<StorageCoordinator>,
-    duration_cache: Arc<DurationCache>,
     gc_floor_bytes: u64,
     recording_capacity_override: Option<u64>,
 }
@@ -147,9 +144,7 @@ impl FilesystemProbe for DefaultProbe {
 impl DefaultProbe {
     fn observe_duration(&self, id: SegmentId) -> Option<u64> {
         match resolve_segment(&self.rec_dir, id) {
-            Ok(Some(segment)) => self
-                .duration_cache
-                .duration_ms(id, &segment.path, segment.bytes),
+            Ok(Some(segment)) => segment_duration_ms(&segment.path, segment.bytes),
             Ok(None) => None,
             Err(error) => {
                 tracing::debug!(%error, id, "skipping current segment duration observation");

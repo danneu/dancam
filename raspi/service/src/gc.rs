@@ -339,7 +339,6 @@ mod tests {
         backend::{BackendError, FrameStream},
         event_hub::{EventConnection, EventHub},
         events::Snapshot,
-        ts_duration::DurationCache,
         world::{CameraState, Input},
     };
     use async_trait::async_trait;
@@ -413,14 +412,12 @@ mod tests {
 
     struct StubBackend {
         hub: Arc<EventHub>,
-        durations: Arc<DurationCache>,
     }
 
     impl StubBackend {
         fn new() -> Self {
             Self {
                 hub: Arc::new(EventHub::new(CameraState::Running)),
-                durations: Arc::new(DurationCache::new()),
             }
         }
     }
@@ -446,11 +443,7 @@ mod tests {
             self.hub.unpullable_from()
         }
         fn note_clip_removed(&self, id: SegmentId) {
-            self.durations.forget(id);
             self.hub.drive_now(Input::ClipRemoved { id });
-        }
-        fn clip_durations(&self) -> Arc<DurationCache> {
-            self.durations.clone()
         }
         fn set_context(&self, boot_id: Arc<str>, started: StdInstant) {
             self.hub.set_context(boot_id, started);

@@ -20,7 +20,7 @@ use dancam::{
     recorder::{stamped_segment_filename, RecorderEvent, SegmentFacts, SegmentId},
     storage::StorageCoordinator,
     world::{CameraState, Input},
-    AppState, DurationCache,
+    AppState,
 };
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
@@ -59,10 +59,6 @@ impl Backend for StubBackend {
 
     fn note_clip_removed(&self, id: SegmentId) {
         self.hub.drive_now(Input::ClipRemoved { id });
-    }
-
-    fn clip_durations(&self) -> Arc<DurationCache> {
-        Arc::new(DurationCache::default())
     }
 
     fn set_context(&self, boot_id: Arc<str>, started: Instant) {

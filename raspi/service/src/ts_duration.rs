@@ -1,9 +1,7 @@
 use std::{
-    collections::HashMap,
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::Path,
-    sync::Mutex,
 };
 
 const PACKET_SIZE: usize = 188;
@@ -18,76 +16,6 @@ struct PtsSpan {
     min: u64,
     max: u64,
     frame_interval: u64,
-}
-
-pub struct DurationCache {
-    state: Mutex<DurationCacheState>,
-}
-
-struct DurationCacheState {
-    entries: HashMap<u32, (u64, Option<u64>)>,
-    generation: u64,
-}
-
-impl DurationCache {
-    pub(crate) fn new() -> Self {
-        Self {
-            state: Mutex::new(DurationCacheState {
-                entries: HashMap::new(),
-                generation: 0,
-            }),
-        }
-    }
-
-    pub(crate) fn duration_ms(&self, seq: u32, path: &Path, bytes: u64) -> Option<u64> {
-        let generation = {
-            let state = self.state.lock().expect("duration cache mutex poisoned");
-            if let Some((cached_bytes, dur_ms)) = state.entries.get(&seq) {
-                if *cached_bytes == bytes {
-                    return *dur_ms;
-                }
-            }
-            state.generation
-        };
-
-        let dur_ms = segment_duration_ms(path, bytes);
-        #[cfg(test)]
-        run_before_duration_insert_hook();
-        let path_still_matches = path
-            .metadata()
-            .is_ok_and(|metadata| metadata.len() == bytes);
-        let mut state = self.state.lock().expect("duration cache mutex poisoned");
-        if state.generation == generation && path_still_matches {
-            state.entries.insert(seq, (bytes, dur_ms));
-        }
-        dur_ms
-    }
-
-    pub(crate) fn forget(&self, seq: u32) {
-        let mut state = self.state.lock().expect("duration cache mutex poisoned");
-        state.generation = state.generation.wrapping_add(1);
-        state.entries.remove(&seq);
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    static BEFORE_DURATION_INSERT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-fn run_before_duration_insert_hook() {
-    BEFORE_DURATION_INSERT.with(|hook| {
-        if let Some(hook) = hook.borrow_mut().take() {
-            hook();
-        }
-    });
-}
-
-impl Default for DurationCache {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 pub(crate) fn segment_duration_ms(path: &Path, bytes: u64) -> Option<u64> {
@@ -270,7 +198,7 @@ fn encode_pts(pts: u64) -> [u8; 5] {
 mod tests {
     use super::{
         scan_pts_bounds, segment_duration_ms, segment_pts_span, tail_window_offset, ts_pts_packet,
-        DurationCache, PtsSpan, BEFORE_DURATION_INSERT, HEAD_WINDOW, PACKET_SIZE, TAIL_WINDOW,
+        PtsSpan, HEAD_WINDOW, PACKET_SIZE, TAIL_WINDOW,
     };
     use std::{
         fs,
@@ -423,74 +351,6 @@ mod tests {
             (dur_ms as i64 - 30_000).abs() <= 100,
             "duration was {dur_ms} ms"
         );
-    }
-
-    #[test]
-    fn duration_cache_keys_by_sequence_and_bytes() {
-        let first = pts_buffer(&[0, 3000]);
-        let second = pts_buffer(&[0, 3000, 6000]);
-        let first_file = TempFile::write("first.ts", &first);
-        let second_file = TempFile::write("second.ts", &second);
-        let cache = DurationCache::new();
-
-        assert_eq!(
-            cache.duration_ms(1, &first_file.path, first.len() as u64),
-            Some(66)
-        );
-        assert_eq!(
-            cache.duration_ms(1, &second_file.path, second.len() as u64),
-            Some(100)
-        );
-        assert_eq!(
-            cache.duration_ms(2, &first_file.path, first.len() as u64),
-            Some(66)
-        );
-    }
-
-    #[test]
-    fn forget_evicts_entry_so_same_size_content_recomputes() {
-        let first = pts_buffer(&[0, 3000, 6000]);
-        let second = pts_buffer(&[0, 6000, 12_000]);
-        let temp = TempFile::write("forget.ts", &first);
-        let cache = DurationCache::new();
-        assert_eq!(
-            cache.duration_ms(7, &temp.path, first.len() as u64),
-            Some(100)
-        );
-        fs::write(&temp.path, &second).unwrap();
-        cache.forget(7);
-        assert_eq!(
-            cache.duration_ms(7, &temp.path, second.len() as u64),
-            Some(200)
-        );
-    }
-
-    #[test]
-    fn forget_during_inflight_compute_does_not_resurrect() {
-        let bytes = pts_buffer(&[0, 3000]);
-        let temp = TempFile::write("inflight-forget.ts", &bytes);
-        let cache = std::sync::Arc::new(DurationCache::new());
-        let hook_cache = cache.clone();
-        BEFORE_DURATION_INSERT.with(|hook| {
-            *hook.borrow_mut() = Some(Box::new(move || hook_cache.forget(7)));
-        });
-
-        assert_eq!(
-            cache.duration_ms(7, &temp.path, bytes.len() as u64),
-            Some(66)
-        );
-        assert!(!cache.state.lock().unwrap().entries.contains_key(&7));
-    }
-
-    #[test]
-    fn forget_before_lookup_does_not_resurrect_evicted_id() {
-        let temp = TempFile::write("already-evicted.ts", &[]);
-        fs::remove_file(&temp.path).unwrap();
-        let cache = DurationCache::new();
-        cache.forget(7);
-
-        assert_eq!(cache.duration_ms(7, &temp.path, 188), None);
-        assert!(!cache.state.lock().unwrap().entries.contains_key(&7));
     }
 
     fn pts_buffer(values: &[u64]) -> Vec<u8> {

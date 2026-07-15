@@ -33,7 +33,7 @@ use crate::{
     storage::StorageCoordinator,
     sysfacts::{DiskUsage, MemInfo},
     time_sync::TimeStore,
-    ts_duration::{ts_pts_packet, DurationCache},
+    ts_duration::ts_pts_packet,
     world::{CameraState, Input},
 };
 
@@ -78,10 +78,6 @@ pub trait Backend: Send + Sync + 'static {
     fn connect(&self) -> EventConnection;
     fn unpullable_from(&self) -> Option<SegmentId>;
     fn note_clip_removed(&self, id: SegmentId);
-
-    /// The cache the finalize path and `/v1/clips` share so a finished segment's
-    /// `dur_ms` is computed once from its file and reused, not recomputed at list time.
-    fn clip_durations(&self) -> Arc<DurationCache>;
 
     fn time_store(&self) -> Arc<TimeStore> {
         Arc::new(TimeStore::in_memory())
@@ -193,7 +189,6 @@ pub struct MockBackend {
     frames_tx: watch::Sender<Option<Bytes>>,
     hub: Arc<EventHub>,
     recorder: Option<MockRecorder>,
-    clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
     boot_tag: Arc<StdMutex<Option<String>>>,
 }
@@ -214,7 +209,6 @@ impl MockBackend {
     fn with_recorder(recorder: Option<(Arc<StorageCoordinator>, Duration)>) -> Self {
         let (frames_tx, _) = watch::channel::<Option<Bytes>>(None);
         let hub = Arc::new(EventHub::new(CameraState::Running));
-        let clip_durations = Arc::new(DurationCache::new());
         let time_store = Arc::new(
             recorder
                 .as_ref()
@@ -244,7 +238,6 @@ impl MockBackend {
             frames_tx,
             hub,
             recorder,
-            clip_durations,
             time_store,
             boot_tag,
         }
@@ -318,12 +311,7 @@ impl Backend for MockBackend {
     }
 
     fn note_clip_removed(&self, id: SegmentId) {
-        self.clip_durations.forget(id);
         self.hub.drive_now(Input::ClipRemoved { id });
-    }
-
-    fn clip_durations(&self) -> Arc<DurationCache> {
-        self.clip_durations.clone()
     }
 
     fn time_store(&self) -> Arc<TimeStore> {
