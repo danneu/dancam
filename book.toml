@@ -1,0 +1,11 @@
+[book]
+title = "dancam"
+src = "docs"
+
+[build]
+create-missing = false
+extra-watch-dirs = ["contract/events"]
+
+[output.html]
+
+[output.linkcheck2]

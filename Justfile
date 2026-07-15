@@ -13,6 +13,14 @@ raspi-check:
     cargo fmt --manifest-path raspi/service/Cargo.toml --check
     cargo clippy --manifest-path raspi/service/Cargo.toml --all-targets -- -D warnings
 
+# Build the documentation book and validate its links.
+docs-build:
+    nix develop -c mdbook build
+
+# Serve the documentation book locally and open it in a browser.
+docs-serve:
+    nix develop -c mdbook serve --open
+
 # Cross-build and deploy the service to the Pi (override target with DANCAM_HOST=...).
 raspi-deploy:
     ./raspi/deploy.sh

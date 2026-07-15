@@ -40,6 +40,9 @@ secrets/
 *.mp4
 recordings/
 
+# mdBook build output
+/book/
+
 # Third-party source references (seeded via `just fetch-references`)
 references/
 /plans/wip
