@@ -4,790 +4,313 @@ import Testing
 
 @MainActor
 struct ClipsFeatureTests {
-    @Test func loadFetchesClipsOnce() async {
-        let response = CameraSamples.clipsResponse(ids: [2, 1], nextCursor: ClipCursor(1))
-        let queue = ClipsFetchQueue([.success(response)])
-        let store = TestStore(
-            initialState: ClipsFeature.State(),
-            dependencies: dependencies(queue: queue),
-            reduce: ClipsFeature.reduce
+    @Test func initialHeadEstablishesBrowseAndAuthoritativeFrontiers() throws {
+        var state = ClipsFeature.State()
+        send(.load, to: &state)
+        let request = try #require(state.request)
+        #expect(request.cursor == nil)
+
+        respond(
+            request,
+            with: .success(CameraSamples.clipsResponse(ids: [5, 4, 3], nextCursor: ClipCursor(3))),
+            to: &state
         )
 
-        await store.send(.load) {
-            $0.status = .loading
-            $0.headEpoch = 1
-            $0.requestSeq = 1
-            $0.inFlightRequests = [1]
-            $0.headRequest = 1
-        }
-        #expect(store.state.hasLoadedOnce == false)
-        await store.receive(.clipsResponse(epoch: 1, generation: 1, .success(response))) {
-            $0.clips = response.clips
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-            $0.nextCursor = ClipCursor(1)
-            $0.inFlightRequests = []
-            $0.headRequest = nil
-        }
-        let cursors = await queue.requestedCursors()
-        #expect(cursors == [Optional<ClipCursor>.none])
+        #expect(state.clips.map(\.id) == [5, 4, 3])
+        #expect(state.nextCursor == ClipCursor(3))
+        #expect(state.authoritativeNextCursor == ClipCursor(3))
+        #expect(state.hasLoadedOnce)
     }
 
-    @Test func clipFinalizedPrependsAndDedupsRegardlessOfStatus() async {
-        let oldClip = CameraSamples.clip(id: 1)
-        let newClip = CameraSamples.clip(id: 2)
-        let updatedOld = CameraSamples.clip(id: 1, durMs: 30_000)
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                clips: [oldClip],
-                status: .loading,
-                headEpoch: 4
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
+    @Test func snapshotWalksMiddlePagesToSavedFrontierAndRepairsArbitraryGaps() throws {
+        var state = loadedState(ids: [10, 9, 8, 7, 6, 5], cursor: ClipCursor(5))
+        send(.load, to: &state)
+        let head = try #require(state.request)
+        respond(
+            head,
+            with: .success(CameraSamples.clipsResponse(ids: [13, 12, 10], nextCursor: ClipCursor(10))),
+            to: &state
         )
 
-        await store.send(.clipFinalized(newClip)) {
-            $0.clips = [newClip, oldClip]
-            $0.clipFinalizeEpoch[2] = 4
-        }
-        await store.send(.clipFinalized(updatedOld)) {
-            $0.clips = [newClip, updatedOld]
-            $0.clipFinalizeEpoch[1] = 4
-        }
+        let middle = try #require(state.request)
+        #expect(middle.cursor == ClipCursor(10))
+        respond(
+            middle,
+            with: .success(CameraSamples.clipsResponse(ids: [9, 7, 6, 5, 4], nextCursor: ClipCursor(4))),
+            to: &state
+        )
+
+        #expect(state.request == nil)
+        #expect(state.nextCursor == ClipCursor(5))
+        #expect(state.authoritativeNextCursor == ClipCursor(5))
+        #expect(state.clips.map(\.id) == [13, 12, 10, 9, 7, 6, 5])
     }
 
-    @Test func staleLoadResponseKeepsClipFinalizedDuringThatRequest() async {
-        let folded = CameraSamples.clip(id: 3)
-        let staleResponse = CameraSamples.clipsResponse(ids: [2, 1])
-        let queue = ClipsFetchQueue([.success(staleResponse)])
-        let store = TestStore(
-            initialState: ClipsFeature.State(),
-            dependencies: dependencies(queue: queue),
-            reduce: ClipsFeature.reduce
+    @Test func fullyLoadedCatalogRecoversToNewEndAndRemovesOldestFirstGC() throws {
+        var state = loadedState(ids: [5, 4, 3, 2, 1], cursor: nil)
+        send(.load, to: &state)
+        let head = try #require(state.request)
+        respond(
+            head,
+            with: .success(CameraSamples.clipsResponse(ids: [7, 6, 5], nextCursor: ClipCursor(5))),
+            to: &state
+        )
+        let tail = try #require(state.request)
+        respond(
+            tail,
+            with: .success(CameraSamples.clipsResponse(ids: [4, 3], nextCursor: nil)),
+            to: &state
         )
 
-        await store.send(.refresh) {
-            $0.status = .loading
-            $0.headEpoch = 1
-            $0.requestSeq = 1
-            $0.inFlightRequests = [1]
-            $0.headRequest = 1
-        }
-        await store.send(.clipFinalized(folded)) {
-            $0.clips = [folded]
-            $0.clipFinalizeEpoch[3] = 1
-        }
-        await store.receive(.clipsResponse(epoch: 1, generation: 1, .success(staleResponse))) {
-            $0.clips = [folded] + staleResponse.clips
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-            $0.clipFinalizeEpoch = [3: 1]
-            $0.inFlightRequests = []
-            $0.headRequest = nil
-        }
+        #expect(state.request == nil)
+        #expect(state.nextCursor == nil)
+        #expect(state.authoritativeNextCursor == nil)
+        #expect(state.clips.map(\.id) == [7, 6, 5, 4, 3])
     }
 
-    @Test func failureKeepsExistingClips() async {
-        let existing = [CameraSamples.clip(id: 4)]
-        let store = TestStore(
-            initialState: ClipsFeature.State(clips: existing, status: .loading, headEpoch: 1),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
+    @Test func recoveryOvershootDoesNotMergeOrInferBelowSavedFrontier() throws {
+        var state = loadedState(ids: [9, 8, 7, 6, 5, 4], cursor: ClipCursor(5))
+        send(.load, to: &state)
+        let head = try #require(state.request)
+        respond(
+            head,
+            with: .success(CameraSamples.clipsResponse(ids: [12, 11, 9, 4, 3], nextCursor: ClipCursor(3))),
+            to: &state
         )
 
-        await store.send(.clipsResponse(epoch: 1, generation: 0, .failure(.http(503)))) {
-            $0.clips = existing
-            $0.status = .failed(.http(503))
-        }
+        #expect(state.clips.map(\.id) == [12, 11, 9, 4])
+        #expect(state.nextCursor == ClipCursor(5))
+        #expect(state.authoritativeNextCursor == ClipCursor(5))
     }
 
-    @Test func loadMoreFetchesNextPageAndAdvancesCursor() async {
-        let firstPage = CameraSamples.clipsResponse(ids: [3, 2], nextCursor: ClipCursor(2))
-        let nextPage = CameraSamples.clipsResponse(ids: [1, 0], nextCursor: nil)
-        let queue = ClipsFetchQueue([.success(nextPage)])
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                clips: firstPage.clips,
-                status: .idle,
-                nextCursor: firstPage.nextCursor,
-                headEpoch: 1
-            ),
-            dependencies: dependencies(queue: queue),
-            reduce: ClipsFeature.reduce
+    @Test func incidentBoundaryAuthorizesOnlyItsExactLowerLimit() throws {
+        var state = loadedState(ids: [9, 8, 7, 6, 5], cursor: ClipCursor(5))
+        send(.load, to: &state)
+        let head = try #require(state.request)
+        respond(
+            head,
+            with: .success(CameraSamples.clipsResponse(ids: [11, 10, 9, 8, 7, 6, 5], nextCursor: ClipCursor(5))),
+            to: &state
+        )
+        send(.setIncidentBoundary(ClipCursor(3)), to: &state)
+        let incidentPage = try #require(state.request)
+        respond(
+            incidentPage,
+            with: .success(CameraSamples.clipsResponse(ids: [4, 3, 2, 1], nextCursor: ClipCursor(1))),
+            to: &state
         )
 
-        await store.send(.loadMore) {
-            $0.isPaging = true
-            $0.requestSeq = 1
-            $0.inFlightRequests = [1]
-            $0.pageRequest = 1
-        }
-        await store.receive(.pageResponse(epoch: 1, generation: 1, .success(nextPage))) {
-            $0.clips = firstPage.clips + nextPage.clips
-            $0.nextCursor = nil
-            $0.isPaging = false
-            $0.inFlightRequests = []
-            $0.pageRequest = nil
-        }
-        let cursors = await queue.requestedCursors()
-        #expect(cursors == [ClipCursor(2)])
+        #expect(state.clips.map(\.id).suffix(2) == [4, 3])
+        #expect(state.clips.contains { $0.id < 3 } == false)
+        #expect(state.nextCursor == ClipCursor(5))
+        #expect(state.authoritativeNextCursor == ClipCursor(3))
     }
 
-    @Test func pageFailureClearsPagingForRetry() async {
-        let queue = ClipsFetchQueue([.failure(.http(503))])
-        let store = TestStore(
-            initialState: ClipsFeature.State(nextCursor: ClipCursor(2)),
-            dependencies: dependencies(queue: queue),
-            reduce: ClipsFeature.reduce
+    @Test func userDemandAuthorizesOneFullPageAndAdvancesBrowseFrontier() throws {
+        var state = loadedFreshState(ids: [7, 6, 5], cursor: ClipCursor(5))
+        send(.loadMore, to: &state)
+        let page = try #require(state.request)
+        #expect(page.advancesBrowseFrontier)
+        respond(
+            page,
+            with: .success(CameraSamples.clipsResponse(ids: [4, 3, 2], nextCursor: ClipCursor(2))),
+            to: &state
         )
 
-        await store.send(.loadMore) {
-            $0.isPaging = true
-            $0.requestSeq = 1
-            $0.inFlightRequests = [1]
-            $0.pageRequest = 1
-        }
-        await store.receive(.pageResponse(epoch: 0, generation: 1, .failure(.http(503)))) {
-            $0.status = .failed(.http(503))
-            $0.isPaging = false
-            $0.inFlightRequests = []
-            $0.pageRequest = nil
-        }
+        #expect(state.nextCursor == ClipCursor(2))
+        #expect(state.clips.map(\.id) == [7, 6, 5, 4, 3, 2])
+        #expect(state.userLoadMorePending == false)
     }
 
-    @Test func deleteTappedOptimisticallyRemovesAndSuccessKeepsRemoved() async {
-        let clip = CameraSamples.clip(id: 7)
-        let deleteProbe = ClipDeleteProbe([.success(())])
-        let cacheProbe = ClipCacheProbe()
-        let store = TestStore(
-            initialState: ClipsFeature.State(clips: [clip]),
-            dependencies: dependencies(deleteProbe: deleteProbe, cacheProbe: cacheProbe),
-            reduce: ClipsFeature.reduce
-        )
+    @Test func pageFailurePausesAllGoalsUntilExplicitRetry() throws {
+        var state = loadedFreshState(ids: [5, 4, 3], cursor: ClipCursor(3))
+        send(.loadMore, to: &state)
+        let page = try #require(state.request)
+        respond(page, with: .failure(.http(503)), to: &state)
 
-        await store.send(.deleteTapped(clip)) {
-            $0.clips = []
-            $0.pendingDeleteIDs = [7]
-        }
-        await store.receive(.deleteResponse(clip: clip, .success(true))) {
-            $0.pendingDeleteIDs = []
-        }
-        #expect(await deleteProbe.deletedIDs() == [7])
-        #expect(await cacheProbe.removedIDs() == [7])
+        #expect(state.status == .failed(.http(503)))
+        #expect(state.request == nil)
+        #expect(state.userLoadMorePending)
+        send(.loadMore, to: &state)
+        send(.setIncidentBoundary(ClipCursor(1)), to: &state)
+        let pausedRequestSequence = state.requestSeq
+        send(.setIncidentBoundary(ClipCursor(1)), to: &state)
+        #expect(state.request == nil)
+        #expect(state.requestSeq == pausedRequestSequence)
+
+        send(.retry, to: &state)
+        #expect(state.request?.cursor == nil)
+        #expect(state.userLoadMorePending)
+        #expect(state.incidentBoundary == ClipCursor(1))
     }
 
-    @Test func clipRemovedKeepsCachedFootage() async {
-        let cacheProbe = ClipCacheProbe()
-        let store = TestStore(
-            initialState: ClipsFeature.State(clips: [CameraSamples.clip(id: 7)]),
-            dependencies: dependencies(cacheProbe: cacheProbe),
-            reduce: ClipsFeature.reduce
+    @Test func nonAdvancingPageCursorFailsInsteadOfLooping() throws {
+        var state = loadedFreshState(ids: [5, 4, 3], cursor: ClipCursor(3))
+        send(.loadMore, to: &state)
+        let page = try #require(state.request)
+        respond(
+            page,
+            with: .success(CameraSamples.clipsResponse(ids: [2], nextCursor: ClipCursor(3))),
+            to: &state
         )
 
-        await store.send(.clipRemoved(id: 7)) {
-            $0.clips = []
-        }
-        #expect(store.state.removalTombstones.isEmpty)
-        #expect(await cacheProbe.removedIDs() == [])
+        #expect(state.status == .failed(.decoding("Clip page cursor did not advance.")))
+        #expect(state.request == nil)
+        #expect(state.nextCursor == ClipCursor(3))
+        #expect(state.userLoadMorePending)
     }
 
-    @Test func optimisticDeleteSurvivesRefreshBeforeDeleteResolves() async {
-        let clip = CameraSamples.clip(id: 7)
-        let staleHead = CameraSamples.clipsResponse(ids: [7])
-        let deleteStarted = AsyncSignal()
-        let releaseDelete = AsyncSignal()
-        let store = TestStore(
-            initialState: ClipsFeature.State(clips: [clip]),
-            dependencies: AppDependencies(
-                clips: ClipsClient(
-                    fetch: { _ in staleHead },
-                    delete: { _ in
-                        await deleteStarted.signal()
-                        await releaseDelete.wait()
-                    }
-                )
-            ),
-            reduce: ClipsFeature.reduce
-        )
+    @Test func revocationRetainsRowsFrontiersAndGoalsButRejectsLateResponse() throws {
+        var state = loadedFreshState(ids: [5, 4, 3], cursor: ClipCursor(3))
+        send(.loadMore, to: &state)
+        let stale = try #require(state.request)
+        send(.setIncidentBoundary(ClipCursor(1)), to: &state)
+        send(.revokeEpoch, to: &state)
 
-        await store.send(.deleteTapped(clip)) {
-            $0.clips = []
-            $0.pendingDeleteIDs = [7]
-        }
-        await deleteStarted.wait()
-        await store.send(.refresh) {
-            $0.status = .loading
-            $0.headEpoch = 1
-            $0.requestSeq = 1
-            $0.inFlightRequests = [1]
-            $0.headRequest = 1
-        }
-        await store.receive(.clipsResponse(epoch: 1, generation: 1, .success(staleHead))) {
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-            $0.inFlightRequests = []
-            $0.headRequest = nil
-        }
-        await releaseDelete.signal()
-        await store.receive(.deleteResponse(clip: clip, .success(true))) {
-            $0.pendingDeleteIDs = []
-        }
-        #expect(store.state.clips.contains { $0.id == 7 } == false)
-        #expect(store.state.removalTombstones.isEmpty)
+        #expect(state.epoch == nil)
+        #expect(state.clips.map(\.id) == [5, 4, 3])
+        #expect(state.nextCursor == ClipCursor(3))
+        #expect(state.userLoadMorePending)
+        #expect(state.incidentBoundary == ClipCursor(1))
+        respond(stale, with: .success(CameraSamples.clipsResponse(ids: [2, 1])), to: &state)
+        #expect(state.clips.map(\.id) == [5, 4, 3])
+        #expect(ClipsFeature.incidentCoverage(state) == .unloaded)
     }
 
-    @Test func confirmedRemovalSuppressesStaleOlderPage() async {
-        let clip = CameraSamples.clip(id: 7)
-        let response = CameraSamples.clipsResponse(ids: [7])
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                requestSeq: 1,
-                inFlightRequests: [1],
-                pageRequest: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
+    @Test func replacementSnapshotResumesRetainedGoalsFromHead() throws {
+        var state = loadedFreshState(ids: [5, 4, 3], cursor: ClipCursor(3))
+        send(.loadMore, to: &state)
+        send(.setIncidentBoundary(ClipCursor(1)), to: &state)
+        send(.revokeEpoch, to: &state)
+        send(.load, to: &state)
 
-        await store.send(.clipRemoved(id: 7)) {
-            $0.removalTombstones = [7: 1]
-        }
-        await store.send(.pageResponse(epoch: 0, generation: 1, .success(response))) {
-            $0.inFlightRequests = []
-            $0.removalTombstones = [:]
-            $0.pageRequest = nil
-        }
-        #expect(store.state.clips.contains(clip) == false)
-        #expect(store.state.removalTombstones.isEmpty)
+        let head = try #require(state.request)
+        #expect(head.cursor == nil)
+        #expect(head.target == ClipCursor(1))
     }
 
-    @Test func confirmedRemovalSuppressesStaleSuccessfulHead() async {
-        let response = CameraSamples.clipsResponse(ids: [7])
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                requestSeq: 1,
-                inFlightRequests: [1],
-                headRequest: 1,
-                headEpoch: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
+    @Test func concurrentFinalizeAndRemovalBeatAuthoritativeAbsence() throws {
+        var state = loadedState(ids: [6, 5, 4], cursor: ClipCursor(4))
+        send(.load, to: &state)
+        let head = try #require(state.request)
+        let finalized = CameraSamples.clip(id: 7, durMs: 99_000)
+        send(.clipFinalized(finalized), to: &state)
+        send(.clipRemoved(id: 5), to: &state)
+        respond(
+            head,
+            with: .success(CameraSamples.clipsResponse(ids: [7, 6, 5, 4], nextCursor: ClipCursor(4))),
+            to: &state
         )
 
-        await store.send(.clipRemoved(id: 7)) {
-            $0.removalTombstones = [7: 1]
-        }
-        await store.send(.clipsResponse(epoch: 1, generation: 1, .success(response))) {
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-            $0.inFlightRequests = []
-            $0.removalTombstones = [:]
-            $0.headRequest = nil
-        }
-        #expect(store.state.clips.isEmpty)
-        #expect(store.state.removalTombstones.isEmpty)
+        #expect(state.clips.map(\.id) == [7, 6, 4])
+        #expect(state.clips.first == finalized)
     }
 
-    @Test func retainedTombstoneReleasedOnFailureAndStaleSettlement() async {
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                requestSeq: 1,
-                inFlightRequests: [1],
-                removalTombstones: [7: 1],
-                pageRequest: 1,
-                headEpoch: 2
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.pageResponse(epoch: 1, generation: 1, .failure(.http(503)))) {
-            $0.inFlightRequests = []
-            $0.removalTombstones = [:]
-            $0.pageRequest = nil
-        }
-    }
-
-    @Test func cancelOnlySettlementLeavesNoOrphanedGenerationOrTombstone() async {
-        let cancelingDependencies = AppDependencies(
-            clips: ClipsClient(fetch: { _ in
-                CameraSamples.clipsResponse(ids: [])
-            })
-        )
-        let replacedHead = TestStore(
-            initialState: ClipsFeature.State(
-                requestSeq: 1,
-                inFlightRequests: [1],
-                removalTombstones: [7: 1],
-                headRequest: 1
-            ),
-            dependencies: cancelingDependencies,
-            reduce: ClipsFeature.reduce
-        )
-        await replacedHead.send(.refresh) {
-            $0.status = .loading
-            $0.requestSeq = 2
-            $0.inFlightRequests = [2]
-            $0.removalTombstones = [:]
-            $0.headRequest = 2
-            $0.headEpoch = 1
-        }
-        await replacedHead.receive(
-            .clipsResponse(epoch: 1, generation: 2, .success(CameraSamples.clipsResponse(ids: [])))
-        ) {
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-            $0.inFlightRequests = []
-            $0.headRequest = nil
-        }
-
-        let disappearedPage = TestStore(
-            initialState: ClipsFeature.State(
-                isPaging: true,
-                requestSeq: 1,
-                inFlightRequests: [1],
-                removalTombstones: [7: 1],
-                pageRequest: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-        await disappearedPage.send(.onDisappear) {
-            $0.isPaging = false
-            $0.inFlightRequests = []
-            $0.removalTombstones = [:]
-            $0.pageRequest = nil
-        }
-
-        let headCancelsPage = TestStore(
-            initialState: ClipsFeature.State(
-                requestSeq: 2,
-                inFlightRequests: [1, 2],
-                removalTombstones: [7: 1],
-                headRequest: 2,
-                pageRequest: 1,
-                headEpoch: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-        let response = CameraSamples.clipsResponse(ids: [])
-        await headCancelsPage.send(.clipsResponse(epoch: 1, generation: 2, .success(response))) {
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-            $0.inFlightRequests = []
-            $0.removalTombstones = [:]
-            $0.headRequest = nil
-            $0.pageRequest = nil
-        }
-    }
-
-    @Test func manyRemovalsWithNoRequestInFlightStayBounded() async {
-        let clips = (1...50).map { CameraSamples.clip(id: $0) }
-        let store = TestStore(
-            initialState: ClipsFeature.State(clips: clips),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        for id in 1...50 {
-            await store.send(.clipRemoved(id: id)) {
-                $0.clips.removeAll { $0.id == id }
-            }
-            #expect(store.state.removalTombstones.isEmpty)
-        }
-    }
-
-    @Test func deleteFailureReinsertsBut404StaysRemoved() async {
-        let clip = CameraSamples.clip(id: 7)
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                pendingDeleteIDs: [7]
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.deleteResponse(clip: clip, .failure(.http(500)))) {
-            $0.clips = [clip]
-            $0.status = .failed(.http(500))
-            $0.pendingDeleteIDs = []
-        }
-
-        let notFoundStore = TestStore(
-            initialState: ClipsFeature.State(
-                pendingDeleteIDs: [7]
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-        await notFoundStore.send(.deleteResponse(clip: clip, .failure(.http(404)))) {
-            $0.pendingDeleteIDs = []
-        }
-    }
-
-    @Test func clipRemovedBeatsLateDeleteFailure() async {
-        let clip = CameraSamples.clip(id: 7)
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                pendingDeleteIDs: [7]
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.clipRemoved(id: 7)) {
-            $0.pendingDeleteIDs = []
-        }
-        await store.send(.deleteResponse(clip: clip, .failure(.http(500))))
-    }
-
-    @Test func headConfirmsOptimisticallyRemovedDeleteBeforeLateFailure() async {
-        let clip = CameraSamples.clip(id: 7)
-        let response = CameraSamples.clipsResponse(ids: [9, 8], nextCursor: nil)
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                pendingDeleteIDs: [7],
-                headEpoch: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.clipsResponse(epoch: 1, generation: 0, .success(response))) {
-            $0.clips = response.clips
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-            $0.pendingDeleteIDs = []
-        }
-        await store.send(.deleteResponse(clip: clip, .failure(.http(500))))
-    }
-
-    @Test func suppressedInputsDoNotResurrectPendingDeleteUntilFailure() async {
-        let clip = CameraSamples.clip(id: 7)
-        let response = CameraSamples.clipsResponse(ids: [7], nextCursor: nil)
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                pendingDeleteIDs: [7],
-                headEpoch: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.clipsResponse(epoch: 1, generation: 0, .success(response))) {
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-        }
-        await store.send(.pageResponse(epoch: 1, generation: 0, .success(response)))
-        await store.send(.clipFinalized(clip)) {
-            $0.clipFinalizeEpoch[7] = 1
-        }
-        await store.send(.deleteResponse(clip: clip, .failure(.http(500)))) {
-            $0.clips = [clip]
-            $0.status = .failed(.http(500))
-            $0.pendingDeleteIDs = []
-        }
-    }
-
-    @Test func headLoadPrunesMissedDeletesWithinAuthoritativeWindow() async {
-        let response = ClipsResponse(
-            clips: [CameraSamples.clip(id: 7), CameraSamples.clip(id: 6), CameraSamples.clip(id: 4)],
-            serverTimeMs: nil,
-            nextCursor: nil
-        )
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                clips: CameraSamples.clipsResponse(ids: [7, 6, 5, 4]).clips,
-                headEpoch: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.clipsResponse(epoch: 1, generation: 0, .success(response))) {
-            $0.clips = response.clips
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-        }
-    }
-
-    @Test func headLoadKeepsClipsBelowItsCursorBoundary() async {
-        let response = CameraSamples.clipsResponse(ids: [8, 7, 6], nextCursor: ClipCursor(6))
-        let older = CameraSamples.clipsResponse(ids: [4, 2]).clips
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                clips: response.clips + older,
-                headEpoch: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.clipsResponse(epoch: 1, generation: 0, .success(response))) {
-            $0.clips = response.clips + older
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-            $0.nextCursor = ClipCursor(6)
-        }
-    }
-
-    @Test func headLoadPrunesStaleClipAboveReturnedHead() async {
-        let response = CameraSamples.clipsResponse(ids: [8, 7], nextCursor: nil)
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                clips: CameraSamples.clipsResponse(ids: [10, 8, 7]).clips,
-                headEpoch: 2,
-                clipFinalizeEpoch: [10: 1]
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.clipsResponse(epoch: 2, generation: 0, .success(response))) {
-            $0.clips = response.clips
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 2
-            $0.clipFinalizeEpoch = [:]
-        }
-    }
-
-    @Test func emptyHeadPrunesEverythingInAuthoritativeWindow() async {
-        let response = CameraSamples.clipsResponse(ids: [], nextCursor: nil)
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                clips: CameraSamples.clipsResponse(ids: [5, 4, 3]).clips,
-                headEpoch: 1
-            ),
-            dependencies: dependencies(),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.clipsResponse(epoch: 1, generation: 0, .success(response))) {
-            $0.clips = []
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
-        }
-    }
-
-    @Test func stalePageResponseDoesNotOverwriteResetFrontier() async {
-        let started = AsyncSignal()
-        let stalePage = CameraSamples.clipsResponse(ids: [400, 399], nextCursor: ClipCursor(399))
-        let freshHead = CameraSamples.clipsResponse(ids: [700, 699], nextCursor: ClipCursor(601))
-        let store = TestStore(
-            initialState: ClipsFeature.State(
-                clips: CameraSamples.clipsResponse(ids: [500, 499]).clips,
-                nextCursor: ClipCursor(401),
-                headEpoch: 5
-            ),
-            dependencies: AppDependencies(
-                clips: ClipsClient(fetch: { cursor in
-                    if cursor == ClipCursor(401) {
-                        await started.signal()
-                        try await Task.sleep(for: .seconds(60))
-                        return stalePage
-                    }
-                    #expect(cursor == nil)
-                    return freshHead
-                })
-            ),
-            reduce: ClipsFeature.reduce
-        )
-
-        await store.send(.loadMore) {
-            $0.isPaging = true
-            $0.requestSeq = 1
-            $0.inFlightRequests = [1]
-            $0.pageRequest = 1
-        }
-        await started.wait()
-        await store.send(.refresh) {
-            $0.status = .loading
-            $0.headEpoch = 6
-            $0.requestSeq = 2
-            $0.inFlightRequests = [1, 2]
-            $0.headRequest = 2
-        }
-        await store.receive(.clipsResponse(epoch: 6, generation: 2, .success(freshHead))) {
-            $0.clips = freshHead.clips + CameraSamples.clipsResponse(ids: [500, 499]).clips
-            $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 6
-            $0.nextCursor = ClipCursor(601)
-            $0.isPaging = false
-            $0.inFlightRequests = []
-            $0.headRequest = nil
-            $0.pageRequest = nil
-        }
-        await store.send(.pageResponse(epoch: 5, generation: 1, .success(stalePage)))
-        await store.finishEffects()
-
-        store.expectNoReceivedActions()
-    }
-
-    @Test func headFetchSurvivesDisappearAndItsResponseStillApplies() async {
+    @Test func sharedRecoverySurvivesHomeDisappearance() async throws {
         let started = AsyncSignal()
         let release = AsyncSignal()
-        let response = CameraSamples.clipsResponse(ids: [1])
+        let response = CameraSamples.clipsResponse(ids: [6, 5, 4], nextCursor: ClipCursor(4))
         let store = TestStore(
-            initialState: ClipsFeature.State(),
-            dependencies: AppDependencies(
-                clips: ClipsClient(fetch: { _ in
-                    await started.signal()
-                    await release.wait()
-                    return response
-                })
-            ),
+            initialState: loadedFreshState(ids: [5, 4], cursor: ClipCursor(4)),
+            dependencies: AppDependencies(clips: ClipsClient(fetch: { _ in
+                await started.signal()
+                await release.wait()
+                return response
+            })),
             reduce: ClipsFeature.reduce
         )
 
-        await store.send(.load) {
+        await store.send(.refresh) {
+            $0.replacementHeadPending = false
             $0.status = .loading
-            $0.headEpoch = 1
             $0.requestSeq = 1
             $0.inFlightRequests = [1]
             $0.headRequest = 1
+            $0.request = .init(
+                epoch: ClipCoverageEpoch(rawValue: 1),
+                generation: 1,
+                cursor: nil,
+                target: ClipCursor(4),
+                advancesBrowseFrontier: false
+            )
         }
         await started.wait()
-        await store.send(.onDisappear)
+        // Home no longer sends a clip lifecycle action when it disappears.
         await release.signal()
         await store.receive(.clipsResponse(epoch: 1, generation: 1, .success(response))) {
             $0.clips = response.clips
             $0.status = .idle
-            $0.hasLoadedOnce = true
-            $0.lastSuccessfulHeadEpoch = 1
             $0.inFlightRequests = []
             $0.headRequest = nil
+            $0.request = nil
+            $0.hasAuthoritativeCoverage = true
+            $0.authoritativeNextCursor = ClipCursor(4)
+            $0.recoveryCursor = ClipCursor(4)
+            $0.lastSuccessfulHeadEpoch = 1
         }
         await store.finishEffects()
     }
 
-    @Test func onDisappearCancelsInFlightPaging() async {
-        let started = AsyncSignal()
-        let store = TestStore(
-            initialState: ClipsFeature.State(nextCursor: ClipCursor(2)),
-            dependencies: AppDependencies(
-                clips: ClipsClient(fetch: { _ in
-                    await started.signal()
-                    try await Task.sleep(for: .seconds(60))
-                    return CameraSamples.clipsResponse(ids: [1])
-                })
-            ),
-            reduce: ClipsFeature.reduce
-        )
+    @Test func deleteFailureRestoresClipAndConfirmedRemovalSuppressesStaleList() {
+        let clip = CameraSamples.clip(id: 7)
+        var state = loadedFreshState(ids: [7], cursor: nil)
+        send(.deleteTapped(clip), to: &state)
+        send(.deleteResponse(clip: clip, .failure(.http(500))), to: &state)
+        #expect(state.clips == [clip])
 
-        await store.send(.loadMore) {
-            $0.isPaging = true
-            $0.requestSeq = 1
-            $0.inFlightRequests = [1]
-            $0.pageRequest = 1
-        }
-        await started.wait()
-        await store.send(.onDisappear) {
-            $0.isPaging = false
-            $0.inFlightRequests = []
-            $0.pageRequest = nil
-        }
-        await store.finishCanceledEffects()
-        store.expectNoReceivedActions()
+        state.status = .idle
+        send(.clipRemoved(id: 7), to: &state)
+        #expect(state.clips.isEmpty)
     }
 
-    private func dependencies(
-        queue: ClipsFetchQueue? = nil,
-        deleteProbe: ClipDeleteProbe? = nil,
-        cacheProbe: ClipCacheProbe? = nil
-    ) -> AppDependencies {
-        var cache = ClipCache.noop
-        if let cacheProbe {
-            cache.remove = { await cacheProbe.record($0) }
+    private func send(
+        _ action: ClipsFeature.Action,
+        to state: inout ClipsFeature.State,
+        dependencies: AppDependencies = AppDependencies()
+    ) {
+        _ = ClipsFeature.reduce(state: &state, action: action, dependencies: dependencies)
+    }
+
+    private func respond(
+        _ request: ClipsFeature.State.Request,
+        with result: Result<ClipsResponse, ClipsError>,
+        to state: inout ClipsFeature.State
+    ) {
+        if let cursor = request.cursor {
+            send(.pageResponse(
+                epoch: request.epoch.rawValue,
+                generation: request.generation,
+                requestedCursor: cursor,
+                result
+            ), to: &state)
+        } else {
+            send(.clipsResponse(
+                epoch: request.epoch.rawValue,
+                generation: request.generation,
+                result
+            ), to: &state)
         }
-        return AppDependencies(
-            clips: ClipsClient(
-                fetch: { cursor in
-                    guard let queue else {
-                        fatalError("Clips fetch should not be called.")
-                    }
-                    return try await queue.fetch(cursor: cursor)
-                },
-                delete: { clipID in
-                    guard let deleteProbe else {
-                        fatalError("Clip delete should not be called.")
-                    }
-                    try await deleteProbe.delete(clipID)
-                }
-            ),
-            clipCache: cache
+    }
+
+    private func loadedState(ids: [Int], cursor: ClipCursor?) -> ClipsFeature.State {
+        ClipsFeature.State(
+            clips: CameraSamples.clipsResponse(ids: ids).clips,
+            nextCursor: cursor,
+            hasLoadedOnce: true
         )
     }
-}
 
-private actor ClipCacheProbe {
-    private var ids: [Int] = []
-
-    func record(_ id: Int) {
-        ids.append(id)
-    }
-
-    func removedIDs() -> [Int] {
-        ids
-    }
-}
-
-private actor ClipsFetchQueue {
-    private var results: [Result<ClipsResponse, ClipsError>]
-    private var cursors: [ClipCursor?] = []
-
-    init(_ results: [Result<ClipsResponse, ClipsError>]) {
-        self.results = results
-    }
-
-    func fetch(cursor: ClipCursor?) throws -> ClipsResponse {
-        cursors.append(cursor)
-        switch results.removeFirst() {
-        case .success(let response):
-            return response
-        case .failure(let error):
-            throw error
-        }
-    }
-
-    func requestedCursors() -> [ClipCursor?] {
-        cursors
-    }
-}
-
-private actor ClipDeleteProbe {
-    private var results: [Result<Void, ClipsError>]
-    private var ids: [Int] = []
-
-    init(_ results: [Result<Void, ClipsError>]) {
-        self.results = results
-    }
-
-    func delete(_ id: Int) throws {
-        ids.append(id)
-        switch results.removeFirst() {
-        case .success:
-            return
-        case .failure(let error):
-            throw error
-        }
-    }
-
-    func deletedIDs() -> [Int] {
-        ids
+    private func loadedFreshState(ids: [Int], cursor: ClipCursor?) -> ClipsFeature.State {
+        ClipsFeature.State(
+            clips: CameraSamples.clipsResponse(ids: ids).clips,
+            nextCursor: cursor,
+            headEpoch: 1,
+            lastSuccessfulHeadEpoch: 1,
+            hasLoadedOnce: true,
+            epoch: ClipCoverageEpoch(rawValue: 1),
+            hasAuthoritativeCoverage: true,
+            authoritativeNextCursor: cursor,
+            recoveryCursor: cursor
+        )
     }
 }

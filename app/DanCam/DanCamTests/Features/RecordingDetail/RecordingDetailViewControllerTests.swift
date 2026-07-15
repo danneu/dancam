@@ -84,11 +84,7 @@ struct RecordingDetailViewControllerTests {
         var updatedClip = initialClip
         updatedClip.durMs = 45_000
 
-        store.send(.clips(.clipsResponse(epoch: 0, generation: 0, .success(ClipsResponse(
-            clips: [updatedClip],
-            serverTimeMs: nil,
-            nextCursor: nil
-        )))))
+        store.send(.clips(.clipFinalized(updatedClip)))
 
         try await waitUntil {
             controller.clipThumbnailCellForTesting(clipID: initialClip.id)?.accessibilityLabel != originalLabel
@@ -281,6 +277,11 @@ struct RecordingDetailViewControllerTests {
     func coveredEmptyProjectionDefersPaginationUntilRepairReloadCompletes() async throws {
         let fetchSpy = RecordingFetchSpy(responses: [
             ClipsResponse(
+                clips: [clip(id: 11, bootTag: nil)],
+                serverTimeMs: nil,
+                nextCursor: ClipCursor(11)
+            ),
+            ClipsResponse(
                 clips: [clip(id: 10, bootTag: "target")],
                 serverTimeMs: nil,
                 nextCursor: nil
@@ -289,7 +290,7 @@ struct RecordingDetailViewControllerTests {
         let (controller, store) = makeControllerAndStore(
             clips: [clip(id: 12, bootTag: "target")],
             clipsClient: fetchSpy.client(),
-            nextCursor: nil
+            nextCursor: ClipCursor(13)
         )
         let root = UIViewController()
         let navigationController = UINavigationController(rootViewController: root)
@@ -303,28 +304,23 @@ struct RecordingDetailViewControllerTests {
         window.layoutIfNeeded()
         let oldTail = try #require(controller.indexPathForTesting(clipID: 12))
 
-        store.send(.clips(.clipsResponse(
-            epoch: 0,
-            generation: 0,
-            .success(ClipsResponse(
-                clips: [clip(id: 11, bootTag: nil)],
-                serverTimeMs: nil,
-                nextCursor: ClipCursor(11)
-            ))
-        )))
+        store.send(.clips(.loadMore))
+        try await waitUntil {
+            controller.clipIDsForTesting().isEmpty && store.state.clips.isPaging == false
+        }
 
         #expect(controller.clipIDsForTesting().isEmpty)
         #expect(controller.presentedClipIDsForTesting == [12])
         #expect(store.state.clips.isPaging == false)
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: oldTail)
         #expect(store.state.clips.isPaging == false)
-        #expect(await fetchSpy.requestedCursors().isEmpty)
+        #expect(await fetchSpy.requestedCursors() == [ClipCursor(13)])
 
         navigationController.popViewController(animated: false)
         window.layoutIfNeeded()
         controller.layoutTableForTesting()
 
-        try await waitForCursors(fetchSpy, [ClipCursor(11)])
+        try await waitForCursors(fetchSpy, [ClipCursor(13), ClipCursor(11)])
         try await waitUntil { controller.clipIDsForTesting() == [10] }
         try await waitUntil {
             controller.layoutTableForTesting()
@@ -436,7 +432,6 @@ struct RecordingDetailViewControllerTests {
         )
         let window = try embed(controller)
         defer {
-            store.send(.clips(.onDisappear))
             window.isHidden = true
         }
 
@@ -615,6 +610,12 @@ struct RecordingDetailViewControllerTests {
         var state = AppFeature.State()
         state.clips.clips = clips
         state.clips.nextCursor = nextCursor
+        state.clips.headEpoch = 1
+        state.clips.epoch = ClipCoverageEpoch(rawValue: 1)
+        state.clips.hasLoadedOnce = clips.isEmpty == false || nextCursor != nil
+        state.clips.hasAuthoritativeCoverage = state.clips.hasLoadedOnce
+        state.clips.authoritativeNextCursor = nextCursor
+        state.clips.recoveryCursor = nextCursor
         state.recording = recording
         if let world {
             state.link = .online(world)

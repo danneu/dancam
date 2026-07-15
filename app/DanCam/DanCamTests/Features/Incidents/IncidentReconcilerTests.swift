@@ -282,7 +282,7 @@ struct IncidentReconcilerTests {
         #expect(IncidentPlanner.plan(
             incidents: [confirmed],
             clips: [clip(seq: 10)],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .notRecording
         ).isEmpty)
     }

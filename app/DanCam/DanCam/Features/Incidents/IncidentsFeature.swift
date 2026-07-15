@@ -41,8 +41,26 @@ enum IncidentsFeature {
         var pendingPersistIDs: Set<UUID> = []
         var hasLoadedStore = false
         var isLoadingStore = false
-        var isPageRequestPending = false
+        var requiredCoverageBoundary: ClipCursor?
         var isForeground = false
+
+        static func == (lhs: State, rhs: State) -> Bool {
+            lhs.incidents == rhs.incidents
+                && lhs.unreadableDirectoryNames == rhs.unreadableDirectoryNames
+                && lhs.openSegmentAnchor == rhs.openSegmentAnchor
+                && lhs.runtimeLockout == rhs.runtimeLockout
+                && lhs.lockoutResolvedRecordingID == rhs.lockoutResolvedRecordingID
+                && lhs.persistenceFailed == rhs.persistenceFailed
+                && lhs.hasRequestedProvisionalAuth == rhs.hasRequestedProvisionalAuth
+                && lhs.pendingProvisionalAuthRecordID == rhs.pendingProvisionalAuthRecordID
+                && lhs.pendingRecords == rhs.pendingRecords
+                && lhs.pullQueue == rhs.pullQueue
+                && lhs.activePull == rhs.activePull
+                && lhs.pendingPersistIDs == rhs.pendingPersistIDs
+                && lhs.hasLoadedStore == rhs.hasLoadedStore
+                && lhs.isLoadingStore == rhs.isLoadingStore
+                && lhs.isForeground == rhs.isForeground
+        }
 
         var pendingIncidentCount: Int {
             var ids = Set(incidents.lazy.filter { $0.status == .pending }.map(\.id))
@@ -122,7 +140,6 @@ enum IncidentsFeature {
         case persistenceAlertDismissed
         case reconcile
         case recordPersisted(IncidentRecord, success: Bool)
-        case pageRequested
         case pullFinished(PullRequest, PullOutcome)
         case pullRecordsPersisted(PullRequest, [IncidentRecord], success: Bool)
         case lossRecordsPersisted([IncidentRecord], success: Bool)
@@ -217,7 +234,6 @@ enum IncidentsFeature {
             }
 
         case .clipsChanged:
-            state.isPageRequestPending = false
             return reduce(
                 state: &state,
                 action: .reconcile,
@@ -333,8 +349,13 @@ enum IncidentsFeature {
             return .none
 
         case .reconcile:
-            guard clipsState.hasLoadedOnce else { return .none }
             let available = state.incidents.filter { state.pendingPersistIDs.contains($0.id) == false }
+            guard clipsState.hasLoadedOnce else {
+                state.requiredCoverageBoundary = available
+                    .map { ClipCursor(UInt32(clamping: $0.markSeq)) }
+                    .min()
+                return .none
+            }
             let commands = IncidentPlanner.plan(
                 incidents: available,
                 clips: clipsState.clips,
@@ -342,6 +363,7 @@ enum IncidentsFeature {
                 recorder: recorderState(world)
             )
             var effects: [Effect<Action>] = []
+            state.requiredCoverageBoundary = nil
 
             for command in commands {
                 switch command {
@@ -360,12 +382,9 @@ enum IncidentsFeature {
                         state: &state
                     )
 
-                case .page:
-                    guard clipsState.isPaging == false,
-                          clipsState.nextCursor != nil,
-                          state.isPageRequestPending == false else { continue }
-                    state.isPageRequestPending = true
-                    effects.append(send(.pageRequested))
+                case .requireCoverage(let boundary):
+                    state.requiredCoverageBoundary = state.requiredCoverageBoundary
+                        .map { min($0, boundary) } ?? boundary
 
                 }
             }
@@ -388,9 +407,6 @@ enum IncidentsFeature {
 
         case .recordPersisted(let record, success: false):
             state.pendingPersistIDs.remove(record.id)
-            return .none
-
-        case .pageRequested:
             return .none
 
         case .pullFinished(let request, let outcome):
@@ -779,13 +795,7 @@ enum IncidentsFeature {
     }
 
     private static func coverage(_ clips: ClipsFeature.State) -> IncidentListCoverage {
-        guard clips.hasLoadedOnce, clips.lastSuccessfulHeadEpoch >= clips.headEpoch else {
-            if clips.hasLoadedOnce {
-                Log.incident.debug("negative inference waiting required_epoch=\(clips.headEpoch, privacy: .public) successful_epoch=\(clips.lastSuccessfulHeadEpoch, privacy: .public)")
-            }
-            return .unloaded
-        }
-        return .loaded(nextCursor: clips.nextCursor)
+        ClipsFeature.incidentCoverage(clips)
     }
 
     private static func recorderState(_ world: World?) -> IncidentRecorderState {

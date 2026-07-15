@@ -105,11 +105,13 @@ struct IncidentsFeatureTests {
         await staleStore.send(.reconcile)
         #expect(staleStore.state.incidents[0].status == .pending)
 
-        let freshClips = ClipsFeature.State(
+        var freshClips = ClipsFeature.State(
             headEpoch: 2,
             lastSuccessfulHeadEpoch: 2,
             hasLoadedOnce: true
         )
+        freshClips.epoch = ClipCoverageEpoch(rawValue: 2)
+        freshClips.hasAuthoritativeCoverage = true
         let freshStore = TestStore(
             initialState: IncidentsFeature.State(incidents: [incident]),
             dependencies: AppDependencies(),

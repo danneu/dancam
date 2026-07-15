@@ -12,6 +12,35 @@ MPEG-TS format and timestamp invariants. [App connection](connection.md) owns th
 shared socket deadlines. This page owns the app-side pull policy, remuxer, playback
 cache, viewer lifecycle, and thumbnail generation.
 
+## Authoritative clip-list recovery
+
+`ClipsFeature` is the sole owner of clip-list sequencing. A fresh SSE snapshot grants
+one opaque coverage epoch and starts a head request. The feature preserves rendered
+rows and the saved browse frontier while it walks the response cursor chain far enough
+to cover that frontier authoritatively. If browsing had already reached catalog end,
+recovery walks to the new end. Stream failure, heartbeat timeout, or process suspension
+revokes the epoch and retires the single in-flight generation before live world state
+becomes unavailable. Connecting and offline states cannot issue clip-list requests.
+
+A numeric browse frontier `F` means IDs at or above `F` have been incorporated and
+IDs below it remain unseen; catalog end is a separate state. Recovery uses a temporary
+cursor and never advances the browse frontier by itself. Only one user load-more demand
+may authorize a full page below the saved frontier. An incident requirement authorizes
+coverage only through its exact sequence; see [incident coverage planning](incidents.md#coverage-planning).
+
+Each response is accepted only when its epoch, generation, and requested upper cursor
+match the current request. A head is authoritative from its returned cursor through
+the newest ID. A page is authoritative from its returned cursor up to, but excluding,
+its requested cursor. The feature intersects that interval with the authorized target,
+discarding overshoot clips and negative evidence below the target. Current-epoch
+`clip_finalized` facts and removal tombstones win over stale list contents.
+
+One central scheduler runs only with a fresh epoch, no in-flight request, and no page
+failure. A failed head or page settles once, retains refresh, browse, and incident
+goals, and pauses. A retryable heartbeat or manual refresh retains a replacement-head
+goal; it resumes immediately in a fresh epoch or waits for the next snapshot after a
+gap. UI navigation has no authority to cancel this process-global work.
+
 ## Raw clip boundary
 
 The Pi remains the footage source of truth and serves one finished segment as raw
@@ -246,8 +275,27 @@ viewer:
 - thumbnail tests cover disk and cached-MP4 hits, exact prefix validation, single
   flight, bounded concurrency, interest cancellation, 2 MB to 4 MB decode retry,
   cache isolation, ETag canonicalization, and failure without cache poisoning.
+- clip-list tests cover head and middle-page gaps, oldest-first deletion, arbitrary
+  holes, saved-frontier and catalog-end recovery, response overshoot, user and incident
+  authorization, failure pause, epoch interruption, finalize/removal races, late
+  responses, and Home disappearance during shared recovery.
 
 ## Decision log
+
+### 2026-07-15: Centralize pagination behind fresh coverage epochs
+
+Head refresh, UI paging, and incident paging previously drove separate request paths.
+That let a cursor response from before an SSE gap mutate the post-gap catalog, let view
+disappearance cancel domain work, and treated a successful head page as authority over
+history it had not covered. The app now gives clip-list sequencing to one scheduler,
+tags every request with the current snapshot epoch and generation, and separates the
+durable browse frontier from the cursor used to prove recovery coverage.
+
+Refreshing only the head was rejected because missed middle-page removals remain
+invisible. Letting recovery merge every page it traverses was rejected because it
+silently expands browsing into unseen history. Epoch-gated interval authority keeps
+positive and negative evidence tied to one coherent snapshot while explicit user and
+incident goals define the only permitted lower bounds.
 
 ### 2026-06-26: Remux pulled TS into MP4 on the phone
 

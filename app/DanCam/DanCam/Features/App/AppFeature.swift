@@ -59,6 +59,11 @@ enum AppFeature {
             state.retentionEstimator.reset()
             _ = reduceIncidents(state: &state, action: .worldObserved(nil), dependencies: dependencies)
             return .merge([
+                ClipsFeature.reduce(
+                    state: &state.clips,
+                    action: .revokeEpoch,
+                    dependencies: dependencies
+                ).map(Action.clips),
                 .cancel(id: streamID),
                 .cancel(id: heartbeatID),
                 .cancel(id: reconnectID),
@@ -102,7 +107,7 @@ enum AppFeature {
                 effects.append(
                     ClipsFeature.reduce(
                         state: &state.clips,
-                        action: .load,
+                        action: .retry,
                         dependencies: dependencies
                     )
                     .map(Action.clips)
@@ -153,7 +158,7 @@ enum AppFeature {
                 effects.append(
                     ClipsFeature.reduce(
                         state: &state.clips,
-                        action: .load,
+                        action: .refresh,
                         dependencies: dependencies
                     )
                     .map(Action.clips)
@@ -175,12 +180,18 @@ enum AppFeature {
 
         case .streamFailed:
             if case .suspended = state.link { return .none }
+            let clipEffect = ClipsFeature.reduce(
+                state: &state.clips,
+                action: .revokeEpoch,
+                dependencies: dependencies
+            ).map(Action.clips)
             state.link.wentOffline()
             state.retentionEstimator.reset()
             state.streamReconnectAttempt += 1
             return .merge([
                 .cancel(id: heartbeatID),
                 .cancel(id: timeSyncID),
+                clipEffect,
                 reduceRecording(
                     state: &state,
                     action: .linkWentOffline,
@@ -195,6 +206,11 @@ enum AppFeature {
 
         case .heartbeatTimedOut:
             if case .suspended = state.link { return .none }
+            let clipEffect = ClipsFeature.reduce(
+                state: &state.clips,
+                action: .revokeEpoch,
+                dependencies: dependencies
+            ).map(Action.clips)
             state.link.wentOffline()
             state.retentionEstimator.reset()
             state.streamReconnectAttempt += 1
@@ -202,6 +218,7 @@ enum AppFeature {
                 .cancel(id: streamID),
                 .cancel(id: heartbeatID),
                 .cancel(id: timeSyncID),
+                clipEffect,
                 reduceRecording(
                     state: &state,
                     action: .linkWentOffline,
@@ -243,7 +260,7 @@ enum AppFeature {
                     action: .clipRemoved(seq: id),
                     dependencies: dependencies
                 ))
-            case .clipFinalized, .clipsResponse(_, _, .success), .pageResponse(_, _, .success):
+            case .clipFinalized, .clipsResponse(_, _, .success), .pageResponse(_, _, _, .success):
                 effects.append(reduceIncidents(
                     state: &state,
                     action: .clipsChanged,
@@ -255,21 +272,11 @@ enum AppFeature {
             return .merge(effects)
 
         case .incidents(let action):
-            let incidentEffect = reduceIncidents(
+            return reduceIncidents(
                 state: &state,
                 action: action,
                 dependencies: dependencies
             )
-            guard action == .pageRequested else { return incidentEffect }
-            return .merge([
-                incidentEffect,
-                ClipsFeature.reduce(
-                    state: &state.clips,
-                    action: .loadMore,
-                    dependencies: dependencies
-                )
-                .map(Action.clips),
-            ])
 
         case .foregrounded:
             state.link.connect()
@@ -280,6 +287,11 @@ enum AppFeature {
             )
 
         case .backgrounded:
+            let clipEffect = ClipsFeature.reduce(
+                state: &state.clips,
+                action: .revokeEpoch,
+                dependencies: dependencies
+            ).map(Action.clips)
             state.link.suspend()
             state.retentionEstimator.reset()
             let incidentBackgroundEffect = reduceIncidents(
@@ -296,6 +308,7 @@ enum AppFeature {
                 .cancel(id: heartbeatID),
                 .cancel(id: reconnectID),
                 .cancel(id: timeSyncID),
+                clipEffect,
                 reduceRecording(
                     state: &state,
                     action: .linkWentOffline,
@@ -381,7 +394,7 @@ enum AppFeature {
         action: IncidentsFeature.Action,
         dependencies: AppDependencies
     ) -> Effect<Action> {
-        IncidentsFeature.reduce(
+        let incidentEffect = IncidentsFeature.reduce(
             state: &state.incidents,
             action: action,
             world: state.link.onlineWorld,
@@ -389,6 +402,13 @@ enum AppFeature {
             dependencies: dependencies
         )
         .map(Action.incidents)
+        let clipEffect = ClipsFeature.reduce(
+            state: &state.clips,
+            action: .setIncidentBoundary(state.incidents.requiredCoverageBoundary),
+            dependencies: dependencies
+        )
+        .map(Action.clips)
+        return .merge([incidentEffect, clipEffect])
     }
 
     private static func streamEffect(dependencies: AppDependencies) -> Effect<Action> {
@@ -765,8 +785,12 @@ private extension ClipsFeature.Action {
             "load"
         case .refresh:
             "refresh"
-        case .onDisappear:
-            "onDisappear"
+        case .retry:
+            "retry"
+        case .revokeEpoch:
+            "revokeEpoch"
+        case .setIncidentBoundary:
+            "setIncidentBoundary"
         case .clipFinalized:
             "clipFinalized"
         case .deleteTapped:
@@ -783,9 +807,9 @@ private extension ClipsFeature.Action {
             "clipsResponse.success"
         case .clipsResponse(_, _, .failure):
             "clipsResponse.failure"
-        case .pageResponse(_, _, .success):
+        case .pageResponse(_, _, _, .success):
             "pageResponse.success"
-        case .pageResponse(_, _, .failure):
+        case .pageResponse(_, _, _, .failure):
             "pageResponse.failure"
         }
     }
@@ -807,7 +831,6 @@ private extension IncidentsFeature.Action {
         case .reconcile: "reconcile"
         case .recordPersisted(_, true): "recordPersisted.success"
         case .recordPersisted(_, false): "recordPersisted.failure"
-        case .pageRequested: "pageRequested"
         case .pullFinished: "pullFinished"
         case .pullRecordsPersisted(_, _, true): "pullRecordsPersisted.success"
         case .pullRecordsPersisted(_, _, false): "pullRecordsPersisted.failure"

@@ -217,11 +217,15 @@ struct HomeViewControllerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func coveredUpdatesDeferUIKitAndPaginationUntilReattachment() async throws {
-        let fetchSpy = HomeFetchSpy()
+        let fetchSpy = HomeFetchSpy(responses: [
+            ClipsResponse(clips: [clipA], serverTimeMs: nil, nextCursor: ClipCursor(1)),
+            ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil),
+        ])
         let (controller, store) = makeControllerAndStore(
             clips: [clipA],
             loader: .noop,
-            clipsClient: fetchSpy.client()
+            clipsClient: fetchSpy.client(),
+            nextCursor: ClipCursor(2)
         )
         let (window, navigationController) = try embedInNavigationController(controller)
         defer { window.isHidden = true }
@@ -232,20 +236,18 @@ struct HomeViewControllerTests {
         window.layoutIfNeeded()
 
         store.send(.clips(.clipFinalized(clipB)))
-        store.send(.clips(.clipsResponse(
-            epoch: 0,
-            generation: 0,
-            .success(ClipsResponse(clips: [clipB, clipA], serverTimeMs: nil, nextCursor: ClipCursor(1)))
-        )))
+        store.send(.clips(.loadMore))
+        try await waitUntil { store.state.clips.isPaging == false }
 
         #expect(controller.rowIDsForTesting.contains(.finished(clipB.id)))
         #expect(controller.presentedRowIDsForTesting == [.finished(clipA.id)])
         #expect(store.state.clips.isPaging == false)
+        #expect(await fetchSpy.requestedCursors() == [ClipCursor(2)])
 
         let tail = try #require(controller.indexPathForTesting(rowID: .finished(clipA.id)))
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: tail)
         #expect(store.state.clips.isPaging == false)
-        #expect(await fetchSpy.requestedCursors().isEmpty)
+        #expect(await fetchSpy.requestedCursors() == [ClipCursor(2)])
 
         navigationController.popViewController(animated: false)
         window.layoutIfNeeded()
@@ -254,7 +256,7 @@ struct HomeViewControllerTests {
         try await waitUntil {
             controller.clipThumbnailCellForTesting(clipID: clipB.id) != nil
         }
-        try await waitForCursors(fetchSpy, [ClipCursor(1)])
+        try await waitForCursors(fetchSpy, [ClipCursor(2), ClipCursor(1)])
     }
 
     @Test func recordingCardSwipeHasNoActions() throws {
@@ -426,11 +428,8 @@ struct HomeViewControllerTests {
             timeApproximate: clipA.timeApproximate
         )
 
-        store.send(.clips(.clipsResponse(epoch: 0, generation: 0, .success(ClipsResponse(
-            clips: [clipC, relabeledClipA, clipB],
-            serverTimeMs: 0,
-            nextCursor: nil
-        )))))
+        store.send(.clips(.clipFinalized(clipC)))
+        store.send(.clips(.clipFinalized(relabeledClipA)))
 
         try await waitUntil {
             controller.clipThumbnailCellForTesting(clipID: self.clipA.id)?.accessibilityLabel != originalLabelA
@@ -480,11 +479,7 @@ struct HomeViewControllerTests {
             timeApproximate: false
         )
 
-        store.send(.clips(.clipsResponse(epoch: 0, generation: 0, .success(ClipsResponse(
-            clips: [trustedClip],
-            serverTimeMs: 1_767_225_601_000,
-            nextCursor: nil
-        )))))
+        store.send(.clips(.clipFinalized(trustedClip)))
 
         try await waitUntil {
             controller.clipThumbnailCellForTesting(clipID: self.clipA.id)?.subtitleTextForTesting != originalSubtitle
@@ -733,7 +728,6 @@ struct HomeViewControllerTests {
         )
         let window = try embed(controller)
         defer {
-            store.send(.clips(.onDisappear))
             window.isHidden = true
         }
 
@@ -1133,7 +1127,7 @@ struct HomeViewControllerTests {
         #expect(controller.isRefreshingForTesting)
         #expect(controller.isManualRefreshingForTesting)
 
-        store.send(.clips(.clipsResponse(epoch: 1, generation: 0, .failure(.transport(.connectTimedOut)))))
+        store.send(.clips(.clipsResponse(epoch: 1, generation: 1, .failure(.transport(.connectTimedOut)))))
 
         #expect(controller.isRefreshingForTesting == false)
         #expect(controller.isManualRefreshingForTesting == false)
@@ -1179,7 +1173,7 @@ struct HomeViewControllerTests {
         #expect(controller.isShowingLoadingStateForTesting)
         #expect(controller.isShowingEmptyStateForTesting == false)
 
-        store.send(.clips(.clipsResponse(epoch: 1, generation: 0, .success(ClipsResponse(
+        store.send(.clips(.clipsResponse(epoch: 2, generation: 1, .success(ClipsResponse(
             clips: [],
             serverTimeMs: nil,
             nextCursor: nil
@@ -1194,7 +1188,7 @@ struct HomeViewControllerTests {
         #expect(controller.isShowingEmptyStateForTesting)
         #expect(controller.isShowingLoadingStateForTesting == false)
 
-        store.send(.clips(.clipsResponse(epoch: 2, generation: 0, .success(ClipsResponse(
+        store.send(.clips(.clipsResponse(epoch: 2, generation: 2, .success(ClipsResponse(
             clips: [clipA],
             serverTimeMs: nil,
             nextCursor: nil
@@ -1205,15 +1199,21 @@ struct HomeViewControllerTests {
     }
 
     @Test func clipsFailurePresentationIsVisibleAndSuppressesEmptyState() {
-        let (staleController, staleStore) = makeControllerAndStore(clips: [clipA], loader: .noop)
+        let (staleController, staleStore) = makeControllerAndStore(
+            clips: [clipA],
+            loader: .noop,
+            clipsClient: parkedClipsClient()
+        )
         staleController.loadViewIfNeeded()
 
-        staleStore.send(.clips(.clipsResponse(epoch: 0, generation: 0, .failure(.transport(.connectTimedOut)))))
+        staleStore.send(.clips(.load))
+        staleStore.send(.clips(.clipsResponse(epoch: 2, generation: 1, .failure(.transport(.connectTimedOut)))))
 
         #expect(staleController.clipsFailureMessageForTesting == "Can't reach the camera (timed out).")
         #expect(staleController.isShowingEmptyStateForTesting == false)
 
-        staleStore.send(.clips(.clipsResponse(epoch: 0, generation: 0, .success(ClipsResponse(
+        staleStore.send(.clips(.retry))
+        staleStore.send(.clips(.clipsResponse(epoch: 2, generation: 2, .success(ClipsResponse(
             clips: [],
             serverTimeMs: 0,
             nextCursor: nil
@@ -1222,11 +1222,16 @@ struct HomeViewControllerTests {
         #expect(staleController.clipsFailureMessageForTesting == nil)
         #expect(staleController.isShowingEmptyStateForTesting)
 
-        let (emptyController, emptyStore) = makeControllerAndStore(clips: [], loader: .noop)
+        let (emptyController, emptyStore) = makeControllerAndStore(
+            clips: [],
+            loader: .noop,
+            clipsClient: parkedClipsClient()
+        )
         emptyController.loadViewIfNeeded()
         #expect(emptyController.isShowingEmptyStateForTesting == false)
 
-        emptyStore.send(.clips(.clipsResponse(epoch: 0, generation: 0, .failure(.transport(.connectTimedOut)))))
+        emptyStore.send(.clips(.load))
+        emptyStore.send(.clips(.clipsResponse(epoch: 2, generation: 1, .failure(.transport(.connectTimedOut)))))
 
         #expect(emptyController.clipsFailureMessageForTesting == "Can't reach the camera (timed out).")
         #expect(emptyController.isShowingEmptyStateForTesting == false)
@@ -1288,6 +1293,12 @@ struct HomeViewControllerTests {
         var state = AppFeature.State()
         state.clips.clips = clips
         state.clips.nextCursor = nextCursor
+        state.clips.headEpoch = 1
+        state.clips.epoch = ClipCoverageEpoch(rawValue: 1)
+        state.clips.hasLoadedOnce = clips.isEmpty == false || nextCursor != nil
+        state.clips.hasAuthoritativeCoverage = state.clips.hasLoadedOnce
+        state.clips.authoritativeNextCursor = nextCursor
+        state.clips.recoveryCursor = nextCursor
         state.recording = recording
         state.incidents.hasLoadedStore = true
         if let world {

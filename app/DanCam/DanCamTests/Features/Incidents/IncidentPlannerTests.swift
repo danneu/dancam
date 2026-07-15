@@ -18,7 +18,7 @@ struct IncidentPlannerTests {
         let persisted = try persistedRecord(from: IncidentPlanner.plan(
             incidents: [testCase.duration == 5_000 ? adjusted : record],
             clips: clips,
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .recording(recordingID)
         ))
 
@@ -38,7 +38,7 @@ struct IncidentPlannerTests {
         let persisted = try persistedRecord(from: IncidentPlanner.plan(
             incidents: [record],
             clips: (40...43).map { clip(seq: $0, duration: 30_000) },
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .recording(recordingID)
         ))
 
@@ -49,13 +49,13 @@ struct IncidentPlannerTests {
         let commands = IncidentPlanner.plan(
             incidents: [fixtureRecord(markSeq: 43, markAge: 0)],
             clips: [clip(seq: 42), clip(seq: 43)],
-            listCoverage: .loaded(nextCursor: ClipCursor(42)),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: ClipCursor(42)),
             recorder: .recording(recordingID)
         )
         let persisted = try persistedRecord(from: commands)
 
         #expect(persisted.segment(seq: 41)?.state == .unresolved)
-        #expect(commands.contains(.page(cursor: ClipCursor(42))))
+        #expect(commands.contains(.requireCoverage(ClipCursor(41))))
     }
 
     @Test func sessionStartAndEndAbsencesClipWithoutMakingIncidentPartial() throws {
@@ -71,7 +71,7 @@ struct IncidentPlannerTests {
         let persisted = try persistedRecord(from: IncidentPlanner.plan(
             incidents: [record],
             clips: [],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .notRecording
         ))
 
@@ -87,7 +87,7 @@ struct IncidentPlannerTests {
         let persisted = try persistedRecord(from: IncidentPlanner.plan(
             incidents: [record],
             clips: [clip(seq: 40), clip(seq: 42), clip(seq: 43)],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .recording(recordingID)
         ))
 
@@ -101,7 +101,7 @@ struct IncidentPlannerTests {
         let firstPass = IncidentPlanner.plan(
             incidents: [record],
             clips: [],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .notRecording
         )
         let persisted = try persistedRecord(from: firstPass)
@@ -110,7 +110,7 @@ struct IncidentPlannerTests {
         let secondPass = IncidentPlanner.plan(
             incidents: [persisted],
             clips: [],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .notRecording
         )
 
@@ -130,7 +130,7 @@ struct IncidentPlannerTests {
         let commands = IncidentPlanner.plan(
             incidents: [record],
             clips: [],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .recording(recordingID)
         )
 
@@ -144,7 +144,7 @@ struct IncidentPlannerTests {
         let firstPass = IncidentPlanner.plan(
             incidents: [first, second],
             clips: [clip(seq: 43)],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .recording(recordingID)
         )
         #expect(pullSeqs(firstPass).isEmpty)
@@ -156,7 +156,7 @@ struct IncidentPlannerTests {
         let secondPass = IncidentPlanner.plan(
             incidents: persisted,
             clips: [clip(seq: 43)],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .recording(recordingID)
         )
 
@@ -170,7 +170,7 @@ struct IncidentPlannerTests {
         #expect(IncidentPlanner.plan(
             incidents: [record],
             clips: [clip(seq: 43)],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .notRecording
         ).isEmpty)
     }
@@ -181,7 +181,7 @@ struct IncidentPlannerTests {
         let commands = IncidentPlanner.plan(
             incidents: [record],
             clips: [],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .recording(recordingID)
         )
 
@@ -232,7 +232,7 @@ struct IncidentPlannerTests {
         #expect(IncidentPlanner.plan(
             incidents: [record],
             clips: [clip(seq: 43)],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .notRecording
         ).isEmpty)
         #expect(record.status == .partial)

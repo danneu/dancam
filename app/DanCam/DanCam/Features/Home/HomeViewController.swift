@@ -175,7 +175,6 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         super.viewWillDisappear(animated)
         isViewActive = false
         snapshotPresenter.setActive(false)
-        store.send(.clips(.onDisappear))
         refreshControl.endRefreshing()
         isManualRefreshing = false
         cancelAllPrefetches()

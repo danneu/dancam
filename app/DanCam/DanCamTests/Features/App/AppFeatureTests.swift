@@ -308,16 +308,15 @@ struct AppFeatureTests {
         await store.send(.event(.timeSynced(atMs: 1_000))) {
             $0.link = .online(synced)
             $0.clips.status = .loading
-            $0.clips.headEpoch = 2
             $0.clips.requestSeq = 2
             $0.clips.inFlightRequests = [2]
             $0.clips.headRequest = 2
         }
-        await store.receive(.clips(.clipsResponse(epoch: 2, generation: 2, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 2, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
-            $0.clips.lastSuccessfulHeadEpoch = 2
+            $0.clips.lastSuccessfulHeadEpoch = 1
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
@@ -378,7 +377,11 @@ struct AppFeatureTests {
             $0.clips.headRequest = 2
         }
         await store.receive(.timeSyncResponded(success: true))
-        await store.send(.streamStopped)
+        await store.send(.streamStopped) {
+            $0.clips.status = .idle
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
+        }
         await sleepGate.releaseAll()
         await store.finishEffects()
 
@@ -413,6 +416,9 @@ struct AppFeatureTests {
 
         await store.send(.streamStopped) {
             $0.streamReconnectAttempt = 0
+            $0.clips.status = .idle
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.finishCanceledEffects()
         await store.finishEffects()
@@ -585,16 +591,15 @@ struct AppFeatureTests {
             heartbeatWorld.uptimeS = 12
             $0.link = .online(heartbeatWorld)
             $0.clips.status = .loading
-            $0.clips.headEpoch = 2
             $0.clips.requestSeq = 2
             $0.clips.inFlightRequests = [2]
             $0.clips.headRequest = 2
         }
-        await store.receive(.clips(.clipsResponse(epoch: 2, generation: 2, .success(response)))) {
+        await store.receive(.clips(.clipsResponse(epoch: 1, generation: 2, .success(response)))) {
             $0.clips.clips = response.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
-            $0.clips.lastSuccessfulHeadEpoch = 2
+            $0.clips.lastSuccessfulHeadEpoch = 1
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
@@ -751,12 +756,15 @@ struct AppFeatureTests {
         let clip = CameraSamples.clip(id: 7)
         let response = CameraSamples.clipsResponse(ids: [9, 8])
         let queue = ClipsFetchQueue([.success(response)])
+        var clipsState = ClipsFeature.State(
+            pendingDeleteIDs: [clip.id],
+            headEpoch: 1
+        )
+        clipsState.epoch = ClipCoverageEpoch(rawValue: 1)
         let store = TestStore(
             initialState: state(
                 link: .online(world),
-                clips: ClipsFeature.State(
-                    pendingDeleteIDs: [clip.id]
-                )
+                clips: clipsState
             ),
             dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
                 try await queue.fetch(cursor: cursor)
@@ -819,8 +827,24 @@ struct AppFeatureTests {
         let world = CameraSamples.world()
         let folded = CameraSamples.clip(id: 3)
         let stale = CameraSamples.clipsResponse(ids: [2, 1])
+        var clipsState = ClipsFeature.State(
+            status: .loading,
+            requestSeq: 1,
+            inFlightRequests: [1],
+            headRequest: 1,
+            headEpoch: 1
+        )
+        let epoch = ClipCoverageEpoch(rawValue: 1)
+        clipsState.epoch = epoch
+        clipsState.request = ClipsFeature.State.Request(
+            epoch: epoch,
+            generation: 1,
+            cursor: nil,
+            target: nil,
+            advancesBrowseFrontier: true
+        )
         let store = TestStore(
-            initialState: state(link: .online(world), clips: ClipsFeature.State(headEpoch: 1)),
+            initialState: state(link: .online(world), clips: clipsState),
             dependencies: dependencies(),
             reduce: AppFeature.reduce
         )
@@ -829,12 +853,14 @@ struct AppFeatureTests {
             $0.clips.clips = [folded]
             $0.clips.clipFinalizeEpoch[3] = 1
         }
-        await store.send(.clips(.clipsResponse(epoch: 1, generation: 0, .success(stale)))) {
+        await store.send(.clips(.clipsResponse(epoch: 1, generation: 1, .success(stale)))) {
             $0.clips.clips = [folded] + stale.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
             $0.clips.lastSuccessfulHeadEpoch = 1
             $0.clips.clipFinalizeEpoch = [3: 1]
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
         }
         await store.finishEffects()
     }
@@ -909,7 +935,14 @@ struct AppFeatureTests {
             initialState: state(
                 clips: ClipsFeature.State(
                     clips: CameraSamples.clipsResponse(ids: [42], nextCursor: ClipCursor(42)).clips,
-                    nextCursor: ClipCursor(42)
+                    nextCursor: ClipCursor(42),
+                    headEpoch: 1,
+                    lastSuccessfulHeadEpoch: 1,
+                    hasLoadedOnce: true,
+                    epoch: ClipCoverageEpoch(rawValue: 1),
+                    hasAuthoritativeCoverage: true,
+                    authoritativeNextCursor: ClipCursor(42),
+                    recoveryCursor: ClipCursor(42)
                 )
             ),
             dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
@@ -923,13 +956,31 @@ struct AppFeatureTests {
             $0.clips.requestSeq = 1
             $0.clips.inFlightRequests = [1]
             $0.clips.pageRequest = 1
+            $0.clips.status = .loading
+            $0.clips.request = .init(
+                epoch: ClipCoverageEpoch(rawValue: 1),
+                generation: 1,
+                cursor: ClipCursor(42),
+                target: nil,
+                advancesBrowseFrontier: true
+            )
         }
-        await store.receive(.clips(.pageResponse(epoch: 0, generation: 1, .success(page)))) {
+        await store.receive(.clips(.pageResponse(
+            epoch: 1,
+            generation: 1,
+            requestedCursor: ClipCursor(42),
+            .success(page)
+        ))) {
             $0.clips.clips = CameraSamples.clipsResponse(ids: [42]).clips + page.clips
             $0.clips.nextCursor = nil
             $0.clips.isPaging = false
             $0.clips.inFlightRequests = []
             $0.clips.pageRequest = nil
+            $0.clips.status = .idle
+            $0.clips.request = nil
+            $0.clips.authoritativeNextCursor = nil
+            $0.clips.recoveryCursor = nil
+            $0.clips.userLoadMorePending = false
         }
 
         let cursors = await queue.requestedCursors()
@@ -940,8 +991,10 @@ struct AppFeatureTests {
         let world = CameraSamples.world()
         let response = CameraSamples.clipsResponse(ids: [42])
         let queue = ClipsFetchQueue([.success(response)])
+        var clipsState = ClipsFeature.State(headEpoch: 1)
+        clipsState.epoch = ClipCoverageEpoch(rawValue: 1)
         let store = TestStore(
-            initialState: state(link: .online(world)),
+            initialState: state(link: .online(world), clips: clipsState),
             dependencies: dependencies(
                 events: EventsClient {
                     fatalError("Online manual refresh should not restart the event stream.")
@@ -955,7 +1008,6 @@ struct AppFeatureTests {
 
         await store.send(.manualRefresh) {
             $0.clips.status = .loading
-            $0.clips.headEpoch = 1
             $0.clips.requestSeq = 1
             $0.clips.inFlightRequests = [1]
             $0.clips.headRequest = 1
@@ -974,7 +1026,7 @@ struct AppFeatureTests {
         #expect(await queue.requestedCursors() == [nil])
     }
 
-    @Test func manualRefreshWhileOfflineReloadsClipsAndReconnectsStream() async {
+    @Test func manualRefreshWhileOfflineWaitsForSnapshotThenReloadsClips() async {
         let world = CameraSamples.world()
         let allowSnapshot = AsyncSignal()
         let response = CameraSamples.clipsResponse(ids: [42])
@@ -995,7 +1047,14 @@ struct AppFeatureTests {
             reduce: AppFeature.reduce
         )
 
-        await store.send(.manualRefresh) {
+        await store.send(.manualRefresh)
+        #expect(await clips.callCount() == 0)
+
+        await allowSnapshot.signal()
+        await store.receive(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.streamReconnectAttempt = 0
             $0.clips.status = .loading
             $0.clips.headEpoch = 1
             $0.clips.requestSeq = 1
@@ -1010,23 +1069,11 @@ struct AppFeatureTests {
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }
-
-        await allowSnapshot.signal()
-        await store.receive(.event(.snapshot(world))) {
-            $0.link = .online(world)
-            $0.recording = .idle
-            $0.streamReconnectAttempt = 0
-            $0.clips.status = .loading
-            $0.clips.headEpoch = 2
-            $0.clips.requestSeq = 2
-            $0.clips.inFlightRequests = [2]
-            $0.clips.headRequest = 2
-        }
         await store.send(.streamStopped)
         await store.finishEffects()
         store.expectNoReceivedActions()
 
-        #expect(await clips.callCount() == 2)
+        #expect(await clips.callCount() == 1)
     }
 
     @Test func reconnectStreamIfOfflineIsNoopUnlessOffline() async {
@@ -1082,7 +1129,11 @@ struct AppFeatureTests {
             $0.clips.inFlightRequests = [1]
             $0.clips.headRequest = 1
         }
-        await offlineStore.send(.streamStopped)
+        await offlineStore.send(.streamStopped) {
+            $0.clips.status = .idle
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
+        }
         await offlineStore.finishEffects()
         offlineStore.expectNoReceivedActions()
     }
@@ -1114,6 +1165,107 @@ struct AppFeatureTests {
         }
         await store.finishEffects()
         store.expectNoReceivedActions()
+    }
+
+    @Test(arguments: OfflineDisconnect.allCases)
+    func eventGapRetiresBlockedClipRequestAndRejectsItsLateResponse(
+        disconnect: OfflineDisconnect
+    ) async {
+        let world = CameraSamples.world()
+        let started = AsyncSignal()
+        let release = AsyncSignal()
+        let clips = ClipsFeature.State(
+            clips: CameraSamples.clipsResponse(ids: [5, 4, 3]).clips,
+            nextCursor: ClipCursor(3),
+            headEpoch: 1,
+            lastSuccessfulHeadEpoch: 1,
+            hasLoadedOnce: true,
+            epoch: ClipCoverageEpoch(rawValue: 1),
+            hasAuthoritativeCoverage: true,
+            authoritativeNextCursor: ClipCursor(3),
+            recoveryCursor: ClipCursor(3)
+        )
+        let store = TestStore(
+            initialState: state(link: .online(world), clips: clips),
+            dependencies: dependencies(
+                clips: ClipsClient(fetch: { _ in
+                    await started.signal()
+                    await release.wait()
+                    return CameraSamples.clipsResponse(ids: [2, 1])
+                }),
+                sleep: longSleep
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.clips(.refresh)) {
+            $0.clips.status = .loading
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
+        }
+        await started.wait()
+        await store.send(disconnect.action) {
+            $0.link = .offline(last: world)
+            $0.streamReconnectAttempt = 1
+            $0.clips.status = .idle
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
+        }
+        #expect(ClipsFeature.incidentCoverage(store.state.clips) == .unloaded)
+
+        await release.signal()
+        await store.finishCanceledEffects()
+        store.expectNoReceivedActions()
+        #expect(store.state.clips.clips.map(\.id) == [5, 4, 3])
+    }
+
+    @Test func offlineManualRefreshWaitsForReplacementSnapshotBeforeListingClips() async {
+        let world = CameraSamples.world()
+        let script = ClipsFetchScript([.success(CameraSamples.clipsResponse(ids: [6, 5]))])
+        let store = TestStore(
+            initialState: state(
+                link: .offline(last: world),
+                clips: ClipsFeature.State(
+                    clips: CameraSamples.clipsResponse(ids: [5]).clips,
+                    nextCursor: ClipCursor(5),
+                    hasLoadedOnce: true
+                )
+            ),
+            dependencies: dependencies(
+                events: EventsClient { AsyncThrowingStream { _ in } },
+                clips: script.client()
+            ),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.manualRefresh)
+        #expect(await script.callCount() == 0)
+
+        await store.send(.event(.snapshot(world))) {
+            $0.link = .online(world)
+            $0.recording = .idle
+            $0.streamReconnectAttempt = 0
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
+        }
+        await store.receive(.clips(.clipsResponse(
+            epoch: 1,
+            generation: 1,
+            .success(CameraSamples.clipsResponse(ids: [6, 5]))
+        ))) {
+            $0.clips.clips = CameraSamples.clipsResponse(ids: [6, 5]).clips
+            $0.clips.status = .idle
+            $0.clips.lastSuccessfulHeadEpoch = 1
+            $0.clips.inFlightRequests = []
+            $0.clips.headRequest = nil
+        }
+        #expect(await script.callCount() == 1)
+        await store.send(.streamStopped)
+        await store.finishEffects()
     }
 
     @Test func telemetryEventsFoldWorldSlices() async throws {
@@ -1281,6 +1433,9 @@ enum TimeSyncDisconnect: CaseIterable, CustomStringConvertible {
 
     @MainActor
     func applyExpectedState(to state: inout AppFeature.State, lastWorld: World) {
+        state.clips.status = .idle
+        state.clips.inFlightRequests = []
+        state.clips.headRequest = nil
         switch self {
         case .streamStopped:
             state.streamReconnectAttempt = 0

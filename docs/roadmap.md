@@ -319,7 +319,8 @@ mock first.
             crash reconciliation, and pure wanted-set/evidence planner.
       - [ ] Capture a durable phone-local mark from the folded recorder state; add
             the enabled-only-while-connected-and-recording Home button and cooldown.
-      - [ ] Reconcile pending incidents across clip pages/events/session changes;
+      - [x] Reconcile pending incidents across authoritative, fresh-epoch clip
+            coverage while preserving event and session evidence ordering;
             deduplicate foreground-resumable pulls, remux to per-segment MP4, retain
             raw TS on remux failure, and classify evidence-backed partial saves.
       - [ ] Add the Incidents tab and local detail surface for status, playback,

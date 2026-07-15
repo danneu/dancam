@@ -75,9 +75,17 @@ they settle the requested boundary without claiming footage was lost.
 
 Clip-list absence is usable only when a successful head and cursor chain from the
 current SSE snapshot epoch covers the sequence. Older loaded clips remain valid
-positive witnesses, but they never prove absence. A retryable page failure invalidates
-negative coverage; heartbeat-driven head retry must rebuild it. Reconciliation pages
-toward the lowest unresolved sequence, with at most one page request pending.
+positive witnesses, but they never prove absence. The planner publishes the minimum
+unresolved sequence it requires as a pure coverage boundary. The root synchronously
+passes that boundary to the single clip-list scheduler described in
+[authoritative clip-list recovery](clips.md#authoritative-clip-list-recovery). Incidents
+never request pages or track whether a page is pending.
+
+Published coverage carries the fresh snapshot epoch that established it. Negative
+evidence is accepted only while that epoch remains current. Stream failure, heartbeat
+timeout, and suspension revoke the coverage before freshness disappears, so a late
+pre-gap page cannot infer loss. A list failure retains the minimum boundary but starts
+no more work until heartbeat or manual recovery establishes a replacement head.
 
 Recorder lifecycle is evidence too:
 
@@ -229,6 +237,19 @@ Incident behavior is locked down at observable boundaries:
   and totals, unreadable deletion, local playback/share selection, and incident deletion.
 
 ## Decision log
+
+### 2026-07-15: Consume only current-epoch coverage from the list owner
+
+Incident reconciliation previously converted an unresolved segment into a page action
+and kept its own pending-page flag. That duplicated pagination state and could consume
+absence from a cursor chain whose SSE snapshot was no longer fresh. The planner now
+publishes only its minimum required sequence, and negative evidence comes exclusively
+from coverage tagged and published by `ClipsFeature` for the current epoch.
+
+Giving incidents their own page loop was rejected because it cannot coordinate safely
+with browse demand, head replacement, or gap recovery. Treating rendered rows as
+negative authority was rejected because old rows remain useful positive witnesses but
+say nothing about deletions after an event gap.
 
 ### 2026-07-14: Keep incidents on the phone
 

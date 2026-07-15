@@ -62,7 +62,7 @@ struct IncidentStoreTests {
         let commands = IncidentPlanner.plan(
             incidents: [repaired],
             clips: [],
-            listCoverage: .loaded(nextCursor: nil),
+            listCoverage: .loaded(epoch: ClipCoverageEpoch(rawValue: 1), nextCursor: nil),
             recorder: .notRecording
         )
         #expect(commands.isEmpty)

@@ -2,22 +2,17 @@ import Foundation
 
 nonisolated enum IncidentListCoverage: Equatable, Sendable {
     case unloaded
-    case loaded(nextCursor: ClipCursor?)
+    case loaded(epoch: ClipCoverageEpoch, nextCursor: ClipCursor?)
 
     func covers(_ seq: Int) -> Bool {
         switch self {
         case .unloaded:
             false
-        case .loaded(nil):
+        case .loaded(_, nil):
             true
-        case .loaded(let cursor?):
+        case .loaded(_, let cursor?):
             seq >= Int(cursor.rawValue)
         }
-    }
-
-    var nextCursor: ClipCursor? {
-        guard case .loaded(let cursor) = self else { return nil }
-        return cursor
     }
 }
 
@@ -45,7 +40,7 @@ nonisolated enum IncidentRecorderState: Equatable, Sendable {
 nonisolated enum IncidentPlannerCommand: Equatable, Sendable {
     case persist(IncidentRecord)
     case pull(seq: Int, etag: String, incidentIDs: [UUID])
-    case page(cursor: ClipCursor?)
+    case requireCoverage(ClipCursor)
 }
 
 nonisolated enum IncidentPlanner {
@@ -58,12 +53,12 @@ nonisolated enum IncidentPlanner {
         let clipsBySeq = Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0) })
         var commands: [IncidentPlannerCommand] = []
         var pullRequests: [PullKey: Set<UUID>] = [:]
-        var requestedPage = false
+        var requiredBoundary: ClipCursor?
 
         for original in incidents {
             var record = original
             var changed = false
-            var needsPage = false
+            var recordBoundary: ClipCursor?
 
             resolve(seq: record.markSeq, in: &record, clipsBySeq: clipsBySeq, changed: &changed)
             walkPreRoll(
@@ -71,7 +66,7 @@ nonisolated enum IncidentPlanner {
                 clipsBySeq: clipsBySeq,
                 coverage: listCoverage,
                 changed: &changed,
-                needsPage: &needsPage
+                requiredBoundary: &recordBoundary
             )
             walkPostRoll(
                 record: &record,
@@ -79,7 +74,7 @@ nonisolated enum IncidentPlanner {
                 coverage: listCoverage,
                 recorder: recorder,
                 changed: &changed,
-                needsPage: &needsPage
+                requiredBoundary: &recordBoundary
             )
 
             if changed {
@@ -93,10 +88,13 @@ nonisolated enum IncidentPlanner {
                 }
             }
 
-            if needsPage && requestedPage == false {
-                commands.append(.page(cursor: listCoverage.nextCursor))
-                requestedPage = true
+            if let recordBoundary {
+                requiredBoundary = requiredBoundary.map { min($0, recordBoundary) } ?? recordBoundary
             }
+        }
+
+        if let requiredBoundary {
+            commands.append(.requireCoverage(requiredBoundary))
         }
 
         for key in pullRequests.keys.sorted(by: { ($0.seq, $0.etag) < ($1.seq, $1.etag) }) {
@@ -111,7 +109,7 @@ nonisolated enum IncidentPlanner {
         clipsBySeq: [Int: Clip],
         coverage: IncidentListCoverage,
         changed: inout Bool,
-        needsPage: inout Bool
+        requiredBoundary: inout ClipCursor?
     ) {
         var remaining = saturatingSubtract(record.preMs + record.slackMs, record.markAgeMs)
         var seq = record.markSeq - 1
@@ -127,7 +125,8 @@ nonisolated enum IncidentPlanner {
 
             if segment.state == .unresolved {
                 guard coverage.covers(seq) else {
-                    needsPage = true
+                    let boundary = ClipCursor(UInt32(clamping: seq))
+                    requiredBoundary = requiredBoundary.map { min($0, boundary) } ?? boundary
                     break
                 }
                 if hasWitnessBeyond(seq: seq, direction: .backward, record: record, clips: clipsBySeq) {
@@ -152,7 +151,7 @@ nonisolated enum IncidentPlanner {
         coverage: IncidentListCoverage,
         recorder: IncidentRecorderState,
         changed: inout Bool,
-        needsPage: inout Bool
+        requiredBoundary: inout ClipCursor?
     ) {
         guard var mark = record.segment(seq: record.markSeq) else { return }
         if mark.state == .unresolved {
@@ -161,7 +160,8 @@ nonisolated enum IncidentPlanner {
                 record.updateSegment(mark)
                 changed = true
             } else if coverage.covers(record.markSeq) == false {
-                needsPage = true
+                let boundary = ClipCursor(UInt32(clamping: record.markSeq))
+                requiredBoundary = requiredBoundary.map { min($0, boundary) } ?? boundary
             }
         }
         guard let markDuration = mark.durMs else { return }
@@ -183,7 +183,8 @@ nonisolated enum IncidentPlanner {
                 }
                 guard recorder.provesSessionEnded(record.recordingID) else { break }
                 guard coverage.covers(seq) else {
-                    needsPage = true
+                    let boundary = ClipCursor(UInt32(clamping: seq))
+                    requiredBoundary = requiredBoundary.map { min($0, boundary) } ?? boundary
                     break
                 }
                 if hasWitnessBeyond(seq: seq, direction: .forward, record: record, clips: clipsBySeq) {
