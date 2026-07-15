@@ -28,8 +28,8 @@ is documented in [`../raspi/AGENTS.md`](../raspi/AGENTS.md).
 
 ## Tech (intended)
 
-Decisions here are provisional until captured as an ADR; treat as the current
-direction, not settled law.
+Decisions here are provisional until captured in the owning living design page; treat
+them as the current direction, not settled law.
 
 - **Language/UI:** Swift, UIKit (programmatic, no storyboards). Target current iOS.
 - **Architecture:** bespoke minimal TEA -- pure reducers, a `@MainActor` store,
@@ -47,7 +47,8 @@ direction, not settled law.
   wire contract and app-side connection obligations. (HLS-for-preview and raw-stream
   options were considered and rejected there.)
 - **CarPlay:** the App Intents framework for voice ("save that clip") and the
-  CarPlay template framework (Driving Task app category) for the on-screen panel.
+  CarPlay template framework (Driving Task app category) for the on-screen panel. See
+  the [CarPlay boundary](../docs/design/app/carplay.md).
 
 When reviewing or writing Swift here, the repo has helper skills: `swiftui-pro`,
 `swift-concurrency-pro`, `swift-testing-pro`, `swiftdata-pro`. The load-bearing
@@ -56,36 +57,11 @@ correctness) and `swift-testing-pro` (TestStore + reducer tests). `swiftui-pro` 
 used because the app is UIKit. `swiftdata-pro` applies only if/when SwiftData
 persistence lands. Prefer Swift Testing over XCTest for new unit tests.
 
-## Logging
-
-App diagnostics use Apple unified logging through the app-owned `Log` namespace.
-
-- Subsystem: `com.danneu.dancam`.
-- Categories double as greppable tags (`reducer`, `pull`, `remux`, `playback`, `share`,
-  `nav`, and media parser categories).
-- Levels: `.error` for failures, `.notice` for state transitions and pipeline
-  boundaries that must reach exports, `.info` for live detail, and `.debug` for hot
-  paths and no-op transitions. `.notice` and higher are the export-critical levels;
-  `.info` and `.debug` are live/in-memory diagnostics and can be absent from in-app
-  log exports.
-- Diagnostic values default to `privacy: .public`; opt specific values back to
-  private only when they are actually sensitive.
-- Use `clip_id=<Int>` as the correlation field for clip pull, remux, playback, and
-  cache-adjacent logs.
-
-## CarPlay
-
-The surprising constraint: third-party CarPlay apps **cannot render a live camera
-feed** (no arbitrary-video template), so the live preview stays on the iPhone and
-CarPlay is voice + status + control only. The ranked integration plan and entitlement
-path are in `docs/design/01-2026-06-22-carplay-integration-surface.md`.
-
 ## Structure (planned)
 
 ```
 app/
   AGENTS.md
-  docs/design/        <- app-side ADRs
   DanCam/             <- Xcode project and app/test targets
 ```
 
@@ -120,23 +96,16 @@ and, for device testing, the CarPlay entitlement from Apple.
 - [App incidents](../docs/design/app/incidents.md) -- read when changing incident
   capture, post-roll lockout, coverage planning, durable evidence, reconciliation,
   notifications, or the Incidents tab.
+- [App sharing](../docs/design/app/sharing.md) -- read when changing clip or incident
+  export naming, clone staging, share progress and cancellation, activity-sheet
+  presentation, raw-URL fallback, or temporary-artifact cleanup.
+- [App capacity](../docs/design/app/capacity.md) -- read when changing finalized-clip
+  sampling, retention estimation, epoch resets, recorder-writable capacity, or the
+  Settings storage section.
+- [CarPlay boundary](../docs/design/app/carplay.md) -- read before adding App Intents,
+  CarPlay scene automation, Driving Task templates, or car-screen alerts.
+- [App logging](../docs/design/app/logging.md) -- read when adding log categories or
+  emit sites, changing diagnostic privacy or levels, root transition logging, or
+  current-process log export.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   Pi routes, HTTP framing, SSE, preview, clip pull, Wi-Fi pinning, or link trust.
-
-During the migration, the remaining app ADRs under `docs/design/` stay authoritative
-for subsystems that do not yet have a living page:
-
-- `01-2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
-- `14-2026-07-01-structured-logging-and-export.md` -- use Apple unified logging as the
-  app's diagnostic stream and expose current-process log export from the Debug screen.
-- `15-2026-07-01-clip-export-share.md` -- superseded by ADR 25; system share sheet over
-  the cached MP4.
-- `25-2026-07-10-clip-share-raw-file-url.md` -- superseded by ADR 30; removed the unnecessary
-  `UIActivityItemSource` wrapper that crashed during share discovery and return to the
-  device-verified raw MP4 file URL.
-- `28-2026-07-14-estimated-recording-capacity.md` -- estimate footage retention from
-  freshly finalized clips and Pi-provided recorder-writable capacity, scoped to one
-  live connection epoch and presented in Settings.
-- `30-2026-07-15-responsive-video-share-preparation.md` -- prepare cached clips and
-  incident segments off the main actor with cancellable `clonefile` staging, inline
-  progress, raw-URL fallback, and shared presentation cleanup.

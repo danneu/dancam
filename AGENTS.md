@@ -140,7 +140,7 @@ These are settled at the system level. Side-specific ADRs must not contradict th
 - **CarPlay is a voice + status + control surface, NOT a video viewport.** Third-party
   CarPlay apps cannot draw a live camera feed. The live preview stays on the iPhone
   screen. CarPlay gets: voice incident-marking, auto start/stop, a status panel,
-  alerts. See `app/docs/design/01-2026-06-22-carplay-integration-surface.md`.
+  alerts. See [`docs/design/app/carplay.md`](docs/design/app/carplay.md).
 - **Recording must survive abrupt power loss.** The car cuts power without warning.
   Corruption resilience is a first-class requirement, solved in layers (format +
   filesystem + card hardware). See
