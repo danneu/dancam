@@ -108,6 +108,9 @@ and, for device testing, the CarPlay entitlement from Apple.
 - [App architecture](../docs/design/app/architecture.md) -- read when changing the
   UIKit shell, Store/Effect runtime, root reducer composition, event folding,
   observation, view-state projection, or diffable identity rules.
+- [App browsing](../docs/design/app/browsing.md) -- read when changing top-level tabs,
+  Home recording cards, recording attribution or detail, browse pagination, or Debug
+  telemetry presentation.
 - [App connection](../docs/design/app/connection.md) -- read when changing event-stream
   liveness, network deadlines, reconnect lifecycle, freshness-typed UI, visible-screen
   recovery, or the shell status strip.
@@ -124,22 +127,6 @@ for subsystems that do not yet have a living page:
   app's diagnostic stream and expose current-process log export from the Debug screen.
 - `15-2026-07-01-clip-export-share.md` -- superseded by ADR 25; system share sheet over
   the cached MP4.
-- `19-2026-07-08-drive-grouped-clip-browsing.md` -- superseded by ADR 24; treated a
-  drive boottag as the Home browse unit for finished clips, with app-side drive cards,
-  detail projections, stable representative thumbnails, and per-clip deletion.
-- `20-2026-07-09-live-recording-surfaces-and-drive-attribution.md` -- superseded by ADR
-  24; moved live/pending recorder state to a widget under the Record button, a REC marker
-  on the recording drive's card, and a live row atop that drive's detail; snapshot-level
-  nullable `boot_tag` was the drive identity, read with recorder truth through one
-  projection.
-- `22-2026-07-09-tab-based-top-level-navigation.md` -- embed Home and Settings as
-  independently navigable tabs below the global status strip.
-- `23-2026-07-09-debug-tab-sse-only-telemetry.md` -- add Debug as the middle tab,
-  render it solely from the folded SSE world, and keep uptime heartbeat-fresh.
-- `24-2026-07-09-recording-grouped-clip-browsing-and-attribution.md` -- make a recording
-  `(boot_tag, session)` the Home browse unit, superseding the boot-keyed "drive" model of
-  ADRs 19/20; re-keys grouping, occurrences, detail, and REC attribution to `RecordingID`
-  and retires the "Drive" vocabulary from the active tree.
 - `25-2026-07-10-clip-share-raw-file-url.md` -- superseded by ADR 30; removed the unnecessary
   `UIActivityItemSource` wrapper that crashed during share discovery and return to the
   device-verified raw MP4 file URL.

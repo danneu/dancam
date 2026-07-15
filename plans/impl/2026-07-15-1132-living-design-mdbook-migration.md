@@ -403,7 +403,7 @@ End state:
 - [x] 11. Fold app architecture ADRs into a living architecture page
 - [x] 12. Fold app connection ADRs into a living connection page
 - [x] 13. Fold app clip ADRs into a living clips page
-- [ ] 14. Fold app browsing ADRs into a living browsing page
+- [x] 14. Fold app browsing ADRs into a living browsing page
 - [ ] 15. Fold app incident ADRs into a living incidents page
 - [ ] 16. Fold app sharing, capacity, CarPlay, and logging ADRs
 - [ ] 17. Move the Pi runbook into the book
