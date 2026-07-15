@@ -164,8 +164,14 @@ async fn writer_mock_start_fails_closed_when_witness_is_corrupt() {
         .oneshot(recording_request("/v1/recording/start", "start-corrupt"))
         .await
         .unwrap();
-    assert_eq!(start.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(response_text(start).await, "storage allocation failed");
+    assert_eq!(start.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response_json(start).await,
+        serde_json::json!({
+            "error": "recording_storage_unavailable",
+            "message": "recording storage unavailable"
+        })
+    );
 
     let status = response_json(app.oneshot(get_request("/v1/status")).await.unwrap()).await;
     assert_eq!(status["recorder"]["phase"], "idle");
@@ -192,8 +198,14 @@ async fn writer_mock_start_fails_closed_when_segment_ids_are_exhausted() {
         .oneshot(recording_request("/v1/recording/start", "start-exhausted"))
         .await
         .unwrap();
-    assert_eq!(start.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(response_text(start).await, "storage allocation failed");
+    assert_eq!(start.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response_json(start).await,
+        serde_json::json!({
+            "error": "recording_storage_unavailable",
+            "message": "recording storage unavailable"
+        })
+    );
 
     let status = response_json(app.oneshot(get_request("/v1/status")).await.unwrap()).await;
     assert_eq!(status["recorder"]["phase"], "idle");
@@ -312,7 +324,7 @@ async fn writer_mock_start_fails_closed_when_required_mountpoint_is_plain_dir() 
 
     let error = backend.start_recording().await.unwrap_err();
 
-    assert_eq!(error, BackendError::Storage);
+    assert_eq!(error, BackendError::RecordingStorageUnavailable);
     assert!(!rec_dir.exists());
 }
 
@@ -458,11 +470,6 @@ async fn poll_status_for_recorder_phase(app: axum::Router, phase: &str, timeout:
 async fn response_json(response: axum::http::Response<Body>) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&body).unwrap()
-}
-
-async fn response_text(response: axum::http::Response<Body>) -> String {
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    String::from_utf8(body.to_vec()).unwrap()
 }
 
 fn get_request(uri: &str) -> Request<Body> {

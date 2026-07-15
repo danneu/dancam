@@ -7,8 +7,9 @@ use std::{
 
 use async_trait::async_trait;
 use axum::{
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
+    Json,
 };
 use bytes::Bytes;
 use tokio::{
@@ -105,30 +106,85 @@ pub trait Backend: Send + Sync + 'static {
     fn update_storage(&self, _storage: Option<DiskUsage>, _recording_storage_available: bool) {}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendError {
+    CameraStarting,
+    CameraRestarting,
     CameraOffline,
-    Timeout,
-    Channel,
-    Storage,
+    RecorderFailed(String),
+    CameraCommandTimeout,
+    CameraCommandChannel(String),
+    RecordingStorageUnavailable,
+}
+
+impl BackendError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::CameraStarting => "camera_starting",
+            Self::CameraRestarting => "camera_restarting",
+            Self::CameraOffline => "camera_offline",
+            Self::RecorderFailed(_) => "recorder_failed",
+            Self::CameraCommandTimeout => "camera_command_timeout",
+            Self::CameraCommandChannel(_) => "camera_command_channel",
+            Self::RecordingStorageUnavailable => "recording_storage_unavailable",
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::CameraStarting => "camera starting",
+            Self::CameraRestarting => "camera restarting",
+            Self::CameraOffline => "camera offline",
+            Self::RecorderFailed(detail) => detail,
+            Self::CameraCommandTimeout => "camera command timed out",
+            Self::CameraCommandChannel(detail) => detail,
+            Self::RecordingStorageUnavailable => "recording storage unavailable",
+        }
+    }
+
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::CameraStarting
+            | Self::CameraRestarting
+            | Self::CameraOffline
+            | Self::RecorderFailed(_)
+            | Self::RecordingStorageUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::CameraCommandTimeout => StatusCode::GATEWAY_TIMEOUT,
+            Self::CameraCommandChannel(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+
+    pub fn camera_command_channel(message: impl Into<String>) -> Self {
+        Self::CameraCommandChannel(message.into())
+    }
+
+    fn retry_after(&self) -> bool {
+        matches!(self, Self::CameraStarting | Self::CameraRestarting)
+    }
 }
 
 impl IntoResponse for BackendError {
     fn into_response(self) -> Response {
-        let (status, message) = match self {
-            BackendError::CameraOffline => (StatusCode::SERVICE_UNAVAILABLE, "camera offline"),
-            BackendError::Timeout => (StatusCode::GATEWAY_TIMEOUT, "camera command timed out"),
-            BackendError::Channel => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "camera command channel closed",
-            ),
-            BackendError::Storage => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "storage allocation failed",
-            ),
-        };
+        #[derive(serde::Serialize)]
+        struct ErrorEnvelope<'a> {
+            error: &'a str,
+            message: &'a str,
+        }
 
-        (status, message).into_response()
+        let mut response = (
+            self.status(),
+            Json(ErrorEnvelope {
+                error: self.code(),
+                message: self.message(),
+            }),
+        )
+            .into_response();
+        if self.retry_after() {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+        }
+        response
     }
 }
 
@@ -414,7 +470,7 @@ impl MockRecorder {
 
         let start_segment = self.storage.allocate_start_segment().map_err(|error| {
             tracing::error!(%error, "start segment allocation failed");
-            BackendError::Storage
+            BackendError::RecordingStorageUnavailable
         })?;
         let events = self.hub.drive_now(Input::StartCommand { start_segment });
         let Some(session) = starting_session(&events) else {
@@ -749,12 +805,94 @@ mod tests {
     };
 
     use async_trait::async_trait;
+    use axum::{
+        http::{header, StatusCode},
+        response::IntoResponse,
+    };
+    use http_body_util::BodyExt;
+    use serde_json::json;
     use tokio::sync::oneshot;
 
     use super::{
-        run_mock_recording_writer, starting_session, InflightSyncCadence, MockPeriodicSync,
-        MockRecordingContext,
+        run_mock_recording_writer, starting_session, BackendError, InflightSyncCadence,
+        MockPeriodicSync, MockRecordingContext,
     };
+
+    #[tokio::test]
+    async fn backend_error_envelopes_have_stable_status_and_retry_policy() {
+        let cases = [
+            (
+                BackendError::CameraStarting,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "camera_starting",
+                "camera starting",
+                Some("1"),
+            ),
+            (
+                BackendError::CameraRestarting,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "camera_restarting",
+                "camera restarting",
+                Some("1"),
+            ),
+            (
+                BackendError::CameraOffline,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "camera_offline",
+                "camera offline",
+                None,
+            ),
+            (
+                BackendError::RecorderFailed("injected recorder failure".to_string()),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "recorder_failed",
+                "injected recorder failure",
+                None,
+            ),
+            (
+                BackendError::CameraCommandTimeout,
+                StatusCode::GATEWAY_TIMEOUT,
+                "camera_command_timeout",
+                "camera command timed out",
+                None,
+            ),
+            (
+                BackendError::camera_command_channel("injected channel failure"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "camera_command_channel",
+                "injected channel failure",
+                None,
+            ),
+            (
+                BackendError::RecordingStorageUnavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "recording_storage_unavailable",
+                "recording storage unavailable",
+                None,
+            ),
+        ];
+
+        for (error, status, code, message, retry_after) in cases {
+            let response = error.into_response();
+            assert_eq!(response.status(), status, "code {code}");
+            assert_eq!(
+                response.headers().get(header::CONTENT_TYPE).unwrap(),
+                "application/json",
+                "code {code}"
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok()),
+                retry_after,
+                "code {code}"
+            );
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body, json!({ "error": code, "message": message }));
+        }
+    }
     use crate::{
         event_hub::EventHub,
         events::Event,

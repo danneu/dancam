@@ -187,11 +187,9 @@ impl Backend for CameraBackend {
     }
 
     async fn start_recording(&self) -> Result<(), BackendError> {
+        self.ensure_camera_running()?;
         if self.hub.phase() == RecorderPhase::Recording {
             return Ok(());
-        }
-        if self.hub.live_status().camera_state != CameraState::Running {
-            return Err(BackendError::CameraOffline);
         }
 
         let _handoff = self.start_handoff.lock().await;
@@ -200,11 +198,11 @@ impl Backend for CameraBackend {
             .await
             .map_err(|error| {
                 tracing::error!(%error, "start segment allocation task failed");
-                BackendError::Storage
+                BackendError::RecordingStorageUnavailable
             })?
             .map_err(|error| {
                 tracing::error!(%error, "start segment allocation failed");
-                BackendError::Storage
+                BackendError::RecordingStorageUnavailable
             })?;
 
         #[cfg(test)]
@@ -214,15 +212,15 @@ impl Backend for CameraBackend {
 
         let ack_rx = self.admit(CommandIntent::Start { start_segment }).await?;
         drop(_handoff);
-        ack_rx.await.map_err(|_| BackendError::Channel)?
+        ack_rx.await.map_err(|_| {
+            BackendError::camera_command_channel("camera command acknowledgement channel closed")
+        })?
     }
 
     async fn stop_recording(&self) -> Result<(), BackendError> {
+        self.ensure_camera_running()?;
         if self.hub.phase() == RecorderPhase::Idle {
             return Ok(());
-        }
-        if self.hub.live_status().camera_state != CameraState::Running {
-            return Err(BackendError::CameraOffline);
         }
 
         self.command_and_wait(CommandIntent::Stop).await
@@ -286,11 +284,19 @@ impl Backend for CameraBackend {
 }
 
 impl CameraBackend {
+    fn ensure_camera_running(&self) -> Result<(), BackendError> {
+        match self.hub.live_status().camera_state {
+            CameraState::Running => Ok(()),
+            CameraState::Starting => Err(BackendError::CameraStarting),
+            CameraState::Restarting => Err(BackendError::CameraRestarting),
+            CameraState::Offline => Err(BackendError::CameraOffline),
+        }
+    }
+
     async fn command_and_wait(&self, intent: CommandIntent) -> Result<(), BackendError> {
-        self.admit(intent)
-            .await?
-            .await
-            .map_err(|_| BackendError::Channel)?
+        self.admit(intent).await?.await.map_err(|_| {
+            BackendError::camera_command_channel("camera command acknowledgement channel closed")
+        })?
     }
 
     async fn admit(
@@ -300,8 +306,8 @@ impl CameraBackend {
         let (ack_tx, ack_rx) = oneshot::channel();
         let permit = tokio::time::timeout(ADMISSION_TIMEOUT, self.commands_tx.reserve())
             .await
-            .map_err(|_| BackendError::Timeout)?
-            .map_err(|_| BackendError::Channel)?;
+            .map_err(|_| BackendError::CameraCommandTimeout)?
+            .map_err(|_| BackendError::camera_command_channel("camera command queue closed"))?;
         permit.send(Command {
             intent,
             deadline: tokio::time::Instant::now() + COMMAND_TIMEOUT,
@@ -421,7 +427,7 @@ async fn supervise(
             .is_some_and(|command| command.deadline <= tokio::time::Instant::now())
         {
             let command = pending.take().expect("pending command checked above");
-            let _ = command.ack_tx.send(Err(BackendError::Timeout));
+            let _ = command.ack_tx.send(Err(BackendError::CameraCommandTimeout));
             continue;
         }
 
@@ -497,7 +503,9 @@ async fn supervise(
                     Some(command) => pending = Some(command),
                     None => {
                         if let Some(command) = pending.take() {
-                            let _ = command.ack_tx.send(Err(BackendError::Channel));
+                            let _ = command.ack_tx.send(Err(
+                                BackendError::camera_command_channel("camera command queue closed"),
+                            ));
                         }
                         if let Some(running) = child.take() {
                             retire_child(running, true).await;
@@ -554,7 +562,9 @@ async fn supervise(
             }
             _ = &mut shutdown_rx => {
                 if let Some(command) = pending.take() {
-                    let _ = command.ack_tx.send(Err(BackendError::Channel));
+                    let _ = command.ack_tx.send(Err(
+                        BackendError::camera_command_channel("camera supervisor shut down"),
+                    ));
                 }
                 if let Some(running) = child.take() {
                     retire_child(running, true).await;
@@ -703,7 +713,7 @@ async fn execute_command(
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> ExecuteOutcome {
     if command.deadline <= tokio::time::Instant::now() {
-        let _ = command.ack_tx.send(Err(BackendError::Timeout));
+        let _ = command.ack_tx.send(Err(BackendError::CameraCommandTimeout));
         return ExecuteOutcome::Continue;
     }
 
@@ -758,7 +768,7 @@ async fn execute_command(
         )
         .await
         .err(),
-        Err(failure) => Some(failure),
+        Err(failure) => Some(CommandFailure::Terminal(failure)),
     };
 
     let Some(failure) = failure else {
@@ -779,25 +789,38 @@ async fn execute_command(
         return ExecuteOutcome::Continue;
     }
 
+    let failure = match failure {
+        CommandFailure::RecorderFailed(detail) => {
+            let _ = command
+                .ack_tx
+                .send(Err(BackendError::RecorderFailed(detail)));
+            return ExecuteOutcome::Continue;
+        }
+        CommandFailure::Terminal(failure) => failure,
+    };
     let (error, outcome, detail) = match failure {
         TerminalFailure::Timeout => (
-            BackendError::Timeout,
+            BackendError::CameraCommandTimeout,
             None,
             "camera command timed out".to_string(),
         ),
         TerminalFailure::Write => (
-            BackendError::CameraOffline,
+            BackendError::camera_command_channel("camera command write failed"),
             None,
             "camera command write failed".to_string(),
         ),
-        TerminalFailure::ChildError(detail) => (BackendError::CameraOffline, None, detail),
+        TerminalFailure::ChildError(detail) => (
+            BackendError::camera_command_channel(detail.clone()),
+            None,
+            detail,
+        ),
         TerminalFailure::Exited => (
-            BackendError::CameraOffline,
+            BackendError::camera_command_channel("camera process exited"),
             Some(false),
             "camera process exited".to_string(),
         ),
         TerminalFailure::Shutdown => (
-            BackendError::Channel,
+            BackendError::camera_command_channel("camera supervisor shut down"),
             Some(true),
             "camera supervisor shut down".to_string(),
         ),
@@ -829,6 +852,11 @@ enum TerminalFailure {
     ChildError(String),
     Exited,
     Shutdown,
+}
+
+enum CommandFailure {
+    Terminal(TerminalFailure),
+    RecorderFailed(String),
 }
 
 async fn write_until_terminal(
@@ -869,26 +897,36 @@ async fn wait_for_target(
     hub: &Arc<EventHub>,
     event_context: &EventContext,
     shutdown_rx: &mut oneshot::Receiver<()>,
-) -> Result<(), TerminalFailure> {
+) -> Result<(), CommandFailure> {
     loop {
         if target_reached(hub, active) {
             return Ok(());
+        }
+        if hub.live_status().camera_state == CameraState::Running
+            && hub.phase() == RecorderPhase::Error
+        {
+            return Err(CommandFailure::RecorderFailed(
+                hub.snapshot()
+                    .recorder
+                    .detail
+                    .unwrap_or_else(|| "recorder failed".to_string()),
+            ));
         }
         tokio::select! {
             event = child.events_rx.recv(), if child.events_open => match event {
                 Some(event) => {
                     if let Some(detail) = apply_command_event(event, &mut child.ready, &mut child.event_state, hub, event_context.rec_dir.clone(), event_context.clip_durations.clone(), event_context.time_store.clone()).await {
-                        return Err(TerminalFailure::ChildError(detail));
+                        return Err(CommandFailure::Terminal(TerminalFailure::ChildError(detail)));
                     }
                 }
                 None => child.events_open = false,
             },
             result = child.process.wait() => {
                 if let Err(error) = result { tracing::warn!(%error, "failed waiting for camera child"); }
-                return Err(TerminalFailure::Exited);
+                return Err(CommandFailure::Terminal(TerminalFailure::Exited));
             }
-            _ = tokio::time::sleep_until(deadline) => return Err(TerminalFailure::Timeout),
-            _ = &mut *shutdown_rx => return Err(TerminalFailure::Shutdown),
+            _ = tokio::time::sleep_until(deadline) => return Err(CommandFailure::Terminal(TerminalFailure::Timeout)),
+            _ = &mut *shutdown_rx => return Err(CommandFailure::Terminal(TerminalFailure::Shutdown)),
         }
     }
 }
@@ -1007,13 +1045,17 @@ async fn write_command(
     stdin: &mut (impl AsyncWrite + Unpin + ?Sized),
     command: &ChildCommand,
 ) -> Result<(), BackendError> {
-    let mut line = serde_json::to_vec(command).map_err(|_| BackendError::Channel)?;
+    let mut line = serde_json::to_vec(command)
+        .map_err(|_| BackendError::camera_command_channel("camera command serialization failed"))?;
     line.push(b'\n');
     stdin
         .write_all(&line)
         .await
-        .map_err(|_| BackendError::CameraOffline)?;
-    stdin.flush().await.map_err(|_| BackendError::CameraOffline)
+        .map_err(|_| BackendError::camera_command_channel("camera command write failed"))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|_| BackendError::camera_command_channel("camera command flush failed"))
 }
 
 async fn drain_stdout(mut stdout: ChildStdout, frames_tx: watch::Sender<Option<Bytes>>) {
@@ -1295,7 +1337,7 @@ mod tests {
             backend
                 .admit(CommandIntent::Start { start_segment: 7 })
                 .await,
-            Err(BackendError::Channel)
+            Err(BackendError::CameraCommandChannel(_))
         ));
         assert_eq!(backend.hub.phase(), crate::recorder::RecorderPhase::Idle);
     }
@@ -1317,7 +1359,7 @@ mod tests {
             backend
                 .admit(CommandIntent::Start { start_segment: 7 })
                 .await,
-            Err(BackendError::Timeout)
+            Err(BackendError::CameraCommandTimeout)
         ));
         assert_eq!(backend.hub.phase(), crate::recorder::RecorderPhase::Idle);
     }
@@ -1350,7 +1392,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ack_rx.await.unwrap(), Err(BackendError::Timeout));
+        assert_eq!(
+            ack_rx.await.unwrap(),
+            Err(BackendError::CameraCommandTimeout)
+        );
         assert_eq!(hub.phase(), crate::recorder::RecorderPhase::Idle);
         let _ = shutdown_tx.send(());
         supervisor.await.unwrap();
@@ -1411,7 +1456,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ack_rx.await.unwrap(), Err(BackendError::Timeout));
+        assert_eq!(
+            ack_rx.await.unwrap(),
+            Err(BackendError::CameraCommandTimeout)
+        );
         tokio::time::timeout(Duration::from_secs(2), async {
             while hub.snapshot().camera_state != CameraState::Running {
                 tokio::task::yield_now().await;
@@ -1526,7 +1574,11 @@ for line in sys.stdin:
             first_command.intent,
             CommandIntent::Start { start_segment: 0 }
         ));
-        let _ = first_command.ack_tx.send(Err(BackendError::CameraOffline));
+        let _ = first_command
+            .ack_tx
+            .send(Err(BackendError::camera_command_channel(
+                "injected command failure",
+            )));
 
         assert_eq!(reached_rx.recv().await, Some(1));
         release_tx.send(()).await.unwrap();
@@ -1537,7 +1589,12 @@ for line in sys.stdin:
         ));
         let _ = second_command.ack_tx.send(Ok(()));
 
-        assert_eq!(first.await.unwrap(), Err(BackendError::CameraOffline));
+        assert_eq!(
+            first.await.unwrap(),
+            Err(BackendError::camera_command_channel(
+                "injected command failure"
+            ))
+        );
         assert_eq!(second.await.unwrap(), Ok(()));
         let _ = fs::remove_dir_all(rec_dir);
     }
@@ -1598,7 +1655,10 @@ for line in sys.stdin:
         note_child_lost(&watch::channel::<Option<Bytes>>(None).0, &hub, &detail);
         let _ = ack_tx.send(Err(error));
 
-        assert_eq!(ack_rx.await.unwrap(), Err(BackendError::Timeout));
+        assert_eq!(
+            ack_rx.await.unwrap(),
+            Err(BackendError::CameraCommandTimeout)
+        );
         assert_eq!(hub.phase(), RecorderPhase::Error);
         assert!(!process_id_exists(pid).await);
     }

@@ -636,6 +636,6 @@ Behavioral tests and verification:
 - [x] 1. Extract raspi-reset-data remote body into a testable script
 - [x] 2. Bound operational filesystem observation
 - [x] 3. Make recording readiness part of canonical status
-- [ ] 4. Return typed recording-command errors
+- [x] 4. Return typed recording-command errors
 - [ ] 5. Add decision-grade ring GC diagnostics
 - [ ] 6. Wait for recording readiness after deploy

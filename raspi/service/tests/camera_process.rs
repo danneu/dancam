@@ -1,13 +1,14 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
 
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{header, Request, StatusCode},
 };
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -19,6 +20,12 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
+use tracing::{field::Visit, Subscriber};
+use tracing_subscriber::{
+    layer::{Context, SubscriberExt},
+    registry::LookupSpan,
+    Layer,
+};
 use uuid::Uuid;
 
 use dancam::{
@@ -33,6 +40,77 @@ use dancam::{
 };
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
+
+#[derive(Clone, Debug, Default)]
+struct CapturedFields(BTreeMap<String, String>);
+
+impl Visit for CapturedFields {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.0
+            .insert(field.name().to_string(), format!("{value:?}"));
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.0.insert(field.name().to_string(), value.to_string());
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CapturedTraceEvent {
+    name: String,
+    level: tracing::Level,
+    fields: CapturedFields,
+    spans: Vec<(String, CapturedFields)>,
+}
+
+#[derive(Clone)]
+struct CaptureLayer(Arc<StdMutex<Vec<CapturedTraceEvent>>>);
+
+impl<S> Layer<S> for CaptureLayer
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    fn on_new_span(
+        &self,
+        attributes: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        context: Context<'_, S>,
+    ) {
+        let mut fields = CapturedFields::default();
+        attributes.record(&mut fields);
+        if let Some(span) = context.span(id) {
+            span.extensions_mut().insert(fields);
+        }
+    }
+
+    fn on_event(&self, event: &tracing::Event<'_>, context: Context<'_, S>) {
+        let mut fields = CapturedFields::default();
+        event.record(&mut fields);
+        let spans = context
+            .event_scope(event)
+            .map(|scope| {
+                scope
+                    .from_root()
+                    .map(|span| {
+                        (
+                            span.name().to_string(),
+                            span.extensions()
+                                .get::<CapturedFields>()
+                                .cloned()
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.0.lock().unwrap().push(CapturedTraceEvent {
+            name: event.metadata().name().to_string(),
+            level: *event.metadata().level(),
+            fields,
+            spans,
+        });
+    }
+}
 
 #[derive(Default)]
 struct TestJpegSplitter {
@@ -406,6 +484,164 @@ async fn concurrent_start_and_stop_intents_dispatch_once() {
 }
 
 #[tokio::test]
+async fn recording_http_preflight_reports_each_non_running_camera_state() {
+    if !python3_available().await {
+        return;
+    }
+
+    const DELAYED_READY: &str = r#"
+import json, sys, time
+time.sleep(10)
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+"#;
+    let rec_dir = temp_rec_dir("preflight-starting");
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(
+        inline_camera_config(DELAYED_READY, &rec_dir, &[]),
+        storage.clone(),
+    );
+    let captured = Arc::new(StdMutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::registry().with(CaptureLayer(captured.clone()));
+    let trace_guard = tracing::subscriber::set_default(subscriber);
+    assert_recording_preflight(
+        &backend,
+        storage,
+        CameraState::Starting,
+        "camera_starting",
+        "camera starting",
+        Some("1"),
+    )
+    .await;
+    drop(trace_guard);
+    {
+        let events = captured.lock().unwrap();
+        let rejection = events
+            .iter()
+            .find(|event| {
+                event.name == "recording_command_rejected"
+                    && event.fields.0.get("command").map(String::as_str) == Some("start")
+            })
+            .expect("missing structured start rejection event");
+        assert_eq!(rejection.level, tracing::Level::WARN);
+        assert_eq!(
+            rejection.fields.0.get("error_code").map(String::as_str),
+            Some("camera_starting")
+        );
+        assert_eq!(
+            rejection.fields.0.get("camera_state").map(String::as_str),
+            Some("Starting")
+        );
+        let request_span = rejection
+            .spans
+            .iter()
+            .find(|(name, _)| name == "request")
+            .expect("rejection event was outside the request span");
+        assert!(request_span.1 .0.contains_key("request_id"));
+        assert!(request_span
+            .1
+             .0
+            .get("path")
+            .is_some_and(|path| path.contains("/v1/recording/start")));
+    }
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+
+    let rec_dir = temp_rec_dir("preflight-restarting");
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(
+        CameraConfig::new("/definitely-not-a-camera-program", [] as [&str; 0]),
+        storage.clone(),
+    );
+    wait_for_camera_state(&backend, CameraState::Restarting).await;
+    assert_recording_preflight(
+        &backend,
+        storage,
+        CameraState::Restarting,
+        "camera_restarting",
+        "camera restarting",
+        Some("1"),
+    )
+    .await;
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+
+    const READY: &str = r#"
+import json, sys
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    pass
+"#;
+    let rec_dir = temp_rec_dir("preflight-offline");
+    let storage = storage_for(&rec_dir);
+    let (backend, control) =
+        CameraProcess::spawn(inline_camera_config(READY, &rec_dir, &[]), storage.clone());
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    control.shutdown().await;
+    assert_recording_preflight(
+        &backend,
+        storage,
+        CameraState::Offline,
+        "camera_offline",
+        "camera offline",
+        None,
+    )
+    .await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+async fn assert_recording_preflight(
+    backend: &dancam::camera::CameraBackend,
+    storage: Arc<StorageCoordinator>,
+    expected_state: CameraState,
+    code: &str,
+    message: &str,
+    retry_after: Option<&str>,
+) {
+    assert_eq!(backend.snapshot().camera_state, expected_state);
+    let app =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage));
+
+    for path in ["/v1/recording/start", "/v1/recording/stop"] {
+        let response = app.clone().oneshot(recording_request(path)).await.unwrap();
+        assert_backend_error_response(
+            response,
+            StatusCode::SERVICE_UNAVAILABLE,
+            code,
+            message,
+            retry_after,
+        )
+        .await;
+    }
+}
+
+async fn assert_backend_error_response(
+    response: axum::http::Response<Body>,
+    status: StatusCode,
+    code: &str,
+    message: &str,
+    retry_after: Option<&str>,
+) {
+    assert_eq!(response.status(), status, "code {code}");
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/json",
+        "code {code}"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok()),
+        retry_after,
+        "code {code}"
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"], code);
+    assert_eq!(body["message"], message);
+}
+
+#[tokio::test]
 async fn start_timeout_reaps_child_before_error_and_retry_recovers() {
     if !python3_available().await {
         return;
@@ -435,10 +671,23 @@ for line in sys.stdin:
     let marker = rec_dir.with_extension("start-once");
     let pid_file = rec_dir.with_extension("start-pid");
     let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker, &pid_file]);
-    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
     wait_for_camera_state(&backend, CameraState::Running).await;
 
-    assert_eq!(backend.start_recording().await, Err(BackendError::Timeout));
+    let response =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage))
+            .oneshot(recording_request("/v1/recording/start"))
+            .await
+            .unwrap();
+    assert_backend_error_response(
+        response,
+        StatusCode::GATEWAY_TIMEOUT,
+        "camera_command_timeout",
+        "camera command timed out",
+        None,
+    )
+    .await;
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
     let pid = fs::read_to_string(&pid_file)
         .unwrap()
@@ -488,13 +737,23 @@ for line in sys.stdin:
     let marker = rec_dir.with_extension("error-once");
     let pid_file = rec_dir.with_extension("error-pid");
     let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker, &pid_file]);
-    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
     wait_for_camera_state(&backend, CameraState::Running).await;
 
-    assert_eq!(
-        backend.start_recording().await,
-        Err(BackendError::CameraOffline)
-    );
+    let response =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage))
+            .oneshot(recording_request("/v1/recording/start"))
+            .await
+            .unwrap();
+    assert_backend_error_response(
+        response,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "camera_command_channel",
+        "injected failure",
+        None,
+    )
+    .await;
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
     let pid = fs::read_to_string(&pid_file)
         .unwrap()
@@ -543,13 +802,23 @@ for line in sys.stdin:
     let marker = rec_dir.with_extension("write-fail-once");
     let pid_file = rec_dir.with_extension("write-fail-pid");
     let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker, &pid_file]);
-    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
     wait_for_camera_state(&backend, CameraState::Running).await;
 
-    assert_eq!(
-        backend.start_recording().await,
-        Err(BackendError::CameraOffline)
-    );
+    let response =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage))
+            .oneshot(recording_request("/v1/recording/start"))
+            .await
+            .unwrap();
+    assert_backend_error_response(
+        response,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "camera_command_channel",
+        "camera command write failed",
+        None,
+    )
+    .await;
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
     let pid = fs::read_to_string(&pid_file)
         .unwrap()
@@ -593,13 +862,23 @@ for line in sys.stdin:
     let rec_dir = temp_rec_dir("exit-during-command");
     let marker = rec_dir.with_extension("exit-once");
     let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker]);
-    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
     wait_for_camera_state(&backend, CameraState::Running).await;
 
-    assert_eq!(
-        backend.start_recording().await,
-        Err(BackendError::CameraOffline)
-    );
+    let response =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage))
+            .oneshot(recording_request("/v1/recording/start"))
+            .await
+            .unwrap();
+    assert_backend_error_response(
+        response,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "camera_command_channel",
+        "camera process exited",
+        None,
+    )
+    .await;
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
 
     wait_for_camera_state(&backend, CameraState::Running).await;
@@ -628,15 +907,28 @@ for line in sys.stdin:
 "#;
     let rec_dir = temp_rec_dir("shutdown-inflight");
     let config = inline_camera_config(SCRIPT, &rec_dir, &[]);
-    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
     wait_for_camera_state(&backend, CameraState::Running).await;
 
-    let request_backend = backend.clone();
-    let request = tokio::spawn(async move { request_backend.start_recording().await });
+    let app =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage));
+    let request = tokio::spawn(async move {
+        app.oneshot(recording_request("/v1/recording/start"))
+            .await
+            .unwrap()
+    });
     wait_for_recorder_phase(&backend, RecorderPhase::Starting).await;
     control.shutdown().await;
 
-    assert_eq!(request.await.unwrap(), Err(BackendError::Channel));
+    assert_backend_error_response(
+        request.await.unwrap(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "camera_command_channel",
+        "camera supervisor shut down",
+        None,
+    )
+    .await;
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
     assert_eq!(backend.snapshot().camera_state, CameraState::Offline);
     let _ = fs::remove_dir_all(rec_dir);
@@ -672,11 +964,24 @@ for line in sys.stdin:
     let marker = rec_dir.with_extension("stop-once");
     let pid_file = rec_dir.with_extension("stop-pid");
     let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker, &pid_file]);
-    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
     wait_for_camera_state(&backend, CameraState::Running).await;
     backend.start_recording().await.unwrap();
 
-    assert_eq!(backend.stop_recording().await, Err(BackendError::Timeout));
+    let response =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage))
+            .oneshot(recording_request("/v1/recording/stop"))
+            .await
+            .unwrap();
+    assert_backend_error_response(
+        response,
+        StatusCode::GATEWAY_TIMEOUT,
+        "camera_command_timeout",
+        "camera command timed out",
+        None,
+    )
+    .await;
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
     let pid = fs::read_to_string(&pid_file)
         .unwrap()
@@ -694,6 +999,55 @@ for line in sys.stdin:
     control.shutdown().await;
     let _ = fs::remove_file(marker);
     let _ = fs::remove_file(pid_file);
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn recorder_failure_after_dispatch_has_its_own_http_error() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, sys
+session = None
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "shutdown":
+        sys.exit(0)
+    if command["cmd"] == "start_recording":
+        session = command["session_id"]
+        print(json.dumps({"event":"recording_started","session_id":session}), file=sys.stderr, flush=True)
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":0}), file=sys.stderr, flush=True)
+    if command["cmd"] == "stop_recording":
+        print(json.dumps({"event":"recording_stopped","session_id":session}), file=sys.stderr, flush=True)
+"#;
+    let rec_dir = temp_rec_dir("recorder-failed-command");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[]);
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+    wait_for_current_segment(&backend, 0).await;
+
+    let response =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage))
+            .oneshot(recording_request("/v1/recording/stop"))
+            .await
+            .unwrap();
+    assert_backend_error_response(
+        response,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "recorder_failed",
+        "failed to stat final segment 0",
+        None,
+    )
+    .await;
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
+    assert_eq!(backend.snapshot().camera_state, CameraState::Running);
+
+    control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1195,7 +1549,10 @@ async fn supervisor_start_fails_closed_when_witness_is_corrupt() {
 
     wait_for_camera_state(&backend, CameraState::Running).await;
 
-    assert_eq!(backend.start_recording().await, Err(BackendError::Storage));
+    assert_eq!(
+        backend.start_recording().await,
+        Err(BackendError::RecordingStorageUnavailable)
+    );
     let snapshot = backend.snapshot();
     assert_eq!(snapshot.recorder.phase, RecorderPhase::Idle);
     assert_eq!(snapshot.recorder.current_segment, None);

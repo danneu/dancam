@@ -14,11 +14,7 @@ pub async fn start(
     headers: HeaderMap,
 ) -> Result<StatusCode, RecordingRequestError> {
     require_mutation_headers(&headers)?;
-    state
-        .backend
-        .start_recording()
-        .await
-        .map_err(RecordingRequestError::Backend)?;
+    run_command(&state, "start", state.backend.start_recording()).await?;
     Ok(StatusCode::OK)
 }
 
@@ -27,12 +23,35 @@ pub async fn stop(
     headers: HeaderMap,
 ) -> Result<StatusCode, RecordingRequestError> {
     require_mutation_headers(&headers)?;
-    state
-        .backend
-        .stop_recording()
-        .await
-        .map_err(RecordingRequestError::Backend)?;
+    run_command(&state, "stop", state.backend.stop_recording()).await?;
     Ok(StatusCode::OK)
+}
+
+async fn run_command(
+    state: &AppState,
+    command: &'static str,
+    result: impl std::future::Future<Output = Result<(), BackendError>>,
+) -> Result<(), RecordingRequestError> {
+    result.await.map_err(|error| {
+        let camera_state = state.backend.snapshot().camera_state;
+        match error {
+            BackendError::CameraStarting | BackendError::CameraRestarting => tracing::warn!(
+                name: "recording_command_rejected",
+                command,
+                error_code = error.code(),
+                camera_state = ?camera_state,
+                "recording command rejected"
+            ),
+            _ => tracing::error!(
+                name: "recording_command_rejected",
+                command,
+                error_code = error.code(),
+                camera_state = ?camera_state,
+                "recording command rejected"
+            ),
+        }
+        RecordingRequestError::Backend(error)
+    })
 }
 
 #[derive(Debug)]
