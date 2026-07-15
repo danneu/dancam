@@ -360,8 +360,8 @@ swoop can drop into the list above unchanged. Unordered.
       (`NEHotspotConfiguration`), so every unit ships with a unique strong secret
       instead of a shared dev password. This -- not WPA2-vs-WPA3 -- is the real
       security win for the link (the [transport boundary](design/boundary/transport.md)
-      defines the v1 trust boundary; raspi ADR 06 already flags this as a later
-      hardening pass). It is also where app-driven
+      defines the v1 trust boundary; the [Pi networking design](design/pi/networking.md)
+      already flags this as a later hardening pass). It is also where app-driven
       auto-rejoin lands: `joinOnce = false` persists the config so the phone
       re-associates without a manual Settings join -- a manually-saved AP already
       auto-rejoins today, so the win is dropping the manual step, not the behavior.

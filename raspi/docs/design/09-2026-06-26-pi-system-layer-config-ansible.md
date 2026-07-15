@@ -19,8 +19,8 @@
 - **Date:** 2026-06-26
 - **Owner:** raspi
 - **Related:** root `AGENTS.md` (the runbook convention this revises);
-  `06-2026-06-25-ap-networking-bring-up.md` (the AP profile this task automates, **as
-  amended 2026-06-25 for the WPA2-AES cipher pin**);
+  [Pi networking](../../../docs/design/pi/networking.md) (the AP profile this task
+  automates, including the WPA2-AES cipher pin);
   [Pi recording](../../../docs/design/pi/recording.md) (the camera owner whose apt
   deps task 3 installs, the `video` group task 9 guarantees, and the read-only-root
   deploy model this layer must respect); `05-2026-06-23-service-language-rust.md`;
@@ -84,9 +84,10 @@ justifies. Every task and handler also carries a concise `name:` -- the *what* a
 run-output label -- which additionally satisfies ansible-lint's `name[missing]` rule.
 
 **Provisioning always runs over home Wi-Fi.** Task 1 (`apt`) needs internet, and the
-Pi's AP mode is `ipv4.method shared` with no upstream (ADR 06 rejects AP+STA
-concurrency). The AP is for testing the link *after* provisioning, never for running
-the play -- there is no `10.42.0.1` provisioning path.
+Pi's AP mode is `ipv4.method shared` with no upstream (the
+[networking design](../../../docs/design/pi/networking.md#radio-operating-model)
+rejects AP+STA concurrency). The AP is for testing the link *after* provisioning,
+never for running the play -- there is no `10.42.0.1` provisioning path.
 
 **Reboot-after-any-upgrade is intentional.** The `apt full-upgrade` task notifies a
 `reboot` handler, which fires whenever any package changed (not only on a kernel
@@ -101,8 +102,10 @@ secret field unmanaged is also what keeps the task idempotent, because round-tri
 NetworkManager secret fields (`psk`/`psk-flags`) through the module has known
 idempotency gaps. Re-running the playbook does not disturb the hand-set PSK.
 
-Task 8 provisions the **WPA2-AES-pinned** profile from ADR 06 (RSN proto, CCMP
-pairwise + group; no TKIP/WPA1) -- the automation of the iOS "Weak Security" fix. The
+Task 8 provisions the **WPA2-AES-pinned** profile from the
+[networking design](../../../docs/design/pi/networking.md#access-point-profile)
+(RSN proto, CCMP pairwise + group; no TKIP/WPA1) -- the automation of the iOS "Weak
+Security" fix. The
 three cipher props are written as **single-element YAML lists** (`[rsn]`, `[ccmp]`),
 not scalars: `community.general.nmcli` marks `proto`/`pairwise`/`group` list-typed and
 parses the live value into a list, then does an order-insensitive list compare only

@@ -117,7 +117,7 @@
         state: present
 
     - name: Provision the dancam-ap access point profile (no PSK)
-      # AP profile spec per ADR 06 (amended 2026-06-25: WPA2-AES). The cipher pin --
+      # AP profile spec per `docs/design/pi/networking.md`. The cipher pin --
       # proto rsn, pairwise ccmp, group ccmp -- removes TKIP/WPA1 from the beacon so
       # iOS stops flagging the AP "Weak Security"; without it a fresh provision
       # silently regresses that fix. The three cipher props MUST be YAML lists, not

@@ -91,8 +91,8 @@ current provisional direction until it is captured.
   `dnsmasq` for DHCP/DNS; during bring-up it served `10.42.0.10` through
   `10.42.0.254`. The transport boundary's captive-probe DNS lever is applied through
   that instance, not a hand-run DNS service, but is deferred until persistent
-  no-internet joins need it. The concrete AP decision is in
-  `docs/design/06-2026-06-25-ap-networking-bring-up.md`.
+  no-internet joins need it. The concrete topology and AP decision are in the
+  [networking design](../docs/design/pi/networking.md).
 - **Control + media service:** a small **Rust** service (see the service-language
   ADR) exposing a control API (start/stop, settings, time sync) and a media API
   (list/preview/pull clips) to the app. Incidents use those read surfaces and add
@@ -330,6 +330,8 @@ shell, not `rustup target add`.
 - [OS image, power, and recovery](../docs/design/pi/os-image.md) -- read when changing
   the power topology, partition or mount layout, writable OS state, card policy,
   watchdog, or persistent journald.
+- [Networking](../docs/design/pi/networking.md) -- read when changing the Wi-Fi
+  topology, NetworkManager AP profile, gateway, mDNS scoping, or AP safe-flip loop.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   routes, response semantics, SSE framing, preview, clip pull, or app/Pi trust.
 
@@ -340,11 +342,6 @@ authoritative for subsystems that do not yet have a living page:
   Rust, cross-compiled on the dev host to a single static binary and run under
   systemd; the camera is driven as a subprocess, not linked. See the Build / run
   section above for the dev loop.
-- `06-2026-06-25-ap-networking-bring-up.md` (Accepted, amended 2026-06-25 for the
-  WPA2-AES cipher pin) -- the NetworkManager access point the phone joins on the car
-  path (`dancam-ap`: SSID `dancam-dev`, WPA2-AES pinned RSN/CCMP, channel 1,
-  `10.42.0.1/24`, shared IPv4, no autoconnect); the playbook provisions every field
-  but the PSK.
 - `09-2026-06-26-pi-system-layer-config-ansible.md` (Accepted) -- the Pi's system
   layer (apt, camera overlay, Avahi scoping, locale, the `dancam-ap` profile sans PSK,
   the `dancam` service user's `video` group) is provisioned declaratively with

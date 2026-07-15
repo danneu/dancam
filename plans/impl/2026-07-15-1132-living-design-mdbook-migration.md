@@ -396,7 +396,7 @@ End state:
 - [x] 4. Fold the transport ADRs into a living boundary page
 - [x] 5. Fold Pi recording ADRs into a living recording page
 - [x] 6. Fold Pi OS-image ADRs into a living OS-image page
-- [ ] 7. Fold Pi networking ADRs into a living networking page
+- [x] 7. Fold Pi networking ADRs into a living networking page
 - [ ] 8. Fold Pi provisioning ADRs into a living provisioning page
 - [ ] 9. Fold Pi service ADRs into a living service page
 - [ ] 10. Fold Pi telemetry ADRs into a living telemetry page

@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30
 - **Owner:** raspi
-- **Related:** root `AGENTS.md`; `06-2026-06-25-ap-networking-bring-up.md`;
+- **Related:** root `AGENTS.md`;
+  [Pi networking](../../../docs/design/pi/networking.md);
   [Pi recording](../../../docs/design/pi/recording.md);
   `09-2026-06-26-pi-system-layer-config-ansible.md`
 
@@ -61,7 +62,9 @@ connection values and run the documented `just` recipes. There is no second
 inventory file to keep in sync and no service identity for a forker to choose.
 
 Secrets and personal identifiers stay out of the tracked tree. The AP PSK remains a
-manual Pi-side secret per ADR 06 and ADR 09; `.env` is gitignored; the inventory
+manual Pi-side secret per the
+[networking design](../../../docs/design/pi/networking.md#access-point-profile) and
+ADR 09; `.env` is gitignored; the inventory
 contains only the shared host constant.
 
 Provisioning must happen before deploy on a fresh Pi because the unit starts as the
