@@ -18,6 +18,7 @@ All hot recording state lives under the configured recording directory, normally
 /data/rec/
   seg_<seq>.ts
   seg_<seq>_<boottag>_<session>_<monoMs>.ts
+  seg_<seq>_<boottag>_<session>_<monoMs>_<durMs>.ts
   state/state.json
   time/<full-boot-uuid>.json
 ```
@@ -31,7 +32,8 @@ ffmpeg has created a segment but the watcher has not stamped it, after a stampin
 rename failure, or after power dies inside that window. A bare file carries only its
 sequence; all other facts are unknown.
 
-The stamped filename carries four immutable facts:
+The finalized filename carries five immutable facts. The four-field stamped form is
+the live form and omits only `durMs`:
 
 - `seq` is the stable clip id and total order. It is a decimal `u32`, zero-padded
   to at least five digits and allowed to grow wider after 99999.
@@ -41,19 +43,28 @@ The stamped filename carries four immutable facts:
   `start_segment + 1`, so it is at least 1 and survives a service restart.
 - `monoMs` is the `CLOCK_BOOTTIME` millisecond reading captured when the segment
   is first observed open.
+- `durMs` is the measured MPEG-TS duration as a canonical decimal `u64`. It is added
+  only after the writer has moved on and is immutable once present.
 
 The Rust and Python parsers accept a name only when all numeric fields fit their
 declared integer types and rendering the parsed value reproduces the input
 byte-for-byte. Short sequence aliases, over-padding, uppercase or wrong-length boot
-tags, leading-zero session or monotonic aliases, and the retired three-fact stamped
-form are invalid. Directory scans accept the bare and current stamped forms and, for
-a same-sequence bare/stamped pair, prefer the stamped candidate for normal reads.
+tags, leading-zero numeric aliases, and the retired three-fact stamped form are
+invalid. Directory scans accept bare, four-field stamped, and five-field finalized
+forms. Duplicate recovery uses one total order everywhere: five-field finalized over
+four-field stamped over bare, then the lexicographically smallest ASCII filename
+within the same rank. Bulk deletion still removes every valid path for the id.
 
 The camera owner still asks ffmpeg to create bare `seg_%05d.ts` files. Its watcher
 detects a new open segment, captures boot time, renames the bare path to the stamped
 form, and then emits `segment_opened`. Renaming does not interrupt ffmpeg's open file
 descriptor. If stamping fails, the watcher logs the error and emits anyway; missing
 timestamp facts must not stop recording.
+
+When Rust finalizes a four-field segment, it measures the duration while the data is
+hot, renames the path to the five-field form under the storage mutation mutex, and
+fsyncs the recording directory before publishing `clip_finalized`. A measurement or
+rename failure leaves the four-field path usable and duration remains best-effort.
 
 The Pi stores no per-segment JPEG thumbnail and exposes no thumbnail mutation path.
 The app derives first frames from ranged reads or its local clip cache.
@@ -171,7 +182,7 @@ before clients connect.
 
 ## Filesystem-backed reads
 
-Clip listing, lookup, pull, duration caching, recovery, current-segment enrichment,
+Clip listing, lookup, pull, duration recovery, current-segment enrichment,
 next-sequence selection, and GC all scan or open the flat recording directory. A
 missing recording directory is a truthful empty listing. Other scan failures fail
 closed: list and lookup return 503 rather than turning an unreadable directory into an
@@ -181,8 +192,25 @@ Listings include finalized segments only, order newest first, and use a cursor a
 strict lower-sequence boundary. The server clamps page size and returns a next cursor
 only while older candidates remain. Duration is best-effort metadata derived from
 MPEG-TS timestamps; a span over 10 minutes is implausible for the configured 30-second
-segments and is treated as unknown. An immutable clip `ETag` derives from stable facts
-such as sequence and byte length, never inode, mtime, or path.
+segments and is treated as unknown. A five-field filename supplies duration without
+opening media. While recording is inactive, listing lazily measures legacy
+four-field segments and persists the result with the same finalize rename. Bare
+recovery segments can be measured but remain bare because they lack the facts needed
+to render a finalized name.
+
+All listing-triggered legacy measurements share one coordinator-owned gate across
+requests and across both legacy forms. A waiter re-resolves by sequence after taking
+the gate, so a duration persisted by another request is consumed without another
+scan. It then rechecks the live recording floor immediately before any SD read. Once
+recording is active, queued and subsequent measurements return unknown without
+scanning or renaming; at most the one scan already in progress may finish. Candidate
+enumeration also precedes the listing's first live-floor sample, so a recording that
+starts during directory enumeration cannot expose its live segment to migration.
+Failed scans, failed persistence, and power loss may retry because no durable fact
+exists yet.
+
+An immutable clip `ETag` derives from stable facts such as sequence and byte length,
+never inode, mtime, or path.
 
 Media reads do not take the mutation mutex. A reader opens the segment and streams
 from its file descriptor. POSIX unlink semantics let an already-open pull finish after
@@ -193,7 +221,8 @@ can re-list, and resumable pulls retain their representation boundary through th
 ## Mutation coordinator and manual deletion
 
 One `StorageCoordinator` owns recording-directory mutations. Its mutex serializes
-start reservation, boot scrub, manual deletion, and each GC delete. Recorder byte
+start reservation, duration persistence, boot scrub, manual deletion, and each GC
+delete. Recorder byte
 streaming and all non-mutating reads stay outside it. The composition root shares one
 coordinator between application state and the active backend, using the camera
 configuration's recording directory so custom camera commands cannot split storage
@@ -508,3 +537,21 @@ Alternatives considered:
 - Building an index log, snapshots, and an in-memory index was rejected because the
   filenames already carry durable facts and bounded-ring scans are simpler and
   crash-safe.
+
+### 2026-07-15: Persist measured duration in the finalized filename
+
+Cold clip listings repeatedly scanned 768 KB of MPEG-TS data per segment after every
+service restart. Those SD reads competed with camera startup, while the in-memory
+duration cache could not make the immutable fact survive a restart and its global
+generation invalidated unrelated in-flight inserts after deletion.
+
+The decision made duration the fifth finalized filename fact. Finalize measures and
+persists it with an atomic rename and directory fsync; inactive listings lazily
+backfill four-field segments through a single measurement gate. Every resolver uses
+the same fact-rank and filename tie-break order, and listing migration yields as soon
+as recording is observed active.
+
+Startup warming was rejected because it creates maximum SD contention at recording
+startup. A sidecar or index was rejected because the filename already owns immutable
+per-segment facts. Keeping the cache with per-id invalidation was rejected because a
+durable filename makes the cache a rare-case optimization rather than useful state.

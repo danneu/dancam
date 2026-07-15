@@ -20,9 +20,9 @@ use tokio_util::io::ReaderStream;
 use crate::{
     mutation::{require_mutation_headers, MutationHeaderError},
     recorder::{parse_segment_filename, SegmentFacts, SegmentId},
-    storage::SegmentDeleteError,
+    storage::{DurationPersist, ListingDuration, SegmentDeleteError, StorageCoordinator},
     time_sync::TimeStore,
-    ts_duration::DurationCache,
+    ts_duration::segment_duration_ms,
     AppState,
 };
 
@@ -47,6 +47,21 @@ pub struct ClipsResponse {
     pub clips: Vec<ClipMeta>,
     pub server_time_ms: Option<u64>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DurationSources {
+    pub(crate) from_name: usize,
+    pub(crate) scanned: usize,
+    pub(crate) backfilled: usize,
+    pub(crate) unknown: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct FinishedClipsPage {
+    pub(crate) clips: Vec<ClipMeta>,
+    pub(crate) next_cursor: Option<SegmentId>,
+    pub(crate) dur_sources: DurationSources,
 }
 
 #[derive(Clone, Debug)]
@@ -91,17 +106,15 @@ pub(crate) async fn list_clips(
         .transpose()
         .map_err(|_| ClipError::BadRequest)?;
     let limit = resolve_limit(query.limit);
-    let unpullable_from = state.backend.unpullable_from();
-    let rec_dir = state.storage.rec_dir();
-    let duration_cache = state.clip_durations.clone();
+    let backend = state.backend.clone();
+    let storage = state.storage.clone();
     let time_store = state.time_store.clone();
-    let (clips, next_cursor) = tokio::task::spawn_blocking(move || {
+    let page = tokio::task::spawn_blocking(move || {
         read_finished_clips(
-            rec_dir.as_ref(),
-            unpullable_from,
+            storage.as_ref(),
+            &|| backend.unpullable_from(),
             cursor,
             limit,
-            duration_cache.as_ref(),
             time_store.as_ref(),
         )
     })
@@ -115,10 +128,20 @@ pub(crate) async fn list_clips(
         ClipError::Unavailable
     })?;
 
+    tracing::info!(
+        cursor = ?cursor,
+        limit,
+        dur_from_name = page.dur_sources.from_name,
+        dur_scanned = page.dur_sources.scanned,
+        dur_backfilled = page.dur_sources.backfilled,
+        dur_unknown = page.dur_sources.unknown,
+        "clips listed"
+    );
+
     Ok(Json(ClipsResponse {
-        clips,
+        clips: page.clips,
         server_time_ms: state.time_store.derived_wall_now_ms(),
-        next_cursor: next_cursor.map(cursor_string),
+        next_cursor: page.next_cursor.map(cursor_string),
     }))
 }
 
@@ -323,14 +346,14 @@ enum RangeResolution {
 }
 
 pub(crate) fn read_finished_clips(
-    rec_dir: &Path,
-    unpullable_from: Option<SegmentId>,
+    storage: &StorageCoordinator,
+    live_floor: &dyn Fn() -> Option<SegmentId>,
     cursor: Option<SegmentId>,
     limit: usize,
-    duration_cache: &DurationCache,
     time_store: &TimeStore,
-) -> io::Result<(Vec<ClipMeta>, Option<SegmentId>)> {
-    let candidates = segment_candidates(rec_dir)?;
+) -> io::Result<FinishedClipsPage> {
+    let candidates = segment_candidates(storage.rec_dir().as_ref())?;
+    let unpullable_from = live_floor();
     let mut candidates: Vec<_> = candidates
         .into_iter()
         .filter(|candidate| unpullable_from.is_none_or(|floor| candidate.seq < floor))
@@ -344,12 +367,50 @@ pub(crate) fn read_finished_clips(
         .then(|| candidates.last().map(|candidate| candidate.seq))
         .flatten();
 
-    let clips = candidates
-        .into_iter()
-        .map(|candidate| clip_meta_from_candidate(candidate, Some(duration_cache), time_store))
-        .collect();
+    let mut clips = Vec::with_capacity(candidates.len());
+    let mut dur_sources = DurationSources::default();
+    for candidate in candidates {
+        let outcome = storage.listing_segment_duration(
+            candidate.seq,
+            || live_floor().is_some(),
+            segment_duration_ms,
+        )?;
+        let dur_ms = match outcome {
+            ListingDuration::FromName(dur_ms) => {
+                dur_sources.from_name += 1;
+                Some(dur_ms)
+            }
+            ListingDuration::Scanned { dur_ms, persist } => {
+                dur_sources.scanned += 1;
+                if dur_ms.is_none() {
+                    dur_sources.unknown += 1;
+                }
+                if let Some(persist) = persist {
+                    match persist {
+                        Ok(DurationPersist::Renamed | DurationPersist::AlreadyPersisted) => {
+                            dur_sources.backfilled += 1;
+                        }
+                        Ok(DurationPersist::NoStampedPath | DurationPersist::Vanished) => {}
+                        Err(error) => {
+                            tracing::warn!(%error, id = candidate.seq, "failed to persist listed clip duration");
+                        }
+                    }
+                }
+                dur_ms
+            }
+            ListingDuration::Deferred | ListingDuration::Vanished => {
+                dur_sources.unknown += 1;
+                None
+            }
+        };
+        clips.push(clip_meta_from_candidate(candidate, dur_ms, time_store));
+    }
 
-    Ok((clips, next_cursor))
+    Ok(FinishedClipsPage {
+        clips,
+        next_cursor,
+        dur_sources,
+    })
 }
 
 pub(crate) fn resolve_limit(limit: Option<usize>) -> usize {
@@ -372,16 +433,32 @@ pub(crate) fn max_clip_seq(rec_dir: &Path) -> io::Result<Option<u32>> {
     open_segment(rec_dir).map(|segment| segment.map(|(seq, _, _)| seq))
 }
 
-pub(crate) fn clip_meta(
-    rec_dir: &Path,
+pub(crate) fn finalize_clip_meta(
+    storage: &StorageCoordinator,
     seq: SegmentId,
-    duration_cache: Option<&DurationCache>,
     time_store: &TimeStore,
 ) -> io::Result<Option<ClipMeta>> {
-    let Some(segment) = resolve_segment(rec_dir, seq)? else {
+    let rec_dir = storage.rec_dir();
+    let Some(segment) = resolve_segment(rec_dir.as_ref(), seq)? else {
         return Ok(None);
     };
-    let meta = clip_meta_from_candidate(segment.clone(), duration_cache, time_store);
+    let dur_ms = segment
+        .facts
+        .as_ref()
+        .and_then(|facts| facts.dur_ms)
+        .or_else(|| segment_duration_ms(&segment.path, segment.bytes));
+    if segment
+        .facts
+        .as_ref()
+        .is_some_and(|facts| facts.dur_ms.is_none())
+    {
+        if let Some(dur_ms) = dur_ms {
+            if let Err(error) = storage.persist_segment_duration(seq, dur_ms) {
+                tracing::warn!(%error, id = seq, "failed to persist finalized clip duration");
+            }
+        }
+    }
+    let meta = clip_meta_from_candidate(segment.clone(), dur_ms, time_store);
     if !meta.time_approximate || segment.facts.is_none() {
         return Ok(Some(meta));
     }
@@ -389,7 +466,7 @@ pub(crate) fn clip_meta(
     let disk_time_store = TimeStore::load(rec_dir.join("time"));
     Ok(Some(clip_meta_from_candidate(
         segment,
-        duration_cache,
+        dur_ms,
         &disk_time_store,
     )))
 }
@@ -503,7 +580,7 @@ fn dedupe_candidates(candidates: Vec<SegmentCandidate>) -> Vec<SegmentCandidate>
     let mut by_seq = BTreeMap::<SegmentId, SegmentCandidate>::new();
     for candidate in candidates {
         match by_seq.get_mut(&candidate.seq) {
-            Some(current) if current.facts.is_none() && candidate.facts.is_some() => {
+            Some(current) if candidate_precedes(&candidate, current) => {
                 *current = candidate;
             }
             Some(_) => {}
@@ -515,13 +592,24 @@ fn dedupe_candidates(candidates: Vec<SegmentCandidate>) -> Vec<SegmentCandidate>
     by_seq.into_values().collect()
 }
 
+fn candidate_precedes(candidate: &SegmentCandidate, current: &SegmentCandidate) -> bool {
+    let rank = |candidate: &SegmentCandidate| match candidate.facts.as_ref() {
+        Some(facts) if facts.dur_ms.is_some() => 2,
+        Some(_) => 1,
+        None => 0,
+    };
+    rank(candidate) > rank(current)
+        || (rank(candidate) == rank(current)
+            && candidate.path.file_name() < current.path.file_name())
+}
+
 fn max_segment_seq(candidates: &[SegmentCandidate]) -> Option<u32> {
     candidates.iter().map(|candidate| candidate.seq).max()
 }
 
 fn clip_meta_from_candidate(
     candidate: SegmentCandidate,
-    duration_cache: Option<&DurationCache>,
+    dur_ms: Option<u64>,
     time_store: &TimeStore,
 ) -> ClipMeta {
     let start_ms = derive_start_ms(candidate.facts.as_ref(), time_store);
@@ -532,8 +620,7 @@ fn clip_meta_from_candidate(
         boot_tag,
         session,
         start_ms,
-        dur_ms: duration_cache
-            .and_then(|cache| cache.duration_ms(candidate.seq, &candidate.path, candidate.bytes)),
+        dur_ms,
         bytes: candidate.bytes,
         locked: false,
         etag: format!("{}-{}", candidate.seq, candidate.bytes),
@@ -624,8 +711,9 @@ mod tests {
         ClipError, RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
     };
     use crate::recorder::{stamped_segment_filename, SegmentFacts};
+    use crate::storage::StorageCoordinator;
     use crate::time_sync::{OffsetRecord, TimeStore};
-    use crate::ts_duration::DurationCache;
+    use crate::ts_duration::ts_pts_packet;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::{
@@ -791,10 +879,9 @@ mod tests {
         write_file(&rec_dir.path, "seg_00000.ts", b"zero");
         fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o000)).unwrap();
 
-        let duration_cache = DurationCache::new();
         let time_store = TimeStore::in_memory();
-        let result =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store);
+        let storage = StorageCoordinator::new(rec_dir.path.clone());
+        let result = read_finished_clips(&storage, &|| None, None, 10, &time_store);
 
         fs::set_permissions(&rec_dir.path, fs::Permissions::from_mode(0o700)).unwrap();
         if result.is_ok() {
@@ -855,6 +942,8 @@ mod tests {
         write_file(&rec_dir.path, "seg_00007.ts", b"bare");
         let stamped = stamped_name(7);
         write_file(&rec_dir.path, &stamped, b"stamped");
+        let finalized = finalized_name(7, 300);
+        write_file(&rec_dir.path, &finalized, b"finalized");
         write_file(&rec_dir.path, &stamped_name(8), b"other");
         fs::create_dir(rec_dir.path.join("seg_00009.ts")).unwrap();
 
@@ -865,7 +954,7 @@ mod tests {
             .collect::<Vec<_>>();
         paths.sort();
 
-        assert_eq!(paths, ["seg_00007.ts".to_string(), stamped]);
+        assert_eq!(paths, ["seg_00007.ts".to_string(), stamped, finalized]);
         assert_eq!(segment_paths_for_id(&rec_dir.path, 8).unwrap().len(), 1);
         assert!(segment_paths_for_id(&rec_dir.path, 9).unwrap().is_empty());
     }
@@ -956,6 +1045,160 @@ mod tests {
         assert_eq!(clips[1].bytes, 7);
         assert_eq!(clips[1].etag, "7-7");
         assert_eq!(next_cursor, None);
+    }
+
+    #[test]
+    fn finalized_filename_duration_avoids_scanning_garbage() {
+        let rec_dir = temp_rec_dir();
+        write_file(
+            &rec_dir.path,
+            &finalized_name(7, 300),
+            b"not transport stream",
+        );
+        let storage = StorageCoordinator::new(rec_dir.path.clone());
+
+        let page =
+            read_finished_clips(&storage, &|| None, None, 10, &TimeStore::in_memory()).unwrap();
+
+        assert_eq!(page.clips[0].dur_ms, Some(300));
+        assert_eq!(page.dur_sources.from_name, 1);
+        assert_eq!(page.dur_sources.scanned, 0);
+        assert_eq!(page.dur_sources.unknown, 0);
+    }
+
+    #[test]
+    fn listing_backfills_stamped_duration_once() {
+        let rec_dir = temp_rec_dir();
+        let bytes = pts_segment();
+        write_file(&rec_dir.path, &stamped_name(7), &bytes);
+        let storage = StorageCoordinator::new(rec_dir.path.clone());
+
+        let first =
+            read_finished_clips(&storage, &|| None, None, 10, &TimeStore::in_memory()).unwrap();
+        assert_eq!(first.clips[0].dur_ms, Some(300));
+        assert_eq!(first.dur_sources.scanned, 1);
+        assert_eq!(first.dur_sources.backfilled, 1);
+        let finalized = rec_dir.path.join(finalized_name(7, 300));
+        assert!(finalized.is_file());
+
+        fs::write(&finalized, vec![0; bytes.len()]).unwrap();
+        let second =
+            read_finished_clips(&storage, &|| None, None, 10, &TimeStore::in_memory()).unwrap();
+        assert_eq!(second.clips[0].dur_ms, Some(300));
+        assert_eq!(second.dur_sources.from_name, 1);
+        assert_eq!(second.dur_sources.scanned, 0);
+    }
+
+    #[test]
+    fn finalize_duration_persistence_failure_keeps_computed_metadata() {
+        let rec_dir = temp_rec_dir();
+        let mount = temp_rec_dir();
+        write_file(&rec_dir.path, &stamped_name(7), &pts_segment());
+        let storage = StorageCoordinator::new(rec_dir.path.clone())
+            .with_required_mountpoint(mount.path.clone());
+
+        let meta = super::finalize_clip_meta(&storage, 7, &TimeStore::in_memory())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(meta.dur_ms, Some(300));
+        assert!(rec_dir.path.join(stamped_name(7)).is_file());
+    }
+
+    #[test]
+    fn bare_recovery_duration_is_measured_without_renaming() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, "seg_00007.ts", &pts_segment());
+        let storage = StorageCoordinator::new(rec_dir.path.clone());
+
+        for _ in 0..2 {
+            let page =
+                read_finished_clips(&storage, &|| None, None, 10, &TimeStore::in_memory()).unwrap();
+            assert_eq!(page.clips[0].dur_ms, Some(300));
+            assert_eq!(page.dur_sources.scanned, 1);
+            assert!(rec_dir.path.join("seg_00007.ts").is_file());
+        }
+    }
+
+    #[test]
+    fn listing_rechecks_recording_activity_before_each_legacy_scan() {
+        use std::cell::Cell;
+
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, &stamped_name(8), &pts_segment());
+        write_file(&rec_dir.path, &stamped_name(7), &pts_segment());
+        let storage = StorageCoordinator::new(rec_dir.path.clone());
+        let calls = Cell::new(0);
+
+        let page = read_finished_clips(
+            &storage,
+            &|| {
+                let call = calls.get();
+                calls.set(call + 1);
+                (call >= 2).then_some(8)
+            },
+            None,
+            10,
+            &TimeStore::in_memory(),
+        )
+        .unwrap();
+
+        assert_eq!(page.clips[0].id, 8);
+        assert_eq!(page.clips[0].dur_ms, Some(300));
+        assert_eq!(page.clips[1].id, 7);
+        assert_eq!(page.clips[1].dur_ms, None);
+        assert!(rec_dir.path.join(finalized_name(8, 300)).is_file());
+        assert!(rec_dir.path.join(stamped_name(7)).is_file());
+        assert_eq!(page.dur_sources.scanned, 1);
+        assert_eq!(page.dur_sources.unknown, 1);
+    }
+
+    #[test]
+    fn floor_sample_after_enumeration_excludes_newly_live_candidate() {
+        let rec_dir = temp_rec_dir();
+        write_file(&rec_dir.path, &stamped_name(7), &pts_segment());
+        let storage = StorageCoordinator::new(rec_dir.path.clone());
+
+        let page =
+            read_finished_clips(&storage, &|| Some(7), None, 10, &TimeStore::in_memory()).unwrap();
+
+        assert!(page.clips.is_empty());
+        assert!(rec_dir.path.join(stamped_name(7)).is_file());
+    }
+
+    #[test]
+    fn duplicate_resolution_uses_fact_rank_then_filename_order() {
+        for reverse in [false, true] {
+            let rec_dir = temp_rec_dir();
+            let names = [
+                "seg_00007.ts".to_string(),
+                stamped_name_for(7, "fff123def456", None),
+                stamped_name_for(7, "fff123def456", Some(400)),
+                stamped_name_for(7, "abc123def456", Some(300)),
+                stamped_name_for(8, "fff123def456", None),
+                stamped_name_for(8, "abc123def456", None),
+            ];
+            let iter: Box<dyn Iterator<Item = &String>> = if reverse {
+                Box::new(names.iter().rev())
+            } else {
+                Box::new(names.iter())
+            };
+            for (index, name) in iter.enumerate() {
+                write_file(&rec_dir.path, name, &vec![index as u8; index + 1]);
+            }
+
+            let selected = resolve_segment(&rec_dir.path, 7).unwrap().unwrap();
+            assert_eq!(
+                selected.path.file_name().unwrap().to_str().unwrap(),
+                stamped_name_for(7, "abc123def456", Some(300))
+            );
+            assert_eq!(selected.facts.unwrap().dur_ms, Some(300));
+            let selected = resolve_segment(&rec_dir.path, 8).unwrap().unwrap();
+            assert_eq!(
+                selected.path.file_name().unwrap().to_str().unwrap(),
+                stamped_name_for(8, "abc123def456", None)
+            );
+        }
     }
 
     #[test]
@@ -1053,11 +1296,9 @@ mod tests {
         write_offset(&time_dir.path, BOOT_ABC, 1000);
         let time_store = TimeStore::load(time_dir.path.clone());
         time_store.set_boot_id(BOOT_ABC);
-        let duration_cache = DurationCache::new();
-
-        let (clips, next_cursor) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
-                .unwrap();
+        let page = read_finished_clips_with_time_for_test(&rec_dir.path, &time_store);
+        let clips = page.clips;
+        let next_cursor = page.next_cursor;
 
         assert_eq!(next_cursor, None);
         assert_eq!(clips.len(), 1);
@@ -1077,11 +1318,7 @@ mod tests {
             b"stamped",
         );
         let time_store = TimeStore::load(time_dir.path.clone());
-        let duration_cache = DurationCache::new();
-
-        let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
-                .unwrap();
+        let clips = read_finished_clips_with_time_for_test(&rec_dir.path, &time_store).clips;
 
         assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [8, 7]);
         assert_eq!(clips[0].boot_tag.as_deref(), Some("abc123def456"));
@@ -1103,11 +1340,7 @@ mod tests {
         write_offset(&time_dir.path, BOOT_DEF, 1000);
         let time_store = TimeStore::load(time_dir.path.clone());
         time_store.set_boot_id(BOOT_DEF);
-        let duration_cache = DurationCache::new();
-
-        let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
-                .unwrap();
+        let clips = read_finished_clips_with_time_for_test(&rec_dir.path, &time_store).clips;
 
         assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [8, 7]);
         for clip in clips {
@@ -1128,11 +1361,7 @@ mod tests {
         write_offset(&time_dir.path, BOOT_ABC, 1000);
         let time_store = TimeStore::load(time_dir.path.clone());
         time_store.set_boot_id(BOOT_ABC);
-        let duration_cache = DurationCache::new();
-
-        let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
-                .unwrap();
+        let clips = read_finished_clips_with_time_for_test(&rec_dir.path, &time_store).clips;
 
         assert_eq!(clips[0].start_ms, None);
         assert!(clips[0].time_approximate);
@@ -1151,11 +1380,7 @@ mod tests {
         write_offset(&time_dir.path, BOOT_DEF, 2000);
         let time_store = TimeStore::load(time_dir.path.clone());
         time_store.set_boot_id(BOOT_DEF);
-        let duration_cache = DurationCache::new();
-
-        let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
-                .unwrap();
+        let clips = read_finished_clips_with_time_for_test(&rec_dir.path, &time_store).clips;
 
         assert_eq!(clips[0].start_ms, Some(1050));
         assert!(!clips[0].time_approximate);
@@ -1173,11 +1398,7 @@ mod tests {
         write_offset(&time_dir.path, BOOT_DEF, 2000);
         let time_store = TimeStore::load(time_dir.path.clone());
         time_store.set_boot_id(BOOT_DEF);
-        let duration_cache = DurationCache::new();
-
-        let (clips, _) =
-            read_finished_clips(&rec_dir.path, None, None, 10, &duration_cache, &time_store)
-                .unwrap();
+        let clips = read_finished_clips_with_time_for_test(&rec_dir.path, &time_store).clips;
 
         assert_eq!(clips[0].start_ms, None);
         assert!(clips[0].time_approximate);
@@ -1223,8 +1444,29 @@ mod tests {
                 boot_tag: boot_tag.to_string(),
                 session: 1,
                 mono_ms,
+                dur_ms: None,
             },
         )
+    }
+
+    fn stamped_name_for(seq: u32, boot_tag: &str, dur_ms: Option<u64>) -> String {
+        stamped_segment_filename(
+            seq,
+            &SegmentFacts {
+                boot_tag: boot_tag.to_string(),
+                session: 1,
+                mono_ms: 123456789,
+                dur_ms,
+            },
+        )
+    }
+
+    fn finalized_name(seq: u32, dur_ms: u64) -> String {
+        stamped_name_for(seq, "abc123def456", Some(dur_ms))
+    }
+
+    fn pts_segment() -> Vec<u8> {
+        [ts_pts_packet(0), ts_pts_packet(9000), ts_pts_packet(18000)].concat()
     }
 
     fn write_offset(dir: &Path, boot_id: &str, offset_ms: i64) {
@@ -1247,17 +1489,19 @@ mod tests {
         cursor: Option<u32>,
         limit: usize,
     ) -> (Vec<super::ClipMeta>, Option<u32>) {
-        let duration_cache = DurationCache::new();
         let time_store = TimeStore::in_memory();
-        read_finished_clips(
-            rec_dir,
-            unpullable_from,
-            cursor,
-            limit,
-            &duration_cache,
-            &time_store,
-        )
-        .unwrap()
+        let storage = StorageCoordinator::new(rec_dir.to_path_buf());
+        let page =
+            read_finished_clips(&storage, &|| unpullable_from, cursor, limit, &time_store).unwrap();
+        (page.clips, page.next_cursor)
+    }
+
+    fn read_finished_clips_with_time_for_test(
+        rec_dir: &Path,
+        time_store: &TimeStore,
+    ) -> super::FinishedClipsPage {
+        let storage = StorageCoordinator::new(rec_dir.to_path_buf());
+        read_finished_clips(&storage, &|| None, None, 10, time_store).unwrap()
     }
 
     struct TempRecDir {

@@ -90,7 +90,7 @@ impl Default for DurationCache {
     }
 }
 
-fn segment_duration_ms(path: &Path, bytes: u64) -> Option<u64> {
+pub(crate) fn segment_duration_ms(path: &Path, bytes: u64) -> Option<u64> {
     duration_ms_from_span(segment_pts_span(path, bytes)?)
 }
 

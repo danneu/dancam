@@ -14,8 +14,8 @@ use std::{
 };
 
 use crate::{
-    clips::{max_clip_seq, segment_paths_for_id, zero_byte_repair},
-    recorder::SegmentId,
+    clips::{max_clip_seq, resolve_segment, segment_paths_for_id, zero_byte_repair},
+    recorder::{stamped_segment_filename, SegmentId},
 };
 
 const STATE_DIR: &str = "state";
@@ -32,6 +32,7 @@ pub struct StorageCoordinator {
     rec_dir: Arc<Path>,
     required_mountpoint: Option<Arc<Path>>,
     mutation: Mutex<()>,
+    listing_duration: Mutex<()>,
 }
 
 impl StorageCoordinator {
@@ -40,6 +41,7 @@ impl StorageCoordinator {
             rec_dir: Arc::from(rec_dir.into_boxed_path()),
             required_mountpoint: None,
             mutation: Mutex::new(()),
+            listing_duration: Mutex::new(()),
         }
     }
 
@@ -106,6 +108,74 @@ impl StorageCoordinator {
         }
         fsync_dir(rec_dir).map_err(SegmentDeleteError::Io)?;
         Ok(())
+    }
+
+    /// Persist a finalized segment's measured duration in its filename.
+    ///
+    /// Callers must only pass ids whose writer has moved on. There is deliberately
+    /// no live-floor check here because finalize runs while the protective floor still
+    /// equals the id being finalized.
+    pub fn persist_segment_duration(
+        &self,
+        id: SegmentId,
+        dur_ms: u64,
+    ) -> io::Result<DurationPersist> {
+        let _guard = self
+            .mutation
+            .lock()
+            .expect("storage coordinator mutex poisoned");
+        self.ensure_rec_mounted()?;
+        let Some(candidate) = resolve_segment(self.rec_dir.as_ref(), id)? else {
+            return Ok(DurationPersist::Vanished);
+        };
+        let Some(mut facts) = candidate.facts else {
+            return Ok(DurationPersist::NoStampedPath);
+        };
+        if facts.dur_ms.is_some() {
+            return Ok(DurationPersist::AlreadyPersisted);
+        }
+
+        facts.dur_ms = Some(dur_ms);
+        let destination = self.rec_dir.join(stamped_segment_filename(id, &facts));
+        match fs::rename(&candidate.path, destination) {
+            Ok(()) => fsync_dir(self.rec_dir.as_ref())?,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                tracing::debug!(id, "segment vanished while persisting duration");
+                return Ok(DurationPersist::Vanished);
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(DurationPersist::Renamed)
+    }
+
+    pub(crate) fn listing_segment_duration(
+        &self,
+        id: SegmentId,
+        recording_active: impl FnOnce() -> bool,
+        scan: impl FnOnce(&Path, u64) -> Option<u64>,
+    ) -> io::Result<ListingDuration> {
+        let _guard = self
+            .listing_duration
+            .lock()
+            .expect("listing duration mutex poisoned");
+        let Some(candidate) = resolve_segment(self.rec_dir.as_ref(), id)? else {
+            return Ok(ListingDuration::Vanished);
+        };
+        if let Some(dur_ms) = candidate.facts.as_ref().and_then(|facts| facts.dur_ms) {
+            return Ok(ListingDuration::FromName(dur_ms));
+        }
+        if recording_active() {
+            return Ok(ListingDuration::Deferred);
+        }
+
+        let stamped = candidate.facts.is_some();
+        let dur_ms = scan(&candidate.path, candidate.bytes);
+        let persist = if stamped {
+            dur_ms.map(|dur_ms| self.persist_segment_duration(id, dur_ms))
+        } else {
+            None
+        };
+        Ok(ListingDuration::Scanned { dur_ms, persist })
     }
 
     pub(crate) fn raise_witness_for_batch(
@@ -186,6 +256,25 @@ impl StorageCoordinator {
     pub fn recording_storage_available(&self) -> io::Result<()> {
         self.ensure_rec_mounted()
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DurationPersist {
+    Renamed,
+    AlreadyPersisted,
+    NoStampedPath,
+    Vanished,
+}
+
+#[derive(Debug)]
+pub(crate) enum ListingDuration {
+    FromName(u64),
+    Scanned {
+        dur_ms: Option<u64>,
+        persist: Option<io::Result<DurationPersist>>,
+    },
+    Deferred,
+    Vanished,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -369,13 +458,19 @@ mod tests {
         fs,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
-        sync::{Arc, Barrier},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc, Barrier,
+        },
         thread,
     };
 
-    use super::{state_path, SegmentDeleteError, StorageCoordinator, STATE_DIR};
+    use super::{
+        state_path, DurationPersist, ListingDuration, SegmentDeleteError, StorageCoordinator,
+        STATE_DIR,
+    };
     use crate::{
-        clips::resolve_segment,
+        clips::{resolve_segment, segment_paths_for_id},
         recorder::{segment_filename, stamped_segment_filename, SegmentFacts, SegmentId},
     };
 
@@ -989,6 +1084,219 @@ mod tests {
         assert!(!state_path(&rec_dir.path).exists());
     }
 
+    #[test]
+    fn persist_segment_duration_renames_idempotently_and_handles_missing_forms() {
+        let rec_dir = TempRecDir::new();
+        write_stamped_segment(&rec_dir.path, 7);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        assert_eq!(
+            coordinator.persist_segment_duration(7, 300).unwrap(),
+            DurationPersist::Renamed
+        );
+        assert!(rec_dir.path.join(finalized_name(7, 300)).is_file());
+        assert_eq!(
+            coordinator.persist_segment_duration(7, 999).unwrap(),
+            DurationPersist::AlreadyPersisted
+        );
+        assert_eq!(
+            coordinator.persist_segment_duration(8, 300).unwrap(),
+            DurationPersist::Vanished
+        );
+        write_segment(&rec_dir.path, 9);
+        assert_eq!(
+            coordinator.persist_segment_duration(9, 300).unwrap(),
+            DurationPersist::NoStampedPath
+        );
+    }
+
+    #[test]
+    fn persist_segment_duration_prefers_existing_finalized_duplicate() {
+        let rec_dir = TempRecDir::new();
+        write_stamped_segment(&rec_dir.path, 7);
+        fs::write(rec_dir.path.join(finalized_name(7, 400)), b"final").unwrap();
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        assert_eq!(
+            coordinator.persist_segment_duration(7, 300).unwrap(),
+            DurationPersist::AlreadyPersisted
+        );
+        assert!(rec_dir.path.join(stamped_name(7)).is_file());
+        assert!(rec_dir.path.join(finalized_name(7, 400)).is_file());
+    }
+
+    #[test]
+    fn persist_segment_duration_checks_required_mount_before_rename() {
+        let rec_dir = TempRecDir::new();
+        let mount = TempRecDir::new();
+        write_stamped_segment(&rec_dir.path, 7);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone())
+            .with_required_mountpoint(mount.path.clone());
+
+        assert_eq!(
+            coordinator
+                .persist_segment_duration(7, 300)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert!(rec_dir.path.join(stamped_name(7)).is_file());
+    }
+
+    #[test]
+    fn listing_duration_gate_serializes_scans_and_rechecks_activity() {
+        let rec_dir = TempRecDir::new();
+        write_stamped_segment(&rec_dir.path, 7);
+        write_segment(&rec_dir.path, 8);
+        let coordinator = Arc::new(StorageCoordinator::new(rec_dir.path.clone()));
+        let active = Arc::new(AtomicBool::new(false));
+        let scans = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+
+        let first = {
+            let coordinator = coordinator.clone();
+            let scans = scans.clone();
+            let entered = entered.clone();
+            let release = release.clone();
+            thread::spawn(move || {
+                coordinator
+                    .listing_segment_duration(
+                        7,
+                        || false,
+                        |_, _| {
+                            scans.fetch_add(1, Ordering::SeqCst);
+                            entered.wait();
+                            release.wait();
+                            Some(300)
+                        },
+                    )
+                    .unwrap()
+            })
+        };
+        entered.wait();
+        let second = {
+            let coordinator = coordinator.clone();
+            let active = active.clone();
+            let scans = scans.clone();
+            thread::spawn(move || {
+                coordinator
+                    .listing_segment_duration(
+                        8,
+                        || active.load(Ordering::SeqCst),
+                        |_, _| {
+                            scans.fetch_add(1, Ordering::SeqCst);
+                            Some(400)
+                        },
+                    )
+                    .unwrap()
+            })
+        };
+        active.store(true, Ordering::SeqCst);
+        release.wait();
+
+        assert!(matches!(
+            first.join().unwrap(),
+            ListingDuration::Scanned {
+                dur_ms: Some(300),
+                ..
+            }
+        ));
+        assert!(matches!(second.join().unwrap(), ListingDuration::Deferred));
+        assert_eq!(scans.load(Ordering::SeqCst), 1);
+        assert!(rec_dir.path.join(finalized_name(7, 300)).is_file());
+        assert!(rec_dir.path.join(segment_filename(8)).is_file());
+    }
+
+    #[test]
+    fn concurrent_listing_backfill_scans_a_stamped_segment_once() {
+        let rec_dir = TempRecDir::new();
+        write_stamped_segment(&rec_dir.path, 7);
+        let coordinator = Arc::new(StorageCoordinator::new(rec_dir.path.clone()));
+        let scans = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+
+        let first = {
+            let coordinator = coordinator.clone();
+            let scans = scans.clone();
+            let entered = entered.clone();
+            let release = release.clone();
+            thread::spawn(move || {
+                coordinator
+                    .listing_segment_duration(
+                        7,
+                        || false,
+                        |_, _| {
+                            scans.fetch_add(1, Ordering::SeqCst);
+                            entered.wait();
+                            release.wait();
+                            Some(300)
+                        },
+                    )
+                    .unwrap()
+            })
+        };
+        entered.wait();
+        let second = {
+            let coordinator = coordinator.clone();
+            let scans = scans.clone();
+            thread::spawn(move || {
+                coordinator
+                    .listing_segment_duration(
+                        7,
+                        || false,
+                        |_, _| {
+                            scans.fetch_add(1, Ordering::SeqCst);
+                            Some(999)
+                        },
+                    )
+                    .unwrap()
+            })
+        };
+        release.wait();
+
+        assert!(matches!(
+            first.join().unwrap(),
+            ListingDuration::Scanned {
+                dur_ms: Some(300),
+                ..
+            }
+        ));
+        assert!(matches!(
+            second.join().unwrap(),
+            ListingDuration::FromName(300)
+        ));
+        assert_eq!(scans.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn listing_scan_disappearance_is_best_effort_and_does_not_rename() {
+        let rec_dir = TempRecDir::new();
+        write_stamped_segment(&rec_dir.path, 7);
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        let outcome = coordinator
+            .listing_segment_duration(
+                7,
+                || false,
+                |path, _| {
+                    fs::remove_file(path).unwrap();
+                    None
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            ListingDuration::Scanned {
+                dur_ms: None,
+                persist: None
+            }
+        ));
+        assert!(segment_paths_for_id(&rec_dir.path, 7).unwrap().is_empty());
+    }
+
     fn write_segment(rec_dir: &Path, seq: SegmentId) {
         write_segment_bytes(rec_dir, seq, b"segment");
     }
@@ -1022,6 +1330,19 @@ mod tests {
                 boot_tag: "abc123def456".to_string(),
                 session: 1,
                 mono_ms: 123456789,
+                dur_ms: None,
+            },
+        )
+    }
+
+    fn finalized_name(seq: SegmentId, dur_ms: u64) -> String {
+        stamped_segment_filename(
+            seq,
+            &SegmentFacts {
+                boot_tag: "abc123def456".to_string(),
+                session: 1,
+                mono_ms: 123456789,
+                dur_ms: Some(dur_ms),
             },
         )
     }

@@ -381,6 +381,25 @@ mod tests {
             .unwrap();
         }
 
+        fn finalized_segment(&self, id: SegmentId) {
+            let name = crate::recorder::stamped_segment_filename(
+                id,
+                &crate::recorder::SegmentFacts {
+                    boot_tag: "abc123def456".to_string(),
+                    session: 1,
+                    mono_ms: 123456789,
+                    dur_ms: Some(300),
+                },
+            );
+            fs::write(self.0.join(name), b"segment").unwrap();
+        }
+
+        fn has_seq(&self, id: SegmentId) -> bool {
+            crate::clips::resolve_segment(&self.0, id)
+                .unwrap()
+                .is_some()
+        }
+
         fn exists(&self, id: SegmentId) -> bool {
             self.0.join(crate::recorder::segment_filename(id)).exists()
         }
@@ -526,7 +545,8 @@ mod tests {
     #[test]
     fn pass_evicts_oldest_first_and_stops_at_floor() {
         let dir = TempRecDir::new();
-        for id in 0..=2 {
+        dir.finalized_segment(0);
+        for id in 1..=2 {
             dir.segment(id);
         }
         let storage = StorageCoordinator::new(dir.0.clone());
@@ -538,7 +558,7 @@ mod tests {
         assert!(matches!(outcome, GcPass::ReachedFloor { .. }));
         assert_observation(&outcome, 10, Some(0), Some(10), &[0, 1]);
         assert_eq!(removed, [0, 1]);
-        assert!(!dir.exists(0));
+        assert!(!dir.has_seq(0));
         assert!(!dir.exists(1));
         assert!(dir.exists(2));
     }

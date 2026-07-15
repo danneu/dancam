@@ -8,7 +8,9 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
-use dancam::{backend::MockBackend, storage::StorageCoordinator, AppState};
+use dancam::{
+    backend::MockBackend, recorder::parse_segment_filename, storage::StorageCoordinator, AppState,
+};
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
 const VALID_EPOCH_MS: i64 = 1_800_000_000_000;
@@ -179,6 +181,17 @@ async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
 
     // The stamped rollover clip carries the recording's session (start segment 0 -> 1).
     assert_eq!(finalized.json["session"], 1);
+    let filename_dur_ms = fs::read_dir(&rec_dir.path)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let parsed = parse_segment_filename(&name)?;
+            (u64::from(parsed.seq) == finalized_id)
+                .then(|| parsed.facts.and_then(|facts| facts.dur_ms))
+                .flatten()
+        })
+        .next();
+    assert_eq!(filename_dur_ms, event_dur_ms);
 
     // /v1/clips derives dur_ms from the same segment file, so it must agree exactly --
     // a fabricated event duration would diverge here and the value would flicker on

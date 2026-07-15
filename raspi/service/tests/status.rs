@@ -509,6 +509,7 @@ fn stamped_name(seq: u32) -> String {
             boot_tag: "abc123def456".to_string(),
             session: 1,
             mono_ms: 123456789,
+            dur_ms: None,
         },
     )
 }

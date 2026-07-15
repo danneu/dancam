@@ -386,6 +386,42 @@ async fn serve_clip_resolves_stamped_segment_by_id() {
 }
 
 #[tokio::test]
+async fn list_and_pull_choose_lexicographically_smallest_finalized_duplicate() {
+    for reverse in [false, true] {
+        let rec_dir = TempRecDir::new();
+        let preferred = finalized_name(7, "abc123def456", 300);
+        let other = finalized_name(7, "fff123def456", 400);
+        let mut entries = [
+            (preferred.as_str(), b"preferred".as_slice()),
+            (other.as_str(), b"other-longer".as_slice()),
+        ];
+        if reverse {
+            entries.reverse();
+        }
+        for (name, bytes) in entries {
+            rec_dir.write(name, bytes);
+        }
+        let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+
+        let listed = response_json(
+            app.clone()
+                .oneshot(clips_request("/v1/clips"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(listed["clips"][0]["dur_ms"], 300);
+        assert_eq!(listed["clips"][0]["bytes"], 9);
+        assert_eq!(listed["clips"][0]["etag"], "7-9");
+
+        let response = app.oneshot(clip_request("/v1/clips/7")).await.unwrap();
+        assert_eq!(header_value(&response, header::ETAG), Some("\"7-9\""));
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body, Bytes::from_static(b"preferred"));
+    }
+}
+
+#[tokio::test]
 async fn serve_clip_open_ended_range_returns_partial_content() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
@@ -1019,6 +1055,19 @@ fn stamped_name_for_tag(seq: u32, boot_tag: &str, mono_ms: u64) -> String {
             boot_tag: boot_tag.to_string(),
             session: 1,
             mono_ms,
+            dur_ms: None,
+        },
+    )
+}
+
+fn finalized_name(seq: u32, boot_tag: &str, dur_ms: u64) -> String {
+    stamped_segment_filename(
+        seq,
+        &SegmentFacts {
+            boot_tag: boot_tag.to_string(),
+            session: 1,
+            mono_ms: 123456789,
+            dur_ms: Some(dur_ms),
         },
     )
 }

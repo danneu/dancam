@@ -18,7 +18,7 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 use crate::{
     backend::{Backend, BackendError, FrameStream},
-    clips::{clip_meta, ClipMeta},
+    clips::{finalize_clip_meta, ClipMeta},
     cpu::Cpu,
     event_hub::{EventConnection, EventHub},
     events::Event,
@@ -136,11 +136,11 @@ impl CameraProcess {
 
         let supervisor = tokio::spawn(supervise(
             config,
+            storage.clone(),
             frames_tx.clone(),
             hub.clone(),
             commands_rx,
             shutdown_rx,
-            clip_durations.clone(),
             time_store.clone(),
         ));
 
@@ -395,11 +395,11 @@ where
 
 async fn supervise(
     config: CameraConfig,
+    storage: Arc<StorageCoordinator>,
     frames_tx: watch::Sender<Option<Bytes>>,
     hub: Arc<EventHub>,
     mut commands_rx: mpsc::Receiver<Command>,
     mut shutdown_rx: oneshot::Receiver<()>,
-    clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
 ) {
     let mut backoff = BACKOFF_BASE;
@@ -437,8 +437,7 @@ async fn supervise(
                 child.as_mut().expect("ready child checked above"),
                 command,
                 &hub,
-                Arc::from(config.rec_dir.clone().into_boxed_path()),
-                clip_durations.clone(),
+                storage.clone(),
                 time_store.clone(),
                 &mut shutdown_rx,
             )
@@ -530,8 +529,7 @@ async fn supervise(
                             &mut running.ready,
                             &mut running.event_state,
                             &hub,
-                            Arc::from(config.rec_dir.clone().into_boxed_path()),
-                            clip_durations.clone(),
+                            storage.clone(),
                             time_store.clone(),
                         ).await;
                         if let Some(detail) = fatal_detail {
@@ -698,8 +696,7 @@ struct ActiveCommand {
 }
 
 struct EventContext {
-    rec_dir: Arc<Path>,
-    clip_durations: Arc<DurationCache>,
+    storage: Arc<StorageCoordinator>,
     time_store: Arc<TimeStore>,
 }
 
@@ -707,8 +704,7 @@ async fn execute_command(
     child: &mut RunningChild,
     command: Command,
     hub: &Arc<EventHub>,
-    rec_dir: Arc<Path>,
-    clip_durations: Arc<DurationCache>,
+    storage: Arc<StorageCoordinator>,
     time_store: Arc<TimeStore>,
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> ExecuteOutcome {
@@ -744,8 +740,7 @@ async fn execute_command(
     };
 
     let event_context = EventContext {
-        rec_dir,
-        clip_durations,
+        storage,
         time_store,
     };
     let failure = match write_until_terminal(
@@ -776,14 +771,7 @@ async fn execute_command(
         return ExecuteOutcome::Continue;
     };
 
-    drain_delivered_events(
-        child,
-        hub,
-        event_context.rec_dir,
-        event_context.clip_durations,
-        event_context.time_store,
-    )
-    .await;
+    drain_delivered_events(child, hub, event_context.storage, event_context.time_store).await;
     if target_reached(hub, &active) {
         let _ = command.ack_tx.send(Ok(()));
         return ExecuteOutcome::Continue;
@@ -874,7 +862,7 @@ async fn write_until_terminal(
             result = &mut write => return result.map_err(|_| TerminalFailure::Write),
             event = child.events_rx.recv(), if child.events_open => match event {
                 Some(event) => {
-                    if let Some(detail) = apply_command_event(event, &mut child.ready, &mut child.event_state, hub, event_context.rec_dir.clone(), event_context.clip_durations.clone(), event_context.time_store.clone()).await {
+                    if let Some(detail) = apply_command_event(event, &mut child.ready, &mut child.event_state, hub, event_context.storage.clone(), event_context.time_store.clone()).await {
                         return Err(TerminalFailure::ChildError(detail));
                     }
                 }
@@ -915,7 +903,7 @@ async fn wait_for_target(
         tokio::select! {
             event = child.events_rx.recv(), if child.events_open => match event {
                 Some(event) => {
-                    if let Some(detail) = apply_command_event(event, &mut child.ready, &mut child.event_state, hub, event_context.rec_dir.clone(), event_context.clip_durations.clone(), event_context.time_store.clone()).await {
+                    if let Some(detail) = apply_command_event(event, &mut child.ready, &mut child.event_state, hub, event_context.storage.clone(), event_context.time_store.clone()).await {
                         return Err(CommandFailure::Terminal(TerminalFailure::ChildError(detail)));
                     }
                 }
@@ -936,32 +924,21 @@ async fn apply_command_event(
     ready: &mut bool,
     event_state: &mut ChildEventState,
     hub: &Arc<EventHub>,
-    rec_dir: Arc<Path>,
-    clip_durations: Arc<DurationCache>,
+    storage: Arc<StorageCoordinator>,
     time_store: Arc<TimeStore>,
 ) -> Option<String> {
     let detail = match &event {
         ChildEvent::Error { detail } => Some(detail.clone()),
         _ => None,
     };
-    apply_child_event(
-        event,
-        ready,
-        event_state,
-        hub,
-        rec_dir,
-        clip_durations,
-        time_store,
-    )
-    .await;
+    apply_child_event(event, ready, event_state, hub, storage, time_store).await;
     detail
 }
 
 async fn drain_delivered_events(
     child: &mut RunningChild,
     hub: &Arc<EventHub>,
-    rec_dir: Arc<Path>,
-    clip_durations: Arc<DurationCache>,
+    storage: Arc<StorageCoordinator>,
     time_store: Arc<TimeStore>,
 ) {
     while let Ok(event) = child.events_rx.try_recv() {
@@ -970,8 +947,7 @@ async fn drain_delivered_events(
             &mut child.ready,
             &mut child.event_state,
             hub,
-            rec_dir.clone(),
-            clip_durations.clone(),
+            storage.clone(),
             time_store.clone(),
         )
         .await;
@@ -1083,8 +1059,7 @@ async fn apply_child_event(
     ready: &mut bool,
     event_state: &mut ChildEventState,
     hub: &Arc<EventHub>,
-    rec_dir: Arc<Path>,
-    clip_durations: Arc<DurationCache>,
+    storage: Arc<StorageCoordinator>,
     time_store: Arc<TimeStore>,
 ) {
     match event {
@@ -1103,13 +1078,7 @@ async fn apply_child_event(
         ChildEvent::SegmentOpened { session, id } => {
             if let Some((closed_session, closed_id)) = event_state.pending_closed.take() {
                 if closed_session == session {
-                    match finalized_clip_meta(
-                        rec_dir.clone(),
-                        closed_id,
-                        clip_durations.clone(),
-                        time_store.clone(),
-                    )
-                    .await
+                    match finalized_clip_meta(storage.clone(), closed_id, time_store.clone()).await
                     {
                         Some(finalized) => {
                             hub.drive_now(Input::SegmentRollover {
@@ -1152,7 +1121,7 @@ async fn apply_child_event(
             let mut final_stat_failed = false;
             let finalized = match event_state.last_opened {
                 Some((opened_session, id)) if opened_session == session => {
-                    match finalized_clip_meta(rec_dir, id, clip_durations, time_store).await {
+                    match finalized_clip_meta(storage, id, time_store).await {
                         Some(finalized) => Some(finalized),
                         None => {
                             final_stat_failed = true;
@@ -1192,18 +1161,12 @@ fn has_recording_stopping(events: &[crate::event_hub::SeqEvent]) -> bool {
 }
 
 async fn finalized_clip_meta(
-    rec_dir: Arc<Path>,
+    storage: Arc<StorageCoordinator>,
     seq: SegmentId,
-    clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
 ) -> Option<ClipMeta> {
     match tokio::task::spawn_blocking(move || {
-        clip_meta(
-            rec_dir.as_ref(),
-            seq,
-            Some(clip_durations.as_ref()),
-            time_store.as_ref(),
-        )
+        finalize_clip_meta(storage.as_ref(), seq, time_store.as_ref())
     })
     .await
     {
@@ -1370,16 +1333,15 @@ mod tests {
         let hub = Arc::new(EventHub::new(CameraState::Starting));
         let (commands_tx, commands_rx) = mpsc::channel(1);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let clip_durations = Arc::new(DurationCache::new());
         let time_store = Arc::new(TimeStore::in_memory());
         let config = CameraConfig::new("/definitely-not-a-camera-program", [] as [&str; 0]);
         let supervisor = tokio::spawn(supervise(
             config,
+            Arc::new(StorageCoordinator::new(PathBuf::from("."))),
             frames_tx,
             hub.clone(),
             commands_rx,
             shutdown_rx,
-            clip_durations,
             time_store,
         ));
         let (ack_tx, ack_rx) = oneshot::channel();
@@ -1432,11 +1394,11 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let supervisor = tokio::spawn(supervise(
             CameraConfig::new(script_path.to_string_lossy(), [] as [&str; 0]),
+            Arc::new(StorageCoordinator::new(root.join("rec"))),
             frames_tx,
             hub.clone(),
             commands_rx,
             shutdown_rx,
-            Arc::new(DurationCache::new()),
             Arc::new(TimeStore::in_memory()),
         ));
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -1634,8 +1596,7 @@ for line in sys.stdin:
                 ack_tx,
             },
             &hub,
-            Arc::from(PathBuf::from(".").into_boxed_path()),
-            Arc::new(DurationCache::new()),
+            Arc::new(StorageCoordinator::new(PathBuf::from("."))),
             Arc::new(TimeStore::in_memory()),
             &mut shutdown_rx,
         )
@@ -1706,8 +1667,7 @@ for line in sys.stdin:
                 ack_tx,
             },
             &hub,
-            Arc::from(PathBuf::from(".").into_boxed_path()),
-            Arc::new(DurationCache::new()),
+            Arc::new(StorageCoordinator::new(PathBuf::from("."))),
             Arc::new(TimeStore::in_memory()),
             &mut shutdown_rx,
         )

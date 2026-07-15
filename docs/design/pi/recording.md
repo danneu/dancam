@@ -127,7 +127,11 @@ each new id it stamps the file with boot, session, and monotonic facts, then emi
 The watcher reports rollover; it does not drive it. The final segment intentionally
 has no `segment_closed` event because no later file proves a rollover. A matching
 `recording_stopped` event is the finalization signal for that last open segment. Rust
-derives its metadata from the file before publishing the final clip and idle state.
+derives its metadata from the file, renames a measurable four-field path to the
+five-field finalized form with `durMs`, and fsyncs the recording directory before
+publishing the final clip and idle state. Rollover applies the same rename before its
+`clip_finalized` event. Duration persistence is best-effort: measurement or rename
+failure does not suppress otherwise valid finalized metadata.
 
 Every child lifecycle event is checked against the live session. Segment events are
 also checked against the allocated floor. Stale sessions and below-floor ids are

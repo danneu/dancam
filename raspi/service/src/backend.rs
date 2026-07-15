@@ -21,7 +21,7 @@ use tokio::{
 use tokio_stream::{wrappers::WatchStream, Stream, StreamExt};
 
 use crate::{
-    clips::{clip_meta, ClipMeta},
+    clips::{finalize_clip_meta, ClipMeta},
     clock,
     cpu::Cpu,
     event_hub::{EventConnection, EventHub, SeqEvent},
@@ -233,7 +233,6 @@ impl MockBackend {
                 storage,
                 roll_interval,
                 hub.clone(),
-                clip_durations.clone(),
                 time_store.clone(),
                 boot_tag.clone(),
             )
@@ -368,10 +367,8 @@ impl Backend for MockBackend {
 #[derive(Clone)]
 struct MockRecorder {
     storage: Arc<StorageCoordinator>,
-    rec_dir: Arc<Path>,
     roll_interval: Duration,
     hub: Arc<EventHub>,
-    clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
     boot_tag: Arc<StdMutex<Option<String>>>,
     task: Arc<Mutex<Option<MockRecordingTask>>>,
@@ -383,10 +380,9 @@ struct MockRecordingTask {
 }
 
 struct MockRecordingContext {
-    rec_dir: Arc<Path>,
+    storage: Arc<StorageCoordinator>,
     roll_interval: Duration,
     hub: Arc<EventHub>,
-    clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
     boot_tag: Arc<StdMutex<Option<String>>>,
     periodic_sync: Arc<dyn MockPeriodicSync>,
@@ -436,7 +432,6 @@ impl MockRecorder {
         storage: Arc<StorageCoordinator>,
         roll_interval: Duration,
         hub: Arc<EventHub>,
-        clip_durations: Arc<DurationCache>,
         time_store: Arc<TimeStore>,
         boot_tag: Arc<StdMutex<Option<String>>>,
     ) -> Self {
@@ -446,13 +441,10 @@ impl MockRecorder {
             roll_interval
         };
 
-        let rec_dir = storage.rec_dir();
         Self {
             storage,
-            rec_dir,
             roll_interval,
             hub,
-            clip_durations,
             time_store,
             boot_tag,
             task: Arc::new(Mutex::new(None)),
@@ -478,17 +470,15 @@ impl MockRecorder {
         };
 
         let (stop_tx, stop_rx) = oneshot::channel();
-        let rec_dir = self.rec_dir.clone();
         let roll_interval = self.roll_interval;
         let hub = self.hub.clone();
-        let clip_durations = self.clip_durations.clone();
+        let storage = self.storage.clone();
         let time_store = self.time_store.clone();
         let boot_tag = self.boot_tag.clone();
         let context = MockRecordingContext {
-            rec_dir,
+            storage,
             roll_interval,
             hub,
-            clip_durations,
             time_store,
             boot_tag,
             periodic_sync: Arc::new(FlushAndSyncMockSegment),
@@ -531,16 +521,16 @@ async fn run_mock_recording_writer(
     mut stop_rx: oneshot::Receiver<()>,
 ) {
     let MockRecordingContext {
-        rec_dir,
+        storage,
         roll_interval,
         hub,
-        clip_durations,
         time_store,
         boot_tag,
         periodic_sync,
         session,
         start_segment,
     } = context;
+    let rec_dir = storage.rec_dir();
     let mut seq = start_segment;
     let mut file = match open_mock_segment(rec_dir.as_ref(), seq, session, boot_tag.as_ref()).await
     {
@@ -593,7 +583,7 @@ async fn run_mock_recording_writer(
                     return;
                 }
                 let finalized =
-                    finalized_clip_meta(rec_dir.clone(), seq, clip_durations.clone(), time_store.clone())
+                    finalized_clip_meta(storage.clone(), seq, time_store.clone())
                         .await;
                 hub.drive_now(Input::RecordingStopped { session, finalized });
                 return;
@@ -608,9 +598,8 @@ async fn run_mock_recording_writer(
                         return;
                     }
                     let finalized = match finalized_clip_meta(
-                        rec_dir.clone(),
+                        storage.clone(),
                         seq,
-                        clip_durations.clone(),
                         time_store.clone(),
                     )
                     .await
@@ -712,18 +701,12 @@ async fn flush_and_sync_mock_segment(file: &mut tokio::fs::File) -> std::io::Res
 }
 
 async fn finalized_clip_meta(
-    rec_dir: Arc<Path>,
+    storage: Arc<StorageCoordinator>,
     seq: SegmentId,
-    clip_durations: Arc<DurationCache>,
     time_store: Arc<TimeStore>,
 ) -> Option<ClipMeta> {
     match tokio::task::spawn_blocking(move || {
-        clip_meta(
-            rec_dir.as_ref(),
-            seq,
-            Some(clip_durations.as_ref()),
-            time_store.as_ref(),
-        )
+        finalize_clip_meta(storage.as_ref(), seq, time_store.as_ref())
     })
     .await
     {
@@ -756,6 +739,7 @@ async fn open_mock_segment(
                     boot_tag,
                     session,
                     mono_ms: clock::boottime_ms(),
+                    dur_ms: None,
                 },
             )
         })
@@ -896,8 +880,8 @@ mod tests {
     use crate::{
         event_hub::EventHub,
         events::Event,
+        storage::StorageCoordinator,
         time_sync::TimeStore,
-        ts_duration::DurationCache,
         world::{CameraState, Input},
     };
 
@@ -923,10 +907,9 @@ mod tests {
         let sync_calls = Arc::new(AtomicUsize::new(0));
         let (stop_tx, stop_rx) = oneshot::channel();
         let context = MockRecordingContext {
-            rec_dir: Arc::from(rec_dir.path.as_path()),
+            storage: Arc::new(StorageCoordinator::new(rec_dir.path.clone())),
             roll_interval: Duration::from_millis(4_500),
             hub: hub.clone(),
-            clip_durations: Arc::new(DurationCache::new()),
             time_store: Arc::new(TimeStore::in_memory()),
             boot_tag: Arc::new(std::sync::Mutex::new(None)),
             periodic_sync: Arc::new(CountingPeriodicSync {

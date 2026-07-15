@@ -1106,6 +1106,10 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
         finalized_dur_ms.is_some_and(|dur_ms| dur_ms > 0),
         "camera clip_finalized dur_ms was {finalized_dur_ms:?}"
     );
+    assert_eq!(
+        segment_duration_fact(&rec_dir, finalized_id),
+        finalized_dur_ms
+    );
 
     let stop = app
         .clone()
@@ -1113,6 +1117,7 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
         .await
         .unwrap();
     assert_eq!(stop.status(), StatusCode::OK);
+    assert!(segment_duration_fact(&rec_dir, rolled).is_some());
 
     let clips_response = app.clone().oneshot(get_request("/v1/clips")).await.unwrap();
     assert_eq!(clips_response.status(), StatusCode::OK);
@@ -1469,6 +1474,19 @@ fn segment_ids(rec_dir: &Path) -> Vec<u32> {
         .collect::<Vec<_>>();
     ids.sort();
     ids
+}
+
+fn segment_duration_fact(rec_dir: &Path, seq: u32) -> Option<u64> {
+    fs::read_dir(rec_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let parsed = parse_segment_filename(&name)?;
+            (parsed.seq == seq)
+                .then(|| parsed.facts.and_then(|facts| facts.dur_ms))
+                .flatten()
+        })
+        .next()
 }
 
 fn storage_for(rec_dir: &Path) -> Arc<StorageCoordinator> {

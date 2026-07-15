@@ -18,6 +18,7 @@ pub struct SegmentFacts {
     /// `docs/design/pi/storage.md#segment-and-recording-identity`.
     pub session: SessionId,
     pub mono_ms: u64,
+    pub dur_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,13 +28,17 @@ pub struct ParsedSegment {
 }
 
 pub fn stamped_segment_filename(seq: SegmentId, facts: &SegmentFacts) -> String {
-    format!(
+    let stamped = format!(
         "{}_{}_{}_{}.ts",
         segment_stem(seq),
         facts.boot_tag,
         facts.session,
         facts.mono_ms
-    )
+    );
+    match facts.dur_ms {
+        Some(dur_ms) => format!("{}_{dur_ms}.ts", stamped.trim_end_matches(".ts")),
+        None => stamped,
+    }
 }
 
 /// Parse exactly the names this module can render, with no aliases.
@@ -45,7 +50,8 @@ pub fn parse_segment_filename(name: &str) -> Option<ParsedSegment> {
             let seq = seq_digits.parse::<SegmentId>().ok()?;
             (segment_filename(seq) == name).then_some(ParsedSegment { seq, facts: None })
         }
-        [seq_digits, boot_tag, session_digits, mono_digits] => {
+        [seq_digits, boot_tag, session_digits, mono_digits]
+        | [seq_digits, boot_tag, session_digits, mono_digits, _] => {
             let seq = seq_digits.parse::<SegmentId>().ok()?;
             if !valid_boot_tag(boot_tag) {
                 return None;
@@ -55,10 +61,15 @@ pub fn parse_segment_filename(name: &str) -> Option<ParsedSegment> {
             // `sess`/`monoMs` re-renders byte-identically yet must not parse.
             let session = session_digits.parse::<u64>().ok()?;
             let mono_ms = mono_digits.parse::<u64>().ok()?;
+            let dur_ms = match parts.as_slice() {
+                [_, _, _, _, dur_digits] => Some(dur_digits.parse::<u64>().ok()?),
+                _ => None,
+            };
             let facts = SegmentFacts {
                 boot_tag: (*boot_tag).to_string(),
                 session,
                 mono_ms,
+                dur_ms,
             };
             (stamped_segment_filename(seq, &facts) == name).then_some(ParsedSegment {
                 seq,
@@ -360,6 +371,7 @@ mod tests {
             boot_tag: "abc123def456".to_string(),
             session: 7,
             mono_ms: 987654321,
+            dur_ms: None,
         };
 
         for seq in [0, 5, 99999, 100000, u32::MAX] {
@@ -387,6 +399,7 @@ mod tests {
             boot_tag: "abc123def456".to_string(),
             session: u64::MAX,
             mono_ms: 987654321,
+            dur_ms: None,
         };
         let name = stamped_segment_filename(5, &max_session);
         assert_eq!(
@@ -394,6 +407,20 @@ mod tests {
             Some(ParsedSegment {
                 seq: 5,
                 facts: Some(max_session)
+            })
+        );
+
+        let finalized = SegmentFacts {
+            dur_ms: Some(30016),
+            ..facts
+        };
+        let name = stamped_segment_filename(510, &finalized);
+        assert_eq!(name, "seg_00510_abc123def456_7_987654321_30016.ts");
+        assert_eq!(
+            parse_segment_filename(&name),
+            Some(ParsedSegment {
+                seq: 510,
+                facts: Some(finalized)
             })
         );
     }
@@ -412,6 +439,9 @@ mod tests {
             "seg_00005_abc123def456_7_+9.ts",
             "seg_00005_abc123def456_7_987654321.mp4",
             "seg_00005_abc123xyz456_7_987654321.ts",
+            "seg_00005_abc123def456_7_987654321_030016.ts",
+            "seg_00005_abc123def456_7_987654321_.ts",
+            "seg_00005_abc123def456_7_987654321_18446744073709551616.ts",
             // The old 3-part stamped form is rejected outright -- no legacy parse.
             "seg_00005_abc123def456_7.ts",
             // Oversized `sess` / `monoMs` round-trip textually but exceed `u64`, so the

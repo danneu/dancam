@@ -34,7 +34,7 @@ FAKE_SENSOR_TEMP_SPAN_C = 8.0
 U32_MAX = 0xFFFF_FFFF
 U64_MAX = 0xFFFF_FFFF_FFFF_FFFF
 BOOT_TAG_WIDTH = 12
-SEGMENT_RE = re.compile(r"^seg_([0-9]+)(?:_([0-9a-f]{12})_([0-9]+)_([0-9]+))?\.ts$")
+SEGMENT_RE = re.compile(r"^seg_([0-9]+)(?:_([0-9a-f]{12})_([0-9]+)_([0-9]+)(?:_([0-9]+))?)?\.ts$")
 FAKE_JPEG = (
     b"\xff\xd8"
     b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
@@ -109,8 +109,15 @@ def segment_filename(seq: int) -> str:
     return f"seg_{seq:0{SEGMENT_WIDTH}d}.ts"
 
 
-def stamped_segment_filename(seq: int, boot_tag: str, session_id: int, mono_ms_value: int) -> str:
-    return f"seg_{seq:0{SEGMENT_WIDTH}d}_{boot_tag}_{session_id}_{mono_ms_value}.ts"
+def stamped_segment_filename(
+    seq: int,
+    boot_tag: str,
+    session_id: int,
+    mono_ms_value: int,
+    dur_ms_value: int | None = None,
+) -> str:
+    stem = f"seg_{seq:0{SEGMENT_WIDTH}d}_{boot_tag}_{session_id}_{mono_ms_value}"
+    return f"{stem}{f'_{dur_ms_value}' if dur_ms_value is not None else ''}.ts"
 
 
 def segment_ffmpeg_pattern() -> str:
@@ -135,17 +142,28 @@ def parse_segment_filename(name: str) -> int | None:
     boot_tag = match.group(2)
     session_value = match.group(3)
     mono_ms_value = match.group(4)
+    dur_ms_value = match.group(5)
     if seq > U32_MAX:
         return None
-    if boot_tag is None and session_value is None and mono_ms_value is None:
+    if boot_tag is None and session_value is None and mono_ms_value is None and dur_ms_value is None:
         rendered = segment_filename(seq)
     elif boot_tag is not None and session_value is not None and mono_ms_value is not None:
         # Bound both numeric fields before re-rendering: Python ints are unbounded, so an
         # oversized session/mono_ms would re-render byte-identically yet must not parse
         # (Rust's u64 scan drops it, and this grammar stays byte-identical).
-        if int(session_value) > U64_MAX or int(mono_ms_value) > U64_MAX:
+        if (
+            int(session_value) > U64_MAX
+            or int(mono_ms_value) > U64_MAX
+            or (dur_ms_value is not None and int(dur_ms_value) > U64_MAX)
+        ):
             return None
-        rendered = stamped_segment_filename(seq, boot_tag, int(session_value), int(mono_ms_value))
+        rendered = stamped_segment_filename(
+            seq,
+            boot_tag,
+            int(session_value),
+            int(mono_ms_value),
+            int(dur_ms_value) if dur_ms_value is not None else None,
+        )
     else:
         return None
     if rendered != name:
@@ -230,8 +248,7 @@ def stamp_segment(rec_dir: Path, seq: int, boot_tag: str, session_id: int, mono_
 
 
 def resolve_segment_path(rec_dir: Path, seq: int) -> Path | None:
-    bare: Path | None = None
-    stamped: Path | None = None
+    selected: tuple[int, str, Path] | None = None
     try:
         paths = list(rec_dir.iterdir())
     except FileNotFoundError:
@@ -244,11 +261,11 @@ def resolve_segment_path(rec_dir: Path, seq: int) -> Path | None:
         parsed = parse_segment_filename(path.name)
         if parsed != seq:
             continue
-        if match.group(2) is not None:
-            stamped = path
-        elif bare is None:
-            bare = path
-    return stamped or bare
+        rank = 2 if match.group(5) is not None else 1 if match.group(2) is not None else 0
+        key = (-rank, path.name)
+        if selected is None or key < (selected[0], selected[1]):
+            selected = (key[0], key[1], path)
+    return selected[2] if selected is not None else None
 
 
 def fsync_dir(path: Path) -> None:
@@ -492,6 +509,9 @@ def run_self_test() -> int:
     )
     assert parse_segment_filename("seg_00005_abc123def456_7_987654321.ts") == 5
     assert parse_segment_filename("seg_100000_abc123def456_7_987654321.ts") == 100000
+    finalized = stamped_segment_filename(5, "abc123def456", 7, 987654321, 30016)
+    assert finalized == "seg_00005_abc123def456_7_987654321_30016.ts"
+    assert parse_segment_filename(finalized) == 5
     # A u64::MAX session round-trips byte-for-byte (a valid parse).
     assert (
         parse_segment_filename(stamped_segment_filename(5, "abc123def456", U64_MAX, 987654321))
@@ -502,9 +522,31 @@ def run_self_test() -> int:
     assert next_segment_index(U32_MAX - 1) == U32_MAX
     with tempfile.TemporaryDirectory() as temp_dir:
         rec_dir = Path(temp_dir)
-        stamped = rec_dir / stamped_segment_filename(5, "abc123def456", 7, 987654321)
+        stamped = rec_dir / finalized
         stamped.write_bytes(b"segment")
         assert fsync_segment(rec_dir, 5) == stamped
+    for reverse in [False, True]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rec_dir = Path(temp_dir)
+            names = [
+                segment_filename(5),
+                stamped_segment_filename(5, "fff123def456", 7, 987654321),
+                stamped_segment_filename(5, "fff123def456", 7, 987654321, 400),
+                stamped_segment_filename(5, "abc123def456", 7, 987654321, 300),
+                stamped_segment_filename(6, "fff123def456", 7, 987654321),
+                stamped_segment_filename(6, "abc123def456", 7, 987654321),
+            ]
+            for name in reversed(names) if reverse else names:
+                (rec_dir / name).write_bytes(name.encode())
+            expected = rec_dir / stamped_segment_filename(
+                5, "abc123def456", 7, 987654321, 300
+            )
+            assert resolve_segment_path(rec_dir, 5) == expected
+            assert fsync_segment(rec_dir, 5) == expected
+            expected_stamped = rec_dir / stamped_segment_filename(
+                6, "abc123def456", 7, 987654321
+            )
+            assert resolve_segment_path(rec_dir, 6) == expected_stamped
     attempts: list[int] = []
     failures: list[tuple[int, str]] = []
     fake_now = 0.0
@@ -643,6 +685,9 @@ def run_self_test() -> int:
         # (not just re-render) must drop them -- mirrors the Rust overflow rejects.
         "seg_00005_abc123def456_18446744073709551616_7.ts",
         "seg_00005_abc123def456_7_18446744073709551616.ts",
+        "seg_00005_abc123def456_7_987654321_030016.ts",
+        "seg_00005_abc123def456_7_987654321_.ts",
+        "seg_00005_abc123def456_7_987654321_18446744073709551616.ts",
     ]:
         assert parse_segment_filename(name) is None
     assert (
