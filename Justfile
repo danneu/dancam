@@ -30,6 +30,7 @@ raspi-reset-data:
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
     PORT="${DANCAM_PORT:-8080}"
     HEALTH_TIMEOUT="${DANCAM_HEALTH_TIMEOUT:-60}"
+    REMOTE_SCRIPT=/tmp/dancam-reset-data.sh
     # Mount witness identical to the service's stat-based ensure_required_mountpoint:
     # /data is mounted iff dev(/data) != dev(/) OR ino(/data) == ino(/); abort on the
     # complement. Each stat is captured in its own fail-closed assignment (a stat that
@@ -57,40 +58,14 @@ raspi-reset-data:
       read -r -p "Delete ALL of /data/rec on $HOST? [y/N] " ans
       case "$ans" in y | Y) ;; *) echo "aborted"; exit 1 ;; esac
     fi
-    ssh -t -i "$SSH_KEY" "$HOST" "
-      set -euo pipefail
-      $WITNESS
-      # Cleanup runs on EVERY exit path -- normal, a set -e failure, or an untrapped fatal
-      # signal (Ctrl-C / dropped SSH link), for which bash still runs the EXIT trap and then
-      # exits 128+signum. Trapping ONLY EXIT is deliberate: an explicit INT/TERM/HUP handler
-      # would begin with whatever \$? happened to be (possibly 0) and could report an
-      # interrupted wipe as success. Installed BEFORE stop so no interruption window leaves
-      # dancam down.
-      cleanup() {
-        status=\$?
-        trap - EXIT
-        if ! sudo systemctl start dancam; then
-          echo 'ERROR: dancam failed to start after reset -- recording is DOWN; restart it manually' >&2
-          exit 1
-        fi
-        # Type=exec: systemctl start returns once the binary execs, not once it serves.
-        # Confirm dancam actually answers /v1/health (the same bounded poll as deploy.sh) so
-        # a crash-looping unit is never reported as a clean restart.
-        deadline=\$(( \$(date +%s) + $HEALTH_TIMEOUT ))
-        until curl -fsS --max-time 5 -o /dev/null http://localhost:$PORT/v1/health 2>/dev/null; do
-          if (( \$(date +%s) >= deadline )); then
-            echo 'ERROR: dancam did not answer /v1/health after restart -- recording is DOWN; check journalctl -u dancam' >&2
-            exit 1
-          fi
-          sleep 2
-        done
-        exit \$status
-      }
-      trap cleanup EXIT
-      sudo systemctl stop dancam
-      sudo find /data/rec -mindepth 1 -delete
-    "
+    scp -i "$SSH_KEY" raspi/scripts/reset-data.sh "${HOST}:${REMOTE_SCRIPT}"
+    remote_command="sudo DANCAM_PORT=$(printf %q "$PORT") DANCAM_HEALTH_TIMEOUT=$(printf %q "$HEALTH_TIMEOUT") bash $(printf %q "$REMOTE_SCRIPT")"
+    ssh -t -i "$SSH_KEY" "$HOST" "$remote_command"
     echo "==> /data/rec cleared; dancam restarted and answering /v1/health (next run: seq 0 / session 1)"
+
+# Hardware-free behavioral regression for the recording-data reset.
+raspi-reset-data-test:
+    bash raspi/scripts/reset-data-test.sh
 
 # Hardware-free regression for the SD-card partition math.
 raspi-partition-test:
