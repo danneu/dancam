@@ -158,9 +158,10 @@ Lane E -- Pi clip serving & duration (Rust)       ->  05-pi-clip-serving.md
   (never serve a still-being-written file)? {id} path safety (no traversal / arbitrary read).
   PTS duration math (maxPTS - minPTS) + frame_interval -- 33-bit wrap, discontinuities,
   single-frame/empty segments, cache invalidation. Error mapping and IO handling.
-- Authorities: RFC 9110 (Range, conditional requests, status codes); ISO/IEC 13818-1 (PTS).
-  ADRs raspi/docs/design/02-...transport-and-api.md, 03-...storage-ring-buffer...md,
-  01-...crash-safe-recording.md.
+- Authorities: RFC 9110 (Range, conditional requests, status codes); ISO/IEC 13818-1
+  (PTS); `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`,
+  `docs/design/pi/storage.md`, and
+  `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`.
 
 Lane F -- Test coverage & quality (cross-cutting) ->  06-test-coverage.md
 - Scope: audit existing tests around the whole pull->remux->play path; find the gaps that

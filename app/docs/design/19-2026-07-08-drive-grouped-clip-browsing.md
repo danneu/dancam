@@ -8,7 +8,7 @@
   `16-2026-07-01-client-side-clip-thumbnails.md`;
   `17-2026-07-02-selector-observation-and-view-state.md`;
   `../../../docs/roadmap.md` (swoop `sift`);
-  `../../../raspi/docs/design/15-2026-07-02-segment-fact-stamping-and-boot-offset.md`
+  [Pi storage](../../../docs/design/pi/storage.md)
 
 > **Amended (2026-07-09):** ADR 20
 > (`20-2026-07-09-live-recording-surfaces-and-drive-attribution.md`) changes where

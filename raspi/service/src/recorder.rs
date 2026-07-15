@@ -14,7 +14,8 @@ pub fn segment_filename(seq: SegmentId) -> String {
 pub struct SegmentFacts {
     pub boot_tag: String,
     /// Recorder session id, `>= 1` by construction: it is `start_segment + 1` from the
-    /// durably reserved start segment (ADR 20), so session 0 never reaches a filename.
+    /// durably reserved start segment, so session 0 never reaches a filename. See
+    /// `docs/design/pi/storage.md#segment-and-recording-identity`.
     pub session: SessionId,
     pub mono_ms: u64,
 }
@@ -145,7 +146,7 @@ impl RecorderState {
             return None;
         }
 
-        // Session is derived from the durably reserved start segment (ADR 20), not an
+        // Session is derived from the durably reserved start segment, not an
         // in-process counter: `start_segment` is the storage coordinator's monotonic
         // high-water witness, so a same-boot service restart cannot reissue session 1.
         // `start_segment + 1` keeps session `>= 1` (session 0 never reaches a filename).

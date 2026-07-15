@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-14
 - **Owner:** raspi
-- **Related:** raspi ADR 18 (dedicated `/data` partition); raspi ADR 21
+- **Related:** raspi ADR 18 (dedicated `/data` partition); [Pi storage](../../../docs/design/pi/storage.md)
   (`DANCAM_GC_FLOOR_BYTES` ring policy); app ADR 28 (retention estimate)
 
 ## Context

@@ -5,7 +5,7 @@
 - **Owner:** app
 - **Related:** supersedes the thumbnail portions of `../../../raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`
   (the `GET /v1/clips/{id}/thumb` endpoint) and
-  `../../../raspi/docs/design/03-2026-06-23-storage-ring-buffer-incident-lock.md`
+  [Pi storage](../../../docs/design/pi/storage.md)
   (the cached `seg-<seq>.jpg` first-keyframe thumbnails and `openThumb`); builds on
   `13-2026-07-01-durable-clip-cache.md` (the cached MP4 is the free tier) and reuses the
   HTTP primitives from `12-2026-06-30-bounded-resilient-clip-pull.md`;
@@ -18,8 +18,9 @@ thumbnail on every row so the list is scannable at a glance.
 
 The recorded Pi API design already specced a server-side answer: a
 `GET /v1/clips/{id}/thumb` endpoint backed by a cached `seg-<seq>.jpg` first-keyframe
-thumbnail per segment, generated off the storage coordinator and regenerable on miss (raspi
-ADRs 02 and 03). Those were best guesses written before hardware; the roadmap left a
+thumbnail per segment, generated off the storage coordinator and regenerable on miss
+(raspi ADR 02 and the Pi storage design). Those were best guesses written before hardware;
+the roadmap left a
 scope-fence note to revisit if an iPhone-side approach replaced the Pi endpoint.
 
 Deciding this now, with real code, the client-side approach is clearly better.

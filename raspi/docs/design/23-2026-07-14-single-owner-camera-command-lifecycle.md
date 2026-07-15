@@ -5,7 +5,7 @@
 - **Owner:** raspi
 - **Related:** `07-2026-06-25-picamera2-camera-owner.md` (child protocol and
   supervision); `10-2026-06-30-recorder-fsm-and-events-sse.md` (recorder
-  transitions); `16-2026-07-02-storage-coordinator-segment-id-witness.md`
+  transitions); [Pi storage](../../../docs/design/pi/storage.md)
   (durable start-segment allocation)
 
 ## Context

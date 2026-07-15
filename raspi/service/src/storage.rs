@@ -129,7 +129,7 @@ impl StorageCoordinator {
     ///
     /// Must run before any recorder session starts. The pass is idempotent: if
     /// power dies after the witness write but before unlink, the next boot sees
-    /// the same zero-byte files and retries. Fully empty ids raise the ADR 19
+    /// the same zero-byte files and retries. Fully empty ids raise the high-water
     /// witness before unlink; mixed duplicate groups only remove their zero-byte
     /// paths, preserving nonzero footage and letting the surviving file define
     /// the canonical ETag.
@@ -244,9 +244,9 @@ fn next_start_segment(rec_dir: &Path) -> io::Result<SegmentId> {
     let scanned = max_clip_seq(rec_dir)?;
     match witness.into_iter().chain(scanned).max() {
         // Fail closed at the ceiling rather than reissuing `u32::MAX` (which would mint a
-        // same-seq stamped twin and, via `start_segment + 1`, reissue the session). ADR 20
-        // refines ADR 16 here: start allocation is strictly monotonic and never repeats an
-        // id. `u32::MAX` itself is the last legal reservation; the *next* start fails.
+        // same-seq stamped twin and, via `start_segment + 1`, reissue the session). The
+        // storage design requires allocation to stay strictly monotonic and never repeat
+        // an id. `u32::MAX` itself is the last legal reservation; the *next* start fails.
         Some(seq) if seq == SegmentId::MAX => Err(segment_ceiling_error()),
         Some(seq) => Ok(seq + 1),
         None => Ok(0),

@@ -5,7 +5,8 @@
 - **Amended:** 2026-07-01 -- the `GET /v1/clips/{id}/thumb` thumbnail endpoint is superseded by
   app ADR 16 (`app/docs/design/16-2026-07-01-client-side-clip-thumbnails.md`): thumbnails are
   generated client-side, so this endpoint is not built. The rest of the wire contract stands.
-- **Amended:** 2026-07-02 -- ADR 17 adds `DELETE /v1/clips/{id}` and `clip_removed` as
+- **Amended:** 2026-07-02 -- the [Pi storage](../../../docs/design/pi/storage.md)
+  design adds `DELETE /v1/clips/{id}` and `clip_removed` as
   an off-record-path finished-clip mutation, and tightens clip list/serve scan errors to
   fail closed with `503`.
 - **Amended:** 2026-07-09 -- telemetry deltas and snapshot fields expose service-coarsened
@@ -23,15 +24,14 @@
   the incident-lock + offline signal defined here);
   `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md` (the app-side companion ADR
   that delegates the wire contract to this one);
-  `03-2026-06-23-storage-ring-buffer-incident-lock.md` (the later ADR that owns the
-  storage/ring-buffer mechanisms this ADR only calls)
+  [Pi storage](../../../docs/design/pi/storage.md) (owns the storage/ring-buffer
+  mechanisms this ADR only calls)
 
-> **Note (2026-06-23):** Editorial pass after the storage ADR
-> (`03-2026-06-23-storage-ring-buffer-incident-lock.md`) landed. Two changes, no decision
+> **Note (2026-06-23):** Editorial pass after the storage design landed. Two changes, no decision
 > altered: (1) the repeated "mechanism owned by the storage ADR" reminders are
 > consolidated into the Context paragraph below rather than restated at each endpoint;
 > (2) a *Storage companion fields* subsection is appended to the API surface,
-> reconciling the additive fields that ADR introduced (`coverage_truncated`, the
+> reconciling the additive fields that storage decision introduced (`coverage_truncated`, the
 > `deleted` tombstone marker, lock `source`, `retention` ceiling semantics) so the two
 > docs agree. Append-only per the ADR convention.
 
@@ -127,14 +127,15 @@
 > and treats every other HTTP status, including every other 5xx, as terminal.
 
 > **Note (2026-07-02): Time sync simplification.** Swoop `moss` is refined by
-> `15-2026-07-02-segment-fact-stamping-and-boot-offset.md`. `POST /v1/time` now
+> the [Pi storage](../../../docs/design/pi/storage.md) design. `POST /v1/time` now
 > accepts only `{epoch_ms}` and writes a per-boot offset from `CLOCK_BOOTTIME`; the
 > earlier RTT-refined `{epoch_ms, tz, send_ts}` body is dropped. Segment wall times are
 > derived at read time from filename-stamped monotonic facts plus that offset. The
 > `time_synced` event remains the additive events-plane signal, and snapshots gain
 > `time: {synced}` when the route lands.
 
-> **Note (2026-07-02): Clip delete.** ADR 17 adds `DELETE /v1/clips/{id}` for finished,
+> **Note (2026-07-02): Clip delete.** The Pi storage design adds
+> `DELETE /v1/clips/{id}` for finished,
 > below-floor clip removal and the `clip_removed` SSE delta. This is the first
 > phone-initiated mutation of committed footage, but it remains off the record path:
 > active or newly reserved segments are refused before any unlink, and the storage
@@ -146,7 +147,7 @@
 > **Note (2026-07-09): Snapshot boot tag.** Swoop `sift` adds nullable `boot_tag` to
 > the snapshot body served by `GET /v1/status` and as the first frame of
 > `GET /v1/events`. The value is the per-boot drive identity derived from `boot_id`
-> using ADR 15's boottag canon, matching clip `boot_tag`; underivable boot ids carry
+> using the Pi storage boottag canon, matching clip `boot_tag`; underivable boot ids carry
 > null. This supports the app-side live-recording drive attribution decision without
 > making the current segment carry a repeated boot-level fact.
 
@@ -187,15 +188,13 @@ lifecycle; the v1 auth posture; versioning; and the link-health ("camera offline
 signal. The deliverable is this design, reconciled against the five cross-cutting
 principles and the two existing ADRs.
 
-This is the third design decision. The Pi storage ring-buffer / incident-lock
-internals (how segments are protected, reference-counted, force-finalized, and how
-pre-sync locks are held pending resolution) live in a separate ADR,
-`03-2026-06-23-storage-ring-buffer-incident-lock.md`. This ADR only **calls** that
+The Pi storage internals live in the
+[storage page](../../../docs/design/pi/storage.md). This ADR only **calls** that
 interface and fixes the observable wire contract around it. **Read every mechanism
-named below with that split in mind:** wherever this ADR describes finalize,
-persistence, pending-resolution, or reference-counting behavior, the storage ADR owns
-the mechanism and this ADR fixes only the contract -- stated once here rather than
-repeated at each endpoint.
+named below with that split in mind:** wherever this ADR describes finalize or
+persistence behavior, the storage page owns the mechanism and this ADR fixes only the
+contract -- stated once here rather than repeated at each endpoint. The historical
+incident mechanisms described below are withdrawn by app ADR 26.
 
 ### Key technical facts (validated this session)
 
@@ -279,7 +278,7 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > clips, not on a wall-clock `since`, because the Pi has no RTC and time
   > provenance remains owned by `moss`. The open segment stays unlisted by
   > `GET /v1/clips` and unpullable by `GET /v1/clips/{id}`; these fields are status
-  > metadata only, so ADR 03's listing rule is unchanged.
+  > metadata only, so the storage listing rule is unchanged.
   > **Note (2026-07-09):** `temp_c.sensor` now carries the quantized IMX708
   > `SensorTemperature` while the camera child is `running` and reverts to null
   > whenever the child leaves that state.
@@ -416,7 +415,7 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > until the storage/time-sync/incident layers land.
   > **Note (2026-06-29):** Swoop `lime` now populates `dur_ms` from an exact
   > TS-PTS-derived duration cached per finished segment. `start_ms`, `locked`, and
-  > non-approximate time provenance remain deferred. This realizes ADR 03's TS-PTS
+  > non-approximate time provenance remain deferred. This realizes the storage design's TS-PTS
   > rebuild primitive early for the current flat-layout listing.
   > **Note (2026-07-01):** Swoop `lime` now realizes descending-`seq` cursor
   > pagination for the current flat-layout listing: `limit` is clamped server-side,
@@ -426,7 +425,7 @@ and `X-Dancam-Boot-Id`; mutations accept an `Idempotency-Key` header; the
   > with `400` until `moss` provides resolved timestamps, so lookup clients cannot
   > receive a silent unfiltered page.
   > **Note (2026-07-08):** Swoop `sift` adds nullable `boot_tag` to clip metadata:
-  > the stamped segment boottag from ADR 15. It is an identity/grouping key for
+  > the stamped segment boottag from the Pi storage design. It is an identity/grouping key for
   > "one drive = one boot", not a sortable time field. Bare legacy segment names
   > carry null. The flattened `clip_finalized` event carries the same field.
 - `GET /v1/clips/{id}` -- resumable pull; `Range`/`If-Range`, `Accept-Ranges`, `ETag`,
@@ -453,8 +452,8 @@ clip playback below). This keeps every Pi request on the pinned `NWConnection`.
   `temp_warning`, `time_synced`, `clip_removed`. Offline is detected by **absence of
   heartbeat**, not a push.
 
-**Storage companion fields (reconciled 2026-06-23).** The storage ADR
-(`03-2026-06-23-storage-ring-buffer-incident-lock.md`) introduced facts the app needs to
+**Storage companion fields (reconciled 2026-06-23).** The historical storage decision
+introduced facts the app needs to
 rely on contractually. They are folded into the wire contract here, all additive
 (clients ignore unknown keys, so no version bump):
 

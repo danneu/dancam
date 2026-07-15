@@ -7,7 +7,7 @@
   abrupt power loss" and the thermals principle);
   `01-2026-06-22-crash-safe-recording.md` (the crash-safety layers this ADR leans on
   entirely; this ADR appends a dated note there resolving the supercap /
-  clean-shutdown question); `03-2026-06-23-storage-ring-buffer-incident-lock.md`
+  clean-shutdown question); [Pi storage](../../../docs/design/pi/storage.md)
   (the storage model that already assumes abrupt power loss)
 
 ## Context

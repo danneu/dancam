@@ -392,7 +392,7 @@ End state:
 
 - [x] 1. Add mdBook scaffolding
 - [x] 2. Adopt living design pages and retire the ADR convention
-- [ ] 3. Fold Pi storage ADRs into a living storage page
+- [x] 3. Fold Pi storage ADRs into a living storage page
 - [ ] 4. Fold the transport ADRs into a living boundary page
 - [ ] 5. Fold Pi recording ADRs into a living recording page
 - [ ] 6. Fold Pi OS-image ADRs into a living OS-image page

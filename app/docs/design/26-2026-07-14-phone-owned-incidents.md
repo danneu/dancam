@@ -5,11 +5,8 @@
 - **Owner:** app
 - **Related:** root `AGENTS.md` (incidents are phone-owned); raspi ADR 02
   (`raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`, clip list,
-  ranged pull, and events contract); raspi ADR 03
-  (`raspi/docs/design/03-2026-06-23-storage-ring-buffer-incident-lock.md`,
-  superseded Pi-side incident-lock model); raspi ADR 21
-  (`raspi/docs/design/21-2026-07-10-ring-gc-drip-eviction.md`, oldest-first
-  ring retention)
+  ranged pull, and events contract); [Pi storage](../../../docs/design/pi/storage.md)
+  (superseded Pi-side incident locks and current oldest-first ring retention)
 
 ## Context
 

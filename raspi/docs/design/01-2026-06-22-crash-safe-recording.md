@@ -69,7 +69,7 @@
 > **Note (2026-07-08):** The "playable up to the cut" promise failed in a field power
 > cut: the in-flight segment was left as a stamped 0-byte file even though the
 > dirty-writeback clamps from the `/data` hardening pass were verified live on the Pi.
-> `19-2026-07-08-inflight-segment-durability-and-boot-scrub.md` restores the promise by
+> [Pi storage](../../../docs/design/pi/storage.md) restores the promise by
 > adding periodic in-flight `fdatasync` and a witness-first boot scrub for
 > unrecoverable zero-byte leftovers. Append-only per the ADR convention.
 

@@ -6,7 +6,7 @@
 - **Related:** `01-2026-06-22-crash-safe-recording.md` (crash-safe storage layers);
   `09-2026-06-26-pi-system-layer-config-ansible.md` (system-layer ownership);
   `12-2026-06-30-watchdog-and-persistent-journal.md` (persistent journald);
-  `16-2026-07-02-storage-coordinator-segment-id-witness.md` (storage mutation
+  [Pi storage](../../../docs/design/pi/storage.md) (storage mutation
   witness)
 
 ## Context

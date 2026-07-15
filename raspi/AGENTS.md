@@ -320,10 +320,13 @@ shell, not `rustup target add`.
   `journalctl -b -1` (bounded by the last fsync; see
   `docs/design/12-2026-06-30-watchdog-and-persistent-journal.md`).
 
-## Design decisions (ADRs)
+## Design pages
 
-See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
-`docs/design/`. Current:
+- [Storage](../docs/design/pi/storage.md) -- read when changing segment identity,
+  time derivation, startup scrub, clip deletion, or ring GC.
+
+During the migration, the remaining raspi ADRs under `docs/design/` stay
+authoritative for subsystems that do not yet have a living page:
 
 - `01-2026-06-22-crash-safe-recording.md` -- how recording survives abrupt power loss
   (format + filesystem + card hardware layers).
@@ -331,10 +334,6 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
   per plane (control/events/preview/clip-pull), the `/v1` API surface, connection
   lifecycle, and WPA2-only auth posture. Its reserved incident endpoints and events
   are withdrawn by app ADR 26; the Pi owns the remaining canonical contract.
-- `03-2026-06-23-storage-ring-buffer-incident-lock.md` -- the Pi storage model's
-  ring, no-RTC ordering, rebuild, and mutation-serialization decisions remain;
-  app ADR 26 supersedes its incident hardlinks, pre-sync holds, caps, and incident
-  service interface.
 - `04-2026-06-23-power-source-and-shutdown.md` (Proposed) -- the v1 power topology
   (switched USB accessory source, 5V regulated, dies with the car) and the decision
   to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves
@@ -378,36 +377,11 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `14-2026-07-02-request-id-format.md` (Accepted) -- Pi-generated request ids are a
   per-process incrementing counter, keeping access logs short while safe inbound
   `x-request-id` values remain honored.
-- `15-2026-07-02-segment-fact-stamping-and-boot-offset.md` (Accepted) -- segment
-  filenames carry immutable `(seq, boottag, monoMs)` facts while wall time is derived
-  from write-once per-boot offset files.
-- `16-2026-07-02-storage-coordinator-segment-id-witness.md` (Accepted) -- the storage
-  coordinator owns start-segment allocation and persists `state/state.json`
-  `high_water_seq` before handing out a session-start id.
-- `17-2026-07-02-clip-delete.md` (Accepted) -- `DELETE /v1/clips/{id}` removes
-  finished below-floor clips through the storage coordinator, raises the segment-id
-  witness before unlinking, and emits `clip_removed` after durable success.
 - `18-2026-07-04-sd-card-layout-and-readonly-root.md` (Accepted) -- the final SD card
   layout: fixed boot/root/persist partitions, flex `/data` with a 5% unwritten tail,
   plain read-only ext4 root for the car image, `/persist` for OS state, and
   mount-witness requirements so `/data` failures are diagnosable instead of bricking
   the unit.
-- `19-2026-07-08-inflight-segment-durability-and-boot-scrub.md` (Accepted) -- the open
-  segment is periodically `fdatasync`ed from the watcher (and the mock mirrors it), and a
-  boot-time zero-byte scrub removes unrecoverable power-loss leftovers, raising the
-  witness before unlink while preserving nonzero footage.
-- `20-2026-07-09-recording-session-in-segment-filenames.md` (Accepted) -- segment
-  filenames gain a `session` field (`seg_<seq>_<boottag>_<sess>_<monoMs>.ts`) so a
-  recording is `(boot_tag, session)`; session is `start_segment + 1` from the durable
-  witness (survives a same-boot restart) and start allocation fails closed at the `u32`
-  ceiling. Scoped-supersedes ADR 10's session-id definition, ADR 15's filename
-  grammar/parser canon, and ADR 16's allocation ceiling.
-- `21-2026-07-10-ring-gc-drip-eviction.md` (Accepted) -- GC drip-evicts oldest
-  finished segments to an `f_bavail` byte floor, amortizes write-ahead witness
-  raises per pass, and retains an unused in-mutex protection seam for possible
-  future clip pinning; app ADR 26 removes incident locks from v1.
-  The flat stamped-filename, stateless-scan layout is the end state, superseding
-  ADR 03's `segments/`, `index.log`, snapshots, and in-memory index machinery.
 - `22-2026-07-14-recording-capacity-telemetry.md` (Accepted) -- storage telemetry
   reports the exact non-root recorder-writable block pool minus the shared GC
   floor, and snapshot/delta storage use one complete nullable replacement shape.

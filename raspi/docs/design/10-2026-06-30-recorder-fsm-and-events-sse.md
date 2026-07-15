@@ -4,7 +4,7 @@
 - **Date:** 2026-06-30
 - **Owner:** raspi
 - **Related:** `02-2026-06-22-app-pi-transport-and-api.md`;
-  `03-2026-06-23-storage-ring-buffer-incident-lock.md`;
+  [Pi storage](../../../docs/design/pi/storage.md);
   `07-2026-06-25-picamera2-camera-owner.md`; root `AGENTS.md`
 
 ## Context
@@ -28,7 +28,7 @@ The recorder state is:
 
 - `phase`: `idle`, `starting`, `recording`, `stopping`, or `error`
 - `session`: a monotonic per-boot session id, starting at 0 before the first start
-  (**scoped-superseded, for the session id only, by ADR 20**: `session` is now
+  (**scoped-superseded, for the session id only, by the Pi storage design**: `session` is now
   `start_segment + 1` from the durable start-segment witness, so it is durable across a
   same-boot service restart rather than a process-local counter)
 - `current_segment`: the live segment id, present only after a real segment has

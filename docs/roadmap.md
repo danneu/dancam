@@ -217,12 +217,13 @@ mock first.
       - Scope fence: one finished segment per clip (no multi-segment timeline), no export
         (`tide`), no real timestamps (`moss`), no locked/incident clips (`nova`). Thumbnails
         are generated client-side per app ADR 16, which supersedes ADR 02's Pi-generated
-        `/thumb` (and the cached `seg-<seq>.jpg` in raspi ADR 03) for both the pulled and
-        not-yet-pulled cases -- no server-side browse thumbnails.
+        `/thumb` (and the storage page's abandoned cached `seg-<seq>.jpg`) for both the
+        pulled and not-yet-pulled cases -- no server-side browse thumbnails.
 - [x] **Swoop `ebb` -- Delete recorded clips.** Let the app remove a single finished
       clip from the Pi via Home swipe-to-delete or the clip-viewer Delete button, with a
       destructive confirmation and optimistic row removal. Builds on `lime`'s browse/watch
-      UI and ADR 16's storage coordinator: the Pi serves `DELETE /v1/clips/{id}`, refuses
+      UI and the [storage](design/pi/storage.md) coordinator: the Pi serves
+      `DELETE /v1/clips/{id}`, refuses
       active/below-floor violations, write-ahead-raises `state/state.json`
       `high_water_seq` before unlinking every path for the id, and emits `clip_removed`
       after durable success so every connected client reconciles. This is clip-level
@@ -234,7 +235,9 @@ mock first.
       that makes later card formatting safe instead of a directory cleanup._
       - [x] Service durability + mount witness: fsync closed segments before events,
             fdatasync the in-flight segment every ~2 s and scrub unrecoverable
-            zero-byte leftovers at boot witness-first (ADR 19), add mock parity, and
+            zero-byte leftovers at boot witness-first (see
+            [storage](design/pi/storage.md#in-flight-durability-and-startup-repair)),
+            add mock parity, and
             gate recording/time-sync mutations on a mounted `/data`.
       - [x] Partition tooling: on-Pi `sfdisk`/`resize2fs` script, Mac regression for
             the sector math, Just recipes, and README bring-up steps.
@@ -251,7 +254,8 @@ mock first.
       `clip_removed`); the app change bounds its stale-response suppression so
       continuous `clip_removed` traffic no longer grows an unbounded tombstone
       set. Retains an unused in-mutex protection seam for possible future clip
-      pinning; phone-owned `nova` does not use it. See raspi ADR 21 and app ADR 26.
+      pinning; phone-owned `nova` does not use it. See
+      [storage](design/pi/storage.md#ring-garbage-collection) and app ADR 26.
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects `/data` issues and surfaces
       them to the app (missing / unformatted / wrong filesystem); auto-format on first
       insert; format-from-app with a double-confirm (`POST /v1/storage/format`). After

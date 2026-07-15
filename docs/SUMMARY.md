@@ -4,6 +4,10 @@
 
 [Roadmap](roadmap.md)
 
+# Design
+
+- [Pi storage](design/pi/storage.md)
+
 # Research
 
 - [Rust camera owner](research/1-rust-camera-owner.md)

@@ -8,7 +8,7 @@
   `21-2026-07-09-status-strip-recording-pill.md`;
   `../../../docs/roadmap.md` (swoop `sift`);
   `../../../contract/events/README.md`;
-  `../../../raspi/docs/design/20-2026-07-09-recording-session-in-segment-filenames.md`
+  [Pi storage](../../../docs/design/pi/storage.md)
 
 ## Context
 
@@ -18,8 +18,8 @@ distinct recording runs -- a manual stop/start today, a CarPlay auto start/stop 
 `reef`/`sage` swoops, or a mid-boot power blip and service restart -- and the
 boot-keyed model collapsed all of them into a single card.
 
-The wire now carries a per-clip `session` (raspi ADR 20; app clip field added in the
-preceding contract commit). A recording is identified by the pair
+The wire now carries a per-clip `session` (see the Pi storage design; app clip field
+added in the preceding contract commit). A recording is identified by the pair
 `(boot_tag, session)`, durable across a same-boot service restart, so the app can
 finally group by the run that was actually recorded rather than by the boot that
 happened to host it.

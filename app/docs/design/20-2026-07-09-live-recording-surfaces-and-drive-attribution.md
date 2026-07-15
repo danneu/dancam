@@ -8,7 +8,7 @@
   `19-2026-07-08-drive-grouped-clip-browsing.md`;
   `../../../docs/roadmap.md` (swoop `sift`);
   `../../../raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
-  `../../../raspi/docs/design/15-2026-07-02-segment-fact-stamping-and-boot-offset.md`
+  [Pi storage](../../../docs/design/pi/storage.md)
 
 > **Note (2026-07-09):** Decision point 6 is superseded by
 > `21-2026-07-09-status-strip-recording-pill.md`: the preview REC overlay is
@@ -49,7 +49,7 @@ specific drive.
 
 2. **Snapshot-level nullable `boot_tag` is the drive identity.** The `/v1/status`
    snapshot and the `/v1/events` first frame gain a nullable `boot_tag`, derived
-   from `boot_id` by raspi ADR 15's canon and matching clip `boot_tag` (see the
+   from `boot_id` by the Pi storage canon and matching clip `boot_tag` (see the
    raspi ADR 02 dated note). It sits at the snapshot top level, not on
    `current_segment`: a drive is a boot, so the tag is a per-boot constant that
    must survive the pending and idle states when there is no current segment.

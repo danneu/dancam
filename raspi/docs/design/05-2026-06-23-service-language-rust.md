@@ -5,7 +5,7 @@
 - **Owner:** raspi
 - **Related:** root `AGENTS.md`; `02-2026-06-22-app-pi-transport-and-api.md` (the wire
   contract this service implements); `01-2026-06-22-crash-safe-recording.md` (the
-  read-only root the deploy model must respect); `03-2026-06-23-storage-ring-buffer-incident-lock.md`
+  read-only root the deploy model must respect); [Pi storage](../../../docs/design/pi/storage.md)
   (the in-process storage service this binary hosts)
 
 > **Note (2026-06-25):** The subprocess-boundary decision stands, but the specific
