@@ -265,8 +265,10 @@ mock first.
       `dune`, "format the SD" means mkfs of `/data` only -- never the OS or `/persist`.
       The app-facing storage/card-health UI belongs here; `dune` only provides the
       lower-level layout and fail-closed mount witness.
-      - [x] Pi reports exact recorder-writable capacity after root-reserved blocks
-            and the GC floor; snapshot and delta storage share one nullable shape.
+      - [x] Pi reports exact
+            [recorder-writable capacity](design/pi/telemetry.md#recorder-writable-capacity)
+            after root-reserved blocks and the GC floor; snapshot and delta
+            storage share one nullable shape.
       - [x] Settings estimates whole hours/minutes from fresh finalized-clip rates
             and resets the estimator at every connection epoch.
 - [x] **Swoop `moss` -- Time provenance.** The Pi has no RTC, so clip timestamps are

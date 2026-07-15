@@ -8,8 +8,9 @@
   `18-2026-07-08-heartbeat-fresh-present-tense.md`;
   `22-2026-07-09-tab-based-top-level-navigation.md`
 
-**Note (2026-07-15): Operational status consolidation.** Raspi ADR 24 removes
-`/v1/health` and makes canonical `/v1/status` the Pi's sole operational probe.
+**Note (2026-07-15): Operational status consolidation.** The
+[Pi telemetry design](../../../docs/design/pi/telemetry.md) removes `/v1/health`
+and makes canonical `/v1/status` the Pi's sole operational probe.
 The app remains SSE-only for live state and heartbeat liveness; this ADR's
 single-source app behavior is unchanged.
 

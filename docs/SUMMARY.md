@@ -13,6 +13,7 @@
 - [Pi recording](design/pi/recording.md)
 - [Pi service runtime and request tracing](design/pi/service.md)
 - [Pi storage](design/pi/storage.md)
+- [Pi operational telemetry and recording readiness](design/pi/telemetry.md)
 
 # Reference
 

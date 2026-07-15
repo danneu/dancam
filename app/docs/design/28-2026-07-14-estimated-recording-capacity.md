@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-07-14
 - **Owner:** app
-- **Related:** raspi ADR 22 (recorder-writable capacity); app ADR 10
+- **Related:** [Pi telemetry](../../../docs/design/pi/telemetry.md)
+  (recorder-writable capacity); app ADR 10
   (snapshot-first event folding); `docs/roadmap.md#Swoop kelp -- SD card management`
 
 ## Context

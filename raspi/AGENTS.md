@@ -60,8 +60,8 @@ this ecosystem, and autofocus tops out at 120 deg (wider needs a fixed-focus M12
 
 ## Software stack (intended)
 
-Most of this is now settled in ADRs (linked per item below); the remainder is the
-current provisional direction until it is captured.
+Most of this is now settled in the living design pages linked per item below; the
+remainder is the current provisional direction until it is captured.
 
 - **OS:** Raspberry Pi OS Lite, 64-bit (Trixie / Debian 13). The car image uses a
   **plain read-only ext4 root** (no overlayfs), read-only `/boot/firmware`, a small
@@ -80,7 +80,8 @@ current provisional direction until it is captured.
 - **Storage model:** a **ring buffer** of short segments; oldest finished segments
   are drip-evicted as the card fills. Incidents are phone-owned and do not lock
   Pi segments in v1; the coordinator retains an unused protection seam for future
-  evidence-driven pinning. See the ring GC ADR and app ADR 26.
+  evidence-driven pinning. See the [storage design](../docs/design/pi/storage.md)
+  and app ADR 26.
 - **Access point:** a NetworkManager hotspot (`nmcli`, `ipv4.method=shared`) on
   the 2.4 GHz band so the phone can connect directly with no router. The current
   dev profile is `dancam-ap`: SSID `dancam-dev`, WPA2-PSK pinned to AES
@@ -116,7 +117,6 @@ raspi/
   AGENTS.md
   camera/             <- Picamera2 camera-owner subprocess (`camera.py`)
   service/            <- Rust service crate (package/binary `dancam`)
-  docs/design/        <- raspi-side ADRs
 ```
 
 ## Build / run
@@ -259,8 +259,9 @@ shell, not `rustup target add`.
 - Deploy: `just raspi-deploy` (wraps `./raspi/deploy.sh`) -- cross-builds, rsyncs the
   binary + the systemd unit to the Pi, installs both, enables/restarts the service,
   then waits in two phases over `/v1/status`: first for a valid JSON boolean
-  `recording_readiness.ready`, then for that boolean to become true. The first valid
-  body is reused immediately by the readiness phase. Override the 60 second
+  [`recording_readiness.ready`](../docs/design/pi/telemetry.md#recording-readiness),
+  then for that boolean to become true. The first valid body is reused immediately
+  by the readiness phase. Override the 60 second
   reachability bound with `DANCAM_STATUS_TIMEOUT` and the recording-ready bound with
   `DANCAM_RECORDING_READINESS_TIMEOUT` (it defaults to the reachability bound). A
   readiness timeout prints the last valid status and gathers separately bounded
@@ -304,8 +305,9 @@ shell, not `rustup target add`.
 
 - Dev: app (or the mock Pi) and the Pi both on home Wi-Fi; hit
   `http://dancam.local:8080/v1/...` (port 8080 per the systemd unit; the transport
-  ADR covers the wire contract). If `dancam.local` times out but the raw LAN IP
-  works, check `systemctl status avahi-daemon`: a status like
+  [design](../docs/design/boundary/transport.md) covers the wire contract). If
+  `dancam.local` times out but the raw LAN IP works, check
+  `systemctl status avahi-daemon`: a status like
   `running [dancam-2.local]` means Avahi conflict-renamed itself. Verify
   `/etc/avahi/avahi-daemon.conf` contains `allow-interfaces=wlan0`, then restart
   `avahi-daemon`.
@@ -341,16 +343,8 @@ shell, not `rustup target add`.
 - [Service runtime and request tracing](../docs/design/pi/service.md) -- read when
   changing the Rust runtime, cross-build or deploy model, request logs, request ids,
   runtime log filtering, or log-access path.
+- [Operational telemetry and recording readiness](../docs/design/pi/telemetry.md) --
+  read when changing canonical status, readiness derivation, filesystem observation,
+  storage capacity telemetry, or deploy readiness checks.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   routes, response semantics, SSE framing, preview, clip pull, or app/Pi trust.
-
-During the migration, the remaining raspi ADRs under `docs/design/` stay
-authoritative for subsystems that do not yet have a living page:
-
-- `22-2026-07-14-recording-capacity-telemetry.md` (Accepted) -- storage telemetry
-  reports the exact non-root recorder-writable block pool minus the shared GC
-  floor, and snapshot/delta storage use one complete nullable replacement shape.
-- `24-2026-07-15-operational-status-and-recording-readiness.md` (Accepted) -- removes
-  the duplicate health route, makes canonical status the sole operational probe,
-  derives recording readiness atomically across snapshot and deltas, and bounds
-  its authoritative recording-filesystem observation.
