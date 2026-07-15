@@ -5,8 +5,8 @@
 - **Owner:** raspi
 - **Related:** [transport boundary](../../../docs/design/boundary/transport.md) (wire
   surface);
-  `10-2026-06-30-recorder-fsm-and-events-sse.md` (canonical world and deltas);
-  `23-2026-07-14-single-owner-camera-command-lifecycle.md` (command outcomes)
+  [Pi recording](../../../docs/design/pi/recording.md) (canonical recorder world,
+  deltas, and command outcomes)
 
 ## Context
 

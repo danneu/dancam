@@ -5,8 +5,8 @@
 - **Owner:** raspi
 - **Related:** root `AGENTS.md` (cross-cutting principles "Recording must survive
   abrupt power loss" and the thermals principle);
-  `01-2026-06-22-crash-safe-recording.md` (the crash-safety layers this ADR leans on
-  entirely; this ADR appends a dated note there resolving the supercap /
+  [Pi recording](../../../docs/design/pi/recording.md) (the crash-safety layers this
+  ADR leans on entirely, including the dated record that resolves the supercap /
   clean-shutdown question); [Pi storage](../../../docs/design/pi/storage.md)
   (the storage model that already assumes abrupt power loss)
 
@@ -16,7 +16,7 @@ The camera unit is powered from the car. How it is wired determines two things t
 rest of the design depends on: whether power loss comes with any **warning** (which
 decides whether a clean shutdown is even possible), and whether the unit has power
 **while parked** (which decides whether sentry/parked recording is on the table).
-The crash-safe recording ADR explicitly deferred the supercapacitor / clean-shutdown
+The recording design originally deferred the supercapacitor / clean-shutdown
 question to "a build-time decision." This ADR makes it.
 
 Constraints and the chosen environment:
@@ -53,18 +53,20 @@ build a clean-shutdown path.**
 
 2. **No clean shutdown; abrupt loss is the design assumption.** A switched USB source
    provides no power-fail signal to act on, so there is nothing to detect and no
-   shutdown daemon to run. Recording integrity rests entirely on the crash-safe
-   recording ADR's layers: short MPEG-TS segments, inline SPS/PPS, `fsync()` at
+   shutdown daemon to run. Recording integrity rests entirely on the
+   [recording design](../../../docs/design/pi/recording.md)'s layers: short MPEG-TS
+   segments, inline SPS/PPS, `fsync()` at
    segment close, read-only root filesystem, a separate journaled recording partition,
-   and a high-endurance / PLP microSD. A power cut costs at most the final partial
-   segment, and the OS always reboots.
+   and a high-endurance consumer microSD whose residual controller risk is accepted.
+   A power cut may damage the final partial segment, while the recoverable partitions
+   are designed to keep the unit bootable.
 
-3. **No supercapacitor / power-good GPIO.** The supercap option the crash-safe ADR
+3. **No supercapacitor / power-good GPIO.** The supercap option the recording design
    left open is **dropped for this topology.** Without a power-fail signal the Pi
    cannot use hold-up time to finalize cleanly anyway; a supercap would only briefly
-   delay the cut. The residual FTL risk it would have covered is instead handled by
-   the PLP-rated card (crash-safe ADR Layer 3). A dated note is appended to the
-   crash-safe ADR recording this resolution.
+   delay the cut. The residual FTL risk it would have covered is accepted and reduced
+   through the recoverable storage layout and card-as-consumable operations. The
+   recording page's Decision log records this resolution.
 
 4. **No parked / sentry mode in this topology.** Switched power means the unit is
    unpowered while parked, so continuous parked recording is physically impossible
@@ -76,10 +78,10 @@ build a clean-shutdown path.**
   no battery -- just a USB cable from a switched source. The install is reversible and
   requires no work on the car's electrics.
 - **The crash-safe design now carries the entire burden, by design.** This is
-  acceptable because that ADR was built for exactly this assumption ("power is cut
-  without warning, mid-write"). Abrupt loss is the expected event, not an edge case;
-  the storage ADR's reboot-crossing idempotency and torn-segment recovery already
-  assume it.
+  acceptable because the recording design was built for exactly this assumption
+  ("power is cut without warning, mid-write"). Abrupt loss is the expected event,
+  not an edge case; the storage design's reboot-crossing idempotency and torn-segment
+  recovery already assume it.
 - **A thermal win, not just a power simplification.** Switched power means the Pi is
   never running in a closed, parked cabin for hours -- it is on only while driving
   (car moving, often with A/C). This sidesteps the worst case for the camera sensor's
@@ -87,7 +89,8 @@ build a clean-shutdown path.**
   with parked recording.
 - **Crank brownout may reboot the Pi.** The voltage dip at engine start can
   power-cycle the unit. Read-only root makes this a clean reboot costing only a few
-  seconds of footage; auto-record-on-boot brings recording back with no user action.
+  seconds of footage after the app reconnects and starts recording. Auto-record-on-
+  boot remains future work.
 - **Undervoltage is the one real failure mode to watch.** A cheap cable can cause
   throttling or instability that looks like a software bug. Treat persistent
   under-voltage warnings as a cable/source problem first, and document the known-good
@@ -110,11 +113,11 @@ build a clean-shutdown path.**
   converter, and -- the dealbreaker for v1 -- it puts the Pi and camera in a parked,
   sun-baked cabin, the exact thermal worst case. Deferred along with sentry mode
   itself.
-- **Supercapacitor module (e.g. Juice4Halt) for clean shutdown.** The crash-safe
-  ADR's optional Layer 3 extra. Rejected here because a switched USB source gives no
-  power-fail signal to trigger a clean finalize, so the supercap's main benefit is
-  unreachable; its residual FTL protection is covered by the PLP card. Revisit only if
-  a future topology adds a power-good signal.
+- **Supercapacitor module (e.g. Juice4Halt) for clean shutdown.** The recording
+  design's optional hardware extra. Rejected here because a switched USB source
+  gives no power-fail signal to trigger a clean finalize, so the supercap's main
+  benefit is unreachable; its residual FTL protection does not justify the added
+  hardware. Revisit only if a future topology adds a power-good signal.
 - **OBD-II port power.** Removable, but commonly always-on (battery drain) and not a
   clean fit for a switched, drive-only design. The accessory USB sources are simpler
   and switched by default.

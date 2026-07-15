@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-07-04
 - **Owner:** raspi
-- **Related:** `01-2026-06-22-crash-safe-recording.md` (crash-safe storage layers);
+- **Related:** [Pi recording](../../../docs/design/pi/recording.md) (crash-safe
+  storage layers);
   `09-2026-06-26-pi-system-layer-config-ansible.md` (system-layer ownership);
   `12-2026-06-30-watchdog-and-persistent-journal.md` (persistent journald);
   [Pi storage](../../../docs/design/pi/storage.md) (storage mutation
@@ -11,15 +12,17 @@
 
 ## Context
 
-The camera unit records to its own microSD and loses power without warning. ADR 01
-picked the right high-level layers: truncation-tolerant segments, a journaled data
-partition, a read-only OS, and hardware caution around the card. The implementation
-details that were still provisional have now been tested hard enough to settle.
+The camera unit records to its own microSD and loses power without warning. The
+recording design picked the right high-level layers: truncation-tolerant segments,
+a journaled data partition, a read-only OS, and hardware caution around the card.
+The implementation details that were still provisional have now been tested hard
+enough to settle.
 
 Two assumptions changed.
 
 First, consumer high-endurance microSD cards do not provide the kind of power-loss
-protection ADR 01 hoped for. Teardown-confirmed consumer cards in this tier use
+protection the original recording decision hoped for. Teardown-confirmed consumer
+cards in this tier use
 ordinary 3D TLC or pMLC-mode TLC and do not make vendor PLP claims. Industrial cards
 with real power-fail protection exist, but they are a different cost and supply tier
 than this v1 build is using. The remaining flash translation layer risk is accepted

@@ -20,11 +20,11 @@
 - **Owner:** raspi
 - **Related:** root `AGENTS.md` (the runbook convention this revises);
   `06-2026-06-25-ap-networking-bring-up.md` (the AP profile this task automates, **as
-  amended 2026-06-25 for the WPA2-AES cipher pin**); `07-2026-06-25-picamera2-camera-owner.md`
-  (the camera owner whose apt deps task 3 installs and whose `video` group task 9
-  guarantees); `05-2026-06-23-service-language-rust.md` and
-  `01-2026-06-22-crash-safe-recording.md` (the read-only-root deploy model this layer
-  must respect); `raspi/README.md` (the bootstrap/verify/ops runbook)
+  amended 2026-06-25 for the WPA2-AES cipher pin**);
+  [Pi recording](../../../docs/design/pi/recording.md) (the camera owner whose apt
+  deps task 3 installs, the `video` group task 9 guarantees, and the read-only-root
+  deploy model this layer must respect); `05-2026-06-23-service-language-rust.md`;
+  `raspi/README.md` (the bootstrap/verify/ops runbook)
 
 ## Context
 

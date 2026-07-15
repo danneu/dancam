@@ -1,8 +1,8 @@
 # systemd unit for the dancam camera-unit service.
 #
 # Installed to /etc/systemd/system/dancam.service by raspi/deploy.sh. Auto-starts
-# on boot (this is also how the car image auto-records on boot) and restarts on
-# crash. Logs go to journald: `journalctl -u dancam -f`.
+# the service and camera owner on boot and restarts on crash. Recording still starts
+# through /v1/recording/start. Logs go to journald: `journalctl -u dancam -f`.
 #
 # Footage lives on /data/rec. Do not add RequiresMountsFor=/data here: with the
 # playbook's nofail fstab entry, the service must still start so health/status and

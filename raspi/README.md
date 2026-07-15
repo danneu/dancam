@@ -338,8 +338,8 @@ writes H.264 MPEG-TS recording segments under `/data/rec` as the fixed `dancam`
 service user. `DANCAM_REQUIRE_REC_MOUNT=/data` makes recording and time-sync writes
 fail closed if `/data` is not mounted; status and preview still come up for
 diagnosis. The camera process also locks the IMX708 lens to infinity with autofocus
-disabled; see
-`raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`. Local `just raspi-mock`
+disabled; see the [recording design](../docs/design/pi/recording.md#focus-policy).
+Local `just raspi-mock`
 still defaults to the mock backend and cycles committed test-pattern frames.
 
 On a car image, `deploy.sh` temporarily remounts `/` read-write for the install block

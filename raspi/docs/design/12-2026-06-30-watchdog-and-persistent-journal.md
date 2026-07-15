@@ -6,8 +6,9 @@
 - **Related:** `04-2026-06-23-power-source-and-shutdown.md` (covers *unsignaled
   hardware power loss* and deliberately drops any "watch a signal and act" path --
   this ADR covers the distinct **software-freeze-with-power-present** class it does
-  not); `01-2026-06-22-crash-safe-recording.md` (the crash-safe layers, and the
-  precedent for bundling several layers that serve one goal into a single decision);
+  not); [Pi recording](../../../docs/design/pi/recording.md) (the crash-safe layers,
+  and the precedent for bundling several layers that serve one goal into a single
+  decision);
   `09-2026-06-26-pi-system-layer-config-ansible.md` (the Ansible system-layer
   ownership and dev-image-only scoping these tasks follow);
   `06-2026-06-25-ap-networking-bring-up.md` (the AP failure that "could not be proven
@@ -48,8 +49,8 @@ same reason.
 
 Arm the on-board BCM2835 hardware watchdog and enable persistent, size-capped
 journald. These are the **recover** and **diagnose** halves of one concern -- survive
-a software freeze -- so they ship as one ADR, following ADR 01's precedent of bundling
-layers that serve a single goal. Both are provisioned as Ansible tasks in
+a software freeze -- so they ship as one ADR, following the recording design's
+precedent of bundling layers that serve one goal. Both are provisioned as Ansible tasks in
 `raspi/ansible/site.yml` (dev image only), with the rich "why" living as each task's
 `#` comment per ADR 09.
 
@@ -87,9 +88,9 @@ recovery already exists without touching it. Tightening it to 2min buys nothing 
 unattended unit nobody is waiting on, and adds the only real false-trigger risk here:
 a legitimately slow shutdown (one hung stop job alone burns `DefaultTimeoutStopSec=90s`
 before SIGKILL, plus journald flush and SD unmount) that runs past 2min would take a
-hardware reset *mid-unmount* on the writable dev-image root -- the corruption class the
-project treats as first-class (ADR 01). Keeping the 10min default preserves that safety
-net with far more headroom.
+hardware reset *mid-unmount* on the writable dev-image root -- the corruption class
+the project treats as first-class in the recording design. Keeping the 10min default
+preserves that safety net with far more headroom.
 
 **Scope: dev image only.** Persistent journald writes to `/var/log/journal` on the
 currently-writable root. The future read-only-overlay car image must relocate the

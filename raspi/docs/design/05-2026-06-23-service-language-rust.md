@@ -5,13 +5,14 @@
 - **Owner:** raspi
 - **Related:** root `AGENTS.md`;
   [transport boundary](../../../docs/design/boundary/transport.md) (the wire contract
-  this service implements); `01-2026-06-22-crash-safe-recording.md` (the
+  this service implements); [Pi recording](../../../docs/design/pi/recording.md) (the
   read-only root the deploy model must respect); [Pi storage](../../../docs/design/pi/storage.md)
   (the in-process storage service this binary hosts)
 
 > **Note (2026-06-25):** The subprocess-boundary decision stands, but the specific
-> camera subprocess is **partly superseded by**
-> `07-2026-06-25-picamera2-camera-owner.md`. `jet` replaces the preview-only
+> camera subprocess is **partly superseded by the
+> [Pi recording design](../../../docs/design/pi/recording.md)**. `jet` replaces the
+> preview-only
 > `rpicam-vid` subprocess with a Python Picamera2 camera owner so one process can own
 > libcamera and emit concurrent recording + preview streams. The service remains Rust;
 > the reopened cost is carrying the Python/Picamera2/numpy stack on the dev image and
@@ -31,7 +32,7 @@ The forces:
 - **512 MB RAM, always-on while driving.** The service shares the board with the
   camera pipeline and the Wi-Fi AP. A heavy runtime or GC pressure is a real cost,
   not a rounding error.
-- **Read-only root (car image).** The crash-safe ADR mounts root read-only. That is
+- **Read-only root (car image).** The recording design requires a read-only root. That is
   hostile to runtimes that expect to install packages, build venvs, or write
   scratch state at runtime -- whatever the service needs must be baked into the
   image as inert files.

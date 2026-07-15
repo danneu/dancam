@@ -53,7 +53,8 @@
       # image-dependent drift this migration exists to kill. libcamera, numpy,
       # simplejpeg arrive transitively. install_recommends: false == the README's
       # --no-install-recommends, keeping the desktop GUI stack off Lite. No reboot
-      # notify (no kernel/boot change). See ADR 07 (jet's Picamera2 owner).
+      # notify (no kernel/boot change). See
+      # docs/design/pi/recording.md#camera-ownership-and-streams.
       ansible.builtin.apt:
         name: [python3-picamera2, ffmpeg, v4l-utils]
         state: present
@@ -313,7 +314,8 @@
     # interrupts recording). RebootWatchdogSec is deliberately left at its 10min
     # default: it governs only the shutdown/reboot phase (already armed by default),
     # and tightening it risks a hardware reset mid-unmount on the writable dev root
-    # during a legitimately slow shutdown -- the ADR 01 corruption class -- for no gain
+    # during a legitimately slow shutdown -- the recording design's corruption class
+    # -- for no gain
     # on an unattended unit. Do NOT re-add it. Reuse the Reboot host handler:
     # RuntimeWatchdogSec is manager config a live PID 1 won't apply on daemon-reload
     # (needs daemon-reexec or a boot), so arming it authoritatively means rebooting on

@@ -5,7 +5,7 @@
 - **Owner:** app
 - **Related:** `app/docs/design/07-2026-06-26-on-device-clip-remux-playback.md`;
   the [transport boundary](../../../docs/design/boundary/transport.md);
-  `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`;
+  [Pi recording](../../../docs/design/pi/recording.md);
   `docs/roadmap.md` (swoop `lime` -- Watch recorded clips)
 
 ## Context
@@ -175,7 +175,7 @@ Hard or risky:
   progressive path both truncate at the discontinuity and stay consistent (the
   finalizer writes a valid MP4 up to the cut; the progressive playlist finalizes up to
   the cut on pull completion). The per-clip strictly-increasing-DTS contract this
-  relies on is owned by `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`.
+  relies on is owned by the [Pi recording design](../../../docs/design/pi/recording.md).
 - 2026-07-01 update: HTTP response writes are now non-blocking and event-driven. A
   response drains via an inline write on the serial queue, falling back to a
   per-connection `DispatchSource.makeWriteSource` **targeting that same serial queue**

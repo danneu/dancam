@@ -4,8 +4,8 @@ import OSLog
 nonisolated enum H264AccessUnitAssembler {
     private static let logger = Log.h264
 
-    /// Strictly-increasing DTS is the per-clip assembler contract (see the timestamp
-    /// invariant in raspi ADR 01). Returns the positive tick gap, or nil when `next` does
+    /// Strictly-increasing DTS is the per-clip assembler contract (see the Pi recording
+    /// design's timestamp invariant). Returns the positive tick gap, or nil when `next` does
     /// not strictly advance `previous` (duplicate DTS, backward corruption, or a 33-bit
     /// wrap) -- callers drop the offending access unit.
     static func strictlyIncreasingGap(after previous: Int64, to next: Int64) -> Int64? {

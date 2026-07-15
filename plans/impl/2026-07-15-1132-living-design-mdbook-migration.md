@@ -394,7 +394,7 @@ End state:
 - [x] 2. Adopt living design pages and retire the ADR convention
 - [x] 3. Fold Pi storage ADRs into a living storage page
 - [x] 4. Fold the transport ADRs into a living boundary page
-- [ ] 5. Fold Pi recording ADRs into a living recording page
+- [x] 5. Fold Pi recording ADRs into a living recording page
 - [ ] 6. Fold Pi OS-image ADRs into a living OS-image page
 - [ ] 7. Fold Pi networking ADRs into a living networking page
 - [ ] 8. Fold Pi provisioning ADRs into a living provisioning page
@@ -411,3 +411,11 @@ End state:
 - [ ] 19. Retire ADR tooling
 - [ ] 20. Slim AGENTS.md files to the lean layout
 - [ ] 21. Refresh the root README
+
+## Implementation notes
+
+- Commit 5 found that raspi ADR 01's auto-record-on-boot sketch was never realized:
+  systemd starts the service and camera owner, but the recorder stays idle until the
+  app issues `/v1/recording/start`. The living recording page and nearby operational
+  comments now state the implemented behavior instead of carrying the stale claim
+  forward.

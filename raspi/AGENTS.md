@@ -52,7 +52,7 @@ this ecosystem, and autofocus tops out at 120 deg (wider needs a fixed-focus M12
 - **1080p30 H.264 ceiling.** Match the encode to the hardware. HDR mode reduces
   resolution and adds ISP load on a 512 MB board -- use it selectively, not always-on.
 - **Power can be cut at any instant** (engine off). Recording must be corruption-
-  resistant by design. See the recording ADR.
+  resistant by design. See the [recording design](../docs/design/pi/recording.md).
 - **Thermals.** Windshield + Texas sun. Mount high near the rear-view mirror (coolest,
   most-shaded zone), ventilate, heatsink the SoC. Recording-while-parked ("sentry")
   is unreliable in peak summer because the cabin exceeds the camera's 50 C limit --
@@ -70,12 +70,12 @@ current provisional direction until it is captured.
   See the SD-card-layout ADR.
 - **Capture/encode:** a single Picamera2 camera-owner subprocess, supervised by the
   Rust service over stdio (never linked -- see the service-language ADR and the
-  Picamera2 camera-owner ADR). It owns libcamera once, emits low-res MJPEG preview
-  from the lores stream, and writes segmented MPEG-TS (`.ts`) recordings with inline
-  headers under `DANCAM_REC_DIR` -- truncation-tolerant and HLS-native for the iPhone.
-  The camera owner locks the lens to infinity and disables autofocus for both
-  recording and preview streams; see the fixed-infinity-focus ADR. See the crash-safe
-  recording ADR for why TS over raw H.264 / MP4.
+  [recording design](../docs/design/pi/recording.md)). It owns libcamera once, emits
+  low-res MJPEG preview from the lores stream, and writes segmented MPEG-TS (`.ts`)
+  recordings with inline headers under `DANCAM_REC_DIR` -- truncation-tolerant and
+  timestamped for the iPhone. The camera owner locks the lens to infinity and
+  disables autofocus for both recording and preview streams; the recording page also
+  owns the focus policy and why TS wins over raw H.264 / MP4.
 - **Storage model:** a **ring buffer** of short segments; oldest finished segments
   are drip-evicted as the card fills. Incidents are phone-owned and do not lock
   Pi segments in v1; the coordinator retains an unused protection seam for future
@@ -122,8 +122,9 @@ raspi/
 
 The service lives in `raspi/service/` and is written in **Rust** with the camera driven
 as a supervised subprocess; the rationale is in
-`docs/design/05-2026-06-23-service-language-rust.md` and the current Picamera2 owner is
-specified in `docs/design/07-2026-06-25-picamera2-camera-owner.md`. Two facts shape the whole workflow:
+`docs/design/05-2026-06-23-service-language-rust.md`, while the current Picamera2
+owner is specified by the [recording design](../docs/design/pi/recording.md). Two
+facts shape the whole workflow:
 release code is **cross-compiled on the dev host** (never built on the Pi), and the
 **dev image differs from the car image**.
 
@@ -167,8 +168,8 @@ Same Raspberry Pi OS base, two configurations:
 The dev image is where we build: writable root, manual AP toggle, same `/data` and
 `/persist` partition layout, so we can edit and restart freely. The car image (plain
 read-only root, writable `/data`, and `/persist` for OS/connection state) is how that
-same durably-built software gets packaged for deployment; the crash-safe and SD-card
-layout ADRs are the specs both build toward. AP autoconnect is intentionally not
+same durably-built software gets packaged for deployment; the recording and storage
+designs are the specs both build toward. AP autoconnect is intentionally not
 settled here. This is a forced difference in how the software is *run*, not a license
 to build the software itself dumb first and harden later -- you just don't fight
 read-only root on the desk.
@@ -269,8 +270,9 @@ shell, not `rustup target add`.
 ### Running
 
 - A **systemd unit** (`raspi/dancam.service`, installed to `/etc/systemd/system/`
-  by `deploy.sh`) runs the service: auto-start on boot (also how the car image
-  auto-records on boot) and restart-on-crash. It sets `DANCAM_BIND=[::]:8080` so
+  by `deploy.sh`) runs the service: auto-start on boot and restart-on-crash. The
+  recorder currently comes up idle until the app starts it; auto-record-on-boot is
+  future work. The unit sets `DANCAM_BIND=[::]:8080` so
   the service listens on the dual-stack wildcard and `DANCAM_BACKEND=camera` so
   preview uses the real camera; the binary defaults to loopback-only and the mock
   backend.
@@ -322,6 +324,8 @@ shell, not `rustup target add`.
 
 ## Design pages
 
+- [Recording](../docs/design/pi/recording.md) -- read when changing camera capture,
+  encoding, focus, segment format, recorder state, supervision, or command lifecycle.
 - [Storage](../docs/design/pi/storage.md) -- read when changing segment identity,
   time derivation, startup scrub, clip deletion, or ring GC.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
@@ -330,12 +334,10 @@ shell, not `rustup target add`.
 During the migration, the remaining raspi ADRs under `docs/design/` stay
 authoritative for subsystems that do not yet have a living page:
 
-- `01-2026-06-22-crash-safe-recording.md` -- how recording survives abrupt power loss
-  (format + filesystem + card hardware layers).
 - `04-2026-06-23-power-source-and-shutdown.md` (Proposed) -- the v1 power topology
   (switched USB accessory source, 5V regulated, dies with the car) and the decision
   to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves
-  the crash-safe ADR's deferred supercapacitor question (dropped for this topology).
+  the recording design's deferred supercapacitor question (dropped for this topology).
 - `05-2026-06-23-service-language-rust.md` (Accepted) -- the Pi service is written in
   Rust, cross-compiled on the dev host to a single static binary and run under
   systemd; the camera is driven as a subprocess, not linked. See the Build / run
@@ -345,21 +347,12 @@ authoritative for subsystems that do not yet have a living page:
   path (`dancam-ap`: SSID `dancam-dev`, WPA2-AES pinned RSN/CCMP, channel 1,
   `10.42.0.1/24`, shared IPv4, no autoconnect); the playbook provisions every field
   but the PSK.
-- `07-2026-06-25-picamera2-camera-owner.md` (Accepted) -- the camera subprocess is a
-  Picamera2 owner for `jet`, with a fixed stdout/stdin/stderr contract so a future
-  all-Rust camera binary can replace it without changing the HTTP API.
-- `08-2026-06-25-fixed-infinity-focus.md` (Accepted) -- the camera owner disables
-  autofocus and locks the IMX708 lens to infinity so recording cannot hunt onto
-  windshield artifacts.
 - `09-2026-06-26-pi-system-layer-config-ansible.md` (Accepted) -- the Pi's system
   layer (apt, camera overlay, Avahi scoping, locale, the `dancam-ap` profile sans PSK,
   the `dancam` service user's `video` group) is provisioned declaratively with
   Ansible from the Mac;
   `deploy.sh` keeps the binary/unit and the README becomes a bootstrap/verify/ops
   runbook.
-- `10-2026-06-30-recorder-fsm-and-events-sse.md` (Accepted) -- the recorder state
-  machine (Idle/Starting/Recording/Stopping/Error) and how its transitions surface to
-  the app as `/v1/events` SSE snapshot + ordered deltas.
 - `11-2026-06-30-forkable-pi-config.md` (Accepted) -- prepares the repo for public
   forks by splitting the per-machine SSH/Ansible login user from a fixed project-owned
   `dancam` service user (static `User`/`StateDirectory`/rec dir), keeping only
@@ -383,10 +376,6 @@ authoritative for subsystems that do not yet have a living page:
 - `22-2026-07-14-recording-capacity-telemetry.md` (Accepted) -- storage telemetry
   reports the exact non-root recorder-writable block pool minus the shared GC
   floor, and snapshot/delta storage use one complete nullable replacement shape.
-- `23-2026-07-14-single-owner-camera-command-lifecycle.md` (Accepted) -- splits
-  bounded request-side admission from supervisor-owned execution, orders durable
-  start allocation through one async handoff gate, and terminalizes every dispatched
-  failure before acknowledgement.
 - `24-2026-07-15-operational-status-and-recording-readiness.md` (Accepted) -- removes
   the duplicate health route, makes canonical status the sole operational probe,
   derives recording readiness atomically across snapshot and deltas, and bounds

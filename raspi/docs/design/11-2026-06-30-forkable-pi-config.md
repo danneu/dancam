@@ -4,7 +4,7 @@
 - **Date:** 2026-06-30
 - **Owner:** raspi
 - **Related:** root `AGENTS.md`; `06-2026-06-25-ap-networking-bring-up.md`;
-  `07-2026-06-25-picamera2-camera-owner.md`;
+  [Pi recording](../../../docs/design/pi/recording.md);
   `09-2026-06-26-pi-system-layer-config-ansible.md`
 
 ## Context

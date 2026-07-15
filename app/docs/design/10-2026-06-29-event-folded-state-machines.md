@@ -6,7 +6,7 @@
 - **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/03-2026-06-24-app-ui-architecture.md`;
   `app/docs/design/06-2026-06-26-domain-root-store-and-scoped-observation.md`;
-  `raspi/docs/design/10-2026-06-30-recorder-fsm-and-events-sse.md`
+  [Pi recording](../../../docs/design/pi/recording.md)
 
 ## Context
 

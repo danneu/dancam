@@ -143,7 +143,8 @@ These are settled at the system level. Side-specific ADRs must not contradict th
   alerts. See `app/docs/design/01-2026-06-22-carplay-integration-surface.md`.
 - **Recording must survive abrupt power loss.** The car cuts power without warning.
   Corruption resilience is a first-class requirement, solved in layers (format +
-  filesystem + card hardware). See `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`.
+  filesystem + card hardware). See
+  [`docs/design/pi/recording.md`](docs/design/pi/recording.md).
 - **Thermals are a real constraint, not an afterthought.** The unit lives on a
   windshield in Texas heat. The camera sensor (rated to ~50 C) is the weak link,
   not the Pi board (rated to 70 C). See `raspi/AGENTS.md`.

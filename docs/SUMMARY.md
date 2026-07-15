@@ -7,6 +7,7 @@
 # Design
 
 - [App-Pi transport boundary](design/boundary/transport.md)
+- [Pi recording](design/pi/recording.md)
 - [Pi storage](design/pi/storage.md)
 
 # Reference

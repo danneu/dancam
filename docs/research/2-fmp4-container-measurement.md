@@ -1,11 +1,11 @@
 # Research: fMP4 vs MPEG-TS container overhead, measured on the real Pi
 
 - **Date:** 2026-07-15
-- **Status:** research notes, no decision taken. Input for a future ADR on
+- **Status:** research notes, no decision taken. Input for a future design decision on
   migrating recording segments from MPEG-TS to fragmented MP4 (fMP4); this doc
   is the real-number groundwork, not the decision.
-- **Related:** `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`,
-  the [transport boundary](../design/boundary/transport.md),
+- **Related:** the [Pi recording design](../design/pi/recording.md), the
+  [transport boundary](../design/boundary/transport.md),
   `raspi/camera/camera.py#def recording_ffmpeg_output`
 - **Origin:** the fMP4 migration pitch claimed ~1% container overhead for fMP4
   vs "~5-15%" for TS, plus native AVFoundation playback with no remux. Before

@@ -2,14 +2,13 @@
 
 - **Date:** 2026-07-15
 - **Status:** research notes, no decision taken. The all-Rust camera owner is
-  already an Icebox item (`docs/roadmap.md#Icebox`) and ADR 07 names it "the
-  likely end state for the car image." This doc captures the investigation of
-  what it buys, what is hard, how much work each hard part is, and a concrete
-  scaffolding proposal -- thorough enough to resume the topic cold.
-- **Related:** `raspi/docs/design/07-2026-06-25-picamera2-camera-owner.md`,
-  `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`,
-  `raspi/docs/design/05-2026-06-23-service-language-rust.md`,
-  `raspi/docs/design/08-2026-06-25-fixed-infinity-focus.md`
+  already an Icebox item (`docs/roadmap.md#Icebox`) and the
+  [Pi recording design](../design/pi/recording.md) names it a possible response
+  if the current child fails its hardware gates. This doc captures the
+  investigation of what it buys, what is hard, how much work each hard part is,
+  and a concrete scaffolding proposal -- thorough enough to resume the topic cold.
+- **Related:** [Pi recording](../design/pi/recording.md),
+  `raspi/docs/design/05-2026-06-23-service-language-rust.md`
 - **Origin:** started as a question about toggling live preview from the app
   ("can the user turn the preview feed on/off while recording?"), which led to
   tracing the preview pipeline, which led to "what would a Rust rewrite of the
@@ -86,7 +85,7 @@ then if it ever matters.
 
 ## 3. What a Rust camera owner would improve (and what it would not)
 
-Framing constraints from ADR 07 that still hold:
+Framing constraints from the recording design that still hold:
 
 - Keep the subprocess boundary even after a rewrite: a libcamera crash must
   not take down the control API. The win is replacing the Python child with a
@@ -105,10 +104,10 @@ Wins, ranked by value:
    Rust service -> Python child -> ffmpeg grandchild, and ffmpeg's segment
    muxer owns rollover. That is why the session-scoped directory watcher
    exists (synthesizes `segment_opened`/`segment_closed`, filters against a
-   baseline, cannot emit a final `segment_closed` -- see ADR 07's 2026-06-30
-   update). A Rust owner ingests H264 NALs straight from the V4L2 encoder and
-   does its own muxing: keyframe-aligned segment cuts we control, an explicit
-   fsync policy per the crash-safe-recording ADR instead of whatever ffmpeg
+   baseline, cannot emit a final `segment_closed` -- see the recording design's
+   2026-06-30 Decision-log entry). A Rust owner ingests H264 NALs straight from
+   the V4L2 encoder and does its own muxing: keyframe-aligned segment cuts we control, an explicit
+   fsync policy per the recording design instead of whatever ffmpeg
    does, real segment lifecycle events instead of inferred ones, one fewer
    process to supervise. A whole class of watcher complexity gets deleted.
 2. **Boot-to-recording latency.** CPython + numpy + picamera2 imports take
@@ -116,8 +115,8 @@ Wins, ranked by value:
    every one of those seconds is unrecorded driving, every drive. A static
    Rust binary gets the sensor streaming in tens of milliseconds plus camera
    init.
-3. **RAM headroom on the 512 MB board.** ADR 07 already calls RSS "a gate,
-   not an assumption." The Python stack plus ffmpeg plausibly costs
+3. **RAM headroom on the 512 MB board.** The recording design already calls RSS
+   "a gate, not an assumption." The Python stack plus ffmpeg plausibly costs
    80-150 MB RSS; a Rust owner passing dmabuf handles costs a few MB. This is
    the difference between never-swaps and maybe-swaps, and swap on SD hurts
    latency and the card.
@@ -132,7 +131,7 @@ Wins, ranked by value:
 6. **Steadier frame pacing.** No GIL/GC jitter between encoder callback and
    preview pipe; fewer dropped preview frames under load. Modest.
 
-Timing recommendation: ADR 07's sequencing is right. Picamera2 is doing its
+Timing recommendation: the recording design's sequencing is right. Picamera2 is doing its
 job as the fast path to validate concurrency on real hardware. Triggers for
 building the Rust owner: the read-only car-image pass, the RAM gate failing on
 hardware, or boot-to-recording latency proving unacceptable in the car. Do it
@@ -215,7 +214,7 @@ video from stride mismatch.
 
 Mitigation: we do not need the general generator. dancam has exactly one
 config (main 1920x1080 YUV420 + lores 640x480 YUV420, 30 fps, manual focus at
-infinity per ADR 08). Hardcode it, call libcamera `validate()`, read back the
+infinity per the recording design). Hardcode it, call libcamera `validate()`, read back the
 adjusted strides instead of computing them, fail loudly at startup if
 validation adjusted anything unexpected. Failure mode is immediate and
 visible, not latent.
@@ -261,7 +260,7 @@ purpose-built crate is maybe a fifth of the surface.
 
 Total ordering: encoder wrapper >> bindings (variance) > fan-out > config.
 Riding along, not free: a Rust muxer to replace ffmpeg (its own chunk, with
-the crash-safe ADR's power-cut test burden regardless of who writes it), and
+the recording design's power-cut test burden regardless of who writes it), and
 a Rust fake driver replacing `camera.py`'s fake so the mock-Pi track stays
 unblocked off-hardware.
 
@@ -405,13 +404,13 @@ Each tier catches its bug class before the next, more expensive tier exists.
   collapses the largest variance in the whole estimate; do it before anything
   else.
 - **Muxer format decision** (fMP4 vs continuing MPEG-TS) is not settled here;
-  it interacts with the crash-safe ADR, `ts_duration`, the app's
+  it interacts with the recording design, `ts_duration`, the app's
   progressive-fmp4 playback ADR (`app/docs/design/08-2026-06-27-progressive-fmp4-clip-playback.md`),
   and segment fact stamping. Needs its own design pass.
-- **ADR at commit time:** landing the Rust owner needs a new raspi ADR
-  superseding the relevant parts of ADR 07 (which already anticipates this:
-  "Keep the process boundary even if the camera owner is later rewritten in
-  Rust").
+- **Design record at commit time:** landing the Rust owner must update the
+  [recording page](../design/pi/recording.md) body and append the rationale to its
+  Decision log. The existing design already requires keeping the process boundary
+  across a rewrite.
 - **Trigger discipline:** do not start this for its own sake. Triggers per
   section 3: read-only car-image pass, RAM gate failing on hardware, or
   boot-to-recording latency proving unacceptable in the car.

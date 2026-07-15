@@ -105,7 +105,7 @@ Lane B -- TS demux & H.264 access-unit assembly   ->  02-ts-h264-demux.md
   recording guarantees power-cut tails) -- drop the partial trailing unit cleanly or emit
   garbage/crash? Off-by-one and bounds safety on every slice.
 - Authorities: ISO/IEC 13818-1 (MPEG-2 TS); ITU-T H.264 (Annex B, NAL syntax, SPS/PPS);
-  ISO/IEC 14496-15 (avcC). ADR raspi/docs/design/01-2026-06-22-crash-safe-recording.md.
+  ISO/IEC 14496-15 (avcC); the [Pi recording design](../docs/design/pi/recording.md).
 
 Lane C -- fMP4 segmentation & finalized remux (AVFoundation)  ->  03-fmp4-finalize-remux.md
 - Scope: the AVAssetWriter paths -- progressive fragmented-MP4 generation and the finalized
@@ -160,8 +160,8 @@ Lane E -- Pi clip serving & duration (Rust)       ->  05-pi-clip-serving.md
   single-frame/empty segments, cache invalidation. Error mapping and IO handling.
 - Authorities: RFC 9110 (Range, conditional requests, status codes); ISO/IEC 13818-1
   (PTS); the [transport boundary](../docs/design/boundary/transport.md),
-  [Pi storage](../docs/design/pi/storage.md), and
-  `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`.
+  [Pi storage](../docs/design/pi/storage.md), and the
+  [Pi recording design](../docs/design/pi/recording.md).
 
 Lane F -- Test coverage & quality (cross-cutting) ->  06-test-coverage.md
 - Scope: audit existing tests around the whole pull->remux->play path; find the gaps that
