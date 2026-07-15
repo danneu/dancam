@@ -157,6 +157,15 @@ in unsafe Rust: `S_FMT` on both queues, DMABUF import on the OUTPUT side,
 MMAP buffers on the CAPTURE side, the poll/dequeue/requeue loop, keyframe
 flags, forced-keyframe controls.
 
+The kernel driver behind `/dev/video11` is pinned for reading:
+`references/linux/drivers/staging/vc04_services/bcm2835-codec/bcm2835-v4l2-codec.c`
+(~113 KB, self-contained), alongside the `bcm2835-unicam` CSI-2 receiver under
+`references/linux/drivers/media/platform/bcm2835/`. Both are sparse-fetched from
+the Raspberry Pi kernel fork at tag `stable_20260609` (commit `c8c74941`), which
+is kernel 6.18.34 -- exactly the Pi's running `uname -r` (`6.18.34+rpt-rpi-v8`),
+confirmed 2026-07-15 via `just references-pi-version`. This is the authoritative
+ioctl contract (formats, controls, buffer semantics) to bindgen against.
+
 The file is short but encodes years of quirk knowledge that we would
 otherwise rediscover on hardware:
 

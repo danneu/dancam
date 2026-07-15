@@ -26,3 +26,13 @@ ssh -i "$SSH_KEY" "$HOST" '
   # Build version string as libcamera itself reports it (best-effort; needs rpicam-apps).
   printf "build:  "; rpicam-hello --version 2>/dev/null | head -n1 || echo "(rpicam-apps not installed)"
 '
+
+echo "==> querying kernel on $HOST"
+ssh -i "$SSH_KEY" "$HOST" '
+  set -eu
+  # Running kernel release -- the SUBLEVEL (6.12.95 vs 6.18.x) tells us which raspberrypi/linux
+  # maintenance line the bcm2835-codec driver source lives on (rpi-6.12.y, rpi-6.6.y, ...).
+  printf "uname:  "; uname -r
+  # Installed kernel package(s) as the authoritative version, to pin LINUX_REF against.
+  printf "apt:\n"; dpkg-query -W -f="  \${Package} \${Version}\n" "linux-image-*rpi*" 2>/dev/null || echo "  (no linux-image-*rpi* package found)"
+'

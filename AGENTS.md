@@ -117,6 +117,12 @@ bumping a pin.
   IPA tuning under the picamera2 stack. Read for a future all-Rust camera owner; see
   `docs/research/1-rust-camera-owner.md`. Pin tracks the fork branch/tag matching the Pi's
   installed libcamera (`just references-pi-version`). Fork: https://github.com/raspberrypi/libcamera
+- **linux** (`references/linux/`) -- the Raspberry Pi kernel fork, **sparse-fetched** to just
+  two V4L2 driver folders: `drivers/staging/vc04_services/bcm2835-codec/` (the `/dev/video11`
+  H.264 M2M encoder) and `drivers/media/platform/bcm2835/` (the `bcm2835-unicam` CSI-2
+  receiver). Source for the encoder/capture wrappers a future Rust camera owner would drive;
+  see `docs/research/1-rust-camera-owner.md`. Pinned to the `stable_YYYYMMDD` tag matching the
+  Pi's running kernel (`just references-pi-version`). Fork: https://github.com/raspberrypi/linux
 
 ## Cross-cutting principles (the decisions that shape everything)
 
