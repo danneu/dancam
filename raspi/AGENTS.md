@@ -396,3 +396,7 @@ See the root `AGENTS.md` for the ADR convention. Raspi-side ADRs live in
 - `22-2026-07-14-recording-capacity-telemetry.md` (Accepted) -- storage telemetry
   reports the exact non-root recorder-writable block pool minus the shared GC
   floor, and snapshot/delta storage use one complete nullable replacement shape.
+- `23-2026-07-14-single-owner-camera-command-lifecycle.md` (Accepted) -- splits
+  bounded request-side admission from supervisor-owned execution, orders durable
+  start allocation through one async handoff gate, and terminalizes every dispatched
+  failure before acknowledgement.

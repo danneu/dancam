@@ -1,9 +1,9 @@
 //! Single-writer storage coordination for recording-dir mutations.
 //!
-//! This coordinates start-segment reservation and finished-segment deletion. Every
-//! reserved start id is durably written to `state/state.json` as `high_water_seq`
-//! before the caller commits the recorder floor, and every delete raises that
-//! same witness before unlinking a matching segment file.
+//! This coordinates start-segment allocation and finished-segment deletion. Every
+//! allocated start id is durably written to `state/state.json` as `high_water_seq`
+//! before it is returned, and every delete raises that same witness before
+//! unlinking a matching segment file.
 
 use std::{
     fs::{self, File},
@@ -24,7 +24,7 @@ const TMP_STATE_FILE: &str = "state.json.tmp";
 
 /// Coordinates recording-dir mutations behind one in-process mutex.
 ///
-/// Start reservation and finished-clip delete run under the same mutation mutex.
+/// Start allocation and finished-clip delete run under the same mutation mutex.
 /// Any mutation that removes files must raise the durable witness before the
 /// first unlink so a removed id cannot be reissued.
 #[derive(Debug)]
@@ -56,10 +56,14 @@ impl StorageCoordinator {
         self.required_mountpoint.clone()
     }
 
-    pub fn reserve_start_segment<R>(
-        &self,
-        commit: impl FnOnce(SegmentId) -> R,
-    ) -> io::Result<(SegmentId, R)> {
+    #[cfg(test)]
+    pub(crate) fn lock_mutation_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.mutation
+            .lock()
+            .expect("storage coordinator mutex poisoned")
+    }
+
+    pub fn allocate_start_segment(&self) -> io::Result<SegmentId> {
         let _guard = self
             .mutation
             .lock()
@@ -71,13 +75,7 @@ impl StorageCoordinator {
         update_witness(self.rec_dir.as_ref(), |witness| {
             witness.high_water_seq = next;
         })?;
-        let committed = commit(next);
-        Ok((next, committed))
-    }
-
-    #[cfg(test)]
-    pub fn allocate_start_segment(&self) -> io::Result<SegmentId> {
-        self.reserve_start_segment(|_| ()).map(|(id, _)| id)
+        Ok(next)
     }
 
     pub fn delete_finished_segment(

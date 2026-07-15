@@ -1,10 +1,4 @@
-use std::{
-    fs,
-    path::PathBuf,
-    pin::Pin,
-    sync::{mpsc, Arc},
-    time::Instant,
-};
+use std::{fs, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use axum::{
@@ -885,51 +879,8 @@ async fn concurrent_deletes_raise_witness_monotonically() {
     assert_eq!(response_10.status(), StatusCode::NO_CONTENT);
     assert!(!rec_dir.path.join("seg_00011.ts").exists());
     assert!(!rec_dir.path.join("seg_00010.ts").exists());
-    let (next, _) = coordinator.reserve_start_segment(|_| ()).unwrap();
+    let next = coordinator.allocate_start_segment().unwrap();
     assert!(next >= 12, "next segment id was {next}");
-}
-
-#[tokio::test]
-async fn delete_waits_for_reservation_floor_before_scanning() {
-    let rec_dir = TempRecDir::new();
-    for seq in 0..=6 {
-        rec_dir.write(&format!("seg_{seq:05}.ts"), b"segment");
-    }
-    let reserved_path = rec_dir.path.join("seg_00007.ts");
-    let stub = StubBackend::idle();
-    let hub = stub.hub();
-    let (state, coordinator) = state_with_storage(rec_dir.path.clone(), stub);
-    let app = dancam::app(state);
-    let (ready_tx, ready_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-    let rec_path = rec_dir.path.clone();
-    let reservation_coordinator = coordinator.clone();
-
-    let reservation = tokio::task::spawn_blocking(move || {
-        reservation_coordinator
-            .reserve_start_segment(|seg| {
-                assert_eq!(seg, 7);
-                fs::write(rec_path.join("seg_00007.ts"), b"reserved").unwrap();
-                hub.drive(Input::StartCommand { start_segment: seg }, 1500);
-                ready_tx.send(()).unwrap();
-                release_rx.recv().unwrap();
-            })
-            .unwrap();
-    });
-
-    ready_rx.recv().unwrap();
-    let delete = tokio::spawn(app.oneshot(delete_request("/v1/clips/7")));
-    for _ in 0..5 {
-        tokio::task::yield_now().await;
-        assert!(reserved_path.exists());
-    }
-
-    release_tx.send(()).unwrap();
-    reservation.await.unwrap();
-    let response = delete.await.unwrap().unwrap();
-
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    assert!(reserved_path.exists());
 }
 
 fn state(rec_dir: PathBuf, backend: StubBackend) -> AppState {

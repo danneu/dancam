@@ -73,6 +73,25 @@ fn camera_script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../camera/camera.py")
 }
 
+fn inline_camera_config(script: &str, rec_dir: &Path, args: &[&Path]) -> CameraConfig {
+    let mut command_args = vec!["-u".to_string(), "-c".to_string(), script.to_string()];
+    command_args.extend(args.iter().map(|path| path.to_string_lossy().to_string()));
+    command_args.push("--rec-dir".to_string());
+    command_args.push(rec_dir.to_string_lossy().to_string());
+    CameraConfig::new("python3", command_args)
+}
+
+async fn process_exists(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+}
+
 async fn python3_available() -> bool {
     Command::new("python3")
         .arg("--version")
@@ -336,6 +355,345 @@ async fn supervisor_confirms_start_stop_and_records_with_idle_preview_subscriber
     assert_new_segments_are_stamped(&rec_dir, &expected);
 
     control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn concurrent_start_and_stop_intents_dispatch_once() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("supervisor-duplicates");
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "10".to_string(),
+        ],
+    );
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    let first_backend = backend.clone();
+    let second_backend = backend.clone();
+    let (first_start, second_start) = tokio::join!(
+        first_backend.start_recording(),
+        second_backend.start_recording()
+    );
+    assert_eq!(first_start, Ok(()));
+    assert_eq!(second_start, Ok(()));
+
+    let first_backend = backend.clone();
+    let second_backend = backend.clone();
+    let (first_stop, second_stop) = tokio::join!(
+        first_backend.stop_recording(),
+        second_backend.stop_recording()
+    );
+    assert_eq!(first_stop, Ok(()));
+    assert_eq!(second_stop, Ok(()));
+    assert_eq!(segment_ids(&rec_dir), [0]);
+    assert_eq!(storage.allocate_start_segment().unwrap(), 2);
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Idle);
+
+    control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn start_timeout_reaps_child_before_error_and_retry_recovers() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, os, sys, time
+marker, pid_file = sys.argv[1], sys.argv[2]
+session = None
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "shutdown":
+        sys.exit(0)
+    if command["cmd"] == "start_recording":
+        session = command["session_id"]
+        if not os.path.exists(marker):
+            open(marker, "w").close()
+            open(pid_file, "w").write(str(os.getpid()))
+            while True:
+                time.sleep(1)
+        print(json.dumps({"event":"recording_started","session_id":session}), file=sys.stderr, flush=True)
+    if command["cmd"] == "stop_recording":
+        print(json.dumps({"event":"recording_stopped","session_id":session}), file=sys.stderr, flush=True)
+"#;
+    let rec_dir = temp_rec_dir("start-timeout-recovery");
+    let marker = rec_dir.with_extension("start-once");
+    let pid_file = rec_dir.with_extension("start-pid");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker, &pid_file]);
+    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    assert_eq!(backend.start_recording().await, Err(BackendError::Timeout));
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
+    let pid = fs::read_to_string(&pid_file)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert!(
+        !process_exists(pid).await,
+        "timed-out camera child was still alive"
+    );
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
+    backend.stop_recording().await.unwrap();
+
+    control.shutdown().await;
+    let _ = fs::remove_file(marker);
+    let _ = fs::remove_file(pid_file);
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn child_error_reaps_child_before_camera_offline_and_retry_recovers() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, os, sys, time
+marker, pid_file = sys.argv[1], sys.argv[2]
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "shutdown":
+        sys.exit(0)
+    if command["cmd"] == "start_recording":
+        session = command["session_id"]
+        if not os.path.exists(marker):
+            open(marker, "w").close()
+            open(pid_file, "w").write(str(os.getpid()))
+            print(json.dumps({"event":"error","detail":"injected failure"}), file=sys.stderr, flush=True)
+            while True:
+                time.sleep(1)
+        print(json.dumps({"event":"recording_started","session_id":session}), file=sys.stderr, flush=True)
+"#;
+    let rec_dir = temp_rec_dir("child-error-recovery");
+    let marker = rec_dir.with_extension("error-once");
+    let pid_file = rec_dir.with_extension("error-pid");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker, &pid_file]);
+    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    assert_eq!(
+        backend.start_recording().await,
+        Err(BackendError::CameraOffline)
+    );
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
+    let pid = fs::read_to_string(&pid_file)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert!(
+        !process_exists(pid).await,
+        "failed camera child was still alive"
+    );
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
+
+    control.shutdown().await;
+    let _ = fs::remove_file(marker);
+    let _ = fs::remove_file(pid_file);
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn first_write_failure_reconciles_and_retry_dispatches() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, os, sys, time
+marker, pid_file = sys.argv[1], sys.argv[2]
+if not os.path.exists(marker):
+    open(marker, "w").close()
+    open(pid_file, "w").write(str(os.getpid()))
+    os.close(0)
+    print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+    while True:
+        time.sleep(1)
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "shutdown":
+        sys.exit(0)
+    if command["cmd"] == "start_recording":
+        print(json.dumps({"event":"recording_started","session_id":command["session_id"]}), file=sys.stderr, flush=True)
+"#;
+    let rec_dir = temp_rec_dir("write-failure-recovery");
+    let marker = rec_dir.with_extension("write-fail-once");
+    let pid_file = rec_dir.with_extension("write-fail-pid");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker, &pid_file]);
+    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    assert_eq!(
+        backend.start_recording().await,
+        Err(BackendError::CameraOffline)
+    );
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
+    let pid = fs::read_to_string(&pid_file)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert!(
+        !process_exists(pid).await,
+        "write-failed camera child was still alive"
+    );
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
+
+    control.shutdown().await;
+    let _ = fs::remove_file(marker);
+    let _ = fs::remove_file(pid_file);
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn child_exit_during_command_reconciles_before_ack_and_retry_recovers() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, os, sys
+marker = sys.argv[1]
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "shutdown":
+        sys.exit(0)
+    if command["cmd"] == "start_recording":
+        if not os.path.exists(marker):
+            open(marker, "w").close()
+            sys.exit(7)
+        print(json.dumps({"event":"recording_started","session_id":command["session_id"]}), file=sys.stderr, flush=True)
+"#;
+    let rec_dir = temp_rec_dir("exit-during-command");
+    let marker = rec_dir.with_extension("exit-once");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker]);
+    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    assert_eq!(
+        backend.start_recording().await,
+        Err(BackendError::CameraOffline)
+    );
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
+
+    control.shutdown().await;
+    let _ = fs::remove_file(marker);
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn supervisor_shutdown_terminalizes_inflight_command() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, sys, time
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "start_recording":
+        while True:
+            time.sleep(1)
+"#;
+    let rec_dir = temp_rec_dir("shutdown-inflight");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[]);
+    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    let request_backend = backend.clone();
+    let request = tokio::spawn(async move { request_backend.start_recording().await });
+    wait_for_recorder_phase(&backend, RecorderPhase::Starting).await;
+    control.shutdown().await;
+
+    assert_eq!(request.await.unwrap(), Err(BackendError::Channel));
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
+    assert_eq!(backend.snapshot().camera_state, CameraState::Offline);
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn stop_timeout_reaps_child_and_leaves_recoverable_error() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, os, sys, time
+marker, pid_file = sys.argv[1], sys.argv[2]
+session = None
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "shutdown":
+        sys.exit(0)
+    if command["cmd"] == "start_recording":
+        session = command["session_id"]
+        print(json.dumps({"event":"recording_started","session_id":session}), file=sys.stderr, flush=True)
+    if command["cmd"] == "stop_recording":
+        if not os.path.exists(marker):
+            open(marker, "w").close()
+            open(pid_file, "w").write(str(os.getpid()))
+            while True:
+                time.sleep(1)
+        print(json.dumps({"event":"recording_stopped","session_id":session}), file=sys.stderr, flush=True)
+"#;
+    let rec_dir = temp_rec_dir("stop-timeout-recovery");
+    let marker = rec_dir.with_extension("stop-once");
+    let pid_file = rec_dir.with_extension("stop-pid");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker, &pid_file]);
+    let (backend, control) = CameraProcess::spawn(config, storage_for(&rec_dir));
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+
+    assert_eq!(backend.stop_recording().await, Err(BackendError::Timeout));
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
+    let pid = fs::read_to_string(&pid_file)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert!(
+        !process_exists(pid).await,
+        "timed-out camera child was still alive"
+    );
+
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
+
+    control.shutdown().await;
+    let _ = fs::remove_file(marker);
+    let _ = fs::remove_file(pid_file);
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -859,7 +1217,7 @@ async fn supervisor_fake_driver_fails_closed_at_seq_ceiling() {
 
     let rec_dir = temp_rec_dir("supervisor-seq-ceiling");
     fs::create_dir_all(rec_dir.join("state")).unwrap();
-    // Witness at u32::MAX - 1 so reserve_start_segment returns u32::MAX (the last legal
+    // Witness at u32::MAX - 1 so allocation returns u32::MAX (the last legal
     // id -- start succeeds); its next rollover would reissue u32::MAX.
     fs::write(
         rec_dir.join("state").join("state.json"),

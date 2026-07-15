@@ -402,16 +402,11 @@ impl MockRecorder {
             return Ok(());
         }
 
-        let (start_segment, events) = self
-            .storage
-            .reserve_start_segment(|seg| {
-                self.hub
-                    .drive_now(Input::StartCommand { start_segment: seg })
-            })
-            .map_err(|error| {
-                tracing::error!(%error, "start segment allocation failed");
-                BackendError::Storage
-            })?;
+        let start_segment = self.storage.allocate_start_segment().map_err(|error| {
+            tracing::error!(%error, "start segment allocation failed");
+            BackendError::Storage
+        })?;
+        let events = self.hub.drive_now(Input::StartCommand { start_segment });
         let Some(session) = starting_session(&events) else {
             return Ok(());
         };
