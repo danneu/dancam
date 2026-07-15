@@ -30,8 +30,8 @@ mock first.
       from the dev machine, give agents a documented local command loop, and let
       the app point at that mock service and get a 200 back. _Foundation for
       everything below without needing the Pi on the desk._
-      - [x] Mock Pi service runs locally and answers the health endpoint.
-      - [x] App can call the mock Pi health endpoint.
+  - [x] Mock Pi service runs locally and answers the health endpoint.
+  - [x] App can call the mock Pi health endpoint.
 - [x] **Swoop `pine` -- Real Pi bring-up.** Hardware track for the same health slice:
       flash Raspberry Pi OS Lite (64-bit, Trixie), bring up the Wi-Fi AP
       (NetworkManager hotspot, 2.4 GHz), get the camera visible/capturing at a
@@ -41,15 +41,15 @@ mock first.
       HTTP, and have the app join the AP and get a 200 back. Read-only root can
       wait until hardening; do not block first hardware contact on the final
       car-image layout.
-      - [x] Camera is visible to `rpicam` and captures a JPEG after
+  - [x] Camera is visible to `rpicam` and captures a JPEG after
             `camera_auto_detect=0` + `dtoverlay=imx708`.
-      - [x] Rust service deploys to the Pi and serves `GET /v1/health` over home
+  - [x] Rust service deploys to the Pi and serves `GET /v1/health` over home
             Wi-Fi.
-      - [x] NetworkManager AP profile `dancam-ap` starts `dancam-dev` on channel 1
+  - [x] NetworkManager AP profile `dancam-ap` starts `dancam-dev` on channel 1
             with gateway `10.42.0.1` and shared-mode DHCP.
-      - [x] A physical iPhone joins `dancam-dev` and gets health JSON from
+  - [x] A physical iPhone joins `dancam-dev` and gets health JSON from
             `http://10.42.0.1:8080/v1/health` in Safari.
-      - [x] App running on a physical iPhone renders the AP health response.
+  - [x] App running on a physical iPhone renders the AP health response.
 - [x] **Swoop `fox` -- Live preview on iPhone.** Pi serves
       `GET /v1/preview/live.mjpeg`; for this swoop the real camera backend uses a
       temporary preview-only MJPEG stream from `rpicam-vid`, not the later
@@ -74,28 +74,28 @@ mock first.
       preview, and a simple non-interactive list of finished segment files appears
       below. Drive the API from that UI; use the small canonical `/v1/status`
       snapshot as the one-shot operational probe, not a user screen.
-      - [x] Replace the health-first root with a home dashboard that starts preview
+  - [x] Replace the health-first root with a home dashboard that starts preview
             immediately and keeps recording controls on that same screen.
-      - [x] Add `GET /v1/status` for dashboard facts: recording state, camera state,
+  - [x] Add `GET /v1/status` for dashboard facts: recording state, camera state,
             boot/uptime, rec-dir storage, SoC temperature, memory/swap headroom, and
             sensor temperature when Picamera2 metadata is surfaced.
-      - [x] Add the smallest useful `GET /v1/clips` metadata list for finished `.ts`
+  - [x] Add the smallest useful `GET /v1/clips` metadata list for finished `.ts`
             segments: filename/id, bytes, and best-effort time/duration when cheap.
-      - [x] Render the finished-segment list below preview as read-only rows; playback,
+  - [x] Render the finished-segment list below preview as read-only rows; playback,
             thumbnails, selection, and pull/download stay in `lime`.
-      - [x] Deepening: Recent clips now shows the Pi recorder state machine's open
+  - [x] Deepening: Recent clips now shows the Pi recorder state machine's open
             segment as a synthetic live status row with a `REC` badge and count-up,
             while the Pi keeps the open segment unlisted and unpullable.
-      - [x] Deepening: Surface the IMX708 sensor temperature end-to-end: the camera
+  - [x] Deepening: Surface the IMX708 sensor temperature end-to-end: the camera
             owner samples Picamera2 metadata, sends `sensor_temp` to the service,
             and the world merges it into `temp_changed` and snapshots for the app's
             Debug screen.
-      - [x] Deepening: Track max-since-service-start SoC and camera temperatures in
+  - [x] Deepening: Track max-since-service-start SoC and camera temperatures in
             the Pi world as `{current, max}` readings, and show both with independent
             warn/critical tints on Debug; the SoC row uses 70/80 C thresholds.
-      - [x] Deepening: Flow per-core current plus 1m/5m/15m CPU utilization from
+  - [x] Deepening: Flow per-core current plus 1m/5m/15m CPU utilization from
             `/proc/stat` through snapshot/delta events to full-width Debug rows.
-      - [x] Started with polling `status`/`clips`; `pulse` replaced live state polling
+  - [x] Started with polling `status`/`clips`; `pulse` replaced live state polling
             with snapshot-first `GET /v1/events`, while `/v1/status` and `/v1/clips`
             remain one-shot reads.
 - [x] **Swoop `loam` -- Declarative Pi provisioning.** Replace the manual README
@@ -106,18 +106,18 @@ mock first.
       to a thin bootstrap/verify/ops runbook. _Deepens `pine`: its hand-built
       foundation becomes declarative, re-runnable, and diffable (`--check --diff`).
       The "it works" moment is a re-run printing `changed=0`._
-      - [x] Ansible ships in the Nix shell (`nix develop -c ansible --version`) and
+  - [x] Ansible ships in the Nix shell (`nix develop -c ansible --version`) and
             the `raspi-provision` / `-check` / `-lint` Just recipes exist.
-      - [x] Flat playbook (`raspi/ansible/site.yml`, 8 tasks + 2 handlers) passes the
+  - [x] Flat playbook (`raspi/ansible/site.yml`, 8 tasks + 2 handlers) passes the
             Mac-only gate: `just raspi-provision-lint` green (syntax-check + ansible-lint).
-      - [x] One `just raspi-provision` converges a fresh Pi (apt, camera overlay, mDNS
+  - [x] One `just raspi-provision` converges a fresh Pi (apt, camera overlay, mDNS
             scope, locale, AP profile, `video` group) + one reboot; a re-run prints
             `changed=0` (idempotency gate -- catches the nmcli cipher-list churn).
-      - [x] Real-Pi regression checks pass: picamera2 imports, `allow-interfaces=wlan0`
+  - [x] Real-Pi regression checks pass: picamera2 imports, `allow-interfaces=wlan0`
             (no spaces), AP cipher pins `rsn`/`ccmp`/`ccmp`, iPhone joins `dancam-dev`,
             `dancam` service user has `video`, and the service opens the camera as
             `dancam`.
-      - [x] Docs land in lockstep: the
+  - [x] Docs land in lockstep: the
             [provisioning design](design/pi/provisioning.md) records the rationale,
             the README became the pinned runbook, and `raspi/AGENTS.md` flipped to
             "playbook is the source of truth."
@@ -125,23 +125,23 @@ mock first.
       2.4 GHz link: detect drops fast, ride them out in place, and recover without a
       manual rejoin. _App-side ambient UX and resumable pulls have landed; measured
       pull UX now continues in `lime`._
-      - [x] **App:** process-owned connection monitor -- event-stream liveness belongs
+  - [x] **App:** process-owned connection monitor -- event-stream liveness belongs
             to the app runtime (not a phone scene or Home), preserving last-known status
             so every scene rides out drops in place and explicit suspension revokes
             fresh truth when no scene is active.
-      - [x] **App:** missed-heartbeat offline detection -- missed `/v1/events`
+  - [x] **App:** missed-heartbeat offline detection -- missed `/v1/events`
             heartbeats flip the shared link offline after the deadline.
-      - [x] **App:** persistent connection status strip in the root shell, so pushed
+  - [x] **App:** persistent connection status strip in the root shell, so pushed
             screens inherit it without nav-bar re-parenting.
-      - [x] **App:** foreground/reconnect recovery -- foreground and reconnect hooks
+  - [x] **App:** foreground/reconnect recovery -- foreground and reconnect hooks
             refresh the visible screen without tearing down navigation state.
-      - [x] **App:** preview back-off reconnect -- preview reconnects independently with
+  - [x] **App:** preview back-off reconnect -- preview reconnects independently with
             bounded backoff; each attempt bumps `streamGeneration` so decode resets stay
             observable.
-      - [x] **App:** process-owned domain root store -- connection, recording, clips,
+  - [x] **App:** process-owned domain root store -- connection, recording, clips,
             and incident coordination lives in one `AppFeature` shared by phone and
             future CarPlay scenes, with equality-gated scoped observation.
-      - [x] **App:** resumable pulls across drops -- a `Range`/`If-Range` clip pull that
+  - [x] **App:** resumable pulls across drops -- a `Range`/`If-Range` clip pull that
             resumes from the last byte rather than restarting. _Shared with `lime`'s
             ranged-pull step; land it in whichever swoop reaches it first._
       - Note: app-driven AP join (`NEHotspotConfiguration`, `joinOnce = false`) is *not* an
@@ -156,65 +156,65 @@ mock first.
       _Deepens `fern` and `opal`: the dashboard row and connection strip now ride the
       same recorder-owned event stream instead of filesystem guesses and status-poll
       debounce._
-      - [x] `GET /v1/events` streams snapshot, ordered deltas, and 2 second heartbeats;
+  - [x] `GET /v1/events` streams snapshot, ordered deltas, and 2 second heartbeats;
             `GET /v1/status` remains a one-shot `Snapshot`.
-      - [x] Recorder lifecycle transitions are first-class events, including command
+  - [x] Recorder lifecycle transitions are first-class events, including command
             phases, segment opens, clip finalization, failure, and telemetry deltas.
-      - [x] The camera child protocol carries Rust-owned `session_id` and
+  - [x] The camera child protocol carries Rust-owned `session_id` and
             `start_segment_index`, plus session-echoing segment lifecycle events.
-      - [x] App connection state is `Link`, with offline detection after about 6 seconds
+  - [x] App connection state is `Link`, with offline detection after about 6 seconds
             of missed heartbeats, explicit process suspension outside active scenes,
             and fresh snapshot recovery on reconnect.
-      - [x] Recent clips keep a live row only when the Pi recorder snapshot reports a
+  - [x] Recent clips keep a live row only when the Pi recorder snapshot reports a
             current segment; finalized clips merge from `clip_finalized` events.
 - [x] **Swoop `lime` -- Watch recorded clips.** Browse the clip list, pull a finished
       segment with resumable `Range` requests, remux it to a local `.mp4`, and play it
       with AVPlayer. _The chunky one; the first time footage is
       watchable on the phone. A full 30 s segment is ~38 MB (10 Mbps CBR, confirmed on
       real `seg_*.ts`), so the pull -- not the UI -- is the weight here._
-      - [x] **Spike first (real Pi):** Dan confirmed real ~38 MB `seg_*.ts` pulls over
+  - [x] **Spike first (real Pi):** Dan confirmed real ~38 MB `seg_*.ts` pulls over
             the `dancam-dev` AP feel acceptable, including desk and in-car checks with
             and without live preview running concurrently (spike 2); pulled `.ts` files
             remux to playable, seekable `.mp4` files on a physical iPhone (spike 5a).
             The [app clips design](design/app/clips.md) later removed the progressive
             local fMP4 path after remux measured cheap; cached fast-start MP4 is now the
             sole playback artifact.
-      - [x] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
+  - [x] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
             `.ts` as a plain `200` (`application/mp2t`); never serves the open segment
             (matches the list). The dumbest end-to-end that proves tap -> pull -> play; no
             ranged-pull surface until the app step below needs it.
-      - [x] **Pi (ranged/resumable):** add `Accept-Ranges: bytes`, `ETag` (reuse the
+  - [x] **Pi (ranged/resumable):** add `Accept-Ranges: bytes`, `ETag` (reuse the
             list's `{seq}-{bytes}`), `Range`/`If-Range` -> `206`/`Content-Range`, and
             `416` on unsatisfiable range -- pulled in by the app's progress + mid-pull
             resume step below, not before.
-      - [x] **Pi:** report `dur_ms` from an exact cached TS-PTS duration span
+  - [x] **Pi:** report `dur_ms` from an exact cached TS-PTS duration span
             (`(maxPTS - minPTS) + frame_interval`) for each finished segment, pivoting
             from the earlier cadence-constant/ffprobe sketch; `start_ms` and real
             provenance stay deferred to `moss`.
-      - [x] **Pi/App:** Pi paginates `/v1/clips` by descending `seq`; the app pages
+  - [x] **Pi/App:** Pi paginates `/v1/clips` by descending `seq`; the app pages
             older clips in on scroll so the home "Recent clips" list can reach beyond
             the first server page.
-      - [x] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`,
+  - [x] **Mock parity:** mock Pi serves a real sample `.ts` for `GET /v1/clips/{id}`,
             tracking the Pi in the same two pulses -- plain `200` first, then `Range`/`ETag`
             -- so the app pull + playback path runs against the mock first at each step.
-      - [x] **App (riskiest):** resumable ranged pull on the pinned `NWConnection` -- a
+  - [x] **App (riskiest):** resumable ranged pull on the pinned `NWConnection` -- a
             `Range`/`If-Range`/`Content-Range` loop that streams to a local file and
             resumes from the last byte across drops (verify `ETag` before resuming). At
             ~38 MB over a congested 2.4 GHz link a pull is ~6-26 s, so a mid-pull drop
             must resume, never restart.
-      - [x] **App:** durable clip cache -- fast-start MP4s named by clip id + resolved
+  - [x] **App:** durable clip cache -- fast-start MP4s named by clip id + resolved
             etag, reused on replay (never re-pull 38 MB), with an mtime-LRU size cap.
             The cached MP4 is reused later by `tide` export.
-      - [x] **App:** download-then-play -- remux the pulled `.ts` to a local
+  - [x] **App:** download-then-play -- remux the pulled `.ts` to a local
             passthrough `.mp4`, commit it to the clip cache, and play it directly with
             AVPlayer; keeps AVPlayer on a local file (no-internet AP + future-TLS) and
             gives the player an MP4 sample table for scrubbing.
-      - [x] **App:** tapping a clip pushes a viewer screen (AVPlayer + transport
+  - [x] **App:** tapping a clip pushes a viewer screen (AVPlayer + transport
             controls) into the existing nav, showing pull **progress** (a 6-26 s silent
             spinner reads as a hang), a short preparing phase, and then the cached MP4;
             handles pull failure / resume, cache-insert failure, playback failure, and
             manual Retry.
-      - [x] **App:** clip rows show duration + best-effort created time + a real first-frame
+  - [x] **App:** clip rows show duration + best-effort created time + a real first-frame
             thumbnail generated on the phone (the [app clips design](design/app/clips.md)):
             cache-first
             memory/disk/free-cached-MP4/ranged-prefix pipeline. Watched clips are free (the
@@ -241,18 +241,18 @@ mock first.
       for the car image, `/persist` for OS state, `/data` for the recording ring, and
       no overlayfs or consumer-card PLP assumptions. _This is the storage foundation
       that makes later card formatting safe instead of a directory cleanup._
-      - [x] Service durability + mount witness: fsync closed segments before events,
+  - [x] Service durability + mount witness: fsync closed segments before events,
             fdatasync the in-flight segment every ~2 s and scrub unrecoverable
             zero-byte leftovers at boot witness-first (see
             [storage](design/pi/storage.md#in-flight-durability-and-startup-repair)),
             add mock parity, and
             gate recording/time-sync mutations on a mounted `/data`.
-      - [x] Partition tooling: on-Pi `sfdisk`/`resize2fs` script, Mac regression for
+  - [x] Partition tooling: on-Pi `sfdisk`/`resize2fs` script, Mac regression for
             the sector math, Just recipes, and README bring-up steps.
-      - [x] Dev-shared adoption: Ansible mounts `/persist`, `/data`, and the journald
+  - [x] Dev-shared adoption: Ansible mounts `/persist`, `/data`, and the journald
             bind; deploys `/data/rec` with `DANCAM_REQUIRE_REC_MOUNT=/data`; enables
             fstrim and dirty-page clamps; reflashes the current dev card.
-      - [x] Car-image hardening: `car_image`-gated read-only root/boot, tmpfs and
+  - [x] Car-image hardening: `car_image`-gated read-only root/boot, tmpfs and
             `/persist` binds for writable OS state, read-only-root-aware deploy, and
             bench power-cut validation.
 - [x] **Swoop `silt` -- Ring-buffer GC (drip eviction).** Pi deletes oldest
@@ -271,27 +271,27 @@ mock first.
       `dune`, "format the SD" means mkfs of `/data` only -- never the OS or `/persist`.
       The app-facing storage/card-health UI belongs here; `dune` only provides the
       lower-level layout and fail-closed mount witness.
-      - [x] Pi reports exact
+  - [x] Pi reports exact
             [recorder-writable capacity](design/pi/telemetry.md#recorder-writable-capacity)
             after root-reserved blocks and the GC floor; snapshot and delta
             storage share one nullable shape.
-      - [x] Settings estimates whole hours/minutes from fresh finalized-clip rates
+  - [x] Settings estimates whole hours/minutes from fresh finalized-clip rates
             and resets the estimator at every connection epoch.
 - [x] **Swoop `moss` -- Time provenance.** The Pi has no RTC, so clip timestamps are
       derived from immutable segment facts plus a per-boot phone-clock offset rather
       than stored as wall-clock conclusions. This makes pre-sync and power-cut
       segments resolve once the boot offset is known.
-      - [x] **Pi:** stamp segment filenames with `(seq, boottag, monoMs)` facts at
+  - [x] **Pi:** stamp segment filenames with `(seq, boottag, monoMs)` facts at
             segment open, parse bare and stamped names everywhere, and keep next-seq /
             list / pull / status resolution scan-based so stamped footage is never
             overwritten or hidden.
-      - [x] **Pi:** add the write-once per-boot offset store and `POST /v1/time`; derive
+  - [x] **Pi:** add the write-once per-boot offset store and `POST /v1/time`; derive
             clip `start_ms`, `time_approximate`, `server_time_ms`, snapshot
             `time.synced`, and `time_synced` events from the offset.
-      - [x] **App:** POST the phone's current epoch on unsynced snapshots, retry while
+  - [x] **App:** POST the phone's current epoch on unsynced snapshots, retry while
             connected and unsynced, reload clips on `time_synced`, and show "Time
             unverified" until the world reports synced.
-      - [x] **Mock parity:** both the Rust mock backend and Python fake camera exercise
+  - [x] **Mock parity:** both the Rust mock backend and Python fake camera exercise
             stamped segment names so Mac-only tests cover the production path before
             real-Pi validation.
       - Scope fence: no GPS source, no correction/rebind after the first accepted
@@ -301,32 +301,32 @@ mock first.
       navigable when the user knows roughly when footage happened, building on
       `moss` time provenance and the existing `/v1/clips` listing rather than adding a
       new browsing surface.
-      - [x] Group Recent clips under sticky day headers, with undated footage kept in
+  - [x] Group Recent clips under sticky day headers, with undated footage kept in
             in-place "Date unknown" runs.
-      - [x] Group clips by recording `(boot_tag, session)` exposed in `/v1/clips`.
-      - [x] Attribute the active recording to its card: snapshot `boot_tag` +
+  - [x] Group clips by recording `(boot_tag, session)` exposed in `/v1/clips`.
+  - [x] Attribute the active recording to its card: snapshot `boot_tag` +
             `recorder.session`, a live widget under the record button, a REC marker on
             the recording's card, and a live row atop that recording's detail (ADRs 20, 24).
-      - [ ] Add a calendar jump backed by the reserved `from`/`to` window params.
-      - [ ] Add an incidents filter using phone-owned incident membership after
+  - [ ] Add a calendar jump backed by the reserved `from`/`to` window params.
+  - [ ] Add an incidents filter using phone-owned incident membership after
             `nova`; do not depend on the Pi clip body's reserved `locked` field.
 - [ ] **Swoop `nova` -- Phone-owned incidents (manual).** While connected and
       recording, one tap saves roughly 30 s before plus 15 s after the press by
       pulling covering finished segments into permanent iPhone storage. The Pi and
       wire contract stay unchanged: the app resolves the window from the existing
       clips list, resumable ranged pull, and event stream. Build mock-first.
-      - [ ] Add the Codable incident model, Application Support directory store,
+  - [ ] Add the Codable incident model, Application Support directory store,
             crash reconciliation, and pure wanted-set/evidence planner.
-      - [ ] Capture a durable phone-local mark from the folded recorder state; add
+  - [ ] Capture a durable phone-local mark from the folded recorder state; add
             the enabled-only-while-connected-and-recording Home button and cooldown.
-      - [x] Reconcile pending incidents across authoritative, fresh-epoch clip
+  - [x] Reconcile pending incidents across authoritative, fresh-epoch clip
             coverage while preserving event and session evidence ordering;
             deduplicate foreground-resumable pulls, remux to per-segment MP4, retain
             raw TS on remux failure, and classify evidence-backed partial saves.
-      - [ ] Add the Incidents tab and local detail surface for status, playback,
+  - [ ] Add the Incidents tab and local detail surface for status, playback,
             sharing, storage totals, unreadable-directory deletion, and incident
             deletion without touching the Pi ring.
-      - [ ] Finish live saving-state polish, short background-task grace, and the
+  - [ ] Finish live saving-state polish, short background-task grace, and the
             local reopen nudge lifecycle.
 - [ ] **Swoop `reef` -- CarPlay auto start/stop** on CarPlay connect/disconnect.
 - [ ] **Swoop `sage` -- CarPlay status panel** (Driving Task template). _Gated on the
