@@ -34,8 +34,8 @@ direction, not settled law.
 - **Language/UI:** Swift, UIKit (programmatic, no storyboards). Target current iOS.
 - **Architecture:** bespoke minimal TEA -- pure reducers, a `@MainActor` store,
   struct-of-closures dependencies, and a hand-written `TestStore`; zero third-party
-  architecture dependencies. See
-  `docs/design/03-2026-06-24-app-ui-architecture.md`.
+  architecture dependencies. See the
+  [app architecture](../docs/design/app/architecture.md) page.
 - **Local persistence:** filesystem-backed Application Support directories for
   phone-owned incident records and footage; SwiftData remains provisional for any
   future clip metadata or settings store. See app ADR 26.
@@ -105,6 +105,9 @@ and, for device testing, the CarPlay entitlement from Apple.
 
 ## Design pages
 
+- [App architecture](../docs/design/app/architecture.md) -- read when changing the
+  UIKit shell, Store/Effect runtime, root reducer composition, event folding,
+  observation, view-state projection, or diffable identity rules.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   Pi routes, HTTP framing, SSE, preview, clip pull, Wi-Fi pinning, or link trust.
 
@@ -112,24 +115,18 @@ During the migration, the remaining app ADRs under `docs/design/` stay authorita
 for subsystems that do not yet have a living page:
 
 - `01-2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
-- `03-2026-06-24-app-ui-architecture.md` -- UIKit programmatic UI and the bespoke
-  minimal TEA core used by the app.
 - `04-2026-06-26-connection-monitor-and-indicator.md` -- superseded by ADR 05; recorded
   the app-scoped `/v1/status` monitor, ambient navigation-bar connection pill,
   asymmetric disconnect debounce, and foreground/reconnect recovery hook.
-- `05-2026-06-26-app-shell-status-strip.md` -- superseded by ADR 06; kept the
-  app-scoped connection monitor and replaced the navigation-bar pill with a persistent
-  shell-owned status strip.
-- `06-2026-06-26-domain-root-store-and-scoped-observation.md` -- domain root store,
-  scoped observation, and the live connection monitor head inherited from ADR 05.
+- `05-2026-06-26-app-shell-status-strip.md` -- recorded the superseded app-scoped
+  connection monitor and introduced the persistent shell-owned status strip now
+  carried by the app architecture page.
 - `07-2026-06-26-on-device-clip-remux-playback.md` -- remux pulled TS clips into
   on-device MP4 for durable playback.
 - `08-2026-06-27-progressive-fmp4-clip-playback.md` -- progressively serve fMP4
   fragments over loopback while a clip pull is still running; superseded by ADR 13.
 - `09-2026-06-29-connection-liveness-timeouts.md` -- bound transport connect and
   monitor status-fetch liveness so stale "Connected" cannot hang indefinitely.
-- `10-2026-06-29-event-folded-state-machines.md` -- fold the ordered Pi event stream
-  into root app state and use SSE heartbeat timeout as connection truth.
 - `11-2026-06-30-receive-idle-deadline.md` -- bound post-connect receive idleness in
   the shared `NWByteStream` transport.
 - `12-2026-06-30-bounded-resilient-clip-pull.md` -- make clip pull retry by byte
@@ -143,9 +140,6 @@ for subsystems that do not yet have a living page:
 - `16-2026-07-01-client-side-clip-thumbnails.md` -- generate clip-list thumbnails on the
   phone (cache-first memory/disk/free-MP4/ranged-prefix pipeline); supersedes the raspi
   `/thumb` endpoint and cached `seg-<seq>.jpg` thumbnails.
-- `17-2026-07-02-selector-observation-and-view-state.md` -- selector-based observation,
-  derived rendered view-state, and diffable Home row rendering that keeps thumbnails
-  painted across row updates.
 - `18-2026-07-08-heartbeat-fresh-present-tense.md` -- present-tense UI claims require
   heartbeat-fresh state; stale recorder state stays typed and visually last-known rather
   than being extrapolated as live.

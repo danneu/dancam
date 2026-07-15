@@ -4,10 +4,11 @@
 - **Date:** 2026-06-29
 - **Owner:** app
 - **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
-  `app/docs/design/06-2026-06-26-domain-root-store-and-scoped-observation.md`;
+  [app architecture](../../../docs/design/app/architecture.md);
   root `AGENTS.md` (cross-cutting app<->Pi local API principle)
 
-> **Note (2026-06-30):** ADR 10 supersedes this ADR's status-monitor liveness layer.
+> **Note (2026-06-30):** The event-folded app architecture supersedes this ADR's
+> status-monitor liveness layer.
 > The `NWByteStream` connect-phase deadline still applies to the SSE, preview, control,
 > and clip clients, but `/v1/status` polling, the whole-status-fetch timeout, and the
 > three-strike debounce no longer define connection truth. The app starts one
@@ -68,9 +69,10 @@ off-network detection is about `3 x (connectTimeout + pollInterval)`, roughly 10
 seconds. That latency is acceptable for an ambient status strip on a congested 2.4 GHz
 link.
 
-This ADR refines the transport boundary's hand-rolled HTTP mechanics and ADR 06's live
-connection monitor policy. It supersedes neither: the wire contract, Wi-Fi pinning,
-`/v1/status` source of truth, and three-strike debounce all remain.
+This ADR originally refined the transport boundary's hand-rolled HTTP mechanics and
+the app's former live connection-monitor policy. At the time it superseded neither:
+the wire contract, Wi-Fi pinning, `/v1/status` source of truth, and three-strike
+debounce all remained. The note above records the later event-stream replacement.
 
 ## Consequences
 

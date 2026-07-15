@@ -1,11 +1,12 @@
 # ADR: app shell status strip
 
-- **Status:** Superseded by 06-2026-06-26-domain-root-store-and-scoped-observation.md
+- **Status:** Superseded; surviving shell decisions are in the
+  [app architecture](../../../docs/design/app/architecture.md)
 - **Date:** 2026-06-26
 - **Owner:** app
 - **Related:** root `AGENTS.md`; `app/AGENTS.md`;
   [transport boundary](../../../docs/design/boundary/transport.md);
-  `app/docs/design/03-2026-06-24-app-ui-architecture.md`;
+  [app architecture](../../../docs/design/app/architecture.md);
   `app/docs/design/04-2026-06-26-connection-monitor-and-indicator.md`
 
 ## Context

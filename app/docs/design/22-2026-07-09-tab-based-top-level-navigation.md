@@ -4,7 +4,7 @@
 - **Date:** 2026-07-09
 - **Owner:** app
 - **Related:** `05-2026-06-26-app-shell-status-strip.md`;
-  `06-2026-06-26-domain-root-store-and-scoped-observation.md`;
+  [app architecture](../../../docs/design/app/architecture.md);
   `21-2026-07-09-status-strip-recording-pill.md`
 
 ## Context
@@ -13,10 +13,10 @@ The app has one top-level surface today: `HomeViewController` in a single
 `UINavigationController`. Settings and control are an app responsibility, but Settings
 is a peer of Home rather than a destination within Home's navigation stack.
 
-ADR 06 retained the shell introduced by ADR 05 as the owner of global app chrome. ADR
-21 defines that chrome as the current connection and recording dual-pill status strip.
-Adding a peer surface must preserve the strip above every screen and keep the scene's
-composition in `SceneDelegate`.
+The app architecture retained the shell introduced by ADR 05 as the owner of global
+app chrome. ADR 21 defines that chrome as the current connection and recording
+dual-pill status strip. Adding a peer surface must preserve the strip above every
+screen and keep the scene's composition in `SceneDelegate`.
 
 ## Decision
 

@@ -5,9 +5,9 @@
 - **Owner:** app
 - **Related:** app ADR 26
   (`app/docs/design/26-2026-07-14-phone-owned-incidents.md`, superseded only
-  where it treats saved and partial as permanently terminal); app ADR 10
-  (`app/docs/design/10-2026-06-29-event-folded-state-machines.md`, ordered
-  snapshot and recorder lifecycle folding)
+  where it treats saved and partial as permanently terminal);
+  [app architecture](../../../docs/design/app/architecture.md) (ordered snapshot and
+  recorder lifecycle folding)
 
 ## Context
 

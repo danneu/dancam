@@ -3,7 +3,7 @@
 - **Status:** Superseded by 24-2026-07-09-recording-grouped-clip-browsing-and-attribution.md
 - **Date:** 2026-07-09
 - **Owner:** app
-- **Related:** `17-2026-07-02-selector-observation-and-view-state.md`;
+- **Related:** [app architecture](../../../docs/design/app/architecture.md);
   `18-2026-07-08-heartbeat-fresh-present-tense.md`;
   `19-2026-07-08-drive-grouped-clip-browsing.md`;
   `../../../docs/roadmap.md` (swoop `sift`);
@@ -72,8 +72,8 @@ specific drive.
    from `RecorderTruth` per ADR 18: a red ticking badge for a heartbeat-fresh
    live segment, a gray frozen badge at `~mm:ss` for last-known. Recorder status
    and the boot tag are read together through one equality-gated projection
-   (`LiveRecordingInputs`, per ADR 17), never two separate observations. Split
-   observations would be a coherence bug: on a reconnect to a new boot the
+   (`LiveRecordingInputs`, per the app architecture), never two separate
+   observations. Split observations would be a coherence bug: on a reconnect to a new boot the
    snapshot updates recorder state and `boot_tag` in one `send`, and a host that
    cached the two in separate ivars could paint one frame pairing the new
    recorder status with the old boot tag, flashing a REC marker on the wrong

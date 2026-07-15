@@ -3,13 +3,12 @@
 - **Status:** Accepted
 - **Date:** 2026-07-08
 - **Owner:** app
-- **Related:** `app/docs/design/06-2026-06-26-domain-root-store-and-scoped-observation.md`;
-  `app/docs/design/10-2026-06-29-event-folded-state-machines.md`;
-  `app/docs/design/17-2026-07-02-selector-observation-and-view-state.md`
+- **Related:** [app architecture](../../../docs/design/app/architecture.md)
 
 ## Context
 
-ADR 10 made the `/v1/events` heartbeat the app's connection truth. `Link` correctly
+The event-folded app architecture made the `/v1/events` heartbeat the app's connection
+truth. `Link` correctly
 distinguishes `.online(World)` from `.offline(last: World?)`, so the app can keep
 last-known camera detail while also saying "Not connected."
 
@@ -54,9 +53,9 @@ snapshot, even if the Pi recorder phase did not change while offline. `AppFeatur
 therefore compares recorder phases through `link.onlineWorld` before and after folding
 events. Offline last-known worlds are not a valid previous live phase.
 
-ADR 06, ADR 10, and ADR 17 remain Accepted. This ADR tightens their boundary:
-selector-derived view state is encouraged, but present-tense projections must preserve
-freshness instead of erasing it.
+This ADR tightens the [app architecture](../../../docs/design/app/architecture.md):
+selector-derived view state is encouraged, but present-tense projections must
+preserve freshness instead of erasing it.
 
 ## Consequences
 

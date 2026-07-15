@@ -5,7 +5,7 @@
 - **Owner:** app
 - **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/09-2026-06-29-connection-liveness-timeouts.md`;
-  `app/docs/design/10-2026-06-29-event-folded-state-machines.md`;
+  [app architecture](../../../docs/design/app/architecture.md);
   root `AGENTS.md` (cross-cutting app<->Pi local API principle)
 
 ## Context
@@ -23,7 +23,7 @@ preview reconnects after its byte stream throws, and one-shot request/response
 clients surface `.transport` only after the transport returns. Health, status, clips,
 and recording had no post-connect receive bound at all.
 
-The `/v1/events` stream now has an app-layer heartbeat timeout from ADR 10: three
+The `/v1/events` stream now has the app architecture's heartbeat timeout: three
 missed 2 second Pi heartbeats, about 6 seconds. That policy cancels and reconnects
 the events effect when no event arrives, but it covers only the events consumer. The
 transport still needs a socket-level receive backstop for every real `NWByteStream`

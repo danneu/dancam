@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-09
 - **Owner:** app
-- **Related:** `10-2026-06-29-event-folded-state-machines.md`;
+- **Related:** [app architecture](../../../docs/design/app/architecture.md);
   `14-2026-07-01-structured-logging-and-export.md`;
   `18-2026-07-08-heartbeat-fresh-present-tense.md`;
   `22-2026-07-09-tab-based-top-level-navigation.md`
@@ -73,11 +73,11 @@ Delete the app-side `/v1/health` feature, client, response model, and dependency
 keeps `/v1/health` as an operations and curl surface; its API contract is unchanged.
 
 Fold each online `.heartbeat(tMs:)` into `World.uptimeS` as `tMs / 1_000`, changing no
-other world field. This narrows ADR 10's earlier heartbeat rule from "does not mutate
-World" to "advances only uptime." Snapshot events remain authoritative and replace the
-whole world, including uptime. A controller-local uptime timer is unnecessary because
-the wire already carries elapsed time since boot. Home's local live-recording count-up is
-a separate recording-duration clock and remains unchanged.
+other world field. This narrows the event fold's earlier heartbeat rule from "does not
+mutate World" to "advances only uptime." Snapshot events remain authoritative and
+replace the whole world, including uptime. A controller-local uptime timer is
+unnecessary because the wire already carries elapsed time since boot. Home's local
+live-recording count-up is a separate recording-duration clock and remains unchanged.
 
 Keep the current log-export format and outcome tracking. Export failures become an
 inline critical row supplied to the same pure projection as controller-local input, so
@@ -97,9 +97,9 @@ Easy:
 Hard or risky:
 
 - Heartbeats now change `World`, so observers of the whole link can receive updates on
-  every heartbeat. ADR 06's scoped selectors still prevent callbacks whose selected
-  values did not change, and Debug's rendered uptime changes only at its displayed
-  precision.
+  every heartbeat. The app architecture's scoped selectors still prevent callbacks
+  whose selected values did not change, and Debug's rendered uptime changes only at
+  its displayed precision.
 - The Debug controller must reconfigure stable diffable items whenever projected row
   content changes; applying snapshots only for structural changes would freeze live
   values.

@@ -4,9 +4,8 @@
 - **Date:** 2026-07-08
 - **Owner:** app
 - **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
-  `06-2026-06-26-domain-root-store-and-scoped-observation.md`;
+  [app architecture](../../../docs/design/app/architecture.md);
   `16-2026-07-01-client-side-clip-thumbnails.md`;
-  `17-2026-07-02-selector-observation-and-view-state.md`;
   `../../../docs/roadmap.md` (swoop `sift`);
   [Pi storage](../../../docs/design/pi/storage.md)
 
@@ -78,8 +77,9 @@ Easy:
 - Home thumbnail cost drops from one representative fetch per visible segment to one per
   visible drive card, while detail still loads per-clip thumbnails only after the user
   asks for that drive.
-- The root store and selector-observation model from ADR 06 and ADR 17 remain intact:
-  drive cards and drive detail are derived view state over the clip list.
+- The root store and selector-observation model from the
+  [app architecture](../../../docs/design/app/architecture.md) remain intact: drive
+  cards and drive detail are derived view state over the clip list.
 - `boot_tag` stays an identity key only. The app never treats it as chronological or
   sortable.
 

@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-01
 - **Owner:** app
-- **Related:** `app/docs/design/03-2026-06-24-app-ui-architecture.md` (action log);
+- **Related:** [app architecture](../../../docs/design/app/architecture.md) (action log);
   `../../../AGENTS.md` (repo conventions)
 
 ## Context

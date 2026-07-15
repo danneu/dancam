@@ -5,14 +5,16 @@
 - **Owner:** app
 - **Related:** root `AGENTS.md`; `app/AGENTS.md`;
   [transport boundary](../../../docs/design/boundary/transport.md);
-  `app/docs/design/03-2026-06-24-app-ui-architecture.md`
+  [app architecture](../../../docs/design/app/architecture.md)
 
-> **Note (2026-06-30):** ADR 10 supersedes this ADR's connection-truth mechanism.
+> **Note (2026-06-30):** The event-folded app architecture supersedes this ADR's
+> connection-truth mechanism.
 > The app no longer owns a scene-scoped `ConnectionFeature`, `/v1/status` poll, or
 > three-strike debounce. Connection truth is now `Link`, folded from
 > snapshot-first `/v1/events`; liveness is heartbeat presence, with offline detected
 > after about 6 seconds of missed 2 second heartbeats. The shell and root-store
-> decisions that superseded this ADR are refined in ADR 06 and ADR 10.
+> decisions that superseded this ADR live in the
+> [app architecture](../../../docs/design/app/architecture.md) page.
 
 ## Context
 

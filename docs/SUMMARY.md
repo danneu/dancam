@@ -7,6 +7,7 @@
 # Design
 
 - [App-Pi transport boundary](design/boundary/transport.md)
+- [App architecture](design/app/architecture.md)
 - [Pi networking](design/pi/networking.md)
 - [Pi OS image, power, and recovery](design/pi/os-image.md)
 - [Pi provisioning](design/pi/provisioning.md)

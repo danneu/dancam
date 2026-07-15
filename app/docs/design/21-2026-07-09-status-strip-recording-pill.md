@@ -3,9 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-09
 - **Owner:** app
-- **Related:** `06-2026-06-26-domain-root-store-and-scoped-observation.md`;
-  `10-2026-06-29-event-folded-state-machines.md`;
-  `17-2026-07-02-selector-observation-and-view-state.md`;
+- **Related:** [app architecture](../../../docs/design/app/architecture.md);
   `18-2026-07-08-heartbeat-fresh-present-tense.md`;
   `20-2026-07-09-live-recording-surfaces-and-drive-attribution.md`
 
@@ -16,16 +14,16 @@ the preview live," but the implementation did not read preview liveness. It read
 `RecordingFeature.State`, the phone-side command state. `PreviewViewController`
 already owns the preview-liveness pill for Connecting, Live, and Preview offline.
 
-That made the overlay both misplaced and fragile. ADR 10 made heartbeat presence
-the connection truth, and ADR 18 requires stale recorder state to remain visible
-as last-known instead of pretending it is live. When heartbeat timed out,
+That made the overlay both misplaced and fragile. The app architecture made heartbeat
+presence the connection truth, and ADR 18 requires stale recorder state to remain
+visible as last-known instead of pretending it is live. When heartbeat timed out,
 `AppFeature` reset `RecordingFeature.State` to `.unknown`, so the overlay blinked
 out during Wi-Fi churn even if the last-known recorder snapshot said the Pi was
 recording.
 
 The app shell status strip was built for system-level state. ADR 05 described
-"More status surfaces are coming: recording state, ..." and ADR 06 kept the
-shell strip as the persistent app chrome. Recording status is a system-level
+"More status surfaces are coming: recording state, ..." and the app architecture kept
+the shell strip as the persistent app chrome. Recording status is a system-level
 dashcam fact, so it belongs in that strip rather than over Home's preview.
 
 ## Decision
@@ -56,11 +54,11 @@ and when hidden it deactivates its trailing and spacing constraints so it
 reserves no trailing width.
 
 Feed the shell with one equality-gated projection containing the derived
-connection pill, derived recording pill, and coarse link phase. This keeps ADR
-17's "observe view state, not source state" model and avoids waking the shell on
-unrelated `World` deltas such as temperature, storage, memory, or uptime. The
-same projection's link phase preserves ADR 06's offline-to-online live-work
-resume edge.
+connection pill, derived recording pill, and coarse link phase. This keeps the app
+architecture's "observe view state, not source state" model and avoids waking the
+shell on unrelated `World` deltas such as temperature, storage, memory, or uptime.
+The same projection's link phase preserves the architecture's offline-to-online
+live-work resume edge.
 
 Reuse `LiveRecordingStatus.shouldShowPending(recording:recorder:)` for the fresh
 pending-start rule, backed by a shared `RecorderPhase.claimsRecording` predicate.
