@@ -410,7 +410,7 @@ End state:
 - [x] 17. Move the Pi runbook into the book
 - [x] 18. Extract hardware and references pages
 - [x] 19. Retire ADR tooling
-- [ ] 20. Slim AGENTS.md files to the lean layout
+- [x] 20. Slim AGENTS.md files to the lean layout
 - [ ] 21. Refresh the root README
 
 ## Implementation notes

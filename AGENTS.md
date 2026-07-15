@@ -1,143 +1,82 @@
 # dancam
 
-A do-it-yourself dashcam system built around an iPhone. Three parts work together:
-
-1. **Camera unit** (`raspi/`) -- a Raspberry Pi + wide-angle camera that records
-   continuously to its own microSD card.
-2. **iPhone app** (`app/`) -- the primary UI and "brains." Connects to the camera
-   unit over Wi-Fi to preview, browse, and pull clips, manage settings, and handle
-   incidents.
-3. **CarPlay integration** -- a layer inside the iPhone app that exposes a small,
-   safe surface to the car screen: voice control, status, and start/stop. (It is
-   part of the app target; it does not live in a separate folder.)
-
-The project is **iPhone-only** and the app owns the product experience. The Pi is
-deliberately dumb: capture, encode, store safely, and serve footage on request.
+dancam is a do-it-yourself, iPhone-only dashcam system. The Raspberry Pi camera
+unit records safely to its own microSD card, the iPhone app owns the product
+experience, and CarPlay is a small voice, status, and control surface inside the
+app. Read the [system overview](docs/overview.md) before cross-side work.
 
 ## Working stance: take the ideal solution, not the prescribed one
 
-Early implementation: most of this repo is design documentation, but `raspi/service/`
-is the first buildable code. Docs and notes were written ahead of real hardware --
-best guesses, not commitments. When planning or implementation surfaces a better approach, take it;
-never stay trapped in a solution we spitballed before we had evidence. On every
-pivot, update the record in the same change (see "Design documentation"); a pivot
-that isn't written down is the next trap. The
-"Cross-cutting principles" below are the firmest layer (hard physical constraints) --
-revisit even those if reality disagrees, but at a higher, explicit bar.
+This project is early and has no shipped users. Existing docs and code are evidence,
+not compatibility commitments: delete and replace old shapes when a cleaner design
+emerges, and update the owning design page in the same change.
 
-**Optimize for the ideal solution, full stop.** There are no users and no shipped
-releases, so there is nothing to be backwards-compatible with: never preserve an old
-shape, keep a deprecated path, or add a compatibility shim "just in case." Delete and
-replace rather than layer around. Code churn is not a cost we weigh -- rename, move,
-restructure, and rewrite freely whenever it gets us to the cleaner end state. If a
-change is the right one, the size of the diff or the number of touched files is never
-a reason to hold back. The only bar is: is this the best design we can see right now?
-
-**Build each feature durable, not transient.** When you build a swoop, build the
-version you'd defend -- forward-thinking and robust -- not a deliberately dumb stub you
-plan to "harden in a later pass." Suboptimal-on-purpose code compounds: the next
-feature builds around the shortcut and inherits it, so the whole system ratchets toward
-mediocre. If you genuinely need to prove an approach works first, do it with a
-**throwaway spike** (code written to be deleted) and then build the committed version
-properly -- never promote the spike into the feature. The one honest exception is
-sequencing that hardware reality forces (e.g. the writable dev image before the
-read-only car image), which the owning docs call out explicitly.
+Build every swoop as the durable version you would defend, not a deliberately weak
+stub to harden later. When an approach needs proof, write a throwaway spike and then
+build the committed version properly. Hardware-forced sequencing, such as a writable
+dev image before a read-only car image, is the honest exception.
 
 ## Roadmap
 
-The build plan lives in **[`docs/roadmap.md`](docs/roadmap.md)**: the **swoops**
-(codenamed units of work across Pi -> Wi-Fi -> app -- `oak`, `fox`, ... -- each built
-as a durable, forward-thinking feature rather than a transient stub; codenamed so they
-reorder without renumbering), the default order and mock-Pi / real-Pi tracks, and an
-**Icebox** of parked someday-maybe swoops. Read it before deciding what to build next.
-
-## Hardware (tentative)
-
-Pi Zero 2 W + Arducam IMX708 Autofocus Wide camera; full spec, part links, and prices
-in [`docs/hardware.md`](docs/hardware.md). May change as concrete implementation starts.
+[`docs/roadmap.md`](docs/roadmap.md) owns the ordered, codenamed swoops and Icebox.
+Read it before choosing what to build next.
 
 ## Development environment
 
-Dan develops on an **M1 (Apple Silicon) MacBook Pro** running macOS -- the only dev
-workstation.
-
-- **iPhone app:** built and run natively in Xcode on this Mac (an Apple Silicon Mac
-  is required for current iOS toolchains and the simulator).
-- **Raspberry Pi:** flash the microSD from the laptop with Raspberry Pi Imager 2.0.10+
-  (headless OS-customization sets Wi-Fi/SSH/hostname for first-boot without a monitor,
-  then iterate over SSH); see
-  [`docs/setup/pi-runbook.md`](docs/setup/pi-runbook.md) for the full runbook.
+Dan develops on an M1 MacBook Pro running macOS. The iPhone app builds natively in
+Xcode; current iOS toolchains and the simulator require Apple Silicon. Raspberry Pi
+work is cross-built from the Mac and deployed over SSH; the full bootstrap and
+operations guide is the [Pi setup runbook](docs/setup/pi-runbook.md).
 
 ## Repository layout
 
-```
+```text
 dancam/
-  AGENTS.md              <- you are here (whole-system overview + conventions)
-  Justfile               <- common build/test/run tasks; prefer these over raw commands
-  docs/roadmap.md        <- build plan: swoops + Icebox
-  app/                   <- iPhone app (Swift / UIKit). Has its own AGENTS.md.
-    docs/design/         <- app-side ADRs ({seq}-YYYY-MM-DD-{slug}.md)
-  raspi/                 <- camera-unit software (Raspberry Pi). Has its own AGENTS.md.
-    service/             <- Rust control/media service crate
-    docs/design/         <- raspi-side ADRs ({seq}-YYYY-MM-DD-{slug}.md)
-  contract/events/       <- shared /v1/events wire contract (canonical event bodies + README)
-  references/            <- third-party source clones (git-ignored; `just fetch-references`)
+  AGENTS.md              <- whole-system stance, constraints, and conventions
+  Justfile               <- common build, test, docs, and deploy tasks
+  book.toml              <- mdBook configuration; source is docs/
+  docs/                  <- overview, roadmap, living design, setup, and research
+  contract/events/       <- canonical /v1/events golden corpus and framing reference
+  app/                   <- iPhone app (Swift/UIKit); has its own AGENTS.md
+  raspi/                 <- camera owner, Rust service, provisioning; has its own AGENTS.md
+  references/            <- gitignored, pinned upstream source clones
 ```
 
-When you work inside `app/` or `raspi/`, read that folder's AGENTS.md first
-([`app/AGENTS.md`](app/AGENTS.md), [`raspi/AGENTS.md`](raspi/AGENTS.md)) -- it carries
-the details and constraints specific to that side. Each side's file links back here and
-to its sibling, so the three stay navigable (and de-duped: root owns the cross-cutting
-decisions, each side owns its own).
+When working in `app/` or `raspi/`, read that directory's AGENTS.md after this one.
 
 ## Contract
 
-`contract/` holds the versioned wire contract shared by both sides -- currently
-`contract/events/`, the canonical `/v1/events` event bodies (one JSON file per
-event `type`, plus a `README.md` describing the SSE framing). These files are the
-source of truth for the format: both the raspi Rust service
-(`raspi/service/src/events.rs#fn fixture`) and the app's Swift test suite
-(`app/DanCam/DanCamTests/Networking/Events/CameraEventCorpusTests.swift`) load
-them as a golden corpus and assert their decoders round-trip every file. It lives
-at the repo root, a peer of `app/` and `raspi/`, because it belongs to neither
-side -- it is the boundary between them, not documentation to file under `docs/`.
+`contract/events/` is the canonical shared `/v1/events` wire corpus. Its
+[`README.md`](contract/events/README.md) owns the SSE framing and explains how both
+the Rust and Swift suites round-trip every golden event body. The contract stays at
+the repo root because it is the boundary between the app and Pi, not owned by either.
 
-## References
+## Reference guides
 
-[`docs/references.md`](docs/references.md) documents the gitignored, read-only upstream
-clones, their Pi-matched pins, and the commands for seeding or refreshing them. Read it
-before changing camera-stack or kernel integration.
+- [Hardware](docs/hardware.md) -- read for the selected parts, physical constraints,
+  cabling, camera compatibility, and supported Raspberry Pi Imager versions.
+- [Upstream source references](docs/references.md) -- read before changing camera-stack
+  or kernel integration; it owns clone locations, pins, and refresh commands.
 
-## Cross-cutting principles (the decisions that shape everything)
+## System constraints
 
-These are settled at the system level. Side-specific ADRs must not contradict them.
+The [system overview](docs/overview.md#cross-cutting-principles) is the canonical full
+explanation. Keep these always-on constraints in view:
 
-- **SD is the source of truth.** The Pi always records locally. The phone is a
-  client that reads footage on demand; a dropped Wi-Fi link must never lose video.
-- **Incidents are phone-owned.** The Pi ring buffers recent footage and serves it;
-  the app pulls a marked window into permanent phone storage and owns incident
-  lifecycle, review, sharing, and deletion. See
-  [`docs/design/app/incidents.md`](docs/design/app/incidents.md).
-- **Wi-Fi is 2.4 GHz, preview + pull only.** The chosen Pi (Zero 2 W) has no 5 GHz
-  radio. Design for a slow, congested link: low-res preview, on-demand clip pull,
-  never bulk continuous streaming. See `raspi/AGENTS.md`.
-- **CarPlay is a voice + status + control surface, NOT a video viewport.** Third-party
-  CarPlay apps cannot draw a live camera feed. The live preview stays on the iPhone
-  screen. CarPlay gets: voice incident-marking, auto start/stop, a status panel,
-  alerts. See [`docs/design/app/carplay.md`](docs/design/app/carplay.md).
-- **Recording must survive abrupt power loss.** The car cuts power without warning.
-  Corruption resilience is a first-class requirement, solved in layers (format +
-  filesystem + card hardware). See
-  [`docs/design/pi/recording.md`](docs/design/pi/recording.md).
-- **Thermals are a real constraint, not an afterthought.** The unit lives on a
-  windshield in Texas heat. The camera sensor (rated to ~50 C) is the weak link,
-  not the Pi board (rated to 70 C). See `raspi/AGENTS.md`.
-- **The app<->Pi link is a versioned local API served by the Pi, pinned to Wi-Fi.**
-  Request/response control plus low-res preview, snapshot-first SSE events, and
-  on-demand clip pull; never on the recording path. `/v1/events` is the live state
-  source: snapshot, ordered deltas, and heartbeat. Connection liveness is heartbeat
-  presence; `/v1/status` is a one-shot read of the same snapshot shape. The transport
-  mechanics (MJPEG preview, resumable ranged pull, SSE events) live in the
+- **SD is the source of truth:** the Pi records locally; Wi-Fi is never on the
+  recording path. See [Pi recording](docs/design/pi/recording.md).
+- **Incidents are phone-owned:** the app pulls and permanently owns marked footage.
+  See [incident capture](docs/design/app/incidents.md).
+- **Wi-Fi is 2.4 GHz, preview and pull only:** never design for bulk continuous
+  streaming. See the [transport boundary](docs/design/boundary/transport.md).
+- **CarPlay is voice, status, and control, not video:** live preview stays on the
+  phone. See the [CarPlay boundary](docs/design/app/carplay.md).
+- **Abrupt power loss is normal:** recording and storage must recover safely. See
+  [Pi recording](docs/design/pi/recording.md) and the [OS image](docs/design/pi/os-image.md).
+- **Thermals are a first-class limit:** the 50 C camera rating is weaker than the
+  Pi board. See [hardware](docs/hardware.md#arducam-imx708-autofocus-wide).
+- **The app<->Pi API is local, versioned, and Wi-Fi-pinned:** SSE is the live state
+  source; status is a one-shot snapshot. See the
   [transport boundary](docs/design/boundary/transport.md).
 
 ## Design documentation
@@ -146,59 +85,37 @@ Design documentation is a set of living subsystem pages under
 `docs/design/{boundary,pi,app}/`. The folder identifies the owner; pages have no
 owner metadata or sequence numbers.
 
-- Keep each page body as the canonical present-tense description of the current
-  design. Every behavior change updates the owning page body in the same change.
-- Record the why behind a decision, including abandoned ideas, as a dated entry
-  under the page's `## Decision log`. Append new entries; never rewrite or delete
-  existing entries, and never leave stale history in the page body.
+- Keep each page body as the canonical present-tense design. Every behavior change
+  updates the owning page body in the same change.
+- Record why a decision was made, including abandoned ideas, as a dated entry under
+  the page's `## Decision log`. Append entries; never rewrite or delete them, and
+  never preserve stale history in the page body.
 - Link to pages inside the book with normal Markdown links so mdBook link checking
-  can validate them. Write references outside `docs/` as backticked stable anchors,
-  such as `raspi/service/src/storage.rs#fn evict`, rather than links.
-- Treat research and battle notes as point-in-time findings, not living design
-  pages. Files under `docs/research/` and `docs/battle-notes/` need neither body
-  rewrites nor a Decision log and may honestly go stale. Add every new file in
-  either folder to `docs/SUMMARY.md` in the same change.
-- Keep AGENTS.md files lean: always-on stance, constraints, and commands belong
-  here; task-specific guidance belongs in a linked documentation page with a short
-  blurb saying when to read it.
-
-During the migration from ADRs to living pages:
-
-- A living page becomes the sole authority for its subsystem when it lands; delete
-  the ADRs it absorbs in the same change.
-- ADRs not yet absorbed remain authoritative until their living page lands.
-- New design decisions create or extend the owning living page and absorb that
-  page's remaining ADRs in the same change. Do not create new ADR files.
+  validates them. Write out-of-book code or config references as backticked stable
+  anchors such as `raspi/service/src/storage.rs#fn evict`.
+- Research and battle notes are point-in-time findings, not living pages. They need
+  no Decision log and may go stale honestly. Add every new file under
+  `docs/research/` or `docs/battle-notes/` to `docs/SUMMARY.md` in the same change.
+- Keep AGENTS.md files lean: always-on stance, constraints, and commands belong here;
+  task-specific guidance belongs in a linked page with a when-to-read blurb.
 
 ## Conventions
 
-- **Writing style:** plain ASCII. Write `4x` not the times sign, straight quotes,
-  `--` not an em dash, `degrees`/`deg` not the degree sign. Applies to docs, code
-  comments, and commit messages -- but not UI.
-- **References in docs/plans:** never cite line numbers -- they drift the moment a
-  file changes and silently rot. Point at a stable anchor instead:
-  `path/to/file#identifier`, where the identifier is a symbol or heading that can be
-  searched for verbatim -- e.g. `raspi/service/src/main.rs#fn run_server`,
-  `app/AGENTS.md#Conventions`, `docs/roadmap.md#Icebox`. When no named anchor exists,
-  quote a short unique snippet rather than a line number. (Clickable `file:line` in
-  chat is fine -- it's transient; this rule is about durable docs, plans, and ADRs.)
-- **Tasks:** use the root `Justfile` for common repo commands when one exists. Run
-  `just --list` to discover tasks, and prefer those tasks over spelling out raw
-  `cargo`/Xcode/etc. commands unless you are deliberately testing the lower-level
-  command.
-- **Raspberry Pi setup runbook:**
-  [`docs/setup/pi-runbook.md`](docs/setup/pi-runbook.md) is the reproducible fresh-Pi
-  bootstrap, verification, and operations guide. Changes to human-facing
-  setup/verify/ops steps must update it in the same change. Changes to onboard system
-  state -- packages, `/boot/firmware/config.txt`, Avahi,
-  NetworkManager profiles, systemd units, deploy paths, AP/mDNS behavior, or other
-  config files -- belong in the owning playbook/unit/deploy artifact and its comments;
-  see [`raspi/AGENTS.md`](raspi/AGENTS.md) and
-  [Pi provisioning](docs/design/pi/provisioning.md).
-- **Commits:** small and logical; one coherent change per commit. Follow
-  [Conventional Commits](https://www.conventionalcommits.org/) -- a `type(scope):
-summary` subject (types: `feat`, `fix`, `docs`, `refactor`, `chore`; scope optional,
-  e.g. `app` / `raspi`), with a body when the why isn't obvious. Example:
-  `docs(raspi): add power-source-and-shutdown ADR`.
-- **Source of truth for context:** `AGENTS.md` files. `CLAUDE.md` exists only to
-  import `AGENTS.md` for the Claude Code harness.
+- **Writing style:** use plain ASCII in docs, code comments, chat, and commit
+  messages. Write `4x`, straight quotes, `--`, and `degrees`/`deg`; UI copy may use
+  richer typography.
+- **Stable references:** durable docs and plans never cite line numbers. Use
+  `path/to/file#identifier`, where the identifier is a symbol or heading, or quote a
+  short unique snippet when no anchor exists. Transient clickable `file:line` links
+  in chat are fine.
+- **Tasks:** use the root `Justfile` when a recipe exists. Run `just --list` to
+  discover tasks; use raw lower-level commands only when testing that layer directly.
+- **Pi operations:** changes to human setup, verification, or operations update
+  `docs/setup/pi-runbook.md` in the same change. Onboard packages, boot config,
+  NetworkManager, Avahi, mounts, systemd, and deploy paths belong in their owning
+  playbook/unit/deploy artifact and comments; see [Pi provisioning](docs/design/pi/provisioning.md).
+- **Commits:** make one coherent Conventional Commit at a time, using
+  `type(scope): summary` with a body when the why is not obvious. Types are `feat`,
+  `fix`, `docs`, `refactor`, and `chore`.
+- **Context source:** AGENTS.md files are authoritative. CLAUDE.md files only import
+  them for the Claude Code harness.

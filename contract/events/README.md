@@ -14,6 +14,12 @@ There is no SSE `event:` discriminator and no JSON frame envelope. The JSON
 object is the tagged event, keyed by `type`; the files in this
 directory are the canonical event bodies that cross the wire in `data:`.
 
+These JSON files are also the shared golden corpus. The Pi fixture loader at
+`raspi/service/src/events.rs#fn fixture` and the Swift corpus tests at
+`app/DanCam/DanCamTests/Networking/Events/CameraEventCorpusTests.swift` load every
+event body and assert that their decoders round-trip it. A wire-shape change updates
+the canonical file and both consumers together.
+
 The first frame on every connection is `snapshot`, followed by ordered delta
 events and periodic `heartbeat` events. Reconnects ignore `Last-Event-ID` and
 start with a fresh snapshot, because any gap is resolved by replacing local
