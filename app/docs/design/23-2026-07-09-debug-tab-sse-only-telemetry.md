@@ -4,8 +4,8 @@
 - **Date:** 2026-07-09
 - **Owner:** app
 - **Related:** [app architecture](../../../docs/design/app/architecture.md);
+  [app connection](../../../docs/design/app/connection.md);
   `14-2026-07-01-structured-logging-and-export.md`;
-  `18-2026-07-08-heartbeat-fresh-present-tense.md`;
   `22-2026-07-09-tab-based-top-level-navigation.md`
 
 **Note (2026-07-15): Operational status consolidation.** The
@@ -113,7 +113,7 @@ Hard or risky:
 - **Keep Debug behind Home's navigation-bar button.** Rejected. Debug is a peer surface,
   and the button competes with Home's feature-specific chrome.
 - **Leave uptime frozen at the snapshot.** Rejected. A healthy connection would show a
-  stale present-tense value without the ADR 18 banner.
+  stale present-tense value and violate the app connection design's freshness boundary.
 - **Run a controller-local uptime timer.** Rejected. Heartbeat `t_ms` already provides
   the device's elapsed-since-boot clock, so a second clock would add drift and lifecycle
   complexity.

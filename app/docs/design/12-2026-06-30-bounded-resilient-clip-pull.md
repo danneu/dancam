@@ -4,7 +4,7 @@
 - **Date:** 2026-06-30
 - **Owner:** app
 - **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
-  `app/docs/design/11-2026-06-30-receive-idle-deadline.md`;
+  [app connection](../../../docs/design/app/connection.md);
   root `AGENTS.md` (cross-cutting app<->Pi local API principle)
 
 > **Note (2026-07-01): HTTP 503 ride-through.** The rideable failure set now
@@ -25,7 +25,8 @@ its retry budget counted total reconnects. A flaky but progressing pull could dr
 than a handful of times, hit the fixed attempt ceiling, delete the temporary TS
 file, and force the user to start again from byte 0.
 
-ADR 11 moved the silent-stall bound into the shared `NWByteStream` transport.
+The [app connection design](../../../docs/design/app/connection.md) moved the
+silent-stall bound into the shared `NWByteStream` transport.
 That transport now turns post-connect receive idleness into
 `NWByteStreamError.receiveIdleTimedOut`, cancels the underlying connection, and
 finishes the byte stream. Clip pull sees that error in the same place it sees any
@@ -83,7 +84,7 @@ Easy:
 - A clip pull that keeps advancing bytes is no longer killed by a small fixed
   total-attempt count.
 - A dead link still terminates in bounded time because each attempt is already
-  bounded by ADR 09's connect deadline and ADR 11's receive-idle deadline, and
+  bounded by the app connection design's connect and receive-idle deadlines, and
   consecutive no-progress reconnects exhaust the clip-pull budget.
 - `NWByteStreamError.receiveIdleTimedOut` remains a rideable transport failure
   for clip pull. A stall before body bytes counts as no progress; a stall after
@@ -111,9 +112,9 @@ Hard or risky:
   Rejected. A legitimate validator-changing `200` truncates and rewrites from
   byte 0, so an attempt can write body bytes while ending below its starting byte
   offset.
-- **Add a clip-pull-local idle timer or wrapper.** Rejected. ADR 11 already
-  implements the receive-idle deadline once inside `NWByteStream`, where the real
-  connection can be cancelled and every transport plane benefits.
+- **Add a clip-pull-local idle timer or wrapper.** Rejected. The app connection design
+  already implements the receive-idle deadline once inside `NWByteStream`, where the
+  real connection can be cancelled and every transport plane benefits.
 - **Keep partial temp files after exhaustion.** Rejected for this change. Without
   cross-pull persistence of validators and partial-file state, keeping the temp
   file does not give the next viewer instance a safe resume point.

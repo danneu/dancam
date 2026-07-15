@@ -4,16 +4,16 @@
 - **Date:** 2026-07-09
 - **Owner:** app
 - **Related:** [app architecture](../../../docs/design/app/architecture.md);
-  `18-2026-07-08-heartbeat-fresh-present-tense.md`;
+  [app connection](../../../docs/design/app/connection.md);
   `19-2026-07-08-drive-grouped-clip-browsing.md`;
   `../../../docs/roadmap.md` (swoop `sift`);
   [transport boundary](../../../docs/design/boundary/transport.md);
   [Pi storage](../../../docs/design/pi/storage.md)
 
-> **Note (2026-07-09):** Decision point 6 is superseded by
-> `21-2026-07-09-status-strip-recording-pill.md`: the preview REC overlay is
-> deleted, and recording status moves to the shell status strip. The widget,
-> drive-card marker, and drive-detail row decisions stand.
+> **Note (2026-07-09):** Decision point 6 is superseded by the
+> [app connection design](../../../docs/design/app/connection.md): the preview REC
+> overlay is deleted, and recording status moves to the shell status strip. The
+> widget, drive-card marker, and drive-detail row decisions stand.
 
 ## Context
 
@@ -69,9 +69,10 @@ specific drive.
    recording stops, the next render pops the empty drive as before.
 
 5. **One recorder-truth projection feeds all three.** All three surfaces render
-   from `RecorderTruth` per ADR 18: a red ticking badge for a heartbeat-fresh
-   live segment, a gray frozen badge at `~mm:ss` for last-known. Recorder status
-   and the boot tag are read together through one equality-gated projection
+   from `RecorderTruth` per the app connection design: a red ticking badge for a
+   heartbeat-fresh live segment, a gray frozen badge at `~mm:ss` for last-known.
+   Recorder status and the boot tag are read together through one equality-gated
+   projection
    (`LiveRecordingInputs`, per the app architecture), never two separate
    observations. Split observations would be a coherence bug: on a reconnect to a new boot the
    snapshot updates recorder state and `boot_tag` in one `send`, and a host that
@@ -133,5 +134,5 @@ Mitigations:
   boot-level constant on every segment and vanish exactly when the attribution is
   needed most -- during pending (no current segment) and idle.
 - **Hide the card pill and detail row when the link drops.** Rejected. It
-  reintroduces the flap ADR 18 rejected; last-known state stays visible and typed
-  (gray frozen) rather than blinking out on a heartbeat gap.
+  reintroduces the flap rejected by the app connection design; last-known state stays
+  visible and typed (gray frozen) rather than blinking out on a heartbeat gap.

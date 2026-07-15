@@ -82,7 +82,7 @@ Lane A -- Clip pull & resumable transport (app)   ->  01-pull-transport.md
   app/DanCam/DanCam/App/ConnectionResumable.swift; app/DanCam/DanCam/Networking/HTTP/
   (HTTPContentRange, HTTPRequestEncoder, HTTPResponseHead, HTTPBodyDecoder, NWByteStream,
   InterfacePinning, ContentType); Networking/ClipsClient.swift; ClipsResponse.swift.
-  Authorities: `app/docs/design/09-2026-06-29-connection-liveness-timeouts.md` and the
+  Authorities: the [app connection design](../docs/design/app/connection.md) and the
   [transport boundary](../docs/design/boundary/transport.md).
 - Key questions: Is the Range/If-Range/Content-Range resume loop correct -- verify ETag
   before resuming, truncate/restart correctly on a validator change (HTTP 200), never

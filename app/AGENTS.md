@@ -108,6 +108,9 @@ and, for device testing, the CarPlay entitlement from Apple.
 - [App architecture](../docs/design/app/architecture.md) -- read when changing the
   UIKit shell, Store/Effect runtime, root reducer composition, event folding,
   observation, view-state projection, or diffable identity rules.
+- [App connection](../docs/design/app/connection.md) -- read when changing event-stream
+  liveness, network deadlines, reconnect lifecycle, freshness-typed UI, visible-screen
+  recovery, or the shell status strip.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   Pi routes, HTTP framing, SSE, preview, clip pull, Wi-Fi pinning, or link trust.
 
@@ -115,20 +118,10 @@ During the migration, the remaining app ADRs under `docs/design/` stay authorita
 for subsystems that do not yet have a living page:
 
 - `01-2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
-- `04-2026-06-26-connection-monitor-and-indicator.md` -- superseded by ADR 05; recorded
-  the app-scoped `/v1/status` monitor, ambient navigation-bar connection pill,
-  asymmetric disconnect debounce, and foreground/reconnect recovery hook.
-- `05-2026-06-26-app-shell-status-strip.md` -- recorded the superseded app-scoped
-  connection monitor and introduced the persistent shell-owned status strip now
-  carried by the app architecture page.
 - `07-2026-06-26-on-device-clip-remux-playback.md` -- remux pulled TS clips into
   on-device MP4 for durable playback.
 - `08-2026-06-27-progressive-fmp4-clip-playback.md` -- progressively serve fMP4
   fragments over loopback while a clip pull is still running; superseded by ADR 13.
-- `09-2026-06-29-connection-liveness-timeouts.md` -- bound transport connect and
-  monitor status-fetch liveness so stale "Connected" cannot hang indefinitely.
-- `11-2026-06-30-receive-idle-deadline.md` -- bound post-connect receive idleness in
-  the shared `NWByteStream` transport.
 - `12-2026-06-30-bounded-resilient-clip-pull.md` -- make clip pull retry by byte
   progress, bound no-progress and runaway reconnects, and surface typed failures.
 - `13-2026-07-01-durable-clip-cache.md` -- delete the progressive loopback player and
@@ -140,9 +133,6 @@ for subsystems that do not yet have a living page:
 - `16-2026-07-01-client-side-clip-thumbnails.md` -- generate clip-list thumbnails on the
   phone (cache-first memory/disk/free-MP4/ranged-prefix pipeline); supersedes the raspi
   `/thumb` endpoint and cached `seg-<seq>.jpg` thumbnails.
-- `18-2026-07-08-heartbeat-fresh-present-tense.md` -- present-tense UI claims require
-  heartbeat-fresh state; stale recorder state stays typed and visually last-known rather
-  than being extrapolated as live.
 - `19-2026-07-08-drive-grouped-clip-browsing.md` -- superseded by ADR 24; treated a
   drive boottag as the Home browse unit for finished clips, with app-side drive cards,
   detail projections, stable representative thumbnails, and per-clip deletion.
@@ -151,8 +141,6 @@ for subsystems that do not yet have a living page:
   on the recording drive's card, and a live row atop that drive's detail; snapshot-level
   nullable `boot_tag` was the drive identity, read with recorder truth through one
   projection.
-- `21-2026-07-09-status-strip-recording-pill.md` -- show connection and recording state
-  together in the shell-owned dual-pill status strip.
 - `22-2026-07-09-tab-based-top-level-navigation.md` -- embed Home and Settings as
   independently navigable tabs below the global status strip.
 - `23-2026-07-09-debug-tab-sse-only-telemetry.md` -- add Debug as the middle tab,

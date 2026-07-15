@@ -5,7 +5,7 @@
 - **Owner:** app
 - **Related:** `19-2026-07-08-drive-grouped-clip-browsing.md` (superseded);
   `20-2026-07-09-live-recording-surfaces-and-drive-attribution.md` (superseded);
-  `21-2026-07-09-status-strip-recording-pill.md`;
+  [app connection](../../../docs/design/app/connection.md);
   `../../../docs/roadmap.md` (swoop `sift`);
   `../../../contract/events/README.md`;
   [Pi storage](../../../docs/design/pi/storage.md)
@@ -88,7 +88,6 @@ with `boot_tag`.
 This ADR supersedes app ADRs 19 and 20. Those files are append-only historical record:
 their filenames and "drive" wording stand unchanged; only their Status line gains the
 supersession marker. ADR 24 additionally retires the "Drive" vocabulary going forward
-and renames the "drive card" / "drive detail" surfaces that ADR 21 refers to; ADR 21
-stays `Accepted` and is not rewritten -- the status strip is identity-agnostic, and
-accepted ADRs are not edited to chase terminology, so the surface rename is captured
-here.
+and renames the "drive card" / "drive detail" surfaces described by the app connection
+design's Decision log. The status strip is identity-agnostic; this decision records the
+surface rename where it occurred.

@@ -149,9 +149,9 @@ app in `connecting` forever. Every received event replaces that deadline. Stream
 failure or deadline expiry moves the link offline, cancels live work as appropriate,
 resets connection-scoped state, and schedules a bounded reconnect. The current
 deadline is 6 seconds, or three missed 2 second Pi heartbeats. The broader liveness and
-foreground lifecycle policy belongs to the app connection design; the architecture
-invariant is that SSE is the single ordered connection truth, never a fallback beside
-`/v1/status` polling.
+foreground lifecycle policy belongs to the [app connection design](connection.md); the
+architecture invariant is that SSE is the single ordered connection truth, never a
+fallback beside `/v1/status` polling.
 
 Recording controls are locally optimistic but reconcile against Pi-owned
 `RecorderPhase`. While starting, a stale `idle` event cannot undo the optimistic
