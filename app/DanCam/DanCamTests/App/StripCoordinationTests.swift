@@ -5,7 +5,8 @@ struct StripCoordinationTests {
     @Test func connectionPillMapsCaptionAndTone() {
         let world = CameraSamples.world()
         let cases: [(Link, StripCoordination.ConnectionPill)] = [
-            (.connecting, .init(caption: "Connecting", tone: .neutral)),
+            (.suspended(last: world), .init(caption: "Paused", tone: .neutral)),
+            (.connecting(last: world), .init(caption: "Connecting", tone: .neutral)),
             (.online(world), .init(caption: "Connected", tone: .positive)),
             (.offline(last: world), .init(caption: "Not connected", tone: .negative)),
         ]
@@ -18,6 +19,8 @@ struct StripCoordinationTests {
     @Test func resumesLiveWorkOnlyFromOfflineToOnline() {
         let cases: [(StripCoordination.LinkPhase, StripCoordination.LinkPhase, Bool)] = [
             (.offline, .online, true),
+            (.suspended, .online, false),
+            (.suspended, .connecting, false),
             (.connecting, .online, false),
             (.online, .online, false),
             (.online, .offline, false),

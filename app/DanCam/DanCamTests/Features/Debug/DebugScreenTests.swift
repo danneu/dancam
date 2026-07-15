@@ -82,7 +82,7 @@ struct DebugScreenTests {
     }
 
     @Test func connectingWithoutWorldRendersPlaceholdersWithoutGauges() throws {
-        let sections = DebugScreen.sections(for: state(link: .connecting))
+        let sections = DebugScreen.sections(for: state(link: .connecting(last: nil)))
 
         #expect(sections.flatMap(\.rows).contains { if case .gauge = $0 { true } else { false } } == false)
         #expect(try value(for: .recorderPhase, in: sections) == "--")
@@ -158,10 +158,10 @@ struct DebugScreenTests {
 
     @Test func exportFailureIsCriticalAndClearsWhenNil() throws {
         let failed = DebugScreen.sections(
-            for: state(link: .connecting),
+            for: state(link: .connecting(last: nil)),
             exportError: "Log export failed: Denied"
         )
-        let clear = DebugScreen.sections(for: state(link: .connecting))
+        let clear = DebugScreen.sections(for: state(link: .connecting(last: nil)))
 
         #expect(try row(.exportError, in: failed) == .exportError("Log export failed: Denied"))
         #expect(clear.flatMap(\.rows).contains { $0.id == .exportError } == false)

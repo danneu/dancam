@@ -1,11 +1,14 @@
 nonisolated enum StripCoordination {
     enum LinkPhase: Equatable {
+        case suspended
         case connecting
         case online
         case offline
 
         init(_ link: Link) {
             switch link {
+            case .suspended:
+                self = .suspended
             case .connecting:
                 self = .connecting
             case .online:
@@ -52,6 +55,8 @@ nonisolated enum StripCoordination {
 
     static func connectionPill(for link: Link) -> ConnectionPill {
         switch link {
+        case .suspended:
+            ConnectionPill(caption: "Paused", tone: .neutral)
         case .connecting:
             ConnectionPill(caption: "Connecting", tone: .neutral)
         case .online:

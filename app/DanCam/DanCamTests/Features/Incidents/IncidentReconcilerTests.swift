@@ -4,6 +4,64 @@ import Testing
 
 @MainActor
 struct IncidentReconcilerTests {
+    @Test func queuedPullWaitsForForegroundWhileActivePullKeepsBackgroundGrace() async {
+        let request = IncidentsFeature.PullRequest(seq: 10, etag: "e10", incidentIDs: [])
+        let pullStarted = AsyncSignal()
+        let releasePull = AsyncSignal()
+        let state = IncidentsFeature.State(
+            pullQueue: [request],
+            hasLoadedStore: true
+        )
+        let dependencies = AppDependencies(
+            clipCache: ClipCache(
+                lookup: { _, _ in
+                    await pullStarted.signal()
+                    await releasePull.wait()
+                    return URL(filePath: "/tmp/cached.mp4")
+                },
+                insert: { _, _, source in source }
+            ),
+            incidentArtifactInstaller: installer { _, _, _, _ in [:] }
+        )
+        let clips = clipsState([])
+        let store = TestStore(
+            initialState: state,
+            dependencies: dependencies,
+            reduce: { state, action, dependencies in
+                IncidentsFeature.reduce(
+                    state: &state,
+                    action: action,
+                    world: nil,
+                    clipsState: clips,
+                    dependencies: dependencies
+                )
+            }
+        )
+
+        await store.send(.reconcile)
+        #expect(store.state.pullQueue == [request])
+        #expect(store.state.activePull == nil)
+
+        await store.send(.foregrounded) {
+            $0.isForeground = true
+            $0.pullQueue = []
+            $0.activePull = request
+        }
+        await pullStarted.wait()
+
+        await store.send(.backgrounded) {
+            $0.isForeground = false
+        }
+        #expect(store.state.activePull == request)
+
+        await releasePull.signal()
+        await store.receive(.pullFinished(request, .completed(bytes: [:])))
+        await store.receive(.pullRecordsPersisted(request, [], success: true)) {
+            $0.activePull = nil
+        }
+        await store.finishEffects()
+    }
+
     @Test func happyThreeSegmentSaveFinishesSavedAndCancelsNudge() async throws {
         let id = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
         let cached = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
@@ -12,7 +70,7 @@ struct IncidentReconcilerTests {
         let ledger = ReconcilerLedger()
         var state = IncidentsFeature.State(incidents: [
             record(id: id, states: [.wanted, .wanted, .wanted]),
-        ])
+        ], isForeground: true)
         let dependencies = AppDependencies(
             clipCache: ClipCache(lookup: { _, _ in cached }, insert: { _, _, source in source }),
             incidentStore: store { _ in },
@@ -71,7 +129,10 @@ struct IncidentReconcilerTests {
         try Data([1, 2, 3]).write(to: cached)
         defer { try? FileManager.default.removeItem(at: cached) }
 
-        var state = IncidentsFeature.State(incidents: [record(id: id, states: [.unresolved])])
+        var state = IncidentsFeature.State(
+            incidents: [record(id: id, states: [.unresolved])],
+            isForeground: true
+        )
         let dependencies = AppDependencies(
             clipCache: ClipCache(
                 lookup: { _, _ in
@@ -126,7 +187,7 @@ struct IncidentReconcilerTests {
         var state = IncidentsFeature.State(incidents: [
             record(id: firstID, states: [.wanted]),
             record(id: secondID, states: [.wanted]),
-        ])
+        ], isForeground: true)
         let dependencies = AppDependencies(
             clipPull: completedPull(source),
             clipRemuxer: ClipRemuxer { url, _ in
@@ -231,7 +292,8 @@ struct IncidentReconcilerTests {
         let request = IncidentsFeature.PullRequest(seq: 10, etag: "e10", incidentIDs: [id])
         var state = IncidentsFeature.State(
             incidents: [record(id: id, states: [.wanted])],
-            activePull: request
+            activePull: request,
+            isForeground: true
         )
         let dependencies = AppDependencies(incidentStore: store { _ in })
 
@@ -264,7 +326,8 @@ struct IncidentReconcilerTests {
         let request = IncidentsFeature.PullRequest(seq: 10, etag: "e10", incidentIDs: [id])
         var state = IncidentsFeature.State(
             incidents: [record(id: id, states: [.wanted])],
-            activePull: request
+            activePull: request,
+            isForeground: true
         )
         let dependencies = AppDependencies(incidentStore: store { _ in })
 
@@ -356,7 +419,10 @@ struct IncidentReconcilerTests {
         let ledger = ReconcilerLedger()
         let source = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try Data([1, 2]).write(to: source)
-        var state = IncidentsFeature.State(incidents: [record(id: id, states: [.wanted])])
+        var state = IncidentsFeature.State(
+            incidents: [record(id: id, states: [.wanted])],
+            isForeground: true
+        )
         let dependencies = AppDependencies(
             clipPull: completedPull(source),
             clipRemuxer: ClipRemuxer { _, _ in throw CocoaError(.fileReadCorruptFile) },

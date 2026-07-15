@@ -13,7 +13,8 @@ coordination, and status-strip presentation.
 
 ## One connection authority
 
-The root `AppFeature` owns one long-lived `GET /v1/events` stream for the scene.
+The process-owned `AppFeature` owns one `GET /v1/events` stream while at least one
+scene is active.
 There is no parallel `/v1/status` poll, screen-local reachability reader, or
 `NWPathMonitor` signal in product state. A generic network path says only that iOS
 has a path; it does not prove that the camera API is answering on the local Wi-Fi
@@ -23,24 +24,29 @@ Connection state is explicit:
 
 ```swift
 enum Link {
-    case connecting
+    case suspended(last: World?)
+    case connecting(last: World?)
     case online(World)
     case offline(last: World?)
 }
 ```
 
-The stream starts at cold launch and whenever the scene enters the foreground. The
-first snapshot replaces the folded world and moves the link online. A stream error,
-clean unexpected EOF, or heartbeat deadline moves it offline while retaining the
-last world. Deltas received without an online snapshot base do not restore the link;
-only a new snapshot can establish a fresh online world.
+The initial state is `suspended(last: nil)`. The first active scene starts the stream
+and moves suspension to `connecting(last:)`, retaining stale facts for frozen display
+while making `onlineWorld` unavailable. The first snapshot replaces the folded world
+and moves the link online. A stream error, clean unexpected EOF, or heartbeat deadline
+moves it offline while retaining the last world. Active reconnect attempts remain
+offline until their replacement snapshot, preserving the offline-to-online recovery
+edge. Deltas received without an online snapshot base do not restore the link; only a
+new snapshot can establish a fresh online world.
 
-`SceneDelegate` stops the stream when the scene enters the background. This
-lifecycle stop cancels the stream, heartbeat, reconnect, and time-sync effects and
-resets connection-epoch estimates, but it deliberately does not rewrite `Link` as
-offline. Foregrounding immediately starts a fresh stream and snapshot wait. During
-that transition, the previously rendered link can remain briefly visible until the
-new snapshot arrives or the newly armed heartbeat deadline expires.
+The last scene deactivation moves every link state to `suspended(last: link.world)`
+before stopping the stream. It resets recording controls to unknown, cancels pending
+recording commands plus heartbeat, reconnect, and time-sync work, and resets
+connection-epoch estimates. A foreground activation always returns suspension to
+`connecting(last:)` and waits for a fresh snapshot. Suspended events are ignored, so
+an already-queued stream callback cannot silently restore freshness after the process
+has no active scene.
 
 ## Heartbeat liveness and reconnect
 
@@ -121,7 +127,8 @@ local acceptance, not peer response progress.
 
 ## Fresh and last-known state
 
-`offline(last:)` is useful only if projections preserve the freshness boundary.
+The retained worlds in `suspended(last:)`, `connecting(last:)`, and `offline(last:)`
+are useful only if projections preserve the freshness boundary.
 Static detail may read `Link.world` and display retained facts under the visible
 "Not connected" status. A present-tense claim must instead read `onlineWorld` or a
 freshness-typed projection.
@@ -136,17 +143,23 @@ enum RecorderTruth {
 }
 ```
 
-`Link.recorderTruth` maps online state to `.live`, an offline retained world to
-`.lastKnown`, and connecting or offline-without-history to `.unknown`. Recording
-durations tick only from live truth. Last-known segments remain visible but freeze
-and use muted presentation rather than continuing to imply that the camera is
-recording now.
+`Link.recorderTruth` maps online state to `.live`, any retained non-online world to
+`.lastKnown`, and a non-online state without history to `.unknown`. Recording durations
+tick only from live truth. Last-known segments remain visible but freeze and use muted
+presentation rather than continuing to imply that the camera is recording now.
 
-When the link goes offline, `RecordingFeature` resets its command presentation to
-`.unknown` and cancels any in-flight command. On reconnect, the first snapshot is
-always reconciled as fresh recorder evidence, even when its recorder phase equals
-the last-known offline phase. This lets same-phase reconnects re-enable controls and
-live presentation without manufacturing a phase change.
+When the link goes offline or suspends, `RecordingFeature` resets its command
+presentation to `.unknown` and cancels any in-flight command. Record taps require an
+online world before they can call either recording route. On reconnect, the first
+snapshot is always reconciled as fresh recorder evidence, even when its recorder
+phase equals the last-known phase. This lets same-phase reconnects re-enable controls
+and live presentation without manufacturing a phase change.
+
+Incident reconciliation also records whether the process has an active scene. It may
+continue one active pull under the pull's existing UIKit background-task grace, but it
+does not start another queued pull while backgrounded. Foregrounding resumes
+reconciliation and starts the next eligible pull. This keeps durable incident goals
+queued without beginning new network and remux work outside the active lifecycle.
 
 New UI must choose deliberately among retained world, online-only world, and typed
 freshness. A view-local `isOffline` flag beside an untyped world is not an acceptable
@@ -156,7 +169,7 @@ transitions.
 ## Recovery coordination
 
 Connection recovery is an edge, not a general render callback. The shell derives a
-coarse `connecting` / `online` / `offline` phase as part of its single status
+coarse `suspended` / `connecting` / `online` / `offline` phase as part of its single status
 projection. Only `offline -> online` asks the selected tab's top view controller to
 `resumeLiveWork()`. First contact from `connecting -> online` is not a resume; each
 screen owns its initial appearance.
@@ -180,6 +193,7 @@ tab controller.
 
 The leading connection pill renders:
 
+- `Paused` with a neutral dot and material background;
 - `Connecting` with a neutral dot and material background;
 - `Connected` with a green dot and material background; or
 - `Not connected` with a red dot and red-tinted background.
@@ -216,14 +230,19 @@ Connection behavior is covered at the boundaries where regressions are observabl
   receive-idle defaults and reject invalid or sub-heartbeat overrides;
 - loopback Network tests prove a silent receive times out, chunked slow progress
   survives, and a slow consumer does not trip the socket-idle deadline;
-- root reducer tests cover pre-snapshot deadline arming, stream start/stop, offline
-  folding, command cancellation, reconnect scheduling, and same-phase snapshot recovery;
+- root reducer tests cover suspension, pre-snapshot deadline arming, stream start/stop,
+  offline folding, command cancellation, reconnect scheduling, fresh command guards,
+  and same-phase snapshot recovery;
 - link and rendered-projection tests cover live, last-known, and unknown recorder
   truth without erasing freshness;
 - strip coordination tests cover pill mapping, `.stopping`, unrelated-world equality,
   and the offline-to-online resume edge; and
 - shell tests cover red-to-gray REC on heartbeat loss, affirmative idle, hidden-pill
   width release, first contact, and selected-tab recovery routing.
+
+Incident reducer tests prove queued pulls pause outside the foreground while an active
+pull keeps its existing background-task grace and can finish without launching the
+next queued pull.
 
 ## Decision log
 
@@ -384,3 +403,25 @@ wrong question and flapped on heartbeat gaps. Adding elapsed time was rejected b
 global chrome should not own a timer. The layout accepts the extra two-pill complexity:
 the optional pill must release constraints when hidden, and REC accessibility labels
 must describe live versus last-known state even though both visible captions are REC.
+
+### 2026-07-15: Represent process suspension as a freshness state
+
+The first process-owned runtime kept its last online or offline `Link` value when the
+last scene deactivated. That made retained online state look heartbeat-fresh while no
+event stream existed, and it allowed queued incident work to start from lifecycle
+callbacks even though the app had left the foreground.
+
+The link now has explicit `suspended(last:)` and freshness-preserving
+`connecting(last:)` states. Last-scene deactivation revokes fresh truth immediately,
+freezes retained projections, resets recording controls, and cancels ephemeral command
+and deadline work. Foregrounding retains those display facts while waiting for the
+replacement snapshot. Incident reconciliation separately gates starting queued pulls,
+while preserving the already-established UIKit background-task grace for one active
+pull.
+
+Keeping stale online state was rejected because it made `onlineWorld` lie about the
+only condition that authorizes present-tense controls. Erasing the world on background
+was rejected because frozen recorder and telemetry facts remain useful. Cancelling an
+active incident pull at the lifecycle edge was rejected because UIKit already provides
+a short bounded completion window and abandoning partial progress would make recovery
+less reliable.

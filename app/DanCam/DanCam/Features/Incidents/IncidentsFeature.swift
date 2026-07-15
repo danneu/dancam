@@ -42,6 +42,7 @@ enum IncidentsFeature {
         var hasLoadedStore = false
         var isLoadingStore = false
         var isPageRequestPending = false
+        var isForeground = false
 
         var pendingIncidentCount: Int {
             var ids = Set(incidents.lazy.filter { $0.status == .pending }.map(\.id))
@@ -156,6 +157,7 @@ enum IncidentsFeature {
             )
 
         case .foregrounded:
+            state.isForeground = true
             guard state.hasLoadedStore == false, state.isLoadingStore == false else {
                 return reduce(
                     state: &state,
@@ -177,6 +179,7 @@ enum IncidentsFeature {
             }
 
         case .backgrounded:
+            state.isForeground = false
             let pendingIDs = state.incidents.compactMap { record in
                 record.status == .pending ? record.id : nil
             }
@@ -634,7 +637,9 @@ enum IncidentsFeature {
         state: inout State,
         dependencies: AppDependencies
     ) -> Effect<Action>? {
-        guard state.activePull == nil, state.pullQueue.isEmpty == false else { return nil }
+        guard state.isForeground,
+              state.activePull == nil,
+              state.pullQueue.isEmpty == false else { return nil }
         let request = state.pullQueue.removeFirst()
         state.activePull = request
         let markIDs = state.incidents.compactMap { record in

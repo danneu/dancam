@@ -6,7 +6,7 @@ import Testing
 struct AppFeatureTests {
     @Test func recordTappedRoutesByCurrentRecordingState() async {
         let startStore = TestStore(
-            initialState: state(recording: .idle),
+            initialState: state(link: .online(CameraSamples.world()), recording: .idle),
             dependencies: dependencies(
                 recording: RecordingClient(
                     start: { throw CancellationError() },
@@ -23,7 +23,7 @@ struct AppFeatureTests {
         startStore.expectNoReceivedActions()
 
         let stopStore = TestStore(
-            initialState: state(recording: .recording),
+            initialState: state(link: .online(CameraSamples.world()), recording: .recording),
             dependencies: dependencies(
                 recording: RecordingClient(
                     start: { fatalError("Start should not be called.") },
@@ -40,13 +40,93 @@ struct AppFeatureTests {
         stopStore.expectNoReceivedActions()
 
         let busyStore = TestStore(
-            initialState: state(recording: .starting),
+            initialState: state(link: .online(CameraSamples.world()), recording: .starting),
             dependencies: dependencies(),
             reduce: AppFeature.reduce
         )
 
         await busyStore.send(.recordTapped)
         #expect(busyStore.state.recording == .starting)
+    }
+
+    @Test(arguments: [
+        Link.suspended(last: CameraSamples.world()),
+        Link.connecting(last: CameraSamples.world()),
+        Link.offline(last: CameraSamples.world()),
+    ], [RecordingFeature.State.idle, .recording])
+    func recordTappedRequiresFreshOnlineWorld(
+        link: Link,
+        recording: RecordingFeature.State
+    ) async {
+        let calls = RecordingCallLedger()
+        let store = TestStore(
+            initialState: state(link: link, recording: recording),
+            dependencies: dependencies(recording: RecordingClient(
+                start: { await calls.recordStart() },
+                stop: { await calls.recordStop() }
+            )),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.recordTapped)
+
+        #expect(store.state.recording == recording)
+        #expect(await calls.values() == [])
+    }
+
+    @Test func backgroundSuspendsFreshnessAndForegroundRetainsLastWorldWhileConnecting() async {
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 43, durMs: 12_000)
+        )
+        var initial = state(link: .offline(last: world), recording: .recording)
+        initial.incidents.hasLoadedStore = true
+        initial.incidents.isForeground = true
+        let store = TestStore(
+            initialState: initial,
+            dependencies: dependencies(),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.backgrounded) {
+            $0.link = .suspended(last: world)
+            $0.recording = .unknown
+            $0.incidents.isForeground = false
+        }
+        #expect(store.state.link.onlineWorld == nil)
+        #expect(store.state.link.recorderTruth == .lastKnown(world.recorder))
+
+        await store.send(.foregrounded) {
+            $0.link = .connecting(last: world)
+            $0.incidents.isForeground = true
+        }
+    }
+
+    @Test func freshSnapshotRestoresSuspendedWorldToLiveTruth() async {
+        let stale = CameraSamples.world(phase: .recording)
+        let fresh = CameraSamples.world(phase: .idle)
+        var initial = state(link: .suspended(last: stale))
+        initial.incidents.hasLoadedStore = true
+        let store = TestStore(
+            initialState: initial,
+            dependencies: dependencies(clips: cancellingClipsClient()),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.foregrounded) {
+            $0.link = .connecting(last: stale)
+            $0.incidents.isForeground = true
+        }
+        await store.send(.event(.snapshot(fresh))) {
+            $0.link = .online(fresh)
+            $0.recording = .idle
+            $0.clips.status = .loading
+            $0.clips.headEpoch = 1
+            $0.clips.requestSeq = 1
+            $0.clips.inFlightRequests = [1]
+            $0.clips.headRequest = 1
+        }
+        await store.finishEffects()
     }
 
     @Test func snapshotSeedsOnlineRecordingProjectionAndLoadsClips() async {
@@ -57,7 +137,7 @@ struct AppFeatureTests {
         let response = CameraSamples.clipsResponse(ids: [42])
         let queue = ClipsFetchQueue([.success(response)])
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
                 try await queue.fetch(cursor: cursor)
             })),
@@ -89,7 +169,7 @@ struct AppFeatureTests {
         let time = TimeSyncScript([.succeed])
         let world = CameraSamples.world(time: TimeStatus(synced: false))
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(
                 clips: cancellingClipsClient(),
                 time: time.client()
@@ -116,7 +196,7 @@ struct AppFeatureTests {
         let time = TimeSyncScript([.fail])
         let world = CameraSamples.world(time: TimeStatus(synced: true))
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(
                 clips: cancellingClipsClient(),
                 time: time.client()
@@ -142,7 +222,7 @@ struct AppFeatureTests {
         let time = TimeSyncScript([.succeed])
         let world = CameraSamples.world(time: nil)
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(
                 clips: cancellingClipsClient(),
                 time: time.client()
@@ -169,7 +249,7 @@ struct AppFeatureTests {
         let time = TimeSyncScript([.fail, .succeed])
         let world = CameraSamples.world(time: TimeStatus(synced: false))
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(
                 clips: cancellingClipsClient(),
                 time: time.client(),
@@ -204,7 +284,7 @@ struct AppFeatureTests {
         var synced = unsynced
         synced.time = TimeStatus(synced: true)
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(
                 clips: clips.client(),
                 time: time.client(),
@@ -258,7 +338,7 @@ struct AppFeatureTests {
         let sleepGate = SleepGate()
         let world = CameraSamples.world(time: TimeStatus(synced: false))
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(
                 clips: cancellingClipsClient(),
                 time: time.client(),
@@ -422,6 +502,40 @@ struct AppFeatureTests {
         await store.finishEffects()
     }
 
+    @Test func backgroundCancelsInFlightRecordingCommand() async {
+        let world = CameraSamples.world(phase: .recording)
+        let stopStarted = AsyncSignal()
+        let releaseStop = AsyncSignal()
+        var initial = state(link: .online(world), recording: .recording)
+        initial.incidents.hasLoadedStore = true
+        initial.incidents.isForeground = true
+        let store = TestStore(
+            initialState: initial,
+            dependencies: dependencies(recording: RecordingClient(
+                start: { fatalError("Start should not be called.") },
+                stop: {
+                    await stopStarted.signal()
+                    await releaseStop.wait()
+                }
+            )),
+            reduce: AppFeature.reduce
+        )
+
+        await store.send(.recordTapped) {
+            $0.recording = .stopping
+        }
+        await stopStarted.wait()
+
+        await store.send(.backgrounded) {
+            $0.link = .suspended(last: world)
+            $0.recording = .unknown
+            $0.incidents.isForeground = false
+        }
+        await releaseStop.signal()
+        await store.finishCanceledEffects()
+        store.expectNoReceivedActions()
+    }
+
     @Test func heartbeatDoesNotBounceOptimisticStarting() async {
         let world = CameraSamples.world(phase: .idle)
         let store = TestStore(
@@ -445,7 +559,7 @@ struct AppFeatureTests {
         let response = CameraSamples.clipsResponse(ids: [42])
         let queue = ClipsFetchQueue([.failure(.http(503)), .success(response)])
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
                 try await queue.fetch(cursor: cursor)
             })),
@@ -493,7 +607,7 @@ struct AppFeatureTests {
         let response = CameraSamples.clipsResponse(ids: [42])
         let queue = ClipsFetchQueue([.failure(.http(404)), .success(response)])
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
                 try await queue.fetch(cursor: cursor)
             })),
@@ -550,7 +664,7 @@ struct AppFeatureTests {
         let error = ClipsError.decoding("invalid clips response")
         let queue = ClipsFetchQueue([.failure(error)])
         let store = TestStore(
-            initialState: AppFeature.State(),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
                 try await queue.fetch(cursor: cursor)
             })),
@@ -932,7 +1046,7 @@ struct AppFeatureTests {
         onlineStore.expectNoReceivedActions()
 
         let connectingStore = TestStore(
-            initialState: state(link: .connecting),
+            initialState: state(link: .connecting(last: nil)),
             dependencies: dependencies(
                 events: EventsClient {
                     fatalError("Connecting reconnectStreamIfOffline should not open events.")
@@ -1066,7 +1180,9 @@ struct AppFeatureTests {
             reduce: AppFeature.reduce
         )
 
-        await store.send(.streamStarted)
+        await store.send(.streamStarted) {
+            $0.link = .connecting(last: nil)
+        }
         await heartbeatArmed.wait()
         await store.receive(.heartbeatTimedOut) {
             $0.link = .offline(last: nil)
@@ -1098,7 +1214,7 @@ struct AppFeatureTests {
     }
 
     private func state(
-        link: Link = .connecting,
+        link: Link = .suspended(last: nil),
         recording: RecordingFeature.State = .unknown,
         clips: ClipsFeature.State = ClipsFeature.State()
     ) -> AppFeature.State {
@@ -1196,6 +1312,22 @@ enum OfflineDisconnect: CaseIterable, CustomStringConvertible {
         case .heartbeatTimedOut:
             .heartbeatTimedOut
         }
+    }
+}
+
+private actor RecordingCallLedger {
+    private var calls: [String] = []
+
+    func recordStart() {
+        calls.append("start")
+    }
+
+    func recordStop() {
+        calls.append("stop")
+    }
+
+    func values() -> [String] {
+        calls
     }
 }
 

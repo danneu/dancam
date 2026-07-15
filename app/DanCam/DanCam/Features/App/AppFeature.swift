@@ -3,7 +3,7 @@ import OSLog
 
 enum AppFeature {
     struct State: Equatable {
-        var link: Link = .connecting
+        var link: Link = .suspended(last: nil)
         var recording: RecordingFeature.State = .unknown
         var clips = ClipsFeature.State()
         var incidents = IncidentsFeature.State()
@@ -44,8 +44,8 @@ enum AppFeature {
         case .streamStarted:
             if case .offline = state.link {
                 // Preserve the offline -> online recovery edge until the next snapshot.
-            } else if state.link.onlineWorld == nil {
-                state.link = .connecting
+            } else {
+                state.link.connect()
             }
 
             return .merge([
@@ -66,6 +66,7 @@ enum AppFeature {
             ])
 
         case .event(let event):
+            if case .suspended = state.link { return .none }
             let previousPhase = state.link.onlineWorld?.recorder.phase
             var isSnapshot = false
             var effects = [armHeartbeat(dependencies: dependencies)]
@@ -173,6 +174,7 @@ enum AppFeature {
             return .merge(effects)
 
         case .streamFailed:
+            if case .suspended = state.link { return .none }
             state.link.wentOffline()
             state.retentionEstimator.reset()
             state.streamReconnectAttempt += 1
@@ -192,6 +194,7 @@ enum AppFeature {
             ])
 
         case .heartbeatTimedOut:
+            if case .suspended = state.link { return .none }
             state.link.wentOffline()
             state.retentionEstimator.reset()
             state.streamReconnectAttempt += 1
@@ -212,6 +215,7 @@ enum AppFeature {
             ])
 
         case .streamReconnect:
+            if case .suspended = state.link { return .none }
             return .merge([
                 streamEffect(dependencies: dependencies),
                 armHeartbeat(dependencies: dependencies),
@@ -268,6 +272,7 @@ enum AppFeature {
             ])
 
         case .foregrounded:
+            state.link.connect()
             return reduceIncidents(
                 state: &state,
                 action: .foregrounded,
@@ -275,13 +280,33 @@ enum AppFeature {
             )
 
         case .backgrounded:
-            return reduceIncidents(
+            state.link.suspend()
+            state.retentionEstimator.reset()
+            let incidentBackgroundEffect = reduceIncidents(
                 state: &state,
                 action: .backgrounded,
                 dependencies: dependencies
             )
+            let incidentWorldEffect = reduceIncidents(
+                state: &state,
+                action: .worldObserved(nil),
+                dependencies: dependencies
+            )
+            return .merge([
+                .cancel(id: heartbeatID),
+                .cancel(id: reconnectID),
+                .cancel(id: timeSyncID),
+                reduceRecording(
+                    state: &state,
+                    action: .linkWentOffline,
+                    dependencies: dependencies
+                ),
+                incidentBackgroundEffect,
+                incidentWorldEffect,
+            ])
 
         case .recordTapped:
+            guard state.link.onlineWorld != nil else { return .none }
             switch state.recording {
             case .recording:
                 return reduceRecording(
@@ -629,6 +654,8 @@ extension AppFeature {
 private extension Link {
     var logPhase: String {
         switch self {
+        case .suspended:
+            "suspended"
         case .connecting:
             "connecting"
         case .online:

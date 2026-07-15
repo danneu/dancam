@@ -214,7 +214,7 @@ struct AppShellViewControllerTests {
         return strip
     }
 
-    private func makeStore(initialState: AppFeature.State = .init()) -> AppStore {
+    private func makeStore(initialState: AppFeature.State = activeAppState()) -> AppStore {
         AppStore(
             initialState: initialState,
             dependencies: AppDependencies(
@@ -227,6 +227,12 @@ struct AppShellViewControllerTests {
             ),
             reduce: AppFeature.reduce
         )
+    }
+
+    private static func activeAppState() -> AppFeature.State {
+        var state = AppFeature.State()
+        state.link = .connecting(last: nil)
+        return state
     }
 
     private func colorMatches(_ color: UIColor?, _ expected: UIColor) -> Bool {

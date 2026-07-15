@@ -1,5 +1,6 @@
-nonisolated enum Link: Equatable {
-    case connecting
+nonisolated enum Link: Equatable, Sendable {
+    case suspended(last: World?)
+    case connecting(last: World?)
     case online(World)
     case offline(last: World?)
 
@@ -7,21 +8,21 @@ nonisolated enum Link: Equatable {
         switch self {
         case .online(let world):
             .live(world.recorder)
-        case .offline(last: let world?):
+        case .suspended(last: let world?),
+             .connecting(last: let world?),
+             .offline(last: let world?):
             .lastKnown(world.recorder)
-        case .offline(last: nil), .connecting:
+        case .suspended(last: nil), .connecting(last: nil), .offline(last: nil):
             .unknown
         }
     }
 
     var world: World? {
         switch self {
-        case .connecting:
-            nil
+        case .suspended(let last), .connecting(let last), .offline(let last):
+            last
         case .online(let world):
             world
-        case .offline(let last):
-            last
         }
     }
 
@@ -33,6 +34,11 @@ nonisolated enum Link: Equatable {
     }
 
     mutating func fold(_ event: CameraEvent) {
+        if case .suspended = self { return }
+        foldWhileActive(event)
+    }
+
+    private mutating func foldWhileActive(_ event: CameraEvent) {
         switch event {
         case .snapshot(let world):
             self = .online(world)
@@ -43,7 +49,17 @@ nonisolated enum Link: Equatable {
     }
 
     mutating func wentOffline() {
+        if case .suspended = self { return }
         self = .offline(last: world)
+    }
+
+    mutating func suspend() {
+        self = .suspended(last: world)
+    }
+
+    mutating func connect() {
+        guard case .suspended(let last) = self else { return }
+        self = .connecting(last: last)
     }
 }
 

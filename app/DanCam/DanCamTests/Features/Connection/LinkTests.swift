@@ -2,16 +2,20 @@ import Testing
 @testable import DanCam
 
 struct LinkTests {
-    @Test func snapshotMovesAnyLinkOnline() {
+    @Test func snapshotMovesActiveLinkOnline() {
         let world = CameraSamples.world(phase: .recording)
 
-        var connecting = Link.connecting
+        var connecting = Link.connecting(last: nil)
         connecting.fold(.snapshot(world))
         #expect(connecting == .online(world))
 
         var offline = Link.offline(last: CameraSamples.world(phase: .idle))
         offline.fold(.snapshot(world))
         #expect(offline == .online(world))
+
+        var suspended = Link.suspended(last: CameraSamples.world(phase: .idle))
+        suspended.fold(.snapshot(world))
+        #expect(suspended == .suspended(last: CameraSamples.world(phase: .idle)))
     }
 
     @Test func deltasFoldOnlyWhileOnline() {
@@ -21,9 +25,9 @@ struct LinkTests {
         online.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
         #expect(online.world?.storage == Storage(used: 10, total: 20, recordingCapacityBytes: 15))
 
-        var connecting = Link.connecting
+        var connecting = Link.connecting(last: world)
         connecting.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
-        #expect(connecting == .connecting)
+        #expect(connecting == .connecting(last: world))
 
         var offline = Link.offline(last: world)
         offline.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
@@ -107,8 +111,30 @@ struct LinkTests {
         let world = CameraSamples.world(phase: .recording)
 
         #expect(Link.online(world).recorderTruth == .live(world.recorder))
+        #expect(Link.suspended(last: world).recorderTruth == .lastKnown(world.recorder))
+        #expect(Link.connecting(last: world).recorderTruth == .lastKnown(world.recorder))
         #expect(Link.offline(last: world).recorderTruth == .lastKnown(world.recorder))
+        #expect(Link.suspended(last: nil).recorderTruth == .unknown)
+        #expect(Link.connecting(last: nil).recorderTruth == .unknown)
         #expect(Link.offline(last: nil).recorderTruth == .unknown)
-        #expect(Link.connecting.recorderTruth == .unknown)
+    }
+
+    @Test func suspensionAndConnectionRetainLastWorld() {
+        let world = CameraSamples.world(phase: .recording)
+        let cases: [Link] = [
+            .suspended(last: nil),
+            .connecting(last: nil),
+            .online(world),
+            .offline(last: world),
+        ]
+
+        for var link in cases {
+            link.suspend()
+            #expect(link == .suspended(last: link.world))
+            #expect(link.onlineWorld == nil)
+            link.connect()
+            #expect(link == .connecting(last: link.world))
+            #expect(link.onlineWorld == nil)
+        }
     }
 }

@@ -253,7 +253,7 @@ struct DebugViewControllerTests {
     }
 
     private func makeController(
-        appState: AppFeature.State = AppFeature.State(),
+        appState: AppFeature.State = activeAppState(),
         logExporter: LogExporter = .noop,
         events: EventsClient = .noop
     ) -> DebugViewController {
@@ -265,7 +265,7 @@ struct DebugViewControllerTests {
     }
 
     private func makeControllerAndAppStore(
-        appState: AppFeature.State = AppFeature.State(),
+        appState: AppFeature.State = activeAppState(),
         logExporter: LogExporter = .noop,
         events: EventsClient = .noop
     ) -> (DebugViewController, AppStore) {
@@ -307,6 +307,12 @@ struct DebugViewControllerTests {
     private func appState(link: Link) -> AppFeature.State {
         var state = AppFeature.State()
         state.link = link
+        return state
+    }
+
+    private static func activeAppState() -> AppFeature.State {
+        var state = AppFeature.State()
+        state.link = .connecting(last: nil)
         return state
     }
 }

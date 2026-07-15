@@ -45,6 +45,7 @@ struct IncidentsFeatureTests {
             continuousNow: { times.next() }
         )
         var state = AppFeature.State()
+        state.link = .connecting(last: nil)
         let firstWorld = world(
             phase: .recording,
             segment: RecorderSegment(id: 12, durMs: 4_500)
@@ -644,7 +645,10 @@ struct IncidentsFeatureTests {
             }
         )
 
-        await store.send(.foregrounded) { $0.isLoadingStore = true }
+        await store.send(.foregrounded) {
+            $0.isLoadingStore = true
+            $0.isForeground = true
+        }
         await store.receive(.storeLoaded(nil)) { $0.isLoadingStore = false }
         #expect(store.state.captureRecordingID(world: recording) == nil)
 

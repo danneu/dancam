@@ -127,7 +127,8 @@ mock first.
       pull UX now continues in `lime`._
       - [x] **App:** process-owned connection monitor -- event-stream liveness belongs
             to the app runtime (not a phone scene or Home), preserving last-known status
-            so every scene rides out drops in place.
+            so every scene rides out drops in place and explicit suspension revokes
+            fresh truth when no scene is active.
       - [x] **App:** missed-heartbeat offline detection -- missed `/v1/events`
             heartbeats flip the shared link offline after the deadline.
       - [x] **App:** persistent connection status strip in the root shell, so pushed
@@ -162,7 +163,8 @@ mock first.
       - [x] The camera child protocol carries Rust-owned `session_id` and
             `start_segment_index`, plus session-echoing segment lifecycle events.
       - [x] App connection state is `Link`, with offline detection after about 6 seconds
-            of missed heartbeats and fresh snapshot recovery on reconnect.
+            of missed heartbeats, explicit process suspension outside active scenes,
+            and fresh snapshot recovery on reconnect.
       - [x] Recent clips keep a live row only when the Pi recorder snapshot reports a
             current segment; finalized clips merge from `clip_finalized` events.
 - [x] **Swoop `lime` -- Watch recorded clips.** Browse the clip list, pull a finished

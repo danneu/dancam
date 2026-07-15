@@ -129,7 +129,8 @@ Connection and Pi-owned state use one sum type:
 
 ```swift
 enum Link: Equatable {
-    case connecting
+    case suspended(last: World?)
+    case connecting(last: World?)
     case online(World)
     case offline(last: World?)
 }
@@ -137,9 +138,10 @@ enum Link: Equatable {
 
 `World.folding(_:_:)` is a pure fold:
 
-- A snapshot replaces the whole world and moves the link online.
+- A snapshot replaces the whole world and moves an active link online. Suspended
+  callbacks are ignored.
 - Deltas apply only to an online world. A delta received before the base snapshot, or
-  after the link went offline, is ignored.
+  after the link went offline or suspended, is ignored.
 - Recorder, camera, readiness, storage, temperature, memory, CPU, and time deltas
   update their typed world fields.
 - A heartbeat advances only `World.uptimeS` from `t_ms`; it does not refresh or infer
@@ -148,9 +150,11 @@ enum Link: Equatable {
   to the clip and incident reducers.
 - Unknown events do not mutate state.
 
-`offline(last:)` retains a stale-but-useful world without presenting it as live.
-Present-tense projections must preserve this freshness distinction rather than erase
-it by selecting only the optional world value.
+Suspended, connecting, and offline links retain a stale-but-useful world without
+presenting it as live. Present-tense projections must preserve this freshness
+distinction rather than erase it by selecting only the optional world value. The last
+active scene moves the link to `suspended(last:)`; the next activation moves it to
+`connecting(last:)`; only a replacement snapshot restores online truth.
 
 The root owns one long-lived event-stream effect. Starting it also arms the heartbeat
 deadline before the first snapshot so a connected but silent stream cannot leave the
