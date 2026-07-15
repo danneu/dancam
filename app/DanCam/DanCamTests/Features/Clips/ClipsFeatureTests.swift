@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct ClipsFeatureTests {
     @Test func loadFetchesClipsOnce() async {
-        let response = CameraSamples.clipsResponse(ids: [2, 1], nextCursor: "1")
+        let response = CameraSamples.clipsResponse(ids: [2, 1], nextCursor: ClipCursor(1))
         let queue = ClipsFetchQueue([.success(response)])
         let store = TestStore(
             initialState: ClipsFeature.State(),
@@ -26,12 +26,12 @@ struct ClipsFeatureTests {
             $0.status = .idle
             $0.hasLoadedOnce = true
             $0.lastSuccessfulHeadEpoch = 1
-            $0.nextCursor = "1"
+            $0.nextCursor = ClipCursor(1)
             $0.inFlightRequests = []
             $0.headRequest = nil
         }
         let cursors = await queue.requestedCursors()
-        #expect(cursors == [Optional<String>.none])
+        #expect(cursors == [Optional<ClipCursor>.none])
     }
 
     @Test func clipFinalizedPrependsAndDedupsRegardlessOfStatus() async {
@@ -105,7 +105,7 @@ struct ClipsFeatureTests {
     }
 
     @Test func loadMoreFetchesNextPageAndAdvancesCursor() async {
-        let firstPage = CameraSamples.clipsResponse(ids: [3, 2], nextCursor: "2")
+        let firstPage = CameraSamples.clipsResponse(ids: [3, 2], nextCursor: ClipCursor(2))
         let nextPage = CameraSamples.clipsResponse(ids: [1, 0], nextCursor: nil)
         let queue = ClipsFetchQueue([.success(nextPage)])
         let store = TestStore(
@@ -133,13 +133,13 @@ struct ClipsFeatureTests {
             $0.pageRequest = nil
         }
         let cursors = await queue.requestedCursors()
-        #expect(cursors == [Optional("2")])
+        #expect(cursors == [ClipCursor(2)])
     }
 
     @Test func pageFailureClearsPagingForRetry() async {
         let queue = ClipsFetchQueue([.failure(.http(503))])
         let store = TestStore(
-            initialState: ClipsFeature.State(nextCursor: "2"),
+            initialState: ClipsFeature.State(nextCursor: ClipCursor(2)),
             dependencies: dependencies(queue: queue),
             reduce: ClipsFeature.reduce
         )
@@ -523,7 +523,7 @@ struct ClipsFeatureTests {
     }
 
     @Test func headLoadKeepsClipsBelowItsCursorBoundary() async {
-        let response = CameraSamples.clipsResponse(ids: [8, 7, 6], nextCursor: "6")
+        let response = CameraSamples.clipsResponse(ids: [8, 7, 6], nextCursor: ClipCursor(6))
         let older = CameraSamples.clipsResponse(ids: [4, 2]).clips
         let store = TestStore(
             initialState: ClipsFeature.State(
@@ -539,7 +539,7 @@ struct ClipsFeatureTests {
             $0.status = .idle
             $0.hasLoadedOnce = true
             $0.lastSuccessfulHeadEpoch = 1
-            $0.nextCursor = "6"
+            $0.nextCursor = ClipCursor(6)
         }
     }
 
@@ -585,17 +585,17 @@ struct ClipsFeatureTests {
 
     @Test func stalePageResponseDoesNotOverwriteResetFrontier() async {
         let started = AsyncSignal()
-        let stalePage = CameraSamples.clipsResponse(ids: [400, 399], nextCursor: "399")
-        let freshHead = CameraSamples.clipsResponse(ids: [700, 699], nextCursor: "601")
+        let stalePage = CameraSamples.clipsResponse(ids: [400, 399], nextCursor: ClipCursor(399))
+        let freshHead = CameraSamples.clipsResponse(ids: [700, 699], nextCursor: ClipCursor(601))
         let store = TestStore(
             initialState: ClipsFeature.State(
                 clips: CameraSamples.clipsResponse(ids: [500, 499]).clips,
-                nextCursor: "401",
+                nextCursor: ClipCursor(401),
                 headEpoch: 5
             ),
             dependencies: AppDependencies(
                 clips: ClipsClient(fetch: { cursor in
-                    if cursor == "401" {
+                    if cursor == ClipCursor(401) {
                         await started.signal()
                         try await Task.sleep(for: .seconds(60))
                         return stalePage
@@ -626,7 +626,7 @@ struct ClipsFeatureTests {
             $0.status = .idle
             $0.hasLoadedOnce = true
             $0.lastSuccessfulHeadEpoch = 6
-            $0.nextCursor = "601"
+            $0.nextCursor = ClipCursor(601)
             $0.isPaging = false
             $0.inFlightRequests = []
             $0.headRequest = nil
@@ -678,7 +678,7 @@ struct ClipsFeatureTests {
     @Test func onDisappearCancelsInFlightPaging() async {
         let started = AsyncSignal()
         let store = TestStore(
-            initialState: ClipsFeature.State(nextCursor: "2"),
+            initialState: ClipsFeature.State(nextCursor: ClipCursor(2)),
             dependencies: AppDependencies(
                 clips: ClipsClient(fetch: { _ in
                     await started.signal()
@@ -748,13 +748,13 @@ private actor ClipCacheProbe {
 
 private actor ClipsFetchQueue {
     private var results: [Result<ClipsResponse, ClipsError>]
-    private var cursors: [String?] = []
+    private var cursors: [ClipCursor?] = []
 
     init(_ results: [Result<ClipsResponse, ClipsError>]) {
         self.results = results
     }
 
-    func fetch(cursor: String?) throws -> ClipsResponse {
+    func fetch(cursor: ClipCursor?) throws -> ClipsResponse {
         cursors.append(cursor)
         switch results.removeFirst() {
         case .success(let response):
@@ -764,7 +764,7 @@ private actor ClipsFetchQueue {
         }
     }
 
-    func requestedCursors() -> [String?] {
+    func requestedCursors() -> [ClipCursor?] {
         cursors
     }
 }

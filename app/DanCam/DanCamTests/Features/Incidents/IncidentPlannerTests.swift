@@ -49,13 +49,13 @@ struct IncidentPlannerTests {
         let commands = IncidentPlanner.plan(
             incidents: [fixtureRecord(markSeq: 43, markAge: 0)],
             clips: [clip(seq: 42), clip(seq: 43)],
-            listCoverage: .loaded(nextCursor: "42"),
+            listCoverage: .loaded(nextCursor: ClipCursor(42)),
             recorder: .recording(recordingID)
         )
         let persisted = try persistedRecord(from: commands)
 
         #expect(persisted.segment(seq: 41)?.state == .unresolved)
-        #expect(commands.contains(.page(cursor: "42")))
+        #expect(commands.contains(.page(cursor: ClipCursor(42))))
     }
 
     @Test func sessionStartAndEndAbsencesClipWithoutMakingIncidentPartial() throws {

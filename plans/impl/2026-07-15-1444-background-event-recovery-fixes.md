@@ -204,5 +204,5 @@ authoritative paged clip recovery. No Pi runtime behavior or wire-contract chang
 
 - [x] 1. Move domain runtime above UI scenes
 - [x] 2. Suspend live state outside active scenes
-- [ ] 3. Type clip cursors
+- [x] 3. Type clip cursors
 - [ ] 4. Reconcile clip pages after event gaps

@@ -43,7 +43,7 @@ struct RecordingDetailStateTests {
                 clip(id: 9, bootTag: "target"),
                 clip(id: 8, bootTag: "target"),
             ],
-            nextCursor: "8",
+            nextCursor: ClipCursor(8),
             recordingID: target
         )
         let bareTail = RecordingDetailState(
@@ -51,12 +51,12 @@ struct RecordingDetailStateTests {
                 clip(id: 9, bootTag: "target"),
                 clip(id: 8, bootTag: nil),
             ],
-            nextCursor: "8",
+            nextCursor: ClipCursor(8),
             recordingID: target
         )
         let emptyLoadedSet = RecordingDetailState(
             allClips: [],
-            nextCursor: "8",
+            nextCursor: ClipCursor(8),
             recordingID: target
         )
         let differentStampedTail = RecordingDetailState(
@@ -64,7 +64,7 @@ struct RecordingDetailStateTests {
                 clip(id: 9, bootTag: "target"),
                 clip(id: 8, bootTag: "other"),
             ],
-            nextCursor: "8",
+            nextCursor: ClipCursor(8),
             recordingID: target
         )
         let noCursor = RecordingDetailState(
@@ -88,7 +88,7 @@ struct RecordingDetailStateTests {
                 clip(id: 9, bootTag: "target", session: 7),
                 clip(id: 8, bootTag: "target", session: 8),
             ],
-            nextCursor: "8",
+            nextCursor: ClipCursor(8),
             recordingID: target
         )
         let bareTail = RecordingDetailState(
@@ -96,7 +96,7 @@ struct RecordingDetailStateTests {
                 clip(id: 9, bootTag: "target", session: 7),
                 clip(id: 8, bootTag: nil),
             ],
-            nextCursor: "8",
+            nextCursor: ClipCursor(8),
             recordingID: target
         )
 
@@ -113,7 +113,7 @@ struct RecordingDetailStateTests {
                 clip(id: 9, bootTag: nil),
                 clip(id: 8, bootTag: "target"),
             ],
-            nextCursor: "8",
+            nextCursor: ClipCursor(8),
             recordingID: target
         )
         let unresolvedBareTail = RecordingDetailState(
@@ -121,7 +121,7 @@ struct RecordingDetailStateTests {
                 clip(id: 10, bootTag: "target"),
                 clip(id: 9, bootTag: nil),
             ],
-            nextCursor: "9",
+            nextCursor: ClipCursor(9),
             recordingID: target
         )
         let provenDifferentTail = RecordingDetailState(
@@ -131,7 +131,7 @@ struct RecordingDetailStateTests {
                 clip(id: 8, bootTag: "target"),
                 clip(id: 7, bootTag: "other"),
             ],
-            nextCursor: "7",
+            nextCursor: ClipCursor(7),
             recordingID: target
         )
 

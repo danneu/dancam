@@ -1,9 +1,45 @@
 import Foundation
 
+nonisolated struct ClipCursor: Equatable, Comparable, Sendable {
+    let rawValue: UInt32
+
+    init(_ rawValue: UInt32) {
+        self.rawValue = rawValue
+    }
+
+    static func < (lhs: ClipCursor, rhs: ClipCursor) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+extension ClipCursor: Codable {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        guard let encoded = try? container.decode(String.self) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Clip cursor must be encoded as a string."
+            )
+        }
+        guard let rawValue = UInt32(encoded), String(rawValue) == encoded else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Clip cursor must be a canonical UInt32 decimal string."
+            )
+        }
+        self.init(rawValue)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(String(rawValue))
+    }
+}
+
 nonisolated struct ClipsResponse: Codable, Equatable, Sendable {
     var clips: [Clip]
     var serverTimeMs: UInt64?
-    var nextCursor: String?
+    var nextCursor: ClipCursor?
 }
 
 nonisolated struct Clip: Codable, Equatable, Sendable {

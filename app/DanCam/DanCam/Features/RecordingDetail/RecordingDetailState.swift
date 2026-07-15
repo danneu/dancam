@@ -6,7 +6,7 @@ nonisolated struct RecordingDetailState: Equatable, Sendable {
     var canLoadMore: Bool
     var paginationFrontier: Int?
 
-    init(allClips: [Clip], nextCursor: String?, recordingID: RecordingID) {
+    init(allClips: [Clip], nextCursor: ClipCursor?, recordingID: RecordingID) {
         self.recordingID = recordingID
         clips = allClips
             .filter { $0.recordingID == recordingID }

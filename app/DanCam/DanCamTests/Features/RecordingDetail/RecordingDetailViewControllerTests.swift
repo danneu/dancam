@@ -147,7 +147,7 @@ struct RecordingDetailViewControllerTests {
                 clip(id: 1, bootTag: "other"),
             ],
             clipsClient: blockedSpy.client(),
-            nextCursor: "1"
+            nextCursor: ClipCursor(1)
         )
         let blockedWindow = try embed(blockedController)
         defer { blockedWindow.isHidden = true }
@@ -164,7 +164,7 @@ struct RecordingDetailViewControllerTests {
                 clip(id: 11, bootTag: nil),
             ],
             clipsClient: fetchSpy.client(),
-            nextCursor: "11"
+            nextCursor: ClipCursor(11)
         )
         let loadingWindow = try embed(loadingController)
         defer { loadingWindow.isHidden = true }
@@ -172,7 +172,7 @@ struct RecordingDetailViewControllerTests {
 
         loadingController.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: loadingTail)
 
-        try await waitForCursors(fetchSpy, [Optional("11")])
+        try await waitForCursors(fetchSpy, [ClipCursor(11)])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -181,7 +181,7 @@ struct RecordingDetailViewControllerTests {
             ClipsResponse(
                 clips: [clip(id: 11, bootTag: nil)],
                 serverTimeMs: nil,
-                nextCursor: "11"
+                nextCursor: ClipCursor(11)
             ),
             ClipsResponse(
                 clips: [clip(id: 10, bootTag: "target")],
@@ -192,7 +192,7 @@ struct RecordingDetailViewControllerTests {
         let controller = makeController(
             clips: [clip(id: 12, bootTag: "target")],
             clipsClient: fetchSpy.client(),
-            nextCursor: "12"
+            nextCursor: ClipCursor(12)
         )
         let window = try embed(controller)
         defer { window.isHidden = true }
@@ -202,7 +202,7 @@ struct RecordingDetailViewControllerTests {
             return controller.clipThumbnailCellForTesting(clipID: 12) != nil
         }
 
-        try await waitForCursors(fetchSpy, [Optional("12"), Optional("11")])
+        try await waitForCursors(fetchSpy, [ClipCursor(12), ClipCursor(11)])
         try await waitUntil {
             controller.clipIDsForTesting() == [12, 10]
         }
@@ -222,7 +222,7 @@ struct RecordingDetailViewControllerTests {
                 clip(id: 11, bootTag: nil),
             ],
             clipsClient: fetchSpy.client(),
-            nextCursor: "11"
+            nextCursor: ClipCursor(11)
         )
         let root = UIViewController()
         let navigationController = UINavigationController(rootViewController: root)
@@ -232,7 +232,7 @@ struct RecordingDetailViewControllerTests {
 
         store.send(.clips(.clipRemoved(id: 12)))
 
-        try await waitForCursors(fetchSpy, [Optional("11")])
+        try await waitForCursors(fetchSpy, [ClipCursor(11)])
         #expect(navigationController.viewControllers.contains(controller))
         await fetchSpy.releaseFetches()
     }
@@ -309,7 +309,7 @@ struct RecordingDetailViewControllerTests {
             .success(ClipsResponse(
                 clips: [clip(id: 11, bootTag: nil)],
                 serverTimeMs: nil,
-                nextCursor: "11"
+                nextCursor: ClipCursor(11)
             ))
         )))
 
@@ -324,7 +324,7 @@ struct RecordingDetailViewControllerTests {
         window.layoutIfNeeded()
         controller.layoutTableForTesting()
 
-        try await waitForCursors(fetchSpy, [Optional("11")])
+        try await waitForCursors(fetchSpy, [ClipCursor(11)])
         try await waitUntil { controller.clipIDsForTesting() == [10] }
         try await waitUntil {
             controller.layoutTableForTesting()
@@ -583,7 +583,7 @@ struct RecordingDetailViewControllerTests {
     private func makeController(
         clips: [Clip],
         clipsClient: ClipsClient = .noop,
-        nextCursor: String? = nil,
+        nextCursor: ClipCursor? = nil,
         thumbnailLoader: ThumbnailLoader = .noop,
         recordingID: RecordingID? = nil,
         world: World? = nil,
@@ -605,7 +605,7 @@ struct RecordingDetailViewControllerTests {
     private func makeControllerAndStore(
         clips: [Clip],
         clipsClient: ClipsClient = .noop,
-        nextCursor: String? = nil,
+        nextCursor: ClipCursor? = nil,
         thumbnailLoader: ThumbnailLoader = .noop,
         recordingID: RecordingID? = nil,
         world: World? = nil,
@@ -705,13 +705,13 @@ struct RecordingDetailViewControllerTests {
         Issue.record("Timed out waiting for condition.")
     }
 
-    private func waitForCursors(_ spy: RecordingFetchSpy, _ expected: [String?]) async throws {
+    private func waitForCursors(_ spy: RecordingFetchSpy, _ expected: [ClipCursor?]) async throws {
         try await waitUntil {
             await spy.requestedCursors() == expected
         }
     }
 
-    private func waitForCursors(_ spy: ParkedRecordingFetchSpy, _ expected: [String?]) async throws {
+    private func waitForCursors(_ spy: ParkedRecordingFetchSpy, _ expected: [ClipCursor?]) async throws {
         try await waitUntil {
             await spy.requestedCursors() == expected
         }
@@ -738,7 +738,7 @@ private actor RecordingDeleteSpy {
 }
 
 private actor RecordingFetchSpy {
-    private var cursors: [String?] = []
+    private var cursors: [ClipCursor?] = []
     private var responses: [ClipsResponse]
 
     init(responses: [ClipsResponse] = [
@@ -753,11 +753,11 @@ private actor RecordingFetchSpy {
         }
     }
 
-    func requestedCursors() -> [String?] {
+    func requestedCursors() -> [ClipCursor?] {
         cursors
     }
 
-    private func nextResponse(cursor: String?) -> ClipsResponse {
+    private func nextResponse(cursor: ClipCursor?) -> ClipsResponse {
         cursors.append(cursor)
         guard responses.isEmpty == false else {
             return ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)
@@ -768,7 +768,7 @@ private actor RecordingFetchSpy {
 }
 
 private actor ParkedRecordingFetchSpy {
-    private var cursors: [String?] = []
+    private var cursors: [ClipCursor?] = []
     private let release = AsyncSignal()
 
     nonisolated func client() -> ClipsClient {
@@ -779,7 +779,7 @@ private actor ParkedRecordingFetchSpy {
         }
     }
 
-    func requestedCursors() -> [String?] {
+    func requestedCursors() -> [ClipCursor?] {
         cursors
     }
 
@@ -787,7 +787,7 @@ private actor ParkedRecordingFetchSpy {
         await release.signal()
     }
 
-    private func record(_ cursor: String?) {
+    private func record(_ cursor: ClipCursor?) {
         cursors.append(cursor)
     }
 

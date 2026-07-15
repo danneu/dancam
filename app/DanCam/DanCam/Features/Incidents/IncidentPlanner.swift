@@ -2,7 +2,7 @@ import Foundation
 
 nonisolated enum IncidentListCoverage: Equatable, Sendable {
     case unloaded
-    case loaded(nextCursor: String?)
+    case loaded(nextCursor: ClipCursor?)
 
     func covers(_ seq: Int) -> Bool {
         switch self {
@@ -11,11 +11,11 @@ nonisolated enum IncidentListCoverage: Equatable, Sendable {
         case .loaded(nil):
             true
         case .loaded(let cursor?):
-            Int(cursor).map { seq >= $0 } ?? false
+            seq >= Int(cursor.rawValue)
         }
     }
 
-    var nextCursor: String? {
+    var nextCursor: ClipCursor? {
         guard case .loaded(let cursor) = self else { return nil }
         return cursor
     }
@@ -45,7 +45,7 @@ nonisolated enum IncidentRecorderState: Equatable, Sendable {
 nonisolated enum IncidentPlannerCommand: Equatable, Sendable {
     case persist(IncidentRecord)
     case pull(seq: Int, etag: String, incidentIDs: [UUID])
-    case page(cursor: String?)
+    case page(cursor: ClipCursor?)
 }
 
 nonisolated enum IncidentPlanner {

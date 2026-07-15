@@ -33,11 +33,11 @@ extension ClipsError {
 nonisolated struct ClipsClient {
     typealias OpenByteStream = @Sendable (URL, Data) async throws -> AsyncThrowingStream<Data, Error>
 
-    var fetch: @Sendable (_ cursor: String?) async throws -> ClipsResponse
+    var fetch: @Sendable (_ cursor: ClipCursor?) async throws -> ClipsResponse
     var delete: @Sendable (_ clipID: Int) async throws -> Void
 
     init(
-        fetch: @escaping @Sendable (_ cursor: String?) async throws -> ClipsResponse,
+        fetch: @escaping @Sendable (_ cursor: ClipCursor?) async throws -> ClipsResponse,
         delete: @escaping @Sendable (_ clipID: Int) async throws -> Void = { _ in }
     ) {
         self.fetch = fetch
@@ -72,7 +72,7 @@ nonisolated struct ClipsClient {
             let requestURL = if let cursor {
                 baseURL
                     .appending(path: "v1/clips")
-                    .appending(queryItems: [URLQueryItem(name: "cursor", value: cursor)])
+                    .appending(queryItems: [URLQueryItem(name: "cursor", value: String(cursor.rawValue))])
             } else {
                 baseURL.appending(path: "v1/clips")
             }

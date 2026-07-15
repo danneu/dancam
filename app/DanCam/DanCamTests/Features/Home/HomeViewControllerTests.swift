@@ -133,7 +133,7 @@ struct HomeViewControllerTests {
             clips: clips,
             loader: .noop,
             clipsClient: fetchSpy.client(),
-            nextCursor: "5",
+            nextCursor: ClipCursor(5),
             wallNow: { now },
             currentCalendar: { calendar }
         )
@@ -149,7 +149,7 @@ struct HomeViewControllerTests {
         #expect(lastIndexPath.section != firstIndexPath.section)
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: lastIndexPath)
 
-        try await waitForCursors(fetchSpy, [Optional("5")])
+        try await waitForCursors(fetchSpy, [ClipCursor(5)])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -162,7 +162,7 @@ struct HomeViewControllerTests {
             ],
             loader: .noop,
             clipsClient: fetchSpy.client(),
-            nextCursor: "8"
+            nextCursor: ClipCursor(8)
         )
         let window = try embed(controller)
         defer { window.isHidden = true }
@@ -170,13 +170,13 @@ struct HomeViewControllerTests {
         let recordingIndexPath = try #require(controller.indexPathForTesting(rowID: .recording(recording: RecordingID(bootTag: "boot-a", session: 7), occurrence: 0)))
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: recordingIndexPath)
 
-        try await waitForCursors(fetchSpy, [Optional("8")])
+        try await waitForCursors(fetchSpy, [ClipCursor(8)])
     }
 
     @Test(.timeLimit(.minutes(1)))
     func pageAbsorbedByVisibleBottomRecordingIssuesNextFetch() async throws {
         let fetchSpy = HomeFetchSpy(responses: [
-            ClipsResponse(clips: [recordingClip(id: 8, bootTag: "boot-a")], serverTimeMs: nil, nextCursor: "7"),
+            ClipsResponse(clips: [recordingClip(id: 8, bootTag: "boot-a")], serverTimeMs: nil, nextCursor: ClipCursor(7)),
             ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil),
         ])
         let controller = makeController(
@@ -186,7 +186,7 @@ struct HomeViewControllerTests {
             ],
             loader: .noop,
             clipsClient: fetchSpy.client(),
-            nextCursor: "8"
+            nextCursor: ClipCursor(8)
         )
         let window = try embed(controller)
         defer { window.isHidden = true }
@@ -194,7 +194,7 @@ struct HomeViewControllerTests {
         let recordingIndexPath = try #require(controller.indexPathForTesting(rowID: .recording(recording: RecordingID(bootTag: "boot-a", session: 7), occurrence: 0)))
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: recordingIndexPath)
 
-        try await waitForCursors(fetchSpy, [Optional("8"), Optional("7")])
+        try await waitForCursors(fetchSpy, [ClipCursor(8), ClipCursor(7)])
     }
 
     @Test func tappingRecordingCardPushesRecordingDetail() throws {
@@ -235,7 +235,7 @@ struct HomeViewControllerTests {
         store.send(.clips(.clipsResponse(
             epoch: 0,
             generation: 0,
-            .success(ClipsResponse(clips: [clipB, clipA], serverTimeMs: nil, nextCursor: "1"))
+            .success(ClipsResponse(clips: [clipB, clipA], serverTimeMs: nil, nextCursor: ClipCursor(1)))
         )))
 
         #expect(controller.rowIDsForTesting.contains(.finished(clipB.id)))
@@ -254,7 +254,7 @@ struct HomeViewControllerTests {
         try await waitUntil {
             controller.clipThumbnailCellForTesting(clipID: clipB.id) != nil
         }
-        try await waitForCursors(fetchSpy, [Optional("1")])
+        try await waitForCursors(fetchSpy, [ClipCursor(1)])
     }
 
     @Test func recordingCardSwipeHasNoActions() throws {
@@ -1244,7 +1244,7 @@ struct HomeViewControllerTests {
         world: World? = nil,
         recording: RecordingFeature.State = .unknown,
         clipsClient: ClipsClient = .noop,
-        nextCursor: String? = nil,
+        nextCursor: ClipCursor? = nil,
         preview: PreviewClient = .noop,
         recordingClient: RecordingClient = .noop,
         incidentStore: IncidentStore = .noop,
@@ -1276,7 +1276,7 @@ struct HomeViewControllerTests {
         world: World? = nil,
         recording: RecordingFeature.State = .unknown,
         clipsClient: ClipsClient = .noop,
-        nextCursor: String? = nil,
+        nextCursor: ClipCursor? = nil,
         preview: PreviewClient = .noop,
         recordingClient: RecordingClient = .noop,
         incidentStore: IncidentStore = .noop,
@@ -1347,7 +1347,7 @@ struct HomeViewControllerTests {
         Issue.record("Timed out waiting for condition.")
     }
 
-    private func waitForCursors(_ spy: HomeFetchSpy, _ expected: [String?]) async throws {
+    private func waitForCursors(_ spy: HomeFetchSpy, _ expected: [ClipCursor?]) async throws {
         for _ in 0..<200 {
             if await spy.requestedCursors() == expected { return }
             try await Task.sleep(for: .milliseconds(10))
@@ -1455,7 +1455,7 @@ private actor HomeDeleteSpy {
 }
 
 private actor HomeFetchSpy {
-    private var cursors: [String?] = []
+    private var cursors: [ClipCursor?] = []
     private var responses: [ClipsResponse]
 
     init(responses: [ClipsResponse] = [ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)]) {
@@ -1468,11 +1468,11 @@ private actor HomeFetchSpy {
         }
     }
 
-    func requestedCursors() -> [String?] {
+    func requestedCursors() -> [ClipCursor?] {
         cursors
     }
 
-    private func response(cursor: String?) -> ClipsResponse {
+    private func response(cursor: ClipCursor?) -> ClipsResponse {
         cursors.append(cursor)
         guard responses.isEmpty == false else {
             return ClipsResponse(clips: [], serverTimeMs: nil, nextCursor: nil)

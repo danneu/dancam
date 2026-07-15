@@ -3,6 +3,53 @@ import Testing
 @testable import DanCam
 
 struct ClipsClientTests {
+    @Test(
+        .tags(.networking),
+        arguments: ["0", String(UInt32.max)]
+    )
+    func clipsResponseDecodesCanonicalCursorBoundaries(encoded: String) throws {
+        let response = try decodeClipsResponse("""
+        {
+          "clips": [],
+          "server_time_ms": null,
+          "next_cursor": "\(encoded)"
+        }
+        """)
+
+        let rawValue = try #require(UInt32(encoded))
+        #expect(response.nextCursor == ClipCursor(rawValue))
+    }
+
+    @Test(
+        .tags(.networking),
+        arguments: [
+            "\"\"",
+            "\"abc\"",
+            "\"-1\"",
+            "\"+1\"",
+            "\"01\"",
+            "\"4294967296\"",
+            "-1",
+            "1",
+        ]
+    )
+    func clipsResponseRejectsInvalidCursor(encodedCursor: String) {
+        do {
+            _ = try decodeClipsResponse("""
+            {
+              "clips": [],
+              "server_time_ms": null,
+              "next_cursor": \(encodedCursor)
+            }
+            """)
+            Issue.record("Expected a data-corrupted decoding error for cursor \(encodedCursor).")
+        } catch DecodingError.dataCorrupted {
+            // Expected.
+        } catch {
+            Issue.record("Expected DecodingError.dataCorrupted, got \(error).")
+        }
+    }
+
     @Test(.tags(.networking))
     func clipsResponseDecodesBootTagFromSnakeCase() throws {
         let response = try decodeClipsResponse("""
@@ -89,7 +136,7 @@ struct ClipsClientTests {
                 ),
             ],
             serverTimeMs: 1719338400000,
-            nextCursor: "7"
+            nextCursor: ClipCursor(7)
         ))
     }
 
@@ -116,7 +163,7 @@ struct ClipsClientTests {
             return AsyncStreamHelpers.byteStream([wire])
         }
 
-        _ = try await client.fetch("42")
+        _ = try await client.fetch(ClipCursor(42))
         let request = try #require(await capture.values().first)
 
         #expect(String(decoding: request, as: UTF8.self) == """

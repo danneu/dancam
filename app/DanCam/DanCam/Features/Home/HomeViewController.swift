@@ -80,7 +80,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     private var recordingAttribution: RecordingAttribution?
     private var finishedClips: [Clip] = []
     private var clipsStatus: ClipsFeature.State.Status = .idle
-    private var clipsNextCursor: String?
+    private var clipsNextCursor: ClipCursor?
     private var clipsHasLoadedOnce = false
     private var sections: [HomeSectionModel] = []
     private var rows: [HomeRow] = []

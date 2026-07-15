@@ -908,8 +908,8 @@ struct AppFeatureTests {
         let store = TestStore(
             initialState: state(
                 clips: ClipsFeature.State(
-                    clips: CameraSamples.clipsResponse(ids: [42], nextCursor: "42").clips,
-                    nextCursor: "42"
+                    clips: CameraSamples.clipsResponse(ids: [42], nextCursor: ClipCursor(42)).clips,
+                    nextCursor: ClipCursor(42)
                 )
             ),
             dependencies: dependencies(clips: ClipsClient(fetch: { cursor in
@@ -933,7 +933,7 @@ struct AppFeatureTests {
         }
 
         let cursors = await queue.requestedCursors()
-        #expect(cursors == [Optional("42")])
+        #expect(cursors == [ClipCursor(42)])
     }
 
     @Test func manualRefreshWhileOnlineReloadsClipsWithoutRestartingStream() async {
@@ -1388,7 +1388,7 @@ private actor ClipsFetchScript {
         calls
     }
 
-    private func fetch(cursor: String?) throws -> ClipsResponse {
+    private func fetch(cursor: ClipCursor?) throws -> ClipsResponse {
         calls += 1
         switch steps.removeFirst() {
         case .success(let response):
@@ -1465,13 +1465,13 @@ private enum AppFeatureTestError: Error {
 
 private actor ClipsFetchQueue {
     private var results: [Result<ClipsResponse, ClipsError>]
-    private var cursors: [String?] = []
+    private var cursors: [ClipCursor?] = []
 
     init(_ results: [Result<ClipsResponse, ClipsError>]) {
         self.results = results
     }
 
-    func fetch(cursor: String?) throws -> ClipsResponse {
+    func fetch(cursor: ClipCursor?) throws -> ClipsResponse {
         cursors.append(cursor)
         switch results.removeFirst() {
         case .success(let response):
@@ -1481,7 +1481,7 @@ private actor ClipsFetchQueue {
         }
     }
 
-    func requestedCursors() -> [String?] {
+    func requestedCursors() -> [ClipCursor?] {
         cursors
     }
 }

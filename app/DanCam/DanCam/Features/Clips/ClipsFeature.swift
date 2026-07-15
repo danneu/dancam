@@ -4,7 +4,7 @@ enum ClipsFeature {
     struct State: Equatable {
         var clips: [Clip] = []
         var status: Status = .idle
-        var nextCursor: String?
+        var nextCursor: ClipCursor?
         var isPaging = false
         var pendingDeleteIDs: Set<Int> = []
         var requestSeq = 0
@@ -185,7 +185,7 @@ enum ClipsFeature {
     private static func fetchEffect(
         epoch: Int,
         generation: Int,
-        cursor: String?,
+        cursor: ClipCursor?,
         dependencies: AppDependencies
     ) -> Effect<Action> {
         .run(id: fetchID, cancelInFlight: true) { send in
@@ -221,7 +221,7 @@ enum ClipsFeature {
     }
 
     private static func pageEffect(
-        cursor: String,
+        cursor: ClipCursor,
         epoch: Int,
         generation: Int,
         dependencies: AppDependencies
@@ -279,7 +279,7 @@ enum ClipsFeature {
     }
 
     private static func fetchResult(
-        cursor: String?,
+        cursor: ClipCursor?,
         dependencies: AppDependencies
     ) async -> Result<ClipsResponse, ClipsError>? {
         do {
@@ -318,7 +318,7 @@ enum ClipsFeature {
         requestEpoch: Int,
         finalizeEpoch: [Int: Int]
     ) -> HeadReconciliation {
-        let lower = response.nextCursor.flatMap(Int.init) ?? 0
+        let lower = response.nextCursor.map { Int($0.rawValue) } ?? 0
         let incomingIDs = Set(response.clips.map(\.id))
         let candidates = Set(existing.map(\.id)).union(pending)
         let authoritativeAbsent = candidates.filter { id in

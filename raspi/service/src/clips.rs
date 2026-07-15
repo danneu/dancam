@@ -118,8 +118,12 @@ pub(crate) async fn list_clips(
     Ok(Json(ClipsResponse {
         clips,
         server_time_ms: state.time_store.derived_wall_now_ms(),
-        next_cursor: next_cursor.map(|seq| seq.to_string()),
+        next_cursor: next_cursor.map(cursor_string),
     }))
+}
+
+fn cursor_string(seq: SegmentId) -> String {
+    seq.to_string()
 }
 
 pub async fn serve_clip(
@@ -615,9 +619,9 @@ fn segment_delete_to_clip_error(error: SegmentDeleteError) -> ClipError {
 #[cfg(test)]
 mod tests {
     use super::{
-        http_etag, io_error_to_clip_error, max_clip_seq, read_finished_clips, resolve_limit,
-        resolve_range, resolve_segment, segment_paths_for_id, zero_byte_repair, ClipError,
-        RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
+        cursor_string, http_etag, io_error_to_clip_error, max_clip_seq, read_finished_clips,
+        resolve_limit, resolve_range, resolve_segment, segment_paths_for_id, zero_byte_repair,
+        ClipError, RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
     };
     use crate::recorder::{stamped_segment_filename, SegmentFacts};
     use crate::time_sync::{OffsetRecord, TimeStore};
@@ -1185,6 +1189,16 @@ mod tests {
         assert_eq!(resolve_limit(Some(0)), 1);
         assert_eq!(resolve_limit(Some(MAX_LIMIT + 1)), MAX_LIMIT);
         assert_eq!(resolve_limit(Some(50)), 50);
+    }
+
+    #[test]
+    fn emitted_next_cursors_are_canonical_u32_decimals() {
+        for seq in [0, 1, 42, u32::MAX] {
+            let encoded = cursor_string(seq);
+
+            assert_eq!(encoded.parse::<u32>(), Ok(seq));
+            assert_eq!(encoded, seq.to_string());
+        }
     }
 
     fn write_file(dir: &Path, name: &str, bytes: &[u8]) {
