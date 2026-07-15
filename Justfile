@@ -17,7 +17,7 @@ raspi-check:
 raspi-deploy:
     ./raspi/deploy.sh
 
-# Hardware-free regression for deploy's status parser and reachability wait.
+# Hardware-free regression for deploy's status/readiness phases and diagnostics.
 raspi-deploy-test:
     bash raspi/scripts/deploy-test.sh
 

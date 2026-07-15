@@ -255,10 +255,15 @@ shell, not `rustup target add`.
   ADR covers why musl/static).
 - Deploy: `just raspi-deploy` (wraps `./raspi/deploy.sh`) -- cross-builds, rsyncs the
   binary + the systemd unit to the Pi, installs both, enables/restarts the service,
-  and waits for `/v1/status` to contain a JSON boolean
-  `recording_readiness.ready`. Override the 60 second reachability bound with
-  `DANCAM_STATUS_TIMEOUT`. Idempotent; re-run on every change. Override the target
-  with `DANCAM_HOST=... just raspi-deploy`.
+  then waits in two phases over `/v1/status`: first for a valid JSON boolean
+  `recording_readiness.ready`, then for that boolean to become true. The first valid
+  body is reused immediately by the readiness phase. Override the 60 second
+  reachability bound with `DANCAM_STATUS_TIMEOUT` and the recording-ready bound with
+  `DANCAM_RECORDING_READINESS_TIMEOUT` (it defaults to the reachability bound). A
+  readiness timeout prints the last valid status and gathers separately bounded
+  service-environment, `/data` mount, disk-space, and journal diagnostics. Idempotent;
+  re-run on every change. Override the target with
+  `DANCAM_HOST=... just raspi-deploy`.
   VS Code Remote-SSH is handy for poking around the Pi directly.
 
 ### Running

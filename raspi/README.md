@@ -310,9 +310,19 @@ creates that system user before deploy starts the service.
 
 This ships a static aarch64 binary, the camera process
 (`/usr/local/lib/dancam/camera.py`), and the systemd unit (`dancam.service`),
-enables/restarts the service, then waits for a valid `/v1/status` readiness boolean (polling for
-up to `DANCAM_STATUS_TIMEOUT`, default 60 seconds) and fires a macOS notification when the
-service is reachable. Recording-readiness waiting is added separately. The deployed unit sets:
+enables/restarts the service, then waits in two phases over `/v1/status`. Phase 1
+waits up to `DANCAM_STATUS_TIMEOUT` (default 60 seconds) for a valid JSON boolean at
+`recording_readiness.ready`. Phase 2 immediately evaluates that same response, then
+polls until the boolean is true, bounded by `DANCAM_RECORDING_READINESS_TIMEOUT`
+(defaulting to `DANCAM_STATUS_TIMEOUT`). Only then does deploy print success and fire
+the recording-ready macOS notification.
+
+During phase 2, deploy retains the last full valid status response. If recording
+readiness times out, it prints that response without fetching status again, then runs
+separately bounded best-effort diagnostics for the service environment, `/data`
+mount, `/data` space, and the last 50 service log entries. A stalled or failed
+diagnostic does not prevent the later diagnostics from running or replace the primary
+readiness failure. The deployed unit sets:
 
 ```ini
 Environment=DANCAM_BIND=[::]:8080
