@@ -253,7 +253,7 @@
     # drop-in perm and clears ansible-lint risky-file-permissions. The 60- filename
     # prefix sorts our values above the vendor 10-/20-/50- range so a later-sorting
     # drop-in cannot silently override them (last assignment wins across merged
-    # drop-ins). See ADR 12.
+    # drop-ins). See `docs/design/pi/os-image.md#Freeze recovery and persistent logs`.
     - name: Set journald Storage to persistent
       community.general.ini_file:
         path: /etc/systemd/journald.conf.d/60-dancam-persistent.conf
@@ -301,7 +301,7 @@
     # by default -- no config.txt change) via PID 1. systemd pings it every
     # RuntimeWatchdogSec/2 (30s); if PID 1 stops pinging -- a userspace hang, or a
     # kernel hard-freeze that also stalls the kernel ping worker (power present but
-    # wedged, the failure ADR 04 does NOT cover) -- the board resets and the dancam
+    # wedged, distinct from abrupt power loss) -- the board resets and the dancam
     # service comes back on boot (host recovery; the recorder boots Idle, so recording
     # resumes when the app re-issues /v1/recording/start -- auto-record-on-boot does
     # not yet exist). Timeout model: the BCM2835 heartbeat maxes at ~16s but the driver
@@ -319,7 +319,7 @@
     # on an unattended unit. Do NOT re-add it. Reuse the Reboot host handler:
     # RuntimeWatchdogSec is manager config a live PID 1 won't apply on daemon-reload
     # (needs daemon-reexec or a boot), so arming it authoritatively means rebooting on
-    # change. See ADR 12.
+    # change. See `docs/design/pi/os-image.md#Freeze recovery and persistent logs`.
     - name: Arm the on-board hardware watchdog via systemd
       community.general.ini_file:
         path: /etc/systemd/system.conf.d/60-dancam-watchdog.conf

@@ -332,7 +332,7 @@ mock first.
       auth hardening (token, then pinned-cert TLS); GPS
       time source; parked / sentry
       mode (gated on a future constant-power topology -- v1 power is switched /
-      drive-only, see the power-source ADR).
+      drive-only, see the [OS image design](design/pi/os-image.md#power-topology)).
 
 ## Icebox (someday-maybe -- parked, not on the near path)
 

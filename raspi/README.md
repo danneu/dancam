@@ -170,8 +170,8 @@ one piece the playbook deliberately leaves unset is the AP password -- that is a
 one-time manual step in section 7, so the secret never enters the repo.
 
 Two of these -- persistent journald and the hardware watchdog -- are the freeze-
-recovery layer from
-[`docs/design/12-2026-06-30-watchdog-and-persistent-journal.md`](docs/design/12-2026-06-30-watchdog-and-persistent-journal.md).
+recovery layer from the
+[OS image design](../docs/design/pi/os-image.md#freeze-recovery-and-persistent-logs).
 The watchdog drop-in reboots on first apply (arming needs a boot), so verify **after**
 the converge reboot. The *effective* value of a journald key is its **last**
 uncommented assignment across all drop-ins, so assert that with `tail -n1` rather than

@@ -5,7 +5,7 @@
 - **Owner:** raspi
 - **Related:** [transport boundary](../../../docs/design/boundary/transport.md) (API
   surface, including the deferred `/v1/logs` endpoint);
-  `12-2026-06-30-watchdog-and-persistent-journal.md`
+  [Pi OS image](../../../docs/design/pi/os-image.md)
   (persistent journald makes request logs useful across reboots)
 
 ## Context

@@ -67,7 +67,7 @@ current provisional direction until it is captured.
   **plain read-only ext4 root** (no overlayfs), read-only `/boot/firmware`, a small
   writable `/persist` OS-state island, and a writable ext4 `/data` recording
   partition. The dev image uses the same partition layout but keeps root writable.
-  See the SD-card-layout ADR.
+  See the [OS image design](../docs/design/pi/os-image.md).
 - **Capture/encode:** a single Picamera2 camera-owner subprocess, supervised by the
   Rust service over stdio (never linked -- see the service-language ADR and the
   [recording design](../docs/design/pi/recording.md)). It owns libcamera once, emits
@@ -105,8 +105,7 @@ current provisional direction until it is captured.
   USB accessory source
   that dies with the car, so power loss is abrupt and unsignaled -- no clean-shutdown
   path and no supercapacitor. No lithium batteries -- they are a fire risk baking in a
-  hot car. See `docs/design/04-2026-06-23-power-source-and-shutdown.md` and
-  `docs/design/18-2026-07-04-sd-card-layout-and-readonly-root.md`.
+  hot car. See the [OS image design](../docs/design/pi/os-image.md).
 
 ## Structure (planned)
 
@@ -235,8 +234,8 @@ fstab entries, boot and diagnostics stay up when `/data` is missing while record
 mutations fail closed at the service boundary. Ring GC uses
 `DANCAM_GC_FLOOR_BYTES`, defaulting to 2 GiB of available space on the recording
 filesystem; set it to `0` to disable GC. The deployed unit relies on this in-binary
-default, so the systemd unit does not duplicate it. See
-`docs/design/18-2026-07-04-sd-card-layout-and-readonly-root.md`.
+default, so the systemd unit does not duplicate it. See the
+[OS image design](../docs/design/pi/os-image.md).
 
 ### Rust dev loop
 
@@ -295,8 +294,8 @@ shell, not `rustup target add`.
   emitted SSE events with `seq` and body; `RUST_LOG=dancam=trace` adds heartbeats.
 - The dev image auto-reboots on a hard freeze via the on-board BCM2835 hardware
   watchdog (systemd `RuntimeWatchdogSec`), recovering the service unattended; paired
-  persistent journald keeps the previous boot's logs for the post-mortem. See
-  `docs/design/12-2026-06-30-watchdog-and-persistent-journal.md`.
+  persistent journald keeps the previous boot's logs for the post-mortem. See the
+  [OS image design](../docs/design/pi/os-image.md).
 
 ### Pointing the app at the unit
 
@@ -319,8 +318,8 @@ shell, not `rustup target add`.
   Power cycling also returns the dev image to home Wi-Fi. Persistent journald is now
   enabled on the dev image, so previous-boot logs survive a reset -- including watchdog
   reboots and abrupt power loss -- and a prior boot's AP failure is diagnosable via
-  `journalctl -b -1` (bounded by the last fsync; see
-  `docs/design/12-2026-06-30-watchdog-and-persistent-journal.md`).
+  `journalctl -b -1` (bounded by the last fsync; see the
+  [OS image design](../docs/design/pi/os-image.md)).
 
 ## Design pages
 
@@ -328,16 +327,15 @@ shell, not `rustup target add`.
   encoding, focus, segment format, recorder state, supervision, or command lifecycle.
 - [Storage](../docs/design/pi/storage.md) -- read when changing segment identity,
   time derivation, startup scrub, clip deletion, or ring GC.
+- [OS image, power, and recovery](../docs/design/pi/os-image.md) -- read when changing
+  the power topology, partition or mount layout, writable OS state, card policy,
+  watchdog, or persistent journald.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   routes, response semantics, SSE framing, preview, clip pull, or app/Pi trust.
 
 During the migration, the remaining raspi ADRs under `docs/design/` stay
 authoritative for subsystems that do not yet have a living page:
 
-- `04-2026-06-23-power-source-and-shutdown.md` (Proposed) -- the v1 power topology
-  (switched USB accessory source, 5V regulated, dies with the car) and the decision
-  to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves
-  the recording design's deferred supercapacitor question (dropped for this topology).
 - `05-2026-06-23-service-language-rust.md` (Accepted) -- the Pi service is written in
   Rust, cross-compiled on the dev host to a single static binary and run under
   systemd; the camera is driven as a subprocess, not linked. See the Build / run
@@ -357,10 +355,6 @@ authoritative for subsystems that do not yet have a living page:
   forks by splitting the per-machine SSH/Ansible login user from a fixed project-owned
   `dancam` service user (static `User`/`StateDirectory`/rec dir), keeping only
   connection params in a gitignored `.env`.
-- `12-2026-06-30-watchdog-and-persistent-journal.md` (Accepted) -- freeze recovery:
-  the on-board BCM2835 hardware watchdog (`RuntimeWatchdogSec`) auto-reboots a wedged
-  host, and persistent, size-capped journald keeps previous-boot logs for the
-  post-mortem (dev image).
 - `13-2026-07-01-request-logging-and-log-access.md` (Accepted) -- HTTP
   request/response access logs carry a request id through the existing `tracing` ->
   stdout -> journald path; `x-request-id` is honored and echoed for app/Pi
@@ -368,11 +362,6 @@ authoritative for subsystems that do not yet have a living page:
 - `14-2026-07-02-request-id-format.md` (Accepted) -- Pi-generated request ids are a
   per-process incrementing counter, keeping access logs short while safe inbound
   `x-request-id` values remain honored.
-- `18-2026-07-04-sd-card-layout-and-readonly-root.md` (Accepted) -- the final SD card
-  layout: fixed boot/root/persist partitions, flex `/data` with a 5% unwritten tail,
-  plain read-only ext4 root for the car image, `/persist` for OS state, and
-  mount-witness requirements so `/data` failures are diagnosable instead of bricking
-  the unit.
 - `22-2026-07-14-recording-capacity-telemetry.md` (Accepted) -- storage telemetry
   reports the exact non-root recorder-writable block pool minus the shared GC
   floor, and snapshot/delta storage use one complete nullable replacement shape.
