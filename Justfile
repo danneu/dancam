@@ -251,7 +251,7 @@ adr-check:
 fetch-references:
     bash scripts/fetch-references.sh
 
-# Print the picamera2 version installed on the Pi (confirm/bump the pin in scripts/fetch-references.sh).
+# Print the picamera2 + libcamera versions installed on the Pi (confirm/bump the pins in scripts/fetch-references.sh).
 references-pi-version:
     bash scripts/references-pi-version.sh
 

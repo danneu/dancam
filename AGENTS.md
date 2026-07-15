@@ -112,6 +112,11 @@ bumping a pin.
 - **picamera2** (`references/picamera2/`) -- Raspberry Pi camera stack imported by the Pi
   camera process (`raspi/camera/camera.py`). Pinned to the `python3-picamera2` version on
   Raspberry Pi OS Trixie. Upstream: https://github.com/raspberrypi/picamera2
+- **libcamera** (`references/libcamera/`) -- the Raspberry Pi **fork** (not upstream
+  linuxtv), which is what runs on the Pi: it carries the `rpi` pipeline handlers and the
+  IPA tuning under the picamera2 stack. Read for a future all-Rust camera owner; see
+  `docs/research/1-rust-camera-owner.md`. Pin tracks the fork branch/tag matching the Pi's
+  installed libcamera (`just references-pi-version`). Fork: https://github.com/raspberrypi/libcamera
 
 ## Cross-cutting principles (the decisions that shape everything)
 
