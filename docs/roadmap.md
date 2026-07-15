@@ -36,7 +36,8 @@ mock first.
       flash Raspberry Pi OS Lite (64-bit, Trixie), bring up the Wi-Fi AP
       (NetworkManager hotspot, 2.4 GHz), get the camera visible/capturing at a
       basic smoke-test level (`camera_auto_detect=0` + `dtoverlay=imx708`),
-      deploy/run the Rust service on the Pi, serve real `GET /v1/health` over
+      deploy/run the [Rust service](design/pi/service.md) on the Pi, serve real
+      `GET /v1/health` over
       HTTP, and have the app join the AP and get a 200 back. Read-only root can
       wait until hardening; do not block first hardware contact on the final
       car-image layout.

@@ -8,7 +8,7 @@
   investigation of what it buys, what is hard, how much work each hard part is,
   and a concrete scaffolding proposal -- thorough enough to resume the topic cold.
 - **Related:** [Pi recording](../design/pi/recording.md),
-  `raspi/docs/design/05-2026-06-23-service-language-rust.md`
+  [Pi service runtime](../design/pi/service.md)
 - **Origin:** started as a question about toggling live preview from the app
   ("can the user turn the preview feed on/off while recording?"), which led to
   tracing the preview pipeline, which led to "what would a Rust rewrite of the

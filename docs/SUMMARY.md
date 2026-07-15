@@ -11,6 +11,7 @@
 - [Pi OS image, power, and recovery](design/pi/os-image.md)
 - [Pi provisioning](design/pi/provisioning.md)
 - [Pi recording](design/pi/recording.md)
+- [Pi service runtime and request tracing](design/pi/service.md)
 - [Pi storage](design/pi/storage.md)
 
 # Reference

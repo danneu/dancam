@@ -69,7 +69,8 @@ current provisional direction until it is captured.
   partition. The dev image uses the same partition layout but keeps root writable.
   See the [OS image design](../docs/design/pi/os-image.md).
 - **Capture/encode:** a single Picamera2 camera-owner subprocess, supervised by the
-  Rust service over stdio (never linked -- see the service-language ADR and the
+  Rust service over stdio (never linked -- see the
+  [service runtime design](../docs/design/pi/service.md) and the
   [recording design](../docs/design/pi/recording.md)). It owns libcamera once, emits
   low-res MJPEG preview from the lores stream, and writes segmented MPEG-TS (`.ts`)
   recordings with inline headers under `DANCAM_REC_DIR` -- truncation-tolerant and
@@ -93,8 +94,9 @@ current provisional direction until it is captured.
   that instance, not a hand-run DNS service, but is deferred until persistent
   no-internet joins need it. The concrete topology and AP decision are in the
   [networking design](../docs/design/pi/networking.md).
-- **Control + media service:** a small **Rust** service (see the service-language
-  ADR) exposing a control API (start/stop, settings, time sync) and a media API
+- **Control + media service:** a small **Rust** service (see the
+  [service runtime design](../docs/design/pi/service.md)) exposing a control API
+  (start/stop, settings, time sync) and a media API
   (list/preview/pull clips) to the app. Incidents use those read surfaces and add
   no Pi-side API in v1.
 - **Power-loss safety:** a high-endurance consumer microSD treated as a consumable,
@@ -120,10 +122,10 @@ raspi/
 ## Build / run
 
 The service lives in `raspi/service/` and is written in **Rust** with the camera driven
-as a supervised subprocess; the rationale is in
-`docs/design/05-2026-06-23-service-language-rust.md`, while the current Picamera2
-owner is specified by the [recording design](../docs/design/pi/recording.md). Two
-facts shape the whole workflow:
+as a supervised subprocess; the rationale is in the
+[service runtime design](../docs/design/pi/service.md), while the current Picamera2
+owner is specified by the [recording design](../docs/design/pi/recording.md). Two facts
+shape the whole workflow:
 release code is **cross-compiled on the dev host** (never built on the Pi), and the
 **dev image differs from the car image**.
 
@@ -252,8 +254,8 @@ shell, not `rustup target add`.
   flakes enabled.
 - Build: `nix develop -c cargo zigbuild --release --target
   aarch64-unknown-linux-musl --manifest-path raspi/service/Cargo.toml` -> a single
-  static musl binary (nothing to install on the read-only root; the service-language
-  ADR covers why musl/static).
+  static musl binary (nothing to install on the read-only root; the
+  [service runtime design](../docs/design/pi/service.md) covers why musl/static).
 - Deploy: `just raspi-deploy` (wraps `./raspi/deploy.sh`) -- cross-builds, rsyncs the
   binary + the systemd unit to the Pi, installs both, enables/restarts the service,
   then waits in two phases over `/v1/status`: first for a valid JSON boolean
@@ -336,23 +338,15 @@ shell, not `rustup target add`.
 - [Provisioning](../docs/design/pi/provisioning.md) -- read when changing Ansible
   ownership, convergence, per-machine connection config, service identity, or the
   boundary between provisioning, deploy, partitioning, and operator steps.
+- [Service runtime and request tracing](../docs/design/pi/service.md) -- read when
+  changing the Rust runtime, cross-build or deploy model, request logs, request ids,
+  runtime log filtering, or log-access path.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   routes, response semantics, SSE framing, preview, clip pull, or app/Pi trust.
 
 During the migration, the remaining raspi ADRs under `docs/design/` stay
 authoritative for subsystems that do not yet have a living page:
 
-- `05-2026-06-23-service-language-rust.md` (Accepted) -- the Pi service is written in
-  Rust, cross-compiled on the dev host to a single static binary and run under
-  systemd; the camera is driven as a subprocess, not linked. See the Build / run
-  section above for the dev loop.
-- `13-2026-07-01-request-logging-and-log-access.md` (Accepted) -- HTTP
-  request/response access logs carry a request id through the existing `tracing` ->
-  stdout -> journald path; `x-request-id` is honored and echoed for app/Pi
-  correlation, while `/v1/logs` stays deferred until a non-SSH consumer needs it.
-- `14-2026-07-02-request-id-format.md` (Accepted) -- Pi-generated request ids are a
-  per-process incrementing counter, keeping access logs short while safe inbound
-  `x-request-id` values remain honored.
 - `22-2026-07-14-recording-capacity-telemetry.md` (Accepted) -- storage telemetry
   reports the exact non-root recorder-writable block pool minus the shared GC
   floor, and snapshot/delta storage use one complete nullable replacement shape.
