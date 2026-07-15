@@ -116,9 +116,10 @@ mock first.
             (no spaces), AP cipher pins `rsn`/`ccmp`/`ccmp`, iPhone joins `dancam-dev`,
             `dancam` service user has `video`, and the service opens the camera as
             `dancam`.
-      - [x] Docs land in lockstep: ADR 09 (`just adr-check` green), README renumbered to
-            the pinned 8-section runbook, `raspi/AGENTS.md` flipped to "playbook is the
-            source of truth."
+      - [x] Docs land in lockstep: the
+            [provisioning design](design/pi/provisioning.md) records the rationale,
+            the README became the pinned runbook, and `raspi/AGENTS.md` flipped to
+            "playbook is the source of truth."
 - [x] **Swoop `opal` -- Connection robustness.** Keep the app usable across a flaky
       2.4 GHz link: detect drops fast, ride them out in place, and recover without a
       manual rejoin. _App-side ambient UX and resumable pulls have landed; measured

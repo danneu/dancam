@@ -5,7 +5,7 @@
 # systemd unit, and the README owns the human-only/runtime-only steps. One home per
 # fact: a command lives here, its hard-won "why" lives as the # comment on the
 # action it justifies. See
-# raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md.
+# docs/design/pi/provisioning.md.
 - name: Converge the dancam Pi system layer
   hosts: dancam
   become: true
@@ -36,7 +36,7 @@
       # Fresh Lite image lags; full == faithful "apt full-upgrade". notify fires
       # only when a package actually changed, so this reboots after ANY upgrade --
       # intentional and safe, and simpler than probing /run/reboot-required for
-      # kernel-only (the README's old rule). See ADR 09.
+      # kernel-only (the README's old rule). See docs/design/pi/provisioning.md.
       ansible.builtin.apt:
         update_cache: true
         upgrade: full

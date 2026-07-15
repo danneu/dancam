@@ -142,8 +142,8 @@ persistent journald backed by `/persist/journal`, `/data/rec` ownership, kernel
 writeback clamps, weekly `fstrim.timer`, and the on-board hardware watchdog -- is
 provisioned declaratively with Ansible. The playbook
 (`raspi/ansible/site.yml`) is the source of truth for that state; the *why* behind each
-choice lives in its task comments (see also
-`raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`). Run it from the
+choice lives in its task comments (see also the
+[provisioning design](../docs/design/pi/provisioning.md)). Run it from the
 repo root **over home Wi-Fi** -- it needs internet for apt, and the Pi's AP has no
 upstream:
 

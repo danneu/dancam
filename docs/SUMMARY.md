@@ -9,6 +9,7 @@
 - [App-Pi transport boundary](design/boundary/transport.md)
 - [Pi networking](design/pi/networking.md)
 - [Pi OS image, power, and recovery](design/pi/os-image.md)
+- [Pi provisioning](design/pi/provisioning.md)
 - [Pi recording](design/pi/recording.md)
 - [Pi storage](design/pi/storage.md)
 

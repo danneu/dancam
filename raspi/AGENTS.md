@@ -85,8 +85,8 @@ current provisional direction until it is captured.
   dev profile is `dancam-ap`: SSID `dancam-dev`, WPA2-PSK pinned to AES
   (RSN/CCMP, no TKIP), channel 1, `ipv4.addresses 10.42.0.1/24`,
   `ipv6.method ignore`, and `connection.autoconnect no`. Ansible provisions every
-  field of this profile except the PSK (see
-  `docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`); the password is set
+  field of this profile except the PSK (see the
+  [provisioning design](../docs/design/pi/provisioning.md)); the password is set
   by hand on the Pi so it never enters the repo. NM shared mode runs its own
   `dnsmasq` for DHCP/DNS; during bring-up it served `10.42.0.10` through
   `10.42.0.254`. The transport boundary's captive-probe DNS lever is applied through
@@ -131,7 +131,7 @@ The Ansible playbook (`ansible/site.yml`) is the source of truth for onboard **s
 state** -- apt packages, `/boot/firmware/config.txt`, NetworkManager profiles, Avahi
 scoping, locale, and group membership. When a raspi change touches any of that, update
 `site.yml` and its task comment in the same change (the comment is the single home of
-the *why*); see `docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`. The
+the *why*); see the [provisioning design](../docs/design/pi/provisioning.md). The
 systemd unit and deploy paths stay `deploy.sh`'s. This directory's
 [`README.md`](README.md) is the bootstrap/verify/ops runbook -- flash, SSH,
 smoke-tests, the one-time manual AP PSK, the AP safe-flip procedure -- and is kept in
@@ -247,8 +247,9 @@ shell, not `rustup target add`.
   toolchain carrying the `aarch64-unknown-linux-musl` target plus `zig` +
   `cargo-zigbuild` (zig is the cross-linker; the deps are pure Rust, so no C cross-
   toolchain is needed). The same dev shell also ships `ansible` + `ansible-lint` for
-  Pi provisioning (`just raspi-provision*`; see ADR 09). Just need Nix with flakes
-  enabled.
+  Pi provisioning (`just raspi-provision*`; see the
+  [provisioning design](../docs/design/pi/provisioning.md)). Just need Nix with
+  flakes enabled.
 - Build: `nix develop -c cargo zigbuild --release --target
   aarch64-unknown-linux-musl --manifest-path raspi/service/Cargo.toml` -> a single
   static musl binary (nothing to install on the read-only root; the service-language
@@ -332,6 +333,9 @@ shell, not `rustup target add`.
   watchdog, or persistent journald.
 - [Networking](../docs/design/pi/networking.md) -- read when changing the Wi-Fi
   topology, NetworkManager AP profile, gateway, mDNS scoping, or AP safe-flip loop.
+- [Provisioning](../docs/design/pi/provisioning.md) -- read when changing Ansible
+  ownership, convergence, per-machine connection config, service identity, or the
+  boundary between provisioning, deploy, partitioning, and operator steps.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   routes, response semantics, SSE framing, preview, clip pull, or app/Pi trust.
 
@@ -342,16 +346,6 @@ authoritative for subsystems that do not yet have a living page:
   Rust, cross-compiled on the dev host to a single static binary and run under
   systemd; the camera is driven as a subprocess, not linked. See the Build / run
   section above for the dev loop.
-- `09-2026-06-26-pi-system-layer-config-ansible.md` (Accepted) -- the Pi's system
-  layer (apt, camera overlay, Avahi scoping, locale, the `dancam-ap` profile sans PSK,
-  the `dancam` service user's `video` group) is provisioned declaratively with
-  Ansible from the Mac;
-  `deploy.sh` keeps the binary/unit and the README becomes a bootstrap/verify/ops
-  runbook.
-- `11-2026-06-30-forkable-pi-config.md` (Accepted) -- prepares the repo for public
-  forks by splitting the per-machine SSH/Ansible login user from a fixed project-owned
-  `dancam` service user (static `User`/`StateDirectory`/rec dir), keeping only
-  connection params in a gitignored `.env`.
 - `13-2026-07-01-request-logging-and-log-access.md` (Accepted) -- HTTP
   request/response access logs carry a request id through the existing `tracing` ->
   stdout -> journald path; `x-request-id` is honored and echoed for app/Pi

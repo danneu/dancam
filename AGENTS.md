@@ -209,7 +209,7 @@ During the migration from ADRs to living pages:
   NetworkManager profiles, systemd units, deploy paths, AP/mDNS behavior, or other
   config files -- belong in the owning playbook/unit/deploy artifact and its comments;
   see [`raspi/AGENTS.md`](raspi/AGENTS.md) and
-  [`raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`](raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md).
+  [Pi provisioning](docs/design/pi/provisioning.md).
 - **Commits:** small and logical; one coherent change per commit. Follow
   [Conventional Commits](https://www.conventionalcommits.org/) -- a `type(scope):
 summary` subject (types: `feat`, `fix`, `docs`, `refactor`, `chore`; scope optional,
