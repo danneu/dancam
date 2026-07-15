@@ -282,7 +282,7 @@ The Pi does not own incident state and exposes no incident mutation in v1. It ha
 incident directory, hardlink locks, pre-sync holds, idempotency tombstones, locked-byte
 caps, incident metadata, or incident events. The phone records an incident and pulls
 its window through the existing list, event, and ranged-read surfaces; see
-`app/docs/design/26-2026-07-14-phone-owned-incidents.md`.
+[phone-owned incidents](../app/incidents.md).
 
 The old in-mutex protection seam remains intentionally unused. A future protect-only
 pin must be justified by retention evidence and must recheck protection at the same

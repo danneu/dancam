@@ -11,6 +11,7 @@
 - [App connection, liveness, and status](design/app/connection.md)
 - [App clip pull, playback, cache, and thumbnails](design/app/clips.md)
 - [App navigation, recording browse, and Debug](design/app/browsing.md)
+- [Phone-owned incident capture and recovery](design/app/incidents.md)
 - [Pi networking](design/pi/networking.md)
 - [Pi OS image, power, and recovery](design/pi/os-image.md)
 - [Pi provisioning](design/pi/provisioning.md)

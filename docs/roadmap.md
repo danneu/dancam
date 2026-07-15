@@ -261,7 +261,8 @@ mock first.
       continuous `clip_removed` traffic no longer grows an unbounded tombstone
       set. Retains an unused in-mutex protection seam for possible future clip
       pinning; phone-owned `nova` does not use it. See
-      [storage](design/pi/storage.md#ring-garbage-collection) and app ADR 26.
+      [storage](design/pi/storage.md#ring-garbage-collection) and
+      [phone-owned incidents](design/app/incidents.md).
 - [ ] **Swoop `kelp` -- SD card management.** Pi detects `/data` issues and surfaces
       them to the app (missing / unformatted / wrong filesystem); auto-format on first
       insert; format-from-app with a double-confirm (`POST /v1/storage/format`). After

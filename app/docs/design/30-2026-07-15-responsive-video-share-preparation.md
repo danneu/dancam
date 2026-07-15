@@ -4,7 +4,7 @@
 - **Date:** 2026-07-15
 - **Owner:** app
 - **Related:** `25-2026-07-10-clip-share-raw-file-url.md`;
-  `26-2026-07-14-phone-owned-incidents.md`
+  [phone-owned incidents](../../../docs/design/app/incidents.md)
 
 ## Context
 

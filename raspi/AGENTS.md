@@ -81,7 +81,7 @@ remainder is the current provisional direction until it is captured.
   are drip-evicted as the card fills. Incidents are phone-owned and do not lock
   Pi segments in v1; the coordinator retains an unused protection seam for future
   evidence-driven pinning. See the [storage design](../docs/design/pi/storage.md)
-  and app ADR 26.
+  and [incident design](../docs/design/app/incidents.md).
 - **Access point:** a NetworkManager hotspot (`nmcli`, `ipv4.method=shared`) on
   the 2.4 GHz band so the phone can connect directly with no router. The current
   dev profile is `dancam-ap`: SSID `dancam-dev`, WPA2-PSK pinned to AES

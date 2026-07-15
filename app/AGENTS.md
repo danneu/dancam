@@ -38,7 +38,8 @@ direction, not settled law.
   [app architecture](../docs/design/app/architecture.md) page.
 - **Local persistence:** filesystem-backed Application Support directories for
   phone-owned incident records and footage; SwiftData remains provisional for any
-  future clip metadata or settings store. See app ADR 26.
+  future clip metadata or settings store. See the
+  [incident design](../docs/design/app/incidents.md).
 - **Playback:** AVFoundation / AVKit.
 - **Networking to the Pi:** the Network framework (`NWConnection`/`NWBrowser`) for
   discovery and control; HTTP for the clip API; MJPEG over HTTP for low-res live
@@ -116,6 +117,9 @@ and, for device testing, the CarPlay entitlement from Apple.
   recovery, or the shell status strip.
 - [App clips](../docs/design/app/clips.md) -- read when changing resumable clip pull,
   TS-to-MP4 remux, durable clip caching, viewer playback lifecycle, or thumbnails.
+- [App incidents](../docs/design/app/incidents.md) -- read when changing incident
+  capture, post-roll lockout, coverage planning, durable evidence, reconciliation,
+  notifications, or the Incidents tab.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   Pi routes, HTTP framing, SSE, preview, clip pull, Wi-Fi pinning, or link trust.
 
@@ -130,18 +134,9 @@ for subsystems that do not yet have a living page:
 - `25-2026-07-10-clip-share-raw-file-url.md` -- superseded by ADR 30; removed the unnecessary
   `UIActivityItemSource` wrapper that crashed during share discovery and return to the
   device-verified raw MP4 file URL.
-- `26-2026-07-14-phone-owned-incidents.md` -- make incidents durable phone-owned
-  artifacts assembled from the existing clip list, ranged pull, and events surfaces;
-  supersedes the Pi-side incident-lock direction.
-- `27-2026-07-14-incident-post-roll-press-lockout.md` -- replace the 3 s incident
-  cooldown with a recording-scoped monotonic post-roll lockout, one-time relaunch
-  reconstruction, and a single button presentation state machine.
 - `28-2026-07-14-estimated-recording-capacity.md` -- estimate footage retention from
   freshly finalized clips and Pi-provided recorder-writable capacity, scoped to one
   live connection epoch and presented in Settings.
-- `29-2026-07-14-evidence-ordered-self-healing-incidents.md` -- order positive and
-  negative incident evidence, treat stopping as finalization, derive status from
-  segment facts, and reopen inferred losses when later clip evidence contradicts them.
 - `30-2026-07-15-responsive-video-share-preparation.md` -- prepare cached clips and
   incident segments off the main actor with cancellable `clonefile` staging, inline
   progress, raw-URL fallback, and shared presentation cleanup.
