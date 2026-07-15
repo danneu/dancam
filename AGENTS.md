@@ -179,7 +179,7 @@ files under each side's `docs/design/` directory. This is the project's ADR
 
 - **Writing style:** plain ASCII. Write `4x` not the times sign, straight quotes,
   `--` not an em dash, `degrees`/`deg` not the degree sign. Applies to docs, code
-  comments, and commit messages.
+  comments, and commit messages -- but not UI.
 - **References in docs/plans:** never cite line numbers -- they drift the moment a
   file changes and silently rot. Point at a stable anchor instead:
   `path/to/file#identifier`, where the identifier is a symbol or heading that can be
@@ -201,7 +201,7 @@ files under each side's `docs/design/` directory. This is the project's ADR
   [`raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`](raspi/docs/design/09-2026-06-26-pi-system-layer-config-ansible.md).
 - **Commits:** small and logical; one coherent change per commit. Follow
   [Conventional Commits](https://www.conventionalcommits.org/) -- a `type(scope):
-  summary` subject (types: `feat`, `fix`, `docs`, `refactor`, `chore`; scope optional,
+summary` subject (types: `feat`, `fix`, `docs`, `refactor`, `chore`; scope optional,
   e.g. `app` / `raspi`), with a body when the why isn't obvious. Example:
   `docs(raspi): add power-source-and-shutdown ADR`.
 - **Source of truth for context:** `AGENTS.md` files. `CLAUDE.md` exists only to
