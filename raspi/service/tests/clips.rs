@@ -118,10 +118,12 @@ async fn clips_route_lists_finished_clips_and_headers() {
 }
 
 #[tokio::test]
-async fn clips_route_reports_duration_for_real_transport_stream() {
+async fn clips_route_reports_duration_from_finalized_filename() {
     let rec_dir = TempRecDir::new();
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/clips/seg_00000.ts");
-    fs::copy(fixture, rec_dir.path.join("seg_00000.ts")).unwrap();
+    rec_dir.write(
+        &finalized_name(0, BOOT_TAG, 30_000),
+        b"not transport stream",
+    );
 
     let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(
@@ -141,11 +143,7 @@ async fn clips_route_reports_duration_for_real_transport_stream() {
 
     assert_eq!(clips.len(), 1);
     assert_eq!(clips[0]["id"], 0);
-    let dur_ms = clips[0]["dur_ms"].as_u64().unwrap();
-    assert!(
-        (dur_ms as i64 - 30_000).abs() <= 100,
-        "duration was {dur_ms} ms"
-    );
+    assert_eq!(clips[0]["dur_ms"], 30_000);
     assert_eq!(clips[0]["start_ms"], Value::Null);
     assert_eq!(clips[0]["time_approximate"], true);
     assert_eq!(json["server_time_ms"], Value::Null);

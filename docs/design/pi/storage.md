@@ -182,7 +182,7 @@ before clients connect.
 
 ## Filesystem-backed reads
 
-Clip listing, lookup, pull, duration recovery, current-segment enrichment,
+Clip listing, lookup, pull, current-segment enrichment,
 next-sequence selection, and GC all scan or open the flat recording directory. A
 missing recording directory is a truthful empty listing. Other scan failures fail
 closed: list and lookup return 503 rather than turning an unreadable directory into an
@@ -190,24 +190,9 @@ empty list or a false 404, and start allocation does not lower its floor.
 
 Listings include finalized segments only, order newest first, and use a cursor as a
 strict lower-sequence boundary. The server clamps page size and returns a next cursor
-only while older candidates remain. Duration is best-effort metadata derived from
-MPEG-TS timestamps; a span over 10 minutes is implausible for the configured 30-second
-segments and is treated as unknown. A five-field filename supplies duration without
-opening media. While recording is inactive, listing lazily measures legacy
-four-field segments and persists the result with the same finalize rename. Bare
-recovery segments can be measured but remain bare because they lack the facts needed
-to render a finalized name.
-
-All listing-triggered legacy measurements share one coordinator-owned gate across
-requests and across both legacy forms. A waiter re-resolves by sequence after taking
-the gate, so a duration persisted by another request is consumed without another
-scan. It then rechecks the live recording floor immediately before any SD read. Once
-recording is active, queued and subsequent measurements return unknown without
-scanning or renaming; at most the one scan already in progress may finish. Candidate
-enumeration also precedes the listing's first live-floor sample, so a recording that
-starts during directory enumeration cannot expose its live segment to migration.
-Failed scans, failed persistence, and power loss may retry because no durable fact
-exists yet.
+only while older candidates remain. A five-field filename supplies duration without
+opening media. Durationless four-field or bare recovery files remain listable and
+pullable with `dur_ms: null`; listing never scans media or rewrites filenames.
 
 An immutable clip `ETag` derives from stable facts such as sequence and byte length,
 never inode, mtime, or path.
@@ -287,8 +272,8 @@ Jumping ahead is safe because the witness only prevents reuse; it never authoriz
 deletion. If an authoritative protection check skips prefix candidates and GC reaches
 later ids, the ordinary per-id write-ahead raise remains the correctness backstop.
 
-Each durable eviction emits `clip_removed` and evicts that sequence from the in-memory
-duration cache. An already-open pull can finish; a later range request returns 404.
+Each durable eviction emits `clip_removed`. An already-open pull can finish; a later
+range request returns 404.
 Phone-cached MP4s remain available after Pi roll-off, and the app bounds stale-list
 suppression to outstanding request generations rather than accumulating permanent
 tombstones.
@@ -555,3 +540,16 @@ Startup warming was rejected because it creates maximum SD contention at recordi
 startup. A sidecar or index was rejected because the filename already owns immutable
 per-segment facts. Keeping the cache with per-id invalidation was rejected because a
 durable filename makes the cache a rare-case optimization rather than useful state.
+
+### 2026-07-15: Reset existing footage instead of carrying duration migration
+
+The duration filename change had no shipped-user compatibility requirement, and the
+development Pi could be reset at the transition. Keeping listing-time measurement and
+backfill would permanently retain synchronization, recording-yield, retry, and
+instrumentation code for a one-time local migration.
+
+The decision removed listing-time duration scans and backfill. Clip listing now reads
+duration only from the five-field finalized filename; durationless recovery files
+remain usable with unknown duration. The development Pi recording directory was reset
+at the transition. Retaining lazy migration was rejected because operationally
+clearing disposable footage is simpler and removes the SD contention path entirely.

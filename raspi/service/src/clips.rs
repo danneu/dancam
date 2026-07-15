@@ -20,7 +20,7 @@ use tokio_util::io::ReaderStream;
 use crate::{
     mutation::{require_mutation_headers, MutationHeaderError},
     recorder::{parse_segment_filename, SegmentFacts, SegmentId},
-    storage::{DurationPersist, ListingDuration, SegmentDeleteError, StorageCoordinator},
+    storage::{SegmentDeleteError, StorageCoordinator},
     time_sync::TimeStore,
     ts_duration::segment_duration_ms,
     AppState,
@@ -49,19 +49,10 @@ pub struct ClipsResponse {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DurationSources {
-    pub(crate) from_name: usize,
-    pub(crate) scanned: usize,
-    pub(crate) backfilled: usize,
-    pub(crate) unknown: usize,
-}
-
 #[derive(Debug)]
 pub(crate) struct FinishedClipsPage {
     pub(crate) clips: Vec<ClipMeta>,
     pub(crate) next_cursor: Option<SegmentId>,
-    pub(crate) dur_sources: DurationSources,
 }
 
 #[derive(Clone, Debug)]
@@ -127,16 +118,6 @@ pub(crate) async fn list_clips(
         tracing::error!(%error, "failed to list clips");
         ClipError::Unavailable
     })?;
-
-    tracing::info!(
-        cursor = ?cursor,
-        limit,
-        dur_from_name = page.dur_sources.from_name,
-        dur_scanned = page.dur_sources.scanned,
-        dur_backfilled = page.dur_sources.backfilled,
-        dur_unknown = page.dur_sources.unknown,
-        "clips listed"
-    );
 
     Ok(Json(ClipsResponse {
         clips: page.clips,
@@ -367,50 +348,15 @@ pub(crate) fn read_finished_clips(
         .then(|| candidates.last().map(|candidate| candidate.seq))
         .flatten();
 
-    let mut clips = Vec::with_capacity(candidates.len());
-    let mut dur_sources = DurationSources::default();
-    for candidate in candidates {
-        let outcome = storage.listing_segment_duration(
-            candidate.seq,
-            || live_floor().is_some(),
-            segment_duration_ms,
-        )?;
-        let dur_ms = match outcome {
-            ListingDuration::FromName(dur_ms) => {
-                dur_sources.from_name += 1;
-                Some(dur_ms)
-            }
-            ListingDuration::Scanned { dur_ms, persist } => {
-                dur_sources.scanned += 1;
-                if dur_ms.is_none() {
-                    dur_sources.unknown += 1;
-                }
-                if let Some(persist) = persist {
-                    match persist {
-                        Ok(DurationPersist::Renamed | DurationPersist::AlreadyPersisted) => {
-                            dur_sources.backfilled += 1;
-                        }
-                        Ok(DurationPersist::NoStampedPath | DurationPersist::Vanished) => {}
-                        Err(error) => {
-                            tracing::warn!(%error, id = candidate.seq, "failed to persist listed clip duration");
-                        }
-                    }
-                }
-                dur_ms
-            }
-            ListingDuration::Deferred | ListingDuration::Vanished => {
-                dur_sources.unknown += 1;
-                None
-            }
-        };
-        clips.push(clip_meta_from_candidate(candidate, dur_ms, time_store));
-    }
+    let clips = candidates
+        .into_iter()
+        .map(|candidate| {
+            let dur_ms = candidate.facts.as_ref().and_then(|facts| facts.dur_ms);
+            clip_meta_from_candidate(candidate, dur_ms, time_store)
+        })
+        .collect();
 
-    Ok(FinishedClipsPage {
-        clips,
-        next_cursor,
-        dur_sources,
-    })
+    Ok(FinishedClipsPage { clips, next_cursor })
 }
 
 pub(crate) fn resolve_limit(limit: Option<usize>) -> usize {
@@ -1048,7 +994,7 @@ mod tests {
     }
 
     #[test]
-    fn finalized_filename_duration_avoids_scanning_garbage() {
+    fn listing_reads_duration_from_finalized_filename() {
         let rec_dir = temp_rec_dir();
         write_file(
             &rec_dir.path,
@@ -1061,32 +1007,21 @@ mod tests {
             read_finished_clips(&storage, &|| None, None, 10, &TimeStore::in_memory()).unwrap();
 
         assert_eq!(page.clips[0].dur_ms, Some(300));
-        assert_eq!(page.dur_sources.from_name, 1);
-        assert_eq!(page.dur_sources.scanned, 0);
-        assert_eq!(page.dur_sources.unknown, 0);
     }
 
     #[test]
-    fn listing_backfills_stamped_duration_once() {
+    fn listing_does_not_measure_or_rename_durationless_segments() {
         let rec_dir = temp_rec_dir();
-        let bytes = pts_segment();
-        write_file(&rec_dir.path, &stamped_name(7), &bytes);
+        write_file(&rec_dir.path, &stamped_name(8), &pts_segment());
+        write_file(&rec_dir.path, "seg_00007.ts", &pts_segment());
         let storage = StorageCoordinator::new(rec_dir.path.clone());
 
-        let first =
+        let page =
             read_finished_clips(&storage, &|| None, None, 10, &TimeStore::in_memory()).unwrap();
-        assert_eq!(first.clips[0].dur_ms, Some(300));
-        assert_eq!(first.dur_sources.scanned, 1);
-        assert_eq!(first.dur_sources.backfilled, 1);
-        let finalized = rec_dir.path.join(finalized_name(7, 300));
-        assert!(finalized.is_file());
-
-        fs::write(&finalized, vec![0; bytes.len()]).unwrap();
-        let second =
-            read_finished_clips(&storage, &|| None, None, 10, &TimeStore::in_memory()).unwrap();
-        assert_eq!(second.clips[0].dur_ms, Some(300));
-        assert_eq!(second.dur_sources.from_name, 1);
-        assert_eq!(second.dur_sources.scanned, 0);
+        assert_eq!(page.clips.len(), 2);
+        assert!(page.clips.iter().all(|clip| clip.dur_ms.is_none()));
+        assert!(rec_dir.path.join(stamped_name(8)).is_file());
+        assert!(rec_dir.path.join("seg_00007.ts").is_file());
     }
 
     #[test]
@@ -1103,54 +1038,6 @@ mod tests {
 
         assert_eq!(meta.dur_ms, Some(300));
         assert!(rec_dir.path.join(stamped_name(7)).is_file());
-    }
-
-    #[test]
-    fn bare_recovery_duration_is_measured_without_renaming() {
-        let rec_dir = temp_rec_dir();
-        write_file(&rec_dir.path, "seg_00007.ts", &pts_segment());
-        let storage = StorageCoordinator::new(rec_dir.path.clone());
-
-        for _ in 0..2 {
-            let page =
-                read_finished_clips(&storage, &|| None, None, 10, &TimeStore::in_memory()).unwrap();
-            assert_eq!(page.clips[0].dur_ms, Some(300));
-            assert_eq!(page.dur_sources.scanned, 1);
-            assert!(rec_dir.path.join("seg_00007.ts").is_file());
-        }
-    }
-
-    #[test]
-    fn listing_rechecks_recording_activity_before_each_legacy_scan() {
-        use std::cell::Cell;
-
-        let rec_dir = temp_rec_dir();
-        write_file(&rec_dir.path, &stamped_name(8), &pts_segment());
-        write_file(&rec_dir.path, &stamped_name(7), &pts_segment());
-        let storage = StorageCoordinator::new(rec_dir.path.clone());
-        let calls = Cell::new(0);
-
-        let page = read_finished_clips(
-            &storage,
-            &|| {
-                let call = calls.get();
-                calls.set(call + 1);
-                (call >= 2).then_some(8)
-            },
-            None,
-            10,
-            &TimeStore::in_memory(),
-        )
-        .unwrap();
-
-        assert_eq!(page.clips[0].id, 8);
-        assert_eq!(page.clips[0].dur_ms, Some(300));
-        assert_eq!(page.clips[1].id, 7);
-        assert_eq!(page.clips[1].dur_ms, None);
-        assert!(rec_dir.path.join(finalized_name(8, 300)).is_file());
-        assert!(rec_dir.path.join(stamped_name(7)).is_file());
-        assert_eq!(page.dur_sources.scanned, 1);
-        assert_eq!(page.dur_sources.unknown, 1);
     }
 
     #[test]

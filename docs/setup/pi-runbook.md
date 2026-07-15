@@ -502,9 +502,10 @@ just raspi-reset-data                 # prompts before wiping /data/rec
 DANCAM_YES=1 just raspi-reset-data    # unattended
 ```
 
-Leaving old-format segments in place is harmless -- the service ignores names it cannot
-parse and the seq witness stays monotonic -- so this reset reclaims space and clears
-stale footage; it is not required for correctness.
+Use this reset as the clean-break operation after an incompatible recording-format
+change. The service does not migrate old footage during listing; recognized
+durationless recovery files remain pullable with unknown duration, while unrecognized
+names are ignored. Resetting also clears the sequence witness and time anchors.
 
 For an A/B picture comparison, `just raspi-hdr on` enables the IMX708's on-sensor
 HDR and `just raspi-hdr off` disables it. The command stops `dancam` because the
