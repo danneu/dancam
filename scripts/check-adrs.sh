@@ -33,16 +33,6 @@ for dir in app/docs/design raspi/docs/design; do
     status=1
   }
 
-  i=1
-  for s in $sorted; do
-    printf -v want '%02d' "$i"
-    [ "$s" = "$want" ] || {
-      echo "SEQ NOT 01..N in $dir: expected $want, got $s"
-      status=1
-    }
-    i=$((i + 1))
-  done
-
   prev=""
   while read -r s d; do
     [ -n "$prev" ] && [[ "$d" < "$prev" ]] && {

@@ -17,11 +17,11 @@ deliberately dumb: capture, encode, store safely, and serve footage on request.
 ## Working stance: take the ideal solution, not the prescribed one
 
 Early implementation: most of this repo is design documentation, but `raspi/service/`
-is the first buildable code. Docs/notes/ADRs were written ahead of real hardware --
+is the first buildable code. Docs and notes were written ahead of real hardware --
 best guesses, not commitments. When planning or implementation surfaces a better approach, take it;
 never stay trapped in a solution we spitballed before we had evidence. On every
-pivot, update the record in the same change (amend or supersede the ADR -- see
-"Design decisions"); a pivot that isn't written down is the next trap. The
+pivot, update the record in the same change (see "Design documentation"); a pivot
+that isn't written down is the next trap. The
 "Cross-cutting principles" below are the firmest layer (hard physical constraints) --
 revisit even those if reality disagrees, but at a higher, explicit bar.
 
@@ -155,25 +155,35 @@ These are settled at the system level. Side-specific ADRs must not contradict th
   mechanics (MJPEG preview, resumable ranged pull, SSE events) live in the transport ADR.
   See `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`.
 
-## Design decisions (ADRs)
+## Design documentation
 
-Architecture and design decisions are recorded as sequence-prefixed, dated Markdown
-files under each side's `docs/design/` directory. This is the project's ADR
-("Architecture Decision Record") system.
+Design documentation is a set of living subsystem pages under
+`docs/design/{boundary,pi,app}/`. The folder identifies the owner; pages have no
+owner metadata or sequence numbers.
 
-**Convention**
+- Keep each page body as the canonical present-tense description of the current
+  design. Every behavior change updates the owning page body in the same change.
+- Record the why behind a decision, including abandoned ideas, as a dated entry
+  under the page's `## Decision log`. Append new entries; never rewrite or delete
+  existing entries, and never leave stale history in the page body.
+- Link to pages inside the book with normal Markdown links so mdBook link checking
+  can validate them. Write references outside `docs/` as backticked stable anchors,
+  such as `raspi/service/src/storage.rs#fn evict`, rather than links.
+- Treat research and battle notes as point-in-time findings, not living design
+  pages. Files under `docs/research/` and `docs/battle-notes/` need neither body
+  rewrites nor a Decision log and may honestly go stale. Add every new file in
+  either folder to `docs/SUMMARY.md` in the same change.
+- Keep AGENTS.md files lean: always-on stance, constraints, and commands belong
+  here; task-specific guidance belongs in a linked documentation page with a short
+  blurb saying when to read it.
 
-- Filename: `docs/design/{seq}-YYYY-MM-DD-{slug}.md`, date = day the decision is
-  taken, slug short and specific (`crash-safe-recording`). `{seq}` = two-digit
-  per-side sequence (each side starts at `01`, new ADR = highest in that folder + 1);
-  it orders ADRs and breaks ties on same-day decisions. Enforced by `just adr-check`.
-- One decision per file. Shape: Title (`# ADR: ...`) / Status (Proposed | Accepted |
-  Superseded by <file> | Deprecated) / Context / Decision / Consequences /
-  Alternatives considered.
-- Append-only history: to change a decision, write a new ADR and mark the old one
-  `Superseded by ...`; never silently rewrite it.
-- System-wide decisions that span both sides are summarized under "Cross-cutting
-  principles" above and link to the owning ADR.
+During the migration from ADRs to living pages:
+
+- A living page becomes the sole authority for its subsystem when it lands; delete
+  the ADRs it absorbs in the same change.
+- ADRs not yet absorbed remain authoritative until their living page lands.
+- New design decisions create or extend the owning living page and absorb that
+  page's remaining ADRs in the same change. Do not create new ADR files.
 
 ## Conventions
 

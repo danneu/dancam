@@ -2,7 +2,7 @@
 
 dancam is my DIY dashcam built around an Raspberry Pi 2 W ($15) and an iPhone (live camera preview, clip viewing/pulling, and CarPlay).
 
-- The full system overview, working stance, and ADR conventions live in [`AGENTS.md`](AGENTS.md).
+- The full system overview, working stance, and design docs conventions live in [`AGENTS.md`](AGENTS.md).
 - Planned roadmap: [`docs/roadmap.md`](docs/roadmap.md).
 
 ## The three parts

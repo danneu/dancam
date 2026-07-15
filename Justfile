@@ -255,7 +255,7 @@ raspi-mock-clips:
 raspi-mock-lan:
     cd raspi/service && DANCAM_BIND=[::]:9000 cargo run
 
-# Validate ADR filenames: format, per-side contiguous sequence, seq/date order.
+# Validate ADR filenames: format, per-side unique sequence, seq/date order.
 adr-check:
     bash scripts/check-adrs.sh
 
