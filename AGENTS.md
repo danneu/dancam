@@ -152,8 +152,8 @@ These are settled at the system level. Side-specific ADRs must not contradict th
   on-demand clip pull; never on the recording path. `/v1/events` is the live state
   source: snapshot, ordered deltas, and heartbeat. Connection liveness is heartbeat
   presence; `/v1/status` is a one-shot read of the same snapshot shape. The transport
-  mechanics (MJPEG preview, resumable ranged pull, SSE events) live in the transport ADR.
-  See `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`.
+  mechanics (MJPEG preview, resumable ranged pull, SSE events) live in the
+  [transport boundary](docs/design/boundary/transport.md).
 
 ## Design documentation
 

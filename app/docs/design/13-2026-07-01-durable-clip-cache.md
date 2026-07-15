@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-01
 - **Owner:** app
-- **Related:** `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/07-2026-06-26-on-device-clip-remux-playback.md`;
   `app/docs/design/08-2026-06-27-progressive-fmp4-clip-playback.md`;
   `docs/roadmap.md` (swoop `lime` -- Watch recorded clips; swoop `tide` -- Export /

@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-29
 - **Owner:** app
-- **Related:** `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/06-2026-06-26-domain-root-store-and-scoped-observation.md`;
   root `AGENTS.md` (cross-cutting app<->Pi local API principle)
 
@@ -15,7 +15,7 @@
 > offline on stream failure or about 6 seconds without an event (3 missed 2 second Pi
 > heartbeats). That deliberate number replaces the earlier
 > `3 x (connectTimeout + pollInterval)` rough 10 second estimate and reconciles the
-> app policy with ADR 02's missed-heartbeat contract.
+> app policy with the transport boundary's missed-heartbeat contract.
 
 > **Note (2026-07-10):** the default connect deadline is now 4 seconds rather than
 > 2 seconds. TCP retransmits a lost SYN after about 1 second and again after about
@@ -68,7 +68,7 @@ off-network detection is about `3 x (connectTimeout + pollInterval)`, roughly 10
 seconds. That latency is acceptable for an ambient status strip on a congested 2.4 GHz
 link.
 
-This ADR refines ADR 02's hand-rolled HTTP transport mechanics and ADR 06's live
+This ADR refines the transport boundary's hand-rolled HTTP mechanics and ADR 06's live
 connection monitor policy. It supersedes neither: the wire contract, Wi-Fi pinning,
 `/v1/status` source of truth, and three-strike debounce all remain.
 
@@ -112,6 +112,6 @@ Hard or risky:
   this pass. The monitor is the product-critical signal, and testing it at the
   reducer/dependency seam avoids introducing a general injected clock or timing policy
   before a second caller needs it.
-- **Switch to `URLSession` request timeouts.** Rejected. ADR 02 chose the hand-rolled
-  `NWConnection` client so Pi traffic can be pinned to Wi-Fi and prohibited from using
-  cellular.
+- **Switch to `URLSession` request timeouts.** Rejected. The transport boundary chose
+  the hand-rolled `NWConnection` client so Pi traffic can be pinned to Wi-Fi and
+  prohibited from using cellular.

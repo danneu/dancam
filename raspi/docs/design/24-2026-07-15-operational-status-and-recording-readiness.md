@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-07-15
 - **Owner:** raspi
-- **Related:** `02-2026-06-22-app-pi-transport-and-api.md` (wire surface);
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md) (wire
+  surface);
   `10-2026-06-30-recorder-fsm-and-events-sse.md` (canonical world and deltas);
   `23-2026-07-14-single-owner-camera-command-lifecycle.md` (command outcomes)
 

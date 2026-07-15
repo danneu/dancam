@@ -89,9 +89,9 @@ current provisional direction until it is captured.
   `docs/design/09-2026-06-26-pi-system-layer-config-ansible.md`); the password is set
   by hand on the Pi so it never enters the repo. NM shared mode runs its own
   `dnsmasq` for DHCP/DNS; during bring-up it served `10.42.0.10` through
-  `10.42.0.254`. ADR 02's captive-probe DNS lever is applied through that instance,
-  not a hand-run DNS service, but is deferred until persistent no-internet joins need
-  it. The concrete AP decision is in
+  `10.42.0.254`. The transport boundary's captive-probe DNS lever is applied through
+  that instance, not a hand-run DNS service, but is deferred until persistent
+  no-internet joins need it. The concrete AP decision is in
   `docs/design/06-2026-06-25-ap-networking-bring-up.md`.
 - **Control + media service:** a small **Rust** service (see the service-language
   ADR) exposing a control API (start/stop, settings, time sync) and a media API
@@ -324,16 +324,14 @@ shell, not `rustup target add`.
 
 - [Storage](../docs/design/pi/storage.md) -- read when changing segment identity,
   time derivation, startup scrub, clip deletion, or ring GC.
+- [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
+  routes, response semantics, SSE framing, preview, clip pull, or app/Pi trust.
 
 During the migration, the remaining raspi ADRs under `docs/design/` stay
 authoritative for subsystems that do not yet have a living page:
 
 - `01-2026-06-22-crash-safe-recording.md` -- how recording survives abrupt power loss
   (format + filesystem + card hardware layers).
-- `02-2026-06-22-app-pi-transport-and-api.md` -- the app<->Pi wire contract: transport
-  per plane (control/events/preview/clip-pull), the `/v1` API surface, connection
-  lifecycle, and WPA2-only auth posture. Its reserved incident endpoints and events
-  are withdrawn by app ADR 26; the Pi owns the remaining canonical contract.
 - `04-2026-06-23-power-source-and-shutdown.md` (Proposed) -- the v1 power topology
   (switched USB accessory source, 5V regulated, dies with the car) and the decision
   to design for abrupt, unsignaled power loss with no clean-shutdown path. Resolves

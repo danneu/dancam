@@ -82,8 +82,8 @@ Lane A -- Clip pull & resumable transport (app)   ->  01-pull-transport.md
   app/DanCam/DanCam/App/ConnectionResumable.swift; app/DanCam/DanCam/Networking/HTTP/
   (HTTPContentRange, HTTPRequestEncoder, HTTPResponseHead, HTTPBodyDecoder, NWByteStream,
   InterfacePinning, ContentType); Networking/ClipsClient.swift; ClipsResponse.swift.
-  ADRs: app/docs/design/09-2026-06-29-connection-liveness-timeouts.md and
-  02-2026-06-22-app-pi-transport-and-api.md.
+  Authorities: `app/docs/design/09-2026-06-29-connection-liveness-timeouts.md` and the
+  [transport boundary](../docs/design/boundary/transport.md).
 - Key questions: Is the Range/If-Range/Content-Range resume loop correct -- verify ETag
   before resuming, truncate/restart correctly on a validator change (HTTP 200), never
   corrupt the temp file by appending past a reset? Exact byte offsets, partial reads, EOF?
@@ -159,8 +159,8 @@ Lane E -- Pi clip serving & duration (Rust)       ->  05-pi-clip-serving.md
   PTS duration math (maxPTS - minPTS) + frame_interval -- 33-bit wrap, discontinuities,
   single-frame/empty segments, cache invalidation. Error mapping and IO handling.
 - Authorities: RFC 9110 (Range, conditional requests, status codes); ISO/IEC 13818-1
-  (PTS); `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`,
-  `docs/design/pi/storage.md`, and
+  (PTS); the [transport boundary](../docs/design/boundary/transport.md),
+  [Pi storage](../docs/design/pi/storage.md), and
   `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`.
 
 Lane F -- Test coverage & quality (cross-cutting) ->  06-test-coverage.md

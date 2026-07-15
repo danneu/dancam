@@ -3,8 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-07-01
 - **Owner:** raspi
-- **Related:** `02-2026-06-22-app-pi-transport-and-api.md` (API surface, including the
-  deferred `/v1/logs` endpoint); `12-2026-06-30-watchdog-and-persistent-journal.md`
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md) (API
+  surface, including the deferred `/v1/logs` endpoint);
+  `12-2026-06-30-watchdog-and-persistent-journal.md`
   (persistent journald makes request logs useful across reboots)
 
 ## Context

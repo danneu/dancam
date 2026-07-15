@@ -3,16 +3,16 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30
 - **Owner:** raspi
-- **Related:** `02-2026-06-22-app-pi-transport-and-api.md`;
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   [Pi storage](../../../docs/design/pi/storage.md);
   `07-2026-06-25-picamera2-camera-owner.md`; root `AGENTS.md`
 
 ## Context
 
 The Pi service initially exposed `/v1/status` as a polled dashboard snapshot. That
-was a stopgap for the event plane already selected in ADR 02. It also left the
-current recording segment inferred from the filesystem: while recording, the newest
-`seg_*.ts` file was treated as the live segment and hidden from clips.
+was a stopgap for the event plane already selected at the transport boundary. It also
+left the current recording segment inferred from the filesystem: while recording, the
+newest `seg_*.ts` file was treated as the live segment and hidden from clips.
 
 That inference is not authoritative enough. Start, rollover, stop, and camera
 failure are domain transitions, not directory guesses. A partial segment can exist

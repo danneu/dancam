@@ -5,7 +5,7 @@
   migrating recording segments from MPEG-TS to fragmented MP4 (fMP4); this doc
   is the real-number groundwork, not the decision.
 - **Related:** `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`,
-  `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`,
+  the [transport boundary](../design/boundary/transport.md),
   `raspi/camera/camera.py#def recording_ffmpeg_output`
 - **Origin:** the fMP4 migration pitch claimed ~1% container overhead for fMP4
   vs "~5-15%" for TS, plus native AVFoundation playback with no remux. Before

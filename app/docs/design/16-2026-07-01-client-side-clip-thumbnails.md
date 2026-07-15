@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-07-01
 - **Owner:** app
-- **Related:** supersedes the thumbnail portions of `../../../raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`
+- **Related:** supersedes the thumbnail portions of the
+  [transport boundary](../../../docs/design/boundary/transport.md)
   (the `GET /v1/clips/{id}/thumb` endpoint) and
   [Pi storage](../../../docs/design/pi/storage.md)
   (the cached `seg-<seq>.jpg` first-keyframe thumbnails and `openThumb`); builds on
@@ -19,8 +20,8 @@ thumbnail on every row so the list is scannable at a glance.
 The recorded Pi API design already specced a server-side answer: a
 `GET /v1/clips/{id}/thumb` endpoint backed by a cached `seg-<seq>.jpg` first-keyframe
 thumbnail per segment, generated off the storage coordinator and regenerable on miss
-(raspi ADR 02 and the Pi storage design). Those were best guesses written before hardware;
-the roadmap left a
+(the transport and Pi storage designs). Those were best guesses written before
+hardware; the roadmap left a
 scope-fence note to revisit if an iPhone-side approach replaced the Pi endpoint.
 
 Deciding this now, with real code, the client-side approach is clearly better.
@@ -96,11 +97,11 @@ Hard or risky:
 
 ## Alternatives considered
 
-- **Pi-generated `GET /v1/clips/{id}/thumb` + cached `seg-<seq>.jpg` (the recorded ADR 02/03
-  design).** Rejected: it writes small files to the crash-safety card, adds a Pi
-  image/ffmpeg dependency and a regeneration path, and buys nothing the client-side pipeline
-  does not already give -- the phone has (or cheaply fetches) the bytes and decodes the true
-  frame itself. Superseded by this ADR.
+- **Pi-generated `GET /v1/clips/{id}/thumb` + cached `seg-<seq>.jpg` (the recorded
+  transport and storage designs).** Rejected: it writes small files to the
+  crash-safety card, adds a Pi image/ffmpeg dependency and a regeneration path, and
+  buys nothing the client-side pipeline does not already give -- the phone has (or
+  cheaply fetches) the bytes and decodes the true frame itself. Superseded by this ADR.
 - **256 KB probe + conditional extend** to cut typical prefix bytes ~4x. Deferred: the fixed
   2 MB single round-trip is simpler and a 256 KB probe cannot hold a 1080p IDR; revisit if
   first-browse bandwidth becomes a problem.

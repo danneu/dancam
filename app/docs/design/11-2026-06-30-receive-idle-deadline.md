@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30
 - **Owner:** app
-- **Related:** `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/09-2026-06-29-connection-liveness-timeouts.md`;
   `app/docs/design/10-2026-06-29-event-folded-state-machines.md`;
   root `AGENTS.md` (cross-cutting app<->Pi local API principle)

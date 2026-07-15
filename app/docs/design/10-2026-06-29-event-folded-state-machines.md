@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-29
 - **Owner:** app
-- **Related:** `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/03-2026-06-24-app-ui-architecture.md`;
   `app/docs/design/06-2026-06-26-domain-root-store-and-scoped-observation.md`;
   `raspi/docs/design/10-2026-06-30-recorder-fsm-and-events-sse.md`
@@ -114,7 +114,7 @@ Hard or risky:
 > `temp_changed`, and `mem_changed` as opaque service-coarsened observed values; it
 > must not assume they are full-precision samples. The coarsening quanta are a Pi
 > service concern recorded in
-> `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`.
+> the [transport boundary](../../../docs/design/boundary/transport.md).
 
 > **Note (2026-07-09): Heartbeat-fresh uptime.** ADR 23 narrows this ADR's
 > "heartbeat does not mutate World" rule: while online, heartbeat now advances only

@@ -42,10 +42,9 @@ direction, not settled law.
 - **Playback:** AVFoundation / AVKit.
 - **Networking to the Pi:** the Network framework (`NWConnection`/`NWBrowser`) for
   discovery and control; HTTP for the clip API; MJPEG over HTTP for low-res live
-  preview. The transport is decided -- see the app<->Pi transport ADR
-  (`docs/design/02-2026-06-22-app-pi-transport-and-api.md`) and the canonical wire
-  contract it delegates to in `raspi/`. (HLS-for-preview and raw-stream options were
-  considered and rejected there.)
+  preview. The [transport boundary](../docs/design/boundary/transport.md) owns the
+  wire contract and app-side connection obligations. (HLS-for-preview and raw-stream
+  options were considered and rejected there.)
 - **CarPlay:** the App Intents framework for voice ("save that clip") and the
   CarPlay template framework (Driving Task app category) for the on-screen panel.
 
@@ -104,17 +103,15 @@ The Xcode project is `DanCam`, with scheme `DanCam`.
 CarPlay work needs the CarPlay simulator (Xcode > I/O > External Displays > CarPlay)
 and, for device testing, the CarPlay entitlement from Apple.
 
-## Design decisions (ADRs)
+## Design pages
 
-See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
-`docs/design/`. Current:
+- [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
+  Pi routes, HTTP framing, SSE, preview, clip pull, Wi-Fi pinning, or link trust.
+
+During the migration, the remaining app ADRs under `docs/design/` stay authoritative
+for subsystems that do not yet have a living page:
 
 - `01-2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
-- `02-2026-06-22-app-pi-transport-and-api.md` -- the app-side obligations for talking to
-  the Pi (NEHotspotConfiguration join, NWConnection Wi-Fi pinning, the hand-rolled
-  per-plane HTTP/1.1 client, raw clip pull feeding local cached MP4 playback). Its
-  App Intents incident-lock obligations are superseded by app ADR 26. The
-  wire contract itself is delegated to the raspi-side ADR of the same name.
 - `03-2026-06-24-app-ui-architecture.md` -- UIKit programmatic UI and the bespoke
   minimal TEA core used by the app.
 - `04-2026-06-26-connection-monitor-and-indicator.md` -- superseded by ADR 05; recorded

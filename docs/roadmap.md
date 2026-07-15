@@ -216,9 +216,10 @@ mock first.
             writes, no `/thumb` endpoint.
       - Scope fence: one finished segment per clip (no multi-segment timeline), no export
         (`tide`), no real timestamps (`moss`), no locked/incident clips (`nova`). Thumbnails
-        are generated client-side per app ADR 16, which supersedes ADR 02's Pi-generated
-        `/thumb` (and the storage page's abandoned cached `seg-<seq>.jpg`) for both the
-        pulled and not-yet-pulled cases -- no server-side browse thumbnails.
+        are generated client-side per app ADR 16, which supersedes the
+        [transport boundary's](design/boundary/transport.md) proposed Pi-generated
+        `/thumb` (and the storage page's abandoned cached `seg-<seq>.jpg`) for both
+        the pulled and not-yet-pulled cases -- no server-side browse thumbnails.
 - [x] **Swoop `ebb` -- Delete recorded clips.** Let the app remove a single finished
       clip from the Pi via Home swipe-to-delete or the clip-viewer Delete button, with a
       destructive confirmation and optimistic row removal. Builds on `lime`'s browse/watch
@@ -358,8 +359,9 @@ swoop can drop into the list above unchanged. Unordered.
       time, delivered to the phone via QR-based onboarding
       (`NEHotspotConfiguration`), so every unit ships with a unique strong secret
       instead of a shared dev password. This -- not WPA2-vs-WPA3 -- is the real
-      security win for the link (ADR 02's v1 trust boundary; ADR 06 Consequences
-      already flags it as a later hardening pass). It is also where app-driven
+      security win for the link (the [transport boundary](design/boundary/transport.md)
+      defines the v1 trust boundary; raspi ADR 06 already flags this as a later
+      hardening pass). It is also where app-driven
       auto-rejoin lands: `joinOnce = false` persists the config so the phone
       re-associates without a manual Settings join -- a manually-saved AP already
       auto-rejoins today, so the win is dropping the manual step, not the behavior.

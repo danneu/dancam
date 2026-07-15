@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30
 - **Owner:** app
-- **Related:** `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/11-2026-06-30-receive-idle-deadline.md`;
   root `AGENTS.md` (cross-cutting app<->Pi local API principle)
 
@@ -19,9 +19,9 @@
 
 ## Context
 
-ADR 02 records that clip resume is the normal case on the Pi's 2.4 GHz link. The
-first clip-pull implementation did resume within a single pull, but its retry
-budget counted total reconnects. A flaky but progressing pull could drop more
+The transport boundary records that clip resume is the normal case on the Pi's
+2.4 GHz link. The first clip-pull implementation did resume within a single pull, but
+its retry budget counted total reconnects. A flaky but progressing pull could drop more
 than a handful of times, hit the fixed attempt ceiling, delete the temporary TS
 file, and force the user to start again from byte 0.
 
@@ -104,9 +104,9 @@ Hard or risky:
 
 ## Alternatives considered
 
-- **Keep the fixed total-attempt budget.** Rejected. It contradicts ADR 02's
-  assumption that resume is normal on this link and discards near-complete files
-  even when every reconnect made progress.
+- **Keep the fixed total-attempt budget.** Rejected. It contradicts the transport
+  boundary's assumption that resume is normal on this link and discards near-complete
+  files even when every reconnect made progress.
 - **Infer progress by comparing `bytesWritten` before and after an attempt.**
   Rejected. A legitimate validator-changing `200` truncates and rewrites from
   byte 0, so an attempt can write body bytes while ending below its starting byte

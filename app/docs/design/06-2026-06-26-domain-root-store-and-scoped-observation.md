@@ -4,7 +4,7 @@
 - **Date:** 2026-06-26
 - **Owner:** app
 - **Related:** root `AGENTS.md`; `app/AGENTS.md`;
-  `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
+  [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/03-2026-06-24-app-ui-architecture.md`;
   `app/docs/design/05-2026-06-26-app-shell-status-strip.md`
 

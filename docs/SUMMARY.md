@@ -6,7 +6,12 @@
 
 # Design
 
+- [App-Pi transport boundary](design/boundary/transport.md)
 - [Pi storage](design/pi/storage.md)
+
+# Reference
+
+- [Event wire reference](reference/events.md)
 
 # Research
 

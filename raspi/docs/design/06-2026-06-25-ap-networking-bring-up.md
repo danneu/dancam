@@ -6,7 +6,8 @@
   `/v1/status`; see ADR 24.
 - **Date:** 2026-06-25
 - **Owner:** raspi
-- **Related:** root `AGENTS.md`; `02-2026-06-22-app-pi-transport-and-api.md`
+- **Related:** root `AGENTS.md`;
+  [transport boundary](../../../docs/design/boundary/transport.md)
   (the wire contract served over this link); `raspi/AGENTS.md` (operator-facing
   AP recipe)
 
@@ -121,8 +122,8 @@ Verification from this bring-up:
 - iOS showed a captive sign-in sheet naming `xfinity` during the test, but
   dismissing it, reconnecting to `dancam-dev`, and fetching the fixed IP worked.
   The captive-probe DNS lever remains deferred; this one-shot proof did not need
-  it, but it does not disprove ADR 02's requirement for robust persistent
-  no-internet joins.
+  it, but it does not disprove the transport boundary's requirement for robust
+  persistent no-internet joins.
 - A later attempted persistent-iOS test found `dancam-dev` unavailable because the
   Pi had already reset back to home Wi-Fi; that is not evidence about captive
   behavior.

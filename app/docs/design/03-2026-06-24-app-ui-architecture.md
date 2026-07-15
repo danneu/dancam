@@ -4,7 +4,7 @@
 - **Date:** 2026-06-24
 - **Owner:** app
 - **Related:** root `AGENTS.md`; `app/AGENTS.md`;
-  `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md` (the hand-rolled
+  [transport boundary](../../../docs/design/boundary/transport.md) (the hand-rolled
   client becomes effect handlers behind the dependency boundary)
 
 ## Context
@@ -148,7 +148,7 @@ Mitigations:
 Follow-ups outside this ADR:
 
 - Persistence is a separate decision (SwiftData versus files).
-- The pinned `NWConnection` client from the transport ADR plugs in behind the health
+- The pinned `NWConnection` client from the transport boundary plugs in behind the health
   client style dependency boundary during a later swoop.
 - MJPEG preview decode and ranged clip pull are the first likely places to add
   deliberate off-main work.

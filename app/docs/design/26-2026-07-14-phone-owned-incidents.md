@@ -3,8 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-07-14
 - **Owner:** app
-- **Related:** root `AGENTS.md` (incidents are phone-owned); raspi ADR 02
-  (`raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`, clip list,
+- **Related:** root `AGENTS.md` (incidents are phone-owned); the
+  [transport boundary](../../../docs/design/boundary/transport.md) (clip list,
   ranged pull, and events contract); [Pi storage](../../../docs/design/pi/storage.md)
   (superseded Pi-side incident locks and current oldest-first ring retention)
 

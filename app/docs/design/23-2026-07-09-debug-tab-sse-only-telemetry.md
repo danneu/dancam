@@ -14,7 +14,7 @@ The app remains SSE-only for live state and heartbeat liveness; this ADR's
 single-source app behavior is unchanged.
 
 **Note (2026-07-10): Current + max temperatures.** `temp_c.soc` and
-`temp_c.sensor` are now nested `{current, max}` readings (see raspi ADR 02's
+`temp_c.sensor` are now nested `{current, max}` readings (see the transport boundary's
 2026-07-10 note for the wire shape and the max-since-service-start semantics).
 The Debug SoC and camera rows render `current (max ...)` with the current and
 max parts independently tinted, so a past-hot peak stays visible after current

@@ -3,10 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-06-26
 - **Owner:** app
-- **Related:** `app/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `app/docs/design/08-2026-06-27-progressive-fmp4-clip-playback.md`;
   `raspi/docs/design/01-2026-06-22-crash-safe-recording.md`;
-  `raspi/docs/design/02-2026-06-22-app-pi-transport-and-api.md`;
   `docs/roadmap.md` (swoop `lime` -- Watch recorded clips)
 
 > **Note (2026-06-27):** ADR 08 extends this decision. The finalized MP4 remains

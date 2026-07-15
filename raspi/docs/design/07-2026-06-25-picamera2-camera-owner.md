@@ -4,7 +4,7 @@
 - **Date:** 2026-06-25
 - **Owner:** raspi
 - **Related:** `01-2026-06-22-crash-safe-recording.md`;
-  `02-2026-06-22-app-pi-transport-and-api.md`;
+  [transport boundary](../../../docs/design/boundary/transport.md);
   `05-2026-06-23-service-language-rust.md`
 
 ## Context

@@ -3,7 +3,7 @@
 - **Status:** Superseded by 24-2026-07-09-recording-grouped-clip-browsing-and-attribution.md
 - **Date:** 2026-07-08
 - **Owner:** app
-- **Related:** `02-2026-06-22-app-pi-transport-and-api.md`;
+- **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   `06-2026-06-26-domain-root-store-and-scoped-observation.md`;
   `16-2026-07-01-client-side-clip-thumbnails.md`;
   `17-2026-07-02-selector-observation-and-view-state.md`;
