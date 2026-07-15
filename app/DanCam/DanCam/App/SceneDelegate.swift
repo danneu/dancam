@@ -1,37 +1,30 @@
-import OSLog
 import UIKit
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
-    private var appStore: AppStore?
+    private weak var runtime: AppRuntime?
     private var shell: AppShellViewController?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-        guard let windowScene = scene as? UIWindowScene else { return }
-
-        let dependencies = AppDependencies.live
-        let appStore = AppStore(
-            initialState: AppFeature.State(),
-            dependencies: dependencies,
-            reduce: AppFeature.reduce,
-            log: AppFeature.logTransition
-        )
-        Log.reducer.notice("snapshot \(appStore.state.logSnapshot, privacy: .public)")
+        guard
+            let windowScene = scene as? UIWindowScene,
+            let appDelegate = UIApplication.shared.delegate as? AppDelegate
+        else { return }
+        let appRuntime = appDelegate.runtime
+        let appStore = appRuntime.store
 
         let window = UIWindow(windowScene: windowScene)
-        let tabs = Self.makeTabs(dependencies: dependencies, store: appStore)
+        let tabs = Self.makeTabs(dependencies: appRuntime.dependencies, store: appStore)
         let homeViewController = (tabs[0].viewControllers.first as? HomeViewController)
 
         let shell = AppShellViewController(tabs: tabs, store: appStore)
 
         window.rootViewController = shell
         self.window = window
-        self.appStore = appStore
+        self.runtime = appRuntime
         self.shell = shell
         window.makeKeyAndVisible()
         homeViewController?.loadViewIfNeeded()
-        appStore.send(.streamStarted)
-        appStore.send(.foregrounded)
     }
 
     static func makeTabs(dependencies: AppDependencies, store appStore: AppStore) -> [UINavigationController] {
@@ -76,16 +69,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
-        if let appStore {
-            appStore.send(.streamStarted)
-            appStore.send(.foregrounded)
-            Log.reducer.notice("snapshot \(appStore.state.logSnapshot, privacy: .public)")
-        }
+        runtime?.activateScene(id: scene.session.persistentIdentifier)
         (shell?.topViewController as? ConnectionResumable)?.resumeLiveWork()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
-        appStore?.send(.backgrounded)
-        appStore?.send(.streamStopped)
+        runtime?.deactivateScene(id: scene.session.persistentIdentifier)
+    }
+
+    func sceneDidDisconnect(_ scene: UIScene) {
+        runtime?.deactivateScene(id: scene.session.persistentIdentifier)
     }
 }

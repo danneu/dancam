@@ -1,7 +1,7 @@
 # App architecture
 
 The iPhone app is a programmatic UIKit application built around a small,
-repository-owned Elm Architecture (TEA) runtime. One scene-scoped root store owns
+repository-owned Elm Architecture (TEA) runtime. One process-owned root store owns
 shared domain state and coordination. View controllers render equality-gated
 projections of that state; they do not coordinate sibling features or treat UIKit
 objects as the source of truth.
@@ -13,9 +13,17 @@ into state, effects, and UIKit rendering.
 ## UIKit shell
 
 The app uses UIKit with programmatic view controllers and no main app storyboard. The
-launch-screen storyboard is only a static launch resource. `SceneDelegate` creates the
-dependency bag and root `AppStore`, builds the tab navigation controllers, embeds them
-in `AppShellViewController`, and starts the event stream.
+launch-screen storyboard is only a static launch resource. `AppDelegate` eagerly
+creates the process-owned `AppRuntime`, dependency bag, and sole `AppStore` without
+waiting for a phone window. Each `SceneDelegate` borrows that runtime, builds its tab
+navigation controllers, and embeds them in `AppShellViewController`.
+
+`AppRuntime` tracks active scene session identifiers. The first active scene starts
+the event stream and foreground work; the last deactivation backgrounds the domain
+and stops the stream. Activation and deactivation are idempotent because UIKit may
+deliver both background and disconnect callbacks for one scene. Scene teardown gates
+only process-ephemeral stream and freshness work; durable state does not depend on a
+disconnect callback arriving at process termination.
 
 The shell is persistent app chrome above all tabs. It owns the global status strip,
 tab container, incident badge, and the offline-to-online hook that asks the visible
@@ -60,8 +68,8 @@ The store tracks run effects with monotonic internal tokens. Optional public eff
 IDs name cancellation domains; `cancelInFlight` cancels the prior token for that ID
 before starting its replacement. Completion removes an ID only when it still points to
 the completing token, so an older task cannot unregister its replacement. Effect tasks
-and callbacks capture the store weakly so long-lived work does not keep a dead scene
-alive.
+and callbacks capture the store weakly so long-lived work does not extend the
+process-owned runtime's lifetime.
 
 Every externally sent or effect-produced action passes through `send(_:)`, which gives
 reducer logging one ordered choke point. When a logger is configured, the store passes
@@ -81,9 +89,10 @@ pull, artifact installation, log export, and share preparation use such explicit
 boundaries. The root architecture does not impose blanket `Sendable` annotations on
 all state, actions, or dependency closures just in case.
 
-## Scene-scoped domain root
+## Process-owned domain root
 
-`AppFeature` is the scene's domain root. Its state currently contains:
+`AppFeature` is the process domain root shared by phone and future CarPlay scenes. Its
+state currently contains:
 
 - `Link`, the connection phase and latest Pi world
 - recording command presentation state
@@ -337,7 +346,7 @@ rejected because an older response can arrive after a finalized event.
 
 (absorbed from app ADR 17, 2026-07-02)
 
-The scene root and equality-gated key-path observation still left screens observing
+The process root and equality-gated key-path observation still left screens observing
 state wider than what they rendered. Home status pills and telemetry views woke for
 unrelated world changes. Home also called `reloadData()` for every row update. Once
 thumbnail cells owned asynchronous loads, those broad reloads blanked painted images,
@@ -357,3 +366,23 @@ gating that reload on array equality, still flashed every visible thumbnail on a
 one-row change. Whole-row identity turns content changes into delete/insert; bare
 numeric clip identity cannot represent every distinct row shape. Hand-written batch
 diffing was rejected in favor of UIKit's tested diffable identity and reconfigure path.
+
+### 2026-07-15: Move domain runtime ownership above UI scenes
+
+CarPlay may launch the app directly into the background with only a
+`CPTemplateApplicationScene` and no phone window scene. A runtime lazily initialized by
+the first phone `SceneDelegate` would therefore leave domain work unavailable to a
+valid process entry point. `AppDelegate` now eagerly owns one `AppRuntime`, dependency
+bag, and `AppStore`; UI scenes borrow that process root instead of creating their own.
+
+The runtime tracks active scene session identifiers and gates process-ephemeral stream
+and freshness work at the first-activation and last-deactivation edges. UIKit may send
+both background and disconnect callbacks for one session, so deactivation is
+idempotent. Disconnect is not guaranteed at process termination, so this lifecycle
+owns no durable work and requires no teardown callback for correctness.
+
+Per-scene stores were rejected because phone and CarPlay surfaces would diverge on
+connection, recording, clips, and incidents. Lazy initialization by the first phone
+scene was rejected because CarPlay can be the process's only initial scene. Durable
+cleanup on disconnect was rejected because termination does not guarantee that
+callback.

@@ -125,11 +125,11 @@ mock first.
       2.4 GHz link: detect drops fast, ride them out in place, and recover without a
       manual rejoin. _App-side ambient UX and resumable pulls have landed; measured
       pull UX now continues in `lime`._
-      - [x] **App:** scene-scoped `/v1/status` monitor -- debounced liveness owned by the
-            scene (not the home dashboard), preserving last-known status so screens ride
-            out drops in place.
-      - [x] **App:** missed-heartbeat offline detection -- a missed `/v1/status` heartbeat
-            flips to offline after the debounce window.
+      - [x] **App:** process-owned connection monitor -- event-stream liveness belongs
+            to the app runtime (not a phone scene or Home), preserving last-known status
+            so every scene rides out drops in place.
+      - [x] **App:** missed-heartbeat offline detection -- missed `/v1/events`
+            heartbeats flip the shared link offline after the deadline.
       - [x] **App:** persistent connection status strip in the root shell, so pushed
             screens inherit it without nav-bar re-parenting.
       - [x] **App:** foreground/reconnect recovery -- foreground and reconnect hooks
@@ -137,9 +137,9 @@ mock first.
       - [x] **App:** preview back-off reconnect -- preview reconnects independently with
             bounded backoff; each attempt bumps `streamGeneration` so decode resets stay
             observable.
-      - [x] **App:** domain root store -- connection/recording/clips coordination moves
-            into `AppFeature` with equality-gated scoped observation, cutting poll-driven
-            wakeups.
+      - [x] **App:** process-owned domain root store -- connection, recording, clips,
+            and incident coordination lives in one `AppFeature` shared by phone and
+            future CarPlay scenes, with equality-gated scoped observation.
       - [x] **App:** resumable pulls across drops -- a `Range`/`If-Range` clip pull that
             resumes from the last byte rather than restarting. _Shared with `lime`'s
             ranged-pull step; land it in whichever swoop reaches it first._
