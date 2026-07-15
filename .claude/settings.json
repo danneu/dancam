@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Bash(just --list)",
-      "Bash(just adr-check *)",
       "Bash(just raspi-check *)"
     ]
   },

@@ -322,8 +322,9 @@ clusters. Each commit follows the fold procedure; "absorbs" lists side+seq.
 ### Phase 5 -- teardown and slimming (3 commits)
 
 19. `chore: retire ADR tooling`
-    - Delete `scripts/check-adrs.sh` and the `adr-check` recipe; linkcheck
-      (already running in `just docs-build`) is the replacement gate.
+    - Delete `scripts/check-adrs.sh` and the `adr-check` recipe, and remove the
+      stale command entry from `.claude/settings.json`; linkcheck (already running
+      in `just docs-build`) is the replacement gate.
 20. `docs: slim AGENTS.md files to the lean layout`
     - Root: compress the Contract section (golden-corpus detail moves into
       `contract/events/README.md`); tighten remaining prose.
@@ -408,7 +409,7 @@ End state:
 - [x] 16. Fold app sharing, capacity, CarPlay, and logging ADRs
 - [x] 17. Move the Pi runbook into the book
 - [x] 18. Extract hardware and references pages
-- [ ] 19. Retire ADR tooling
+- [x] 19. Retire ADR tooling
 - [ ] 20. Slim AGENTS.md files to the lean layout
 - [ ] 21. Refresh the root README
 

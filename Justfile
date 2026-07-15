@@ -255,10 +255,6 @@ raspi-mock-clips:
 raspi-mock-lan:
     cd raspi/service && DANCAM_BIND=[::]:9000 cargo run
 
-# Validate ADR filenames: format, per-side unique sequence, seq/date order.
-adr-check:
-    bash scripts/check-adrs.sh
-
 # Seed/refresh third-party source references into references/ (pinned to the Pi's versions).
 fetch-references:
     bash scripts/fetch-references.sh
