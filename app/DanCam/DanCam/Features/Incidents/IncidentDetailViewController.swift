@@ -17,24 +17,29 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
     private let dependencies: AppDependencies
     private let store: AppStore
     private let incidentID: UUID
+    private let sharePresentation: VideoSharePresentation?
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let playerContainer = UIView()
     private let shareButton = UIBarButtonItem()
+    private let deleteButton = UIBarButtonItem()
     private var observation: StoreObservation?
     private var record: IncidentRecord?
     private var rows: [IncidentArtifactRow] = []
     private var selectedRow: IncidentArtifactRow?
     private var playerViewController: AVPlayerViewController?
-    private var shareArtifactDirectories: Set<URL> = []
-
-    var shareScratchDirectory = FileManager.default.temporaryDirectory
-        .appending(path: "incident-share", directoryHint: .isDirectory)
     var exportTimeZone = TimeZone.current
+    private var shareCoordinator: VideoShareCoordinator?
 
-    init(dependencies: AppDependencies, store: AppStore, incidentID: UUID) {
+    init(
+        dependencies: AppDependencies,
+        store: AppStore,
+        incidentID: UUID,
+        sharePresentation: VideoSharePresentation? = nil
+    ) {
         self.dependencies = dependencies
         self.store = store
         self.incidentID = incidentID
+        self.sharePresentation = sharePresentation
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -46,6 +51,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         view.backgroundColor = .systemGroupedBackground
         configureNavigation()
         configureTable()
+        configureShareCoordinator()
         let incidentID = incidentID
         observation = store.observe(select: { $0.incidents.incidents.first(where: { $0.id == incidentID }) }) {
             [weak self] record in
@@ -58,8 +64,15 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
+    override func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        if parent == nil {
+            shareCoordinator?.cancel()
+        }
+    }
+
     isolated deinit {
-        for directory in shareArtifactDirectories { try? FileManager.default.removeItem(at: directory) }
+        shareCoordinator?.cancel()
     }
 
     private func configureNavigation() {
@@ -68,12 +81,10 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         shareButton.action = #selector(shareTapped)
         shareButton.accessibilityLabel = "Share segment"
         shareButton.isEnabled = false
-        let deleteButton = UIBarButtonItem(
-            image: UIImage(systemName: "trash"),
-            style: .plain,
-            target: self,
-            action: #selector(deleteTapped)
-        )
+        deleteButton.image = UIImage(systemName: "trash")
+        deleteButton.style = .plain
+        deleteButton.target = self
+        deleteButton.action = #selector(deleteTapped)
         deleteButton.tintColor = .systemRed
         deleteButton.accessibilityLabel = "Delete incident"
         navigationItem.rightBarButtonItems = [shareButton, deleteButton]
@@ -95,6 +106,21 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         ])
     }
 
+    private func configureShareCoordinator() {
+        shareCoordinator = VideoShareCoordinator(
+            preparer: dependencies.shareArtifactPreparer,
+            presenter: self,
+            shareButton: shareButton,
+            presentation: sharePresentation,
+            preparingChanged: { [weak self] preparing in
+                self?.setSharePreparationControls(preparing: preparing)
+            },
+            sourceUnavailable: { [weak self] in
+                self?.handleShareSourceUnavailable()
+            }
+        )
+    }
+
     private func render(_ record: IncidentRecord?) {
         guard let record else {
             navigationController?.popViewController(animated: true)
@@ -106,6 +132,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         )
         rows = artifactRows(record: record)
         if let selected = selectedRow, rows.contains(where: { $0.id == selected.id }) == false {
+            shareCoordinator?.cancel()
             selectedRow = nil
             shareButton.isEnabled = false
             detachPlayer()
@@ -152,6 +179,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        guard shareCoordinator?.isPreparing != true else { return }
         let row = rows[indexPath.row]
         selectedRow = row
         shareButton.isEnabled = true
@@ -181,57 +209,62 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
     }
 
     @objc private func shareTapped() {
-        guard let row = selectedRow, let artifact = makeShareArtifact(row: row) else { return }
-        let controller = UIActivityViewController(activityItems: [artifact.url], applicationActivities: nil)
-        controller.popoverPresentationController?.sourceItem = shareButton
-        if let directory = artifact.temporaryDirectory {
-            controller.completionWithItemsHandler = { [weak self] _, _, _, _ in
-                try? FileManager.default.removeItem(at: directory)
-                self?.shareArtifactDirectories.remove(directory)
-            }
-        }
-        present(controller, animated: true)
+        guard let row = selectedRow, let record else { return }
+        let pressedAt = Date(timeIntervalSince1970: Double(record.pressedAtMs) / 1_000)
+        let request = SharePreparationRequest(
+            sourceURL: row.url,
+            suggestedFilename: Formatters.incidentExportFilename(
+                pressedAt: pressedAt,
+                seq: row.seq,
+                fileExtension: row.kind.rawValue,
+                timeZone: exportTimeZone
+            )
+        )
+        shareCoordinator?.start(request)
     }
 
     @objc private func deleteTapped() {
+        shareCoordinator?.cancel()
         present(IncidentDeleteConfirmation.alert { [weak self] in
             guard let self else { return }
             self.store.send(.incidents(.deleteTapped(.readable(self.incidentID))))
         }, animated: true)
     }
 
-    private struct ShareArtifact {
-        var url: URL
-        var temporaryDirectory: URL?
+    private func setSharePreparationControls(preparing: Bool) {
+        shareButton.isEnabled = preparing == false && selectedRow != nil
+        deleteButton.isEnabled = preparing == false
+        tableView.allowsSelection = preparing == false
     }
 
-    private func makeShareArtifact(row: IncidentArtifactRow) -> ShareArtifact? {
-        guard let record else { return nil }
-        let subdirectory = shareScratchDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
-        let pressedAt = Date(timeIntervalSince1970: Double(record.pressedAtMs) / 1_000)
-        let destination = subdirectory.appending(path: Formatters.incidentExportFilename(
-            pressedAt: pressedAt,
-            seq: row.seq,
-            fileExtension: row.kind.rawValue,
-            timeZone: exportTimeZone
-        ))
-        do {
-            try FileManager.default.createDirectory(at: subdirectory, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: row.url, to: destination)
-            shareArtifactDirectories.insert(subdirectory)
-            return ShareArtifact(url: destination, temporaryDirectory: subdirectory)
-        } catch {
-            try? FileManager.default.removeItem(at: subdirectory)
-            return FileManager.default.fileExists(atPath: row.url.path)
-                ? ShareArtifact(url: row.url, temporaryDirectory: nil)
-                : nil
-        }
-    }
-
-    func makeShareArtifactForTesting(row: IncidentArtifactRow) -> (url: URL, temporaryDirectory: URL?)? {
-        guard let artifact = makeShareArtifact(row: row) else { return nil }
-        return (artifact.url, artifact.temporaryDirectory)
+    private func handleShareSourceUnavailable() {
+        selectedRow = nil
+        shareButton.isEnabled = false
+        detachPlayer()
+        tableView.reloadData()
+        let alert = UIAlertController(
+            title: "Unable to Share Video",
+            message: "The video file is no longer available.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 
     var rowsForTesting: [IncidentArtifactRow] { rows }
+    var isSharePreparingForTesting: Bool { shareCoordinator?.isPreparing ?? false }
+    var sharePreparationAccessibilityLabelForTesting: String? { shareButton.customView?.accessibilityLabel }
+    var isShareButtonEnabledForTesting: Bool { shareButton.isEnabled }
+    var isDeleteButtonEnabledForTesting: Bool { deleteButton.isEnabled }
+    var allowsSelectionForTesting: Bool { tableView.allowsSelection }
+    var presentedShareURLForTesting: URL? { shareCoordinator?.lastPresentedURLForTesting }
+    var hasSelectedRowForTesting: Bool { selectedRow != nil }
+
+    func selectRowForTesting(at index: Int) {
+        tableView(tableView, didSelectRowAt: IndexPath(row: index, section: 0))
+    }
+
+    func shareTappedForTesting() {
+        shareTapped()
+    }
 }

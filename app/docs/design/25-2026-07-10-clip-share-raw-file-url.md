@@ -1,6 +1,6 @@
 # ADR: share clips as raw MP4 file URLs
 
-- **Status:** Accepted
+- **Status:** Superseded by `30-2026-07-15-responsive-video-share-preparation.md`
 - **Date:** 2026-07-10
 - **Owner:** app
 - **Related:** `15-2026-07-01-clip-export-share.md`;

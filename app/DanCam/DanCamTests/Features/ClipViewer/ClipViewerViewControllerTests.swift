@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 import UIKit
@@ -80,7 +81,6 @@ struct ClipViewerViewControllerTests {
                 ClipRemuxResult(fileURL: source, duration: .zero, bytes: 0)
             }
         )
-
         controller.loadViewIfNeeded()
 
         try await waitUntil { controller.currentPlayerItemURL == cacheURL }
@@ -192,7 +192,7 @@ struct ClipViewerViewControllerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func cacheHitEnablesShareButton() async throws {
-        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        let cacheURL = try await temporaryPlayableVideoFile()
         defer { try? FileManager.default.removeItem(at: cacheURL) }
 
         let controller = makeController(
@@ -211,7 +211,7 @@ struct ClipViewerViewControllerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func disappearanceWithoutRemovalKeepsPlayer() async throws {
-        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        let cacheURL = try await temporaryPlayableVideoFile()
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
             clipCache: ClipCache(
@@ -224,20 +224,15 @@ struct ClipViewerViewControllerTests {
         controller.loadViewIfNeeded()
         try await waitUntil { controller.currentPlayerItemURL == cacheURL }
 
-        let artifact = try #require(controller.makeShareArtifactForTesting())
-        let directory = try #require(artifact.temporaryDirectory)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
         controller.viewWillDisappear(false)
 
         #expect(controller.hasEmbeddedPlayer == true)
         #expect(controller.currentPlayerItemURL == cacheURL)
-        #expect(FileManager.default.fileExists(atPath: directory.path))
     }
 
     @Test(.timeLimit(.minutes(1)))
     func fullscreenRoundTripKeepsPlayer() async throws {
-        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        let cacheURL = try await temporaryPlayableVideoFile()
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
             clipCache: ClipCache(
@@ -268,7 +263,7 @@ struct ClipViewerViewControllerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func removalTearsDownPlayer() async throws {
-        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        let cacheURL = try await temporaryPlayableVideoFile()
         defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
             clipCache: ClipCache(
@@ -289,26 +284,25 @@ struct ClipViewerViewControllerTests {
         #expect(controller.currentPlayerItemURL == nil)
     }
 
-    @Test func shareArtifactIsNilBeforePlaying() {
+    @Test func shareBeforePlayingDoesNothing() {
         let controller = makeController()
 
-        #expect(controller.makeShareArtifactForTesting() == nil)
+        controller.shareTappedForTesting()
+
+        #expect(controller.isSharePreparingForTesting == false)
+        #expect(controller.presentedShareURLForTesting == nil)
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func cacheHitShareArtifactClonesCacheWithFriendlyMovieName() async throws {
-        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+    func cacheHitSharePreparesImmediatelyAndPresentsFriendlyMovieName() async throws {
+        let cacheURL = try await temporaryPlayableVideoFile()
         defer { try? FileManager.default.removeItem(at: cacheURL) }
-        let controller = makeController(
-            clipCache: ClipCache(
-                lookup: { _, _ in cacheURL },
-                insert: { _, _, source in source }
-            )
-        )
-
-        controller.loadViewIfNeeded()
-        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
-
+        let preparationStarted = AsyncSignal()
+        let allowPreparation = AsyncSignal()
+        let calls = CallLog<SharePreparationRequest>()
+        let presentation = VideoSharePresentationSpy()
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "dancam-viewer-share-\(UUID().uuidString)", directoryHint: .isDirectory)
         let clip = Clip(
             id: 1,
             startMs: nil,
@@ -318,64 +312,65 @@ struct ClipViewerViewControllerTests {
             etag: "list-etag",
             timeApproximate: false
         )
-        let artifact = try #require(controller.makeShareArtifactForTesting())
-        defer { if let dir = artifact.temporaryDirectory { try? FileManager.default.removeItem(at: dir) } }
-        #expect(artifact.url.lastPathComponent == Formatters.clipExportFilename(clip))
-        #expect(FileManager.default.fileExists(atPath: artifact.url.path))
-        #expect(try Data(contentsOf: artifact.url) == Data([0x02]))        // clone carries the cache bytes
-        #expect(UTType(filenameExtension: artifact.url.pathExtension)?.conforms(to: .movie) == true)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func cloneFailureFallsBackToCacheURL() async throws {
-        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        defer { try? FileManager.default.removeItem(at: cacheURL) }
         let controller = makeController(
             clipCache: ClipCache(
                 lookup: { _, _ in cacheURL },
                 insert: { _, _, source in source }
-            )
+            ),
+            shareArtifactPreparer: ShareArtifactPreparer { request in
+                calls.append(request)
+                await preparationStarted.signal()
+                await allowPreparation.wait()
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let destination = directory.appending(path: request.suggestedFilename)
+                try Data(contentsOf: request.sourceURL).write(to: destination)
+                return PreparedShareArtifact(url: destination, ownedDirectory: directory)
+            },
+            sharePresentation: presentation.presentation,
+            clip: clip
         )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UINavigationController(rootViewController: controller)
+        window.makeKeyAndVisible()
 
         controller.loadViewIfNeeded()
         try await waitUntil { controller.currentPlayerItemURL == cacheURL }
 
-        let blocker = try temporaryFile(extension: "blocker", contents: Data())  // a file, not a dir
-        defer { try? FileManager.default.removeItem(at: blocker) }
-        controller.shareScratchDirectory = blocker
-        let artifact = try #require(controller.makeShareArtifactForTesting())
-        #expect(artifact.url == cacheURL)             // shared the real cache file, ugly name and all
-        #expect(artifact.temporaryDirectory == nil)   // nothing owned -> handler skips, defer skips
-    }
+        controller.shareTappedForTesting()
+        controller.shareTappedForTesting()
 
-    @Test(.timeLimit(.minutes(1)))
-    func removalCleansUpShareArtifacts() async throws {
-        let cacheURL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
-        defer { try? FileManager.default.removeItem(at: cacheURL) }
-        let controller = makeController(
-            clipCache: ClipCache(
-                lookup: { _, _ in cacheURL },
-                insert: { _, _, source in source }
-            )
-        )
+        #expect(controller.isSharePreparingForTesting)
+        #expect(controller.sharePreparationAccessibilityLabelForTesting == "Preparing video")
+        #expect(controller.isShareButtonEnabled == false)
+        #expect(controller.isDeleteButtonEnabledForTesting == false)
+        #expect(controller.isScrollEnabledForTesting)
+        #expect(controller.hasEmbeddedPlayer)
+        await preparationStarted.wait()
+        #expect(calls.values().count == 1)
+        let request = try #require(calls.values().first)
+        #expect(request.sourceURL == cacheURL)
+        #expect(request.suggestedFilename == Formatters.clipExportFilename(clip))
 
-        controller.loadViewIfNeeded()
-        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
+        await allowPreparation.signal()
+        try await waitUntil { presentation.presentedURL != nil }
+        let presentedURL = try #require(presentation.presentedURL)
+        #expect(presentedURL.lastPathComponent == Formatters.clipExportFilename(clip))
+        try await waitUntil { controller.isSharePreparingForTesting == false }
+        #expect(controller.isShareButtonEnabled)
+        #expect(controller.isDeleteButtonEnabledForTesting)
 
-        let artifact = try #require(controller.makeShareArtifactForTesting())
-        let directory = try #require(artifact.temporaryDirectory)
-        defer { try? FileManager.default.removeItem(at: directory) }   // safety net if the assert fails
         #expect(FileManager.default.fileExists(atPath: directory.path))
-
+        presentation.complete()
+        try await waitUntil { FileManager.default.fileExists(atPath: directory.path) == false }
         controller.didMove(toParent: nil)
-
-        #expect(FileManager.default.fileExists(atPath: directory.path) == false)
+        _ = window
     }
 
     @Test(.timeLimit(.minutes(1)))
     func purgedCacheShareTapSelfHealsByPulling() async throws {
-        let missingCacheURL = FileManager.default.temporaryDirectory
-            .appending(path: "dancam-missing-cache-\(UUID().uuidString).mp4")
+        let missingCacheURL = try await temporaryPlayableVideoFile()
         let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
         let allowCompletion = AsyncSignal()
         let pullCalls = CallLog<Int>()
@@ -401,23 +396,60 @@ struct ClipViewerViewControllerTests {
         try await waitUntil { controller.currentPlayerItemURL == missingCacheURL }
         #expect(controller.statusText == "Ready")
         #expect(controller.currentPlayerItemURL == missingCacheURL)
-        #expect(controller.makeShareArtifactForTesting() == nil)
-
+        try FileManager.default.removeItem(at: missingCacheURL)
         controller.shareTappedForTesting()
 
+        try await waitUntil { pullCalls.values().count == 1 }
         #expect(controller.statusText == "\(Formatters.byteSize(0)) of \(Formatters.byteSize(1))")
         #expect(controller.currentPlayerItemURL == nil)
         #expect(controller.isShareButtonEnabled == false)
-        try await waitUntil { pullCalls.values().count == 1 }
 
         controller.didMove(toParent: nil)
         await allowCompletion.signal()
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func backNavigationCancelsPreparationAndCleansLateArtifact() async throws {
+        let cacheURL = try await temporaryPlayableVideoFile()
+        let preparationStarted = AsyncSignal()
+        let allowPreparation = AsyncSignal()
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "dancam-viewer-late-share-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let artifactURL = directory.appending(path: "late.mp4")
+        defer {
+            try? FileManager.default.removeItem(at: cacheURL)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let controller = makeController(
+            clipCache: ClipCache(
+                lookup: { _, _ in cacheURL },
+                insert: { _, _, source in source }
+            ),
+            shareArtifactPreparer: ShareArtifactPreparer { _ in
+                await preparationStarted.signal()
+                await allowPreparation.wait()
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try Data([0x02]).write(to: artifactURL)
+                return PreparedShareArtifact(url: artifactURL, ownedDirectory: directory)
+            }
+        )
+        controller.loadViewIfNeeded()
+        try await waitUntil { controller.currentPlayerItemURL == cacheURL }
+        controller.shareTappedForTesting()
+        await preparationStarted.wait()
+
+        controller.didMove(toParent: nil)
+
+        #expect(controller.isSharePreparingForTesting == false)
+        await allowPreparation.signal()
+        try await waitUntil { FileManager.default.fileExists(atPath: directory.path) == false }
+        #expect(controller.presentedShareURLForTesting == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func missPullsRemuxesInsertsByResolvedETagAndPlaysCachedURL() async throws {
         let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
-        let mp4URL = try temporaryFile(extension: "mp4", contents: Data([0x02]))
+        let mp4URL = try await temporaryPlayableVideoFile()
         let cachedURL = FileManager.default.temporaryDirectory
             .appending(path: "dancam-viewer-cached-\(UUID().uuidString).mp4")
         let insertCalls = CallLog<InsertCall>()
@@ -532,11 +564,19 @@ struct ClipViewerViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func cacheHitPlaybackFailureSelfHealsByPullingOnce() async throws {
+    func cacheHitPlaybackFailureDuringPreparationRepullsAndCleansLateArtifact() async throws {
         let cacheURL = URL(filePath: "/tmp/dancam-missing-cache-\(UUID().uuidString).mp4")
         let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
         let pullCalls = CallLog<Int>()
-        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let preparationStarted = AsyncSignal()
+        let allowPreparation = AsyncSignal()
+        let artifactDirectory = FileManager.default.temporaryDirectory
+            .appending(path: "dancam-late-share-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let artifactURL = artifactDirectory.appending(path: "late.mp4")
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: artifactDirectory)
+        }
 
         let controller = makeController(
             clipPull: ClipPullClient { clipID, _ in
@@ -549,17 +589,32 @@ struct ClipViewerViewControllerTests {
             clipCache: ClipCache(
                 lookup: { _, _ in cacheURL },
                 insert: { _, _, source in source }
-            )
+            ),
+            shareArtifactPreparer: ShareArtifactPreparer { _ in
+                await preparationStarted.signal()
+                await allowPreparation.wait()
+                try FileManager.default.createDirectory(at: artifactDirectory, withIntermediateDirectories: true)
+                try Data([0x02]).write(to: artifactURL)
+                return PreparedShareArtifact(url: artifactURL, ownedDirectory: artifactDirectory)
+            }
         )
         controller.loadViewIfNeeded()
 
         try await waitUntil { controller.currentPlayerItemURL == cacheURL }
         #expect(controller.currentPlayerItemURL == cacheURL)
 
+        controller.shareTappedForTesting()
+        await preparationStarted.wait()
         controller.failCurrentPlayerForTesting()
 
         try await waitUntil { pullCalls.values().count == 1 }
         #expect(controller.statusText != "Clip failed")
+        #expect(controller.isSharePreparingForTesting == false)
+
+        await allowPreparation.signal()
+        try await waitUntil { FileManager.default.fileExists(atPath: artifactDirectory.path) == false }
+        #expect(controller.presentedShareURLForTesting == nil)
+        controller.didMove(toParent: nil)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -639,6 +694,8 @@ struct ClipViewerViewControllerTests {
         clipCache: ClipCache = .noop,
         remuxer: ClipRemuxer = .noop,
         clipsClient: ClipsClient = .noop,
+        shareArtifactPreparer: ShareArtifactPreparer = .unavailable,
+        sharePresentation: VideoSharePresentation? = nil,
         clip: Clip = Clip(
             id: 1,
             startMs: nil,
@@ -653,7 +710,8 @@ struct ClipViewerViewControllerTests {
             clips: clipsClient,
             clipPull: clipPull,
             clipRemuxer: remuxer,
-            clipCache: clipCache
+            clipCache: clipCache,
+            shareArtifactPreparer: shareArtifactPreparer
         )
         let store = AppStore(
             initialState: AppFeature.State(),
@@ -663,7 +721,8 @@ struct ClipViewerViewControllerTests {
         return ClipViewerViewController(
             dependencies: dependencies,
             store: store,
-            clip: clip
+            clip: clip,
+            sharePresentation: sharePresentation
         )
     }
 
@@ -766,6 +825,46 @@ struct ClipViewerViewControllerTests {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "\(UUID().uuidString).\(pathExtension)")
         try contents.write(to: url)
+        return url
+    }
+
+    private func temporaryPlayableVideoFile() async throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "\(UUID().uuidString).mp4")
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: 64,
+                AVVideoHeightKey: 64,
+            ]
+        )
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: 64,
+                kCVPixelBufferHeightKey as String: 64,
+            ]
+        )
+        #expect(writer.canAdd(input))
+        writer.add(input)
+        #expect(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+
+        let pool = try #require(adaptor.pixelBufferPool)
+        var pixelBuffer: CVPixelBuffer?
+        let result = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
+        #expect(result == kCVReturnSuccess)
+        let buffer = try #require(pixelBuffer)
+        while input.isReadyForMoreMediaData == false {
+            await Task.yield()
+        }
+        #expect(adaptor.append(buffer, withPresentationTime: .zero))
+        input.markAsFinished()
+        await writer.finishWriting()
+        #expect(writer.status == .completed)
         return url
     }
 

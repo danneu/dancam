@@ -7,6 +7,7 @@ final class ClipViewerViewController: UIViewController {
     private let dependencies: AppDependencies
     private let store: AppStore
     private let clip: Clip
+    private let sharePresentation: VideoSharePresentation?
 
     private let scrollView = UIScrollView()
     private let progressContainer = UIView()
@@ -35,21 +36,22 @@ final class ClipViewerViewController: UIViewController {
     private var currentPlaybackSource: PlaybackSource?
     private var currentItemURL: URL?
     private var temporaryFiles: Set<URL> = []
-    private var shareArtifactDirectories: Set<URL> = []
     private var didSelfHealCacheHitFailure = false
     private var isPresentingFullScreen = false
     private var hasCompletedFirstLayout = false
 
-    // Root for the per-share clone subdirectories. Internal (not private) with a single
-    // default so a test can point it at a regular file, forcing the clone below to fail and
-    // exercising the last-resort fallback -- no DI seam through AppDependencies.
-    var shareScratchDirectory = FileManager.default.temporaryDirectory
-        .appending(path: "clip-share", directoryHint: .isDirectory)
+    private var shareCoordinator: VideoShareCoordinator?
 
-    init(dependencies: AppDependencies, store: AppStore, clip: Clip) {
+    init(
+        dependencies: AppDependencies,
+        store: AppStore,
+        clip: Clip,
+        sharePresentation: VideoSharePresentation? = nil
+    ) {
         self.dependencies = dependencies
         self.store = store
         self.clip = clip
+        self.sharePresentation = sharePresentation
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -65,6 +67,7 @@ final class ClipViewerViewController: UIViewController {
         view.backgroundColor = .systemBackground
         configureViews()
         configureShareButton()
+        configureShareCoordinator()
 
         pullTask = Task { [weak self] in
             await self?.loadFromCacheThenPlayOrPull()
@@ -136,17 +139,18 @@ final class ClipViewerViewController: UIViewController {
         shareButton.isEnabled
     }
 
+    var isDeleteButtonEnabledForTesting: Bool { deleteButton.isEnabled }
+    var isSharePreparingForTesting: Bool { shareCoordinator?.isPreparing ?? false }
+    var sharePreparationAccessibilityLabelForTesting: String? { shareButton.customView?.accessibilityLabel }
+    var isScrollEnabledForTesting: Bool { scrollView.isScrollEnabled }
+    var presentedShareURLForTesting: URL? { shareCoordinator?.lastPresentedURLForTesting }
+
     var isPresentingFullScreenForTesting: Bool {
         isPresentingFullScreen
     }
 
     func retryForTesting() {
         retry()
-    }
-
-    func makeShareArtifactForTesting() -> (url: URL, temporaryDirectory: URL?)? {
-        guard let artifact = makeShareArtifact() else { return nil }
-        return (artifact.url, artifact.temporaryDirectory)
     }
 
     func shareTappedForTesting() {
@@ -259,6 +263,22 @@ final class ClipViewerViewController: UIViewController {
         navigationItem.rightBarButtonItems = [shareButton, deleteButton]
     }
 
+    private func configureShareCoordinator() {
+        shareCoordinator = VideoShareCoordinator(
+            preparer: dependencies.shareArtifactPreparer,
+            presenter: self,
+            shareButton: shareButton,
+            presentation: sharePresentation,
+            preparingChanged: { [weak self] preparing in
+                self?.setSharePreparationControls(preparing: preparing)
+            },
+            sourceUnavailable: { [weak self] in
+                guard let self, self.currentItemURL != nil else { return }
+                self.startPull()
+            }
+        )
+    }
+
     private func configureDeleteButton() {
         deleteButton.image = UIImage(systemName: "trash")
         deleteButton.style = .plain
@@ -273,24 +293,12 @@ final class ClipViewerViewController: UIViewController {
     }
 
     @objc private func shareTapped(_ sender: UIBarButtonItem) {
-        guard let artifact = makeShareArtifact() else {
-            if currentItemURL != nil {
-                startPull()   // cache purged between .playing and the tap -> self-heal (ADR 13)
-            }
-            return
-        }
-
-        let activityViewController = UIActivityViewController(
-            activityItems: [artifact.url],
-            applicationActivities: nil
+        guard let sourceURL = currentItemURL else { return }
+        let request = SharePreparationRequest(
+            sourceURL: sourceURL,
+            suggestedFilename: Formatters.clipExportFilename(clip)
         )
-        activityViewController.popoverPresentationController?.sourceItem = sender
-        if let directory = artifact.temporaryDirectory {
-            activityViewController.completionWithItemsHandler = { _, _, _, _ in
-                try? FileManager.default.removeItem(at: directory)
-            }
-        }
-        present(activityViewController, animated: true)
+        shareCoordinator?.start(request)
     }
 
     @objc private func deleteTapped() {
@@ -307,39 +315,9 @@ final class ClipViewerViewController: UIViewController {
     }
 
     private func performDelete() {
+        shareCoordinator?.cancel()
         store.send(.clips(.deleteTapped(clip)))
         navigationController?.popViewController(animated: true)
-    }
-
-    private struct ShareArtifact {
-        let url: URL
-        let temporaryDirectory: URL?   // non-nil only when we created a clone to clean up
-    }
-
-    private func makeShareArtifact() -> ShareArtifact? {
-        guard let cacheURL = currentItemURL, fileExistsAsFile(cacheURL) else { return nil }
-
-        let subdirectory = shareScratchDirectory
-            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
-        let destination = subdirectory.appending(path: Formatters.clipExportFilename(clip))
-
-        do {
-            try FileManager.default.createDirectory(at: subdirectory, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: cacheURL, to: destination)  // APFS COW clone: instant, independent inode
-            shareArtifactDirectories.insert(subdirectory)
-            return ShareArtifact(url: destination, temporaryDirectory: subdirectory)
-        } catch {
-            try? FileManager.default.removeItem(at: subdirectory)
-            // Last resort: share the real cache file (ugly name) rather than fail -- but only
-            // if it still exists; if it was purged in the TOCTOU window, self-heal instead.
-            return fileExistsAsFile(cacheURL) ? ShareArtifact(url: cacheURL, temporaryDirectory: nil) : nil
-        }
-    }
-
-    private func fileExistsAsFile(_ url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-            && isDirectory.boolValue == false
     }
 
     private func retry() {
@@ -358,6 +336,7 @@ final class ClipViewerViewController: UIViewController {
     }
 
     private func startPull() {
+        shareCoordinator?.cancel()
         pullTask?.cancel()
         pullTask = nil
         removeTemporaryFiles()
@@ -533,7 +512,7 @@ final class ClipViewerViewController: UIViewController {
             resultLabel.text = nil
             retryButton.isHidden = true
         case .playing:
-            shareButton.isEnabled = true
+            shareButton.isEnabled = shareCoordinator?.isPreparing != true
             hideProgressIndicators()
             statusLabel.text = "Ready"
             resultLabel.text = nil
@@ -599,18 +578,16 @@ final class ClipViewerViewController: UIViewController {
     }
 
     private func tearDown() {
+        shareCoordinator?.cancel()
         pullTask?.cancel()
         pullTask = nil
         detachPlayer()
         removeTemporaryFiles()
-        removeShareArtifactDirectories()
     }
 
-    private func removeShareArtifactDirectories() {
-        for directory in shareArtifactDirectories {
-            try? FileManager.default.removeItem(at: directory)
-        }
-        shareArtifactDirectories.removeAll()
+    private func setSharePreparationControls(preparing: Bool) {
+        shareButton.isEnabled = preparing == false && state?.isPlaying == true
+        deleteButton.isEnabled = preparing == false
     }
 
     private func removeTemporaryFile(_ url: URL) {
@@ -655,6 +632,11 @@ final class ClipViewerViewController: UIViewController {
         case preparing
         case playing(URL)
         case failed(message: String)
+
+        var isPlaying: Bool {
+            if case .playing = self { return true }
+            return false
+        }
 
         var logPhase: String {
             switch self {

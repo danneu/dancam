@@ -61,8 +61,8 @@ persistence lands. Prefer Swift Testing over XCTest for new unit tests.
 App diagnostics use Apple unified logging through the app-owned `Log` namespace.
 
 - Subsystem: `com.danneu.dancam`.
-- Categories double as greppable tags (`reducer`, `pull`, `remux`, `playback`, `nav`,
-  and media parser categories).
+- Categories double as greppable tags (`reducer`, `pull`, `remux`, `playback`, `share`,
+  `nav`, and media parser categories).
 - Levels: `.error` for failures, `.notice` for state transitions and pipeline
   boundaries that must reach exports, `.info` for live detail, and `.debug` for hot
   paths and no-op transitions. `.notice` and higher are the export-critical levels;
@@ -170,7 +170,7 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
   `(boot_tag, session)` the Home browse unit, superseding the boot-keyed "drive" model of
   ADRs 19/20; re-keys grouping, occurrences, detail, and REC attribution to `RecordingID`
   and retires the "Drive" vocabulary from the active tree.
-- `25-2026-07-10-clip-share-raw-file-url.md` -- remove the unnecessary
+- `25-2026-07-10-clip-share-raw-file-url.md` -- superseded by ADR 30; removed the unnecessary
   `UIActivityItemSource` wrapper that crashed during share discovery and return to the
   device-verified raw MP4 file URL.
 - `26-2026-07-14-phone-owned-incidents.md` -- make incidents durable phone-owned
@@ -185,3 +185,6 @@ See the root `AGENTS.md` for the ADR convention. App-side ADRs live in
 - `29-2026-07-14-evidence-ordered-self-healing-incidents.md` -- order positive and
   negative incident evidence, treat stopping as finalization, derive status from
   segment facts, and reopen inferred losses when later clip evidence contradicts them.
+- `30-2026-07-15-responsive-video-share-preparation.md` -- prepare cached clips and
+  incident segments off the main actor with cancellable `clonefile` staging, inline
+  progress, raw-URL fallback, and shared presentation cleanup.

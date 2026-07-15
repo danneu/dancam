@@ -15,6 +15,7 @@ struct AppDependencies {
     var recording: RecordingClient
     var time: TimeClient
     var logExporter: LogExporter
+    var shareArtifactPreparer: ShareArtifactPreparer
     var sleep: @Sendable (Duration) async -> Void
     var heartbeatTimeout: @Sendable () async throws -> Void
     var continuousNow: @Sendable () -> ContinuousClock.Instant
@@ -36,6 +37,7 @@ struct AppDependencies {
         recording: RecordingClient = .noop,
         time: TimeClient = .noop,
         logExporter: LogExporter = .noop,
+        shareArtifactPreparer: ShareArtifactPreparer = .unavailable,
         sleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
@@ -60,6 +62,7 @@ struct AppDependencies {
         self.recording = recording
         self.time = time
         self.logExporter = logExporter
+        self.shareArtifactPreparer = shareArtifactPreparer
         self.sleep = sleep
         self.heartbeatTimeout = heartbeatTimeout
         self.continuousNow = continuousNow
@@ -131,6 +134,7 @@ struct AppDependencies {
             receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         logExporter = .live
+        shareArtifactPreparer = .live()
         sleep = { duration in
             try? await Task.sleep(for: duration)
         }
