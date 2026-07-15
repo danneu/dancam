@@ -4,7 +4,7 @@
 - **Date:** 2026-07-10
 - **Owner:** app
 - **Related:** `15-2026-07-01-clip-export-share.md`;
-  `13-2026-07-01-durable-clip-cache.md`
+  [app clips](../../../docs/design/app/clips.md)
 
 ## Context
 

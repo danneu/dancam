@@ -174,8 +174,9 @@ mock first.
             the `dancam-dev` AP feel acceptable, including desk and in-car checks with
             and without live preview running concurrently (spike 2); pulled `.ts` files
             remux to playable, seekable `.mp4` files on a physical iPhone (spike 5a).
-            ADR 13 later removed the progressive local fMP4 path after remux measured
-            cheap; cached fast-start MP4 is now the sole playback artifact.
+            The [app clips design](design/app/clips.md) later removed the progressive
+            local fMP4 path after remux measured cheap; cached fast-start MP4 is now the
+            sole playback artifact.
       - [x] **Pi (plain serve):** `GET /v1/clips/{id}` serves a finished segment's raw
             `.ts` as a plain `200` (`application/mp2t`); never serves the open segment
             (matches the list). The dumbest end-to-end that proves tap -> pull -> play; no
@@ -212,13 +213,15 @@ mock first.
             handles pull failure / resume, cache-insert failure, playback failure, and
             manual Retry.
       - [x] **App:** clip rows show duration + best-effort created time + a real first-frame
-            thumbnail generated on the phone (app ADR 16): cache-first
+            thumbnail generated on the phone (the [app clips design](design/app/clips.md)):
+            cache-first
             memory/disk/free-cached-MP4/ranged-prefix pipeline. Watched clips are free (the
             phone has the bytes); not-yet-watched clips ranged-*read* a ~2 MB prefix -- no Pi
             writes, no `/thumb` endpoint.
       - Scope fence: one finished segment per clip (no multi-segment timeline), no export
         (`tide`), no real timestamps (`moss`), no locked/incident clips (`nova`). Thumbnails
-        are generated client-side per app ADR 16, which supersedes the
+        are generated client-side per the [app clips design](design/app/clips.md), which
+        supersedes the
         [transport boundary's](design/boundary/transport.md) proposed Pi-generated
         `/thumb` (and the storage page's abandoned cached `seg-<seq>.jpg`) for both
         the pulled and not-yet-pulled cases -- no server-side browse thumbnails.

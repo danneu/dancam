@@ -404,8 +404,8 @@ Each tier catches its bug class before the next, more expensive tier exists.
   collapses the largest variance in the whole estimate; do it before anything
   else.
 - **Muxer format decision** (fMP4 vs continuing MPEG-TS) is not settled here;
-  it interacts with the recording design, `ts_duration`, the app's
-  progressive-fmp4 playback ADR (`app/docs/design/08-2026-06-27-progressive-fmp4-clip-playback.md`),
+  it interacts with the recording design, `ts_duration`, the app's abandoned
+  [progressive fMP4 experiment](../design/app/clips.md#2026-06-27-try-progressive-fmp4-playback-during-the-pull),
   and segment fact stamping. Needs its own design pass.
 - **Design record at commit time:** landing the Rust owner must update the
   [recording page](../design/pi/recording.md) body and append the rationale to its

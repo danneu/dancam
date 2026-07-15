@@ -111,6 +111,8 @@ and, for device testing, the CarPlay entitlement from Apple.
 - [App connection](../docs/design/app/connection.md) -- read when changing event-stream
   liveness, network deadlines, reconnect lifecycle, freshness-typed UI, visible-screen
   recovery, or the shell status strip.
+- [App clips](../docs/design/app/clips.md) -- read when changing resumable clip pull,
+  TS-to-MP4 remux, durable clip caching, viewer playback lifecycle, or thumbnails.
 - [Transport boundary](../docs/design/boundary/transport.md) -- read when changing
   Pi routes, HTTP framing, SSE, preview, clip pull, Wi-Fi pinning, or link trust.
 
@@ -118,21 +120,10 @@ During the migration, the remaining app ADRs under `docs/design/` stay authorita
 for subsystems that do not yet have a living page:
 
 - `01-2026-06-22-carplay-integration-surface.md` -- what we expose to CarPlay and why.
-- `07-2026-06-26-on-device-clip-remux-playback.md` -- remux pulled TS clips into
-  on-device MP4 for durable playback.
-- `08-2026-06-27-progressive-fmp4-clip-playback.md` -- progressively serve fMP4
-  fragments over loopback while a clip pull is still running; superseded by ADR 13.
-- `12-2026-06-30-bounded-resilient-clip-pull.md` -- make clip pull retry by byte
-  progress, bound no-progress and runaway reconnects, and surface typed failures.
-- `13-2026-07-01-durable-clip-cache.md` -- delete the progressive loopback player and
-  make cached fast-start MP4 the sole clip playback and future export artifact.
 - `14-2026-07-01-structured-logging-and-export.md` -- use Apple unified logging as the
   app's diagnostic stream and expose current-process log export from the Debug screen.
 - `15-2026-07-01-clip-export-share.md` -- superseded by ADR 25; system share sheet over
   the cached MP4.
-- `16-2026-07-01-client-side-clip-thumbnails.md` -- generate clip-list thumbnails on the
-  phone (cache-first memory/disk/free-MP4/ranged-prefix pipeline); supersedes the raspi
-  `/thumb` endpoint and cached `seg-<seq>.jpg` thumbnails.
 - `19-2026-07-08-drive-grouped-clip-browsing.md` -- superseded by ADR 24; treated a
   drive boottag as the Home browse unit for finished clips, with app-side drive cards,
   detail projections, stable representative thumbnails, and per-clip deletion.

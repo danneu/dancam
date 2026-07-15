@@ -34,7 +34,8 @@ section for the orchestrator rather than chasing it.
 
 Ground every checkable claim. When you assert something is wrong, fragile, or non-conforming,
 back it with one of: the relevant Apple developer docs, the wire spec (RFC/ISO/ITU), or a
-dancam ADR under */docs/design/. Use WebSearch + WebFetch to pull the actual doc/spec text;
+dancam living design page under docs/design/. Use WebSearch + WebFetch to pull the actual
+doc/spec text;
 if WebFetch is blocked (403/429/anti-bot/JS shell), fall back to WebSearch excerpts or
 Chrome MCP. Quote or link the specific authority. Separate "violates documented Apple
 guidance / the spec" from "my design judgment." Do not fabricate API names, tag names, or
@@ -59,7 +60,7 @@ only; no em dashes, straight quotes, "deg"/"4x"):
     - What: what the code does
     - Why it matters: realistic trigger and impact
     - Fix: single recommended action
-    - Grounding: Apple doc / RFC / ISO / ITU / ADR link or quote -- or "design judgment, no external source"
+    - Grounding: Apple doc / RFC / ISO / ITU / design-page link or quote -- or "design judgment, no external source"
     - Confidence: high|medium|low   Effort: S|M|L
 
 (`path:line` is fine here -- this scratch dir is a throwaway artifact, not a durable doc --
@@ -94,8 +95,7 @@ Lane A -- Clip pull & resumable transport (app)   ->  01-pull-transport.md
   Network framework (NWConnection state/path, timeouts, NWProtocolTCP).
 
 Lane B -- TS demux & H.264 access-unit assembly   ->  02-ts-h264-demux.md
-- Scope: turning raw MPEG-TS bytes into H.264 access units -- the parsing core shared by
-  progressive and finalized remux.
+- Scope: turning raw MPEG-TS bytes into H.264 access units for the durable remuxer.
 - Anchor files: app/DanCam/DanCam/Media/Remux/TSDemuxer.swift;
   H264AccessUnitAssembler.swift; DemuxedH264Clip.swift.
 - Key questions: MPEG-TS correctness -- 188-byte sync, PID/PAT/PMT resolution, continuity
@@ -105,46 +105,37 @@ Lane B -- TS demux & H.264 access-unit assembly   ->  02-ts-h264-demux.md
   recording guarantees power-cut tails) -- drop the partial trailing unit cleanly or emit
   garbage/crash? Off-by-one and bounds safety on every slice.
 - Authorities: ISO/IEC 13818-1 (MPEG-2 TS); ITU-T H.264 (Annex B, NAL syntax, SPS/PPS);
-  ISO/IEC 14496-15 (avcC); the [Pi recording design](../docs/design/pi/recording.md).
+  ISO/IEC 14496-15 (avcC); the [Pi recording design](../docs/design/pi/recording.md);
+  the [app clips design](../docs/design/app/clips.md).
 
-Lane C -- fMP4 segmentation & finalized remux (AVFoundation)  ->  03-fmp4-finalize-remux.md
-- Scope: the AVAssetWriter paths -- progressive fragmented-MP4 generation and the finalized
-  front-moov MP4.
-- Anchor files: app/DanCam/DanCam/Media/Stream/FMP4Segmenter.swift;
-  Media/Stream/ProgressiveSegmenter.swift; Media/Remux/ClipRemuxerEngine.swift;
+Lane C -- finalized MP4 remux (AVFoundation)  ->  03-finalized-remux.md
+- Scope: the AVAssetWriter path that turns one pulled TS segment into the durable fast-start
+  MP4 used by playback and sharing.
+- Anchor files: app/DanCam/DanCam/Media/Remux/ClipRemuxerEngine.swift;
   Media/ClipRemuxer.swift.
-- Key questions: Is AVAssetWriter configured correctly for HLS fragmented MP4
-  (output settings, outputFileTypeProfile, segment interval/manual flush,
-  initialSegmentStartTime)? Are #EXTINF durations taken strictly from AVAssetSegmentReport
-  (never guessed), with the frozen-target-duration / invalid-duration fallback honored?
-  Segments flushed ONLY at IDR boundaries (one GOP per segment, each starting on a sync
-  sample)? Correct CMSampleBuffer/CMFormatDescription/timing (timescale, PTS/DTS, sync-sample
-  flags)? Is the finalized MP4 actually front-moov/faststart? Is the deliberate double-parse
-  (progressive + finalizer) a real divergence risk or fine?
-- Authorities: Apple AVFoundation (AVAssetWriter, AVAssetWriterInput, AVAssetSegmentReport,
-  AVAssetWriterDelegate, AVOutputSettingsAssistant); Apple HLS authoring spec (fragmented
-  MP4 / CMAF); CoreMedia (CMSampleBuffer, CMFormatDescription).
+- Key questions: Is passthrough AVAssetWriter configured correctly? Correct
+  CMSampleBuffer/CMFormatDescription/timing (timescale, PTS/DTS, sync-sample flags)? Does
+  output begin on a decodable keyframe and place `moov` before media? Do cancellation and
+  every writer/parser failure remove partial output? Does the narrow H.264-only,
+  video-only contract fail loudly outside its supported format?
+- Authorities: Apple AVFoundation (AVAssetWriter, AVAssetWriterInput,
+  AVOutputSettingsAssistant); CoreMedia (CMSampleBuffer, CMFormatDescription); the
+  [app clips design](../docs/design/app/clips.md).
 
-Lane D -- Loopback HLS server & AVPlayer swap     ->  04-loopback-hls-playback.md
-- Scope: the viewer-scoped local HLS server and the AVPlayer state machine that plays
-  progressive segments then swaps to the finalized MP4. Highest-concurrency, highest-LOC
-  surface (server ~767 LOC, viewer ~683 LOC).
-- Anchor files: app/DanCam/DanCam/Media/Stream/LoopbackMediaServer.swift;
-  app/DanCam/DanCam/Features/ClipViewer/ClipViewerViewController.swift; handoff from
-  Media/Stream/ProgressiveSegmenter.swift.
-- Key questions: Is all server state truly confined to one serial domain, with AVAssetWriter
-  delegate segment data copied before crossing threads (per ADR 08)? Any data races,
-  ordering bugs, or deadlocks across demux queue / server queue / MainActor? Is the server
-  bound ONLY to loopback (never 0.0.0.0)? EVENT-playlist correctness:
-  #EXT-X-PLAYLIST-TYPE:EVENT, frozen #EXT-X-TARGETDURATION, #EXTINF, #EXT-X-ENDLIST,
-  append-only discipline, GET/HEAD/Range serving of init.mp4 / segN.m4s. Swap correctness:
-  preserve playback time, cancel the segmenter, suppress a late firstPlayableReady so a slow
-  first GOP cannot reattach a torn-down playlist over a good MP4. Lifetime: server + temp dir
-  deleted on swap/dismiss/failure; AVPlayer/AVPlayerItem KVO add/remove balance; retain
-  cycles/leaks. Fallback when no first fragment ever arrives.
-- Authorities: RFC 8216 + Apple HTTP Live Streaming authoring spec (EXT-X tags, EVENT
-  playlists, fMP4); Apple AVFoundation (AVPlayer, AVPlayerItem, AVURLAsset, status /
-  timeControlStatus observation).
+Lane D -- durable cache & AVPlayer viewer     ->  04-cache-viewer-playback.md
+- Scope: the `(clip id, etag)` MP4 cache and the viewer state machine that resolves a cache
+  hit or runs pull -> remux -> insert -> local playback.
+- Anchor files: app/DanCam/DanCam/Media/ClipCache.swift;
+  app/DanCam/DanCam/Features/ClipViewer/ClipViewerViewController.swift.
+- Key questions: Does validator canonicalization prevent stale-id playback and preserve a
+  validator-changing pull result? Can cache lookup/insert/version wipe interleave or block
+  the MainActor? Are LRU and over-budget-single-file rules correct after OS purges and stray
+  files? Does viewer cancellation delete only temporary artifacts? AVPlayer/AVPlayerItem KVO
+  add/remove balance, retain cycles/leaks, fullscreen lifecycle, one-shot cache self-heal,
+  and Retry behavior after pull/remux/cache/playback failures.
+- Authorities: Apple AVFoundation (AVPlayer, AVPlayerItem, AVURLAsset, status observation),
+  Apple File System Programming Guide, and the
+  [app clips design](../docs/design/app/clips.md).
 
 Lane E -- Pi clip serving & duration (Rust)       ->  05-pi-clip-serving.md
 - Scope: the server side of the pull -- clip listing, raw .ts serving with ranges,
@@ -167,14 +158,14 @@ Lane F -- Test coverage & quality (cross-cutting) ->  06-test-coverage.md
 - Scope: audit existing tests around the whole pull->remux->play path; find the gaps that
   matter and the brittle tests that should change.
 - Anchor files: app/DanCam/DanCamTests/Networking/Clips/, Networking/HTTP/, Media/Remux/,
-  Media/Stream/, Media/ClipRemuxerTests.swift, Media/ProgressivePlaybackIntegrationTests.swift,
-  Features/ClipViewer/, Features/Clips/; raspi/service/tests/clips.rs, recording.rs. Plus the
+  Media/ClipRemuxerTests.swift, Media/ClipCacheTests.swift, Features/ClipViewer/,
+  Features/Clips/; raspi/service/tests/clips.rs, recording.rs. Plus the
   code under test in the other lanes' anchors.
 - Key questions: Do tests exercise the real risk surfaces -- mid-pull drop+resume,
   ETag-change restart/truncation, 416/unsatisfiable range, truncated/corrupt TS tails,
-  progressive->finalized swap continuity, late-first-playable suppression, fMP4
-  duration/fallback, PTS wrap? Audit on two axes: coverage of behavior the code HAS, and
-  coverage of the CLAIMS the ADRs make. Only call for tests that are BEHAVIORAL and
+  cache-purge self-heal, cancellation cleanup, and PTS wrap? Audit on two axes: coverage
+  of behavior the code HAS, and coverage of the CLAIMS the design pages make. Only call
+  for tests that are BEHAVIORAL and
   STRUCTURE-INSENSITIVE -- do not demand tests that pin internal structure or restate the
   implementation. Flag brittle/over-mocked tests that would pass real regressions through.
   Rank gaps by the risk they leave uncovered.
@@ -186,18 +177,19 @@ Lane G -- Simplicity, architecture & over-engineering ->  07-simplicity-architec
   earns its complexity and pitch concrete consolidations.
 - Anchor files: the whole pipeline -- app/DanCam/DanCam/Media/**, Networking/Clips/**,
   Networking/HTTP/**, Features/ClipViewer/**, Features/Clips/**, and
-  raspi/service/src/{clips,ts_duration,recording}.rs. Read ADRs 07 and 08 first.
-- Key questions: Does the dual progressive+finalizer pipeline (TS parsed twice, two writer
-  paths, a loopback server) carry its weight versus a simpler design, or is the complexity
-  load-bearing for time-to-first-frame? Are the big units (767-line server, 683-line viewer)
-  doing one job or several that should split -- or are there too many thin files that should
-  merge? Duplicated logic across remux paths, leaky abstractions, wrong-altitude coupling
-  between viewer/server/segmenter, dead or speculative code, misleading names. Repo stance is
-  explicit: no users, no back-compat -- prefer "delete and replace" over layering. Pitch the
-  simplest design that still hits progressive first-frame, with a concrete migration sketch
-  and what it costs. Distinguish "simplify now" from "fine, leave it."
-- Authorities: project AGENTS.md ("take the ideal solution", "delete don't layer"); ADRs
-  07/08; general design judgment (cite where checkable).
+  raspi/service/src/{clips,ts_duration,recording}.rs. Read the
+  [app clips design](../docs/design/app/clips.md) first, including why progressive playback
+  was removed.
+- Key questions: Does the pull -> remux -> cache -> AVPlayer pipeline earn its remaining
+  complexity? Are the larger units doing one job or several that should split, or are there
+  too many thin files that should merge? Duplicated parsing/cache logic, leaky abstractions,
+  wrong-altitude coupling between viewer, puller, remuxer, and cache, dead or speculative
+  code, misleading names. Repo stance is explicit: no users, no back-compat -- prefer
+  "delete and replace" over layering. Pitch the simplest design that preserves resumable
+  pulls, tolerant remux, instant replay, and honest failure handling. Distinguish "simplify
+  now" from "fine, leave it."
+- Authorities: project AGENTS.md ("take the ideal solution", "delete don't layer"); the
+  app clips design; general design judgment (cite where checkable).
 
 ## Step 2 -- compile index.md
 After all subagents return, write $REVIEW_DIR/index.md (ASCII only):

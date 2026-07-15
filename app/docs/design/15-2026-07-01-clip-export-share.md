@@ -3,7 +3,7 @@
 - **Status:** Superseded by `25-2026-07-10-clip-share-raw-file-url.md`
 - **Date:** 2026-07-01
 - **Owner:** app
-- **Related:** `13-2026-07-01-durable-clip-cache.md`; `../../../docs/roadmap.md`
+- **Related:** [app clips](../../../docs/design/app/clips.md); `../../../docs/roadmap.md`
   (swoop `tide`)
 
 ## Correction 2026-07-01 (device-verified)
@@ -55,8 +55,8 @@ copy the MP4 ... Rejected for now" alternatives.
 
 The clip viewer can pull, remux, cache, and play a fast-start MP4, but the app has no
 way to get that file off the phone. Swoop `tide` calls for Save-to-Photos and AirDrop
-over the MP4, and ADR 13 made the durable cached MP4 the playback artifact and future
-export artifact.
+over the MP4, and the app clips design made the durable cached MP4 the playback artifact
+and future export artifact.
 
 iOS already provides a single native export surface for this: `UIActivityViewController`.
 The system sheet can expose Save Video, AirDrop, Save to Files, and other user-chosen
@@ -88,8 +88,8 @@ Before creating the provider, validate that the current item URL exists and is n
 directory. `NSItemProvider(contentsOf:)` can still create a provider for a missing
 `.mp4` path based on the extension, which would present a sheet that fails later if
 iOS evicted the cache file. If the share tap finds that a playing cache file is gone,
-self-heal by starting a fresh pull, matching ADR 13's requirement that playback
-tolerate missing cached files.
+self-heal by starting a fresh pull, matching the app clips design's requirement that
+playback tolerate missing cached files.
 
 Anchor the popover with `popoverPresentationController?.sourceItem = sender` so the
 same controller is valid on iPad-style presentations.

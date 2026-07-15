@@ -5,7 +5,7 @@
 - **Owner:** app
 - **Related:** [transport boundary](../../../docs/design/boundary/transport.md);
   [app architecture](../../../docs/design/app/architecture.md);
-  `16-2026-07-01-client-side-clip-thumbnails.md`;
+  [app clips](../../../docs/design/app/clips.md);
   `../../../docs/roadmap.md` (swoop `sift`);
   [Pi storage](../../../docs/design/pi/storage.md)
 
@@ -20,8 +20,8 @@
 
 Home originally showed finished footage as one row per segment. That is usable for a
 short recording, but it collapses under normal dashcam usage: a day of driving can mean
-hundreds of roughly 30 second segment rows and, after ADR 16, many first-browse thumbnail
-prefix reads over a 2.4 GHz link.
+hundreds of roughly 30 second segment rows and, after the app clips design, many
+first-browse thumbnail prefix reads over a 2.4 GHz link.
 
 The user usually knows "the drive when this happened" before they know the exact segment.
 For v1 hardware, one Pi boot maps to one drive because camera power is switched with the
