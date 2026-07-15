@@ -407,7 +407,7 @@ End state:
 - [x] 15. Fold app incident ADRs into a living incidents page
 - [x] 16. Fold app sharing, capacity, CarPlay, and logging ADRs
 - [x] 17. Move the Pi runbook into the book
-- [ ] 18. Extract hardware and references pages
+- [x] 18. Extract hardware and references pages
 - [ ] 19. Retire ADR tooling
 - [ ] 20. Slim AGENTS.md files to the lean layout
 - [ ] 21. Refresh the root README

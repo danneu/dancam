@@ -4,6 +4,10 @@
 
 [Roadmap](roadmap.md)
 
+[Hardware](hardware.md)
+
+[Upstream source references](references.md)
+
 # Design
 
 - [App-Pi transport boundary](design/boundary/transport.md)

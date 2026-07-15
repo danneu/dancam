@@ -54,7 +54,7 @@ reorder without renumbering), the default order and mock-Pi / real-Pi tracks, an
 ## Hardware (tentative)
 
 Pi Zero 2 W + Arducam IMX708 Autofocus Wide camera; full spec, part links, and prices
-in [`raspi/AGENTS.md`](raspi/AGENTS.md). May change as concrete implementation starts.
+in [`docs/hardware.md`](docs/hardware.md). May change as concrete implementation starts.
 
 ## Development environment
 
@@ -104,26 +104,9 @@ side -- it is the boundary between them, not documentation to file under `docs/`
 
 ## References
 
-`references/` holds read-only clones of upstream source we build against, so we target
-the exact API. Git-ignored; seed or refresh with `just fetch-references`. Versions are
-pinned in `scripts/fetch-references.sh` to match what the Pi runs; run
-`just references-pi-version` to confirm the Pi's installed version before setting or
-bumping a pin.
-
-- **picamera2** (`references/picamera2/`) -- Raspberry Pi camera stack imported by the Pi
-  camera process (`raspi/camera/camera.py`). Pinned to the `python3-picamera2` version on
-  Raspberry Pi OS Trixie. Upstream: https://github.com/raspberrypi/picamera2
-- **libcamera** (`references/libcamera/`) -- the Raspberry Pi **fork** (not upstream
-  linuxtv), which is what runs on the Pi: it carries the `rpi` pipeline handlers and the
-  IPA tuning under the picamera2 stack. Read for a future all-Rust camera owner; see
-  `docs/research/1-rust-camera-owner.md`. Pin tracks the fork branch/tag matching the Pi's
-  installed libcamera (`just references-pi-version`). Fork: https://github.com/raspberrypi/libcamera
-- **linux** (`references/linux/`) -- the Raspberry Pi kernel fork, **sparse-fetched** to just
-  two V4L2 driver folders: `drivers/staging/vc04_services/bcm2835-codec/` (the `/dev/video11`
-  H.264 M2M encoder) and `drivers/media/platform/bcm2835/` (the `bcm2835-unicam` CSI-2
-  receiver). Source for the encoder/capture wrappers a future Rust camera owner would drive;
-  see `docs/research/1-rust-camera-owner.md`. Pinned to the `stable_YYYYMMDD` tag matching the
-  Pi's running kernel (`just references-pi-version`). Fork: https://github.com/raspberrypi/linux
+[`docs/references.md`](docs/references.md) documents the gitignored, read-only upstream
+clones, their Pi-matched pins, and the commands for seeding or refreshing them. Read it
+before changing camera-stack or kernel integration.
 
 ## Cross-cutting principles (the decisions that shape everything)
 

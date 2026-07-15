@@ -9,39 +9,17 @@ Read the root [`../AGENTS.md`](../AGENTS.md) first for the system picture and
 cross-cutting principles. This file covers the camera unit; its sibling, the iPhone
 app, is documented in [`../app/AGENTS.md`](../app/AGENTS.md).
 
-## Hardware (v1)
+## Hardware constraints
 
-- **Board:** [Raspberry Pi Zero 2 W (2021)](https://www.amazon.com/gp/product/B09LH5SBPS)
-  (~60 USD).
-  - Quad-core Cortex-A53 @ 1 GHz, **512 MB RAM** (tight -- keep the software lean).
-  - **Wi-Fi: 2.4 GHz 802.11 b/g/n only. No 5 GHz.** This shapes the whole link
-    design (preview + pull only; see below).
-  - **Hardware H.264 encode capped at 1080p30.** Plan for 1080p30; no 4K, no HEVC
-    encode, and the camera's higher modes (1080p50 etc.) cannot be hardware-encoded.
-  - Operating range -20 C to +70 C ambient. **No real-time clock** -- time comes
-    from the phone (on connect) and/or a GPS module.
-  - 40-pin header is unpopulated from the factory.
-- **Camera:** [Arducam 12MP IMX708 Autofocus Wide](https://www.amazon.com/gp/product/B0C5D97DRJ)
-  (~30 USD; Camera Module 3 Wide equivalent).
-  - ~120 deg diagonal FOV (Arducam's own specs disagree: the product page says
-    120 deg D, their wiki says 110 deg D x 100 deg H x 72 deg V; either way slightly
-    narrower than the official CM3 Wide's 120 D / 102 H / 67 V), HDR, PDAF autofocus,
-    Sony IMX708, libcamera-native.
-  - Ships with a 15-22pin "Standard-Mini" FPC cable: 15-pin at the camera, 22-pin
-    at the board. The 22-pin end plugs into the Zero 2 W's mini-CSI port (same
-    connector as the Pi 5 and Compute Modules), and the 15-pin end plugs into the
-    camera. A standard Pi 3/4's 15-pin CSI port would instead need a 15-15
-    "Standard-Standard" cable.
-  - This is not an official module, so it is not auto-detected; it needs
-    `camera_auto_detect=0` and `dtoverlay=imx708` in `/boot/firmware/config.txt`.
-    The playbook applies that overlay (`ansible/site.yml`); the rationale lives in
-    "OS and first flash".
-  - **Operating temp 0 C to +50 C -- this is the system's thermal weak link**, not
-    the board. Hot-parked operation is bounded by the sensor, not the Pi.
+The v1 camera unit is a Raspberry Pi Zero 2 W with an Arducam IMX708 Autofocus Wide
+camera. See the [hardware reference](../docs/hardware.md) for the part list, cabling,
+field-of-view notes, and OS compatibility details.
 
-The chosen camera meets the v1 requirements: 120-140 deg + HDR + autofocus +
-acceptable low light. Note that HDR + autofocus together exist only on the IMX708 in
-this ecosystem, and autofocus tops out at 120 deg (wider needs a fixed-focus M12 lens).
+- **512 MB RAM** -- keep the software lean.
+- **2.4 GHz Wi-Fi only** -- there is no 5 GHz radio.
+- **Hardware H.264 encode is capped at 1080p30** -- no 4K or HEVC encode.
+- **No real-time clock** -- time comes from the phone and/or a future GPS module.
+- **The camera is rated only to 50 C** -- it is the system's thermal weak link.
 
 ## Constraints that drive the design
 
@@ -177,30 +155,11 @@ read-only root on the desk.
 
 ### OS and first flash (once)
 
-- **Raspberry Pi OS Lite, 64-bit** (Trixie / Debian 13; the 2026-06-18 build,
-  kernel 6.18 LTS). Lite = headless and lean for 512 MB; Trixie ships
-  `rpicam-vid` and the IMX708 driver in-kernel. Our Arducam B0311 is not
-  auto-detected (it is not an official module), so it needs the kernel's in-tree
-  overlay -- `camera_auto_detect=0` plus `dtoverlay=imx708` in
-  `/boot/firmware/config.txt` -- with no install script, no tuning file, and it
-  survives kernel upgrades. The playbook applies that overlay and reboots; the
-  command and its idempotency notes live in `ansible/site.yml`. Do NOT use
-  Arducam's legacy `install_pivariety_pkgs.sh` driver: it ships prebuilt
-  per-kernel binaries that break on every `apt upgrade` (the source of the "had
-  to downgrade the kernel" reports). The official Camera Module 3 would
-  auto-detect with no config -- same IMX708 sensor -- if we ever want zero camera
-  setup. On this 512 MB board, camera/codec buffers come from CMA; the old
-  `gpu_mem` split is obsolete. If `rpicam` reports buffer-allocation failures,
-  raise CMA with a `config.txt` overlay such as `dtoverlay=cma,cma-size=...`, not
-  `gpu_mem`.
-- Flash with **current Raspberry Pi Imager (2.0.10 or newer)**, pre-setting
-  hostname (`dancam`), SSH on, the user, and **home Wi-Fi credentials**. Current
-  Trixie images use cloud-init for first-boot customization: Imager 1.9.x cannot
-  customize Trixie, and the 2.0.6-2.0.8 stable releases can leave headless SSH off
-  by emitting the deprecated `enable_ssh` key (fixed in the 2.0.9 prerelease and
-  stable in 2.0.10). Editing files on the boot partition is the legacy fallback.
-  Boot headless, then `ssh <your-username>@dancam.local` over the LAN (mDNS). No monitor or
-  keyboard, and no card-shuffling after this.
+- Hardware and OS compatibility -- including the IMX708 overlay, CMA guidance,
+  Arducam driver warning, and minimum supported Imager version -- lives in the
+  [hardware reference](../docs/hardware.md). Follow the
+  [Pi setup runbook](../docs/setup/pi-runbook.md) for the actual flash and bootstrap
+  procedure.
 - The playbook scopes Avahi/mDNS to the Wi-Fi interface --
   `allow-interfaces=wlan0` in `/etc/avahi/avahi-daemon.conf` (see
   `ansible/site.yml`). Without this, Avahi can publish on loopback before Wi-Fi
