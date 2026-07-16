@@ -747,7 +747,7 @@ for line in sys.stdin:
         seq = command["start_segment_index"]
         os.makedirs(sys.argv[-1], exist_ok=True)
         open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
-        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq,"durable_bytes":7}), file=sys.stderr, flush=True)
     if command["cmd"] == "stop_recording":
         print(json.dumps({"event":"recording_stopped","session_id":session}), file=sys.stderr, flush=True)
 "#;
@@ -817,7 +817,7 @@ for line in sys.stdin:
         seq = command["start_segment_index"]
         os.makedirs(sys.argv[-1], exist_ok=True)
         open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
-        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq,"durable_bytes":7}), file=sys.stderr, flush=True)
 "#;
     let rec_dir = temp_rec_dir("child-error-recovery");
     let marker = rec_dir.with_extension("error-once");
@@ -885,7 +885,7 @@ for line in sys.stdin:
         session, seq = command["session_id"], command["start_segment_index"]
         os.makedirs(sys.argv[-1], exist_ok=True)
         open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
-        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq,"durable_bytes":7}), file=sys.stderr, flush=True)
 "#;
     let rec_dir = temp_rec_dir("write-failure-recovery");
     let marker = rec_dir.with_extension("write-fail-once");
@@ -949,7 +949,7 @@ for line in sys.stdin:
         session, seq = command["session_id"], command["start_segment_index"]
         os.makedirs(sys.argv[-1], exist_ok=True)
         open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
-        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq,"durable_bytes":7}), file=sys.stderr, flush=True)
 "#;
     let rec_dir = temp_rec_dir("exit-during-command");
     let marker = rec_dir.with_extension("exit-once");
@@ -1046,7 +1046,7 @@ for line in sys.stdin:
         seq = command["start_segment_index"]
         os.makedirs(sys.argv[-1], exist_ok=True)
         open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
-        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq,"durable_bytes":7}), file=sys.stderr, flush=True)
     if command["cmd"] == "stop_recording":
         if not os.path.exists(marker):
             open(marker, "w").close()
@@ -1116,7 +1116,7 @@ for line in sys.stdin:
         seq = command["start_segment_index"]
         os.makedirs(sys.argv[-1], exist_ok=True)
         open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
-        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq,"durable_bytes":7}), file=sys.stderr, flush=True)
     if command["cmd"] == "stop_recording":
         print(json.dumps({"event":"recording_stopped","session_id":session}), file=sys.stderr, flush=True)
 "#;

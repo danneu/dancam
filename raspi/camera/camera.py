@@ -361,10 +361,18 @@ class TransactionalFile:
 
     def commit(self) -> None:
         self.sync()
+        durable_bytes = os.fstat(self.file.fileno()).st_size
+        if durable_bytes <= 0:
+            raise RuntimeError(f"segment {self.seq} synced an empty publication prefix")
         os.rename(self.pending_path, self.open_path)
         fsync_dir(self.rec_dir)
         self.committed = True
-        self.exchange.acknowledge("segment_opened", self.session_id, self.seq)
+        self.exchange.acknowledge(
+            "segment_opened",
+            self.session_id,
+            self.seq,
+            durable_bytes=durable_bytes,
+        )
         self.sync_thread = threading.Thread(
             target=self._sync_loop,
             name=f"segment-sync-{self.seq}",
@@ -565,12 +573,14 @@ def run_self_test() -> int:
             self.opened_prefix_decoded = False
 
         def acknowledge(self, event: str, session_id: int, seq: int, **fields: Any) -> None:
-            del session_id, seq, fields
+            del session_id, seq
             if event != "segment_opened":
                 return
             paths = list(self.rec_dir.glob(".dancam-seg_*.open.ts"))
             assert len(paths) == 1
-            prefix = paths[0].read_bytes()
+            durable_bytes = fields["durable_bytes"]
+            prefix = paths[0].read_bytes()[:durable_bytes]
+            assert len(prefix) == durable_bytes
             with av.open(io.BytesIO(prefix), mode="r", format="mpegts") as source:
                 assert next(source.decode(video=0), None) is not None
             self.opened_prefix_decoded = True

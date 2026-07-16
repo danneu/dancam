@@ -81,7 +81,12 @@ impl StorageCoordinator {
         Ok(next)
     }
 
-    pub fn validate_committed_open(&self, session: u64, id: SegmentId) -> io::Result<bool> {
+    pub fn validate_committed_open(
+        &self,
+        session: u64,
+        id: SegmentId,
+        durable_bytes: u64,
+    ) -> io::Result<bool> {
         let _guard = self
             .mutation
             .lock()
@@ -104,7 +109,11 @@ impl StorageCoordinator {
                 && artifact.seq == id
                 && artifact.facts.session == session
             {
-                if matched || !entry.file_type()?.is_file() || entry.metadata()?.len() == 0 {
+                if matched
+                    || durable_bytes == 0
+                    || !entry.file_type()?.is_file()
+                    || entry.metadata()?.len() < durable_bytes
+                {
                     return Ok(false);
                 }
                 matched = true;
@@ -627,11 +636,13 @@ mod tests {
         fs::write(&path, b"").unwrap();
         let coordinator = StorageCoordinator::new(rec_dir.path.clone());
 
-        assert!(!coordinator.validate_committed_open(9, 8).unwrap());
+        assert!(!coordinator.validate_committed_open(9, 8, 1).unwrap());
         fs::write(path, b"durable").unwrap();
-        assert!(coordinator.validate_committed_open(9, 8).unwrap());
-        assert!(!coordinator.validate_committed_open(10, 8).unwrap());
-        assert!(!coordinator.validate_committed_open(9, 7).unwrap());
+        assert!(!coordinator.validate_committed_open(9, 8, 0).unwrap());
+        assert!(coordinator.validate_committed_open(9, 8, 7).unwrap());
+        assert!(!coordinator.validate_committed_open(9, 8, 8).unwrap());
+        assert!(!coordinator.validate_committed_open(10, 8, 7).unwrap());
+        assert!(!coordinator.validate_committed_open(9, 7, 7).unwrap());
     }
 
     #[test]

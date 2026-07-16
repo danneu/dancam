@@ -414,6 +414,7 @@ enum ChildEvent {
         #[serde(rename = "session_id")]
         session: u64,
         id: SegmentId,
+        durable_bytes: u64,
     },
     SegmentFinalized {
         #[serde(rename = "session_id")]
@@ -1469,7 +1470,11 @@ async fn apply_child_event(
             tracing::warn!(session, "ignoring obsolete recording_started truth claim");
             None
         }
-        ChildEvent::SegmentOpened { session, id } => {
+        ChildEvent::SegmentOpened {
+            session,
+            id,
+            durable_bytes,
+        } => {
             if event_state.last_opened == Some((session, id)) {
                 return Some(ChildCommand::AckSegment {
                     kind: SegmentAckKind::Opened,
@@ -1492,7 +1497,7 @@ async fn apply_child_event(
             }
             let check_storage = storage.clone();
             let durable = tokio::task::spawn_blocking(move || {
-                check_storage.validate_committed_open(session, id)
+                check_storage.validate_committed_open(session, id, durable_bytes)
             })
             .await
             .ok()
@@ -1515,6 +1520,12 @@ async fn apply_child_event(
             }
             event_state.last_opened = Some((session, id));
             event_state.reserved = None;
+            tracing::info!(
+                session,
+                id,
+                durable_bytes,
+                "accepted durable segment_opened"
+            );
             Some(ChildCommand::AckSegment {
                 kind: SegmentAckKind::Opened,
                 session_id: session,
@@ -1753,10 +1764,14 @@ mod tests {
         );
         assert_eq!(
             serde_json::from_str::<ChildEvent>(
-                r#"{"event":"segment_opened","session_id":7,"id":5}"#
+                r#"{"event":"segment_opened","session_id":7,"id":5,"durable_bytes":4096}"#
             )
             .unwrap(),
-            ChildEvent::SegmentOpened { session: 7, id: 5 }
+            ChildEvent::SegmentOpened {
+                session: 7,
+                id: 5,
+                durable_bytes: 4096,
+            }
         );
         assert_eq!(
             serde_json::from_str::<ChildEvent>(r#"{"event":"recording_stopped","session_id":7}"#)
@@ -1979,7 +1994,7 @@ for line in sys.stdin:
         seq = command["start_segment_index"]
         path = Path(sys.argv[-1]) / f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"
         path.write_bytes(b"segment")
-        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq,"durable_bytes":7}), file=sys.stderr, flush=True)
 "#;
         let config = CameraConfig::new(
             "python3",
@@ -2220,8 +2235,8 @@ while IFS= read -r line; do
   case "$line" in
     *start_recording*)
       cp "$2" "$1/.dancam-seg_00000_abc123def456_1_1.open.ts"
-      printf '%s\n' '{"event":"segment_opened","session_id":1,"id":0}' >&2
-      printf '%s\n' '{"event":"segment_opened","session_id":1,"id":0}' >&2
+      printf '%s\n' '{"event":"segment_opened","session_id":1,"id":0,"durable_bytes":1}' >&2
+      printf '%s\n' '{"event":"segment_opened","session_id":1,"id":0,"durable_bytes":1}' >&2
       ;;
     *shutdown*)
       mv "$1/.dancam-seg_00000_abc123def456_1_1.open.ts" "$1/seg_00000_abc123def456_1_1_30000.ts"
