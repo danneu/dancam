@@ -6,6 +6,7 @@ use axum::{
     Json,
 };
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     clips::ClipMeta,
@@ -124,33 +125,51 @@ pub async fn events(
         }
     });
 
-    Sse::new(first.chain(updates))
+    Sse::new(futures_util::StreamExt::take_until(
+        first.chain(updates),
+        state.shutdown.cancelled_owned(),
+    ))
 }
 
-pub fn spawn_heartbeat(backend: std::sync::Arc<dyn crate::backend::Backend>, interval: Duration) {
+pub fn spawn_heartbeat(
+    backend: std::sync::Arc<dyn crate::backend::Backend>,
+    interval: Duration,
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(interval);
         loop {
-            interval.tick().await;
-            backend.tick();
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return,
+                _ = interval.tick() => backend.tick(),
+            }
         }
-    });
+    })
 }
 
 pub fn spawn_telemetry(
     backend: std::sync::Arc<dyn crate::backend::Backend>,
     filesystem: std::sync::Arc<crate::filesystem_observer::FilesystemObserver>,
     interval: Duration,
-) {
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(interval);
         let mut cpu_sampler = CpuSampler::new();
         loop {
-            interval.tick().await;
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return,
+                _ = interval.tick() => {}
+            }
             let observation = filesystem
                 .observe(None)
                 .await
                 .unwrap_or_else(|| filesystem.unavailable_observation());
+            if shutdown.is_cancelled() {
+                return;
+            }
             backend.update_telemetry(
                 observation.storage,
                 observation.recording_storage_available,
@@ -159,7 +178,7 @@ pub fn spawn_telemetry(
                 cpu_sampler.sample(),
             );
         }
-    });
+    })
 }
 
 pub async fn seed_filesystem_observation(state: &AppState) {

@@ -29,6 +29,12 @@ Environment=DANCAM_BACKEND=camera
 Environment=DANCAM_REC_DIR=/data/rec
 Environment=DANCAM_REQUIRE_REC_MOUNT=/data
 ExecStart=/usr/local/bin/dancam
+# SIGTERM reaches the Rust owner first so it can finalize footage and join every
+# lifecycle task. SIGKILL still covers the full cgroup if the internal bounds fail.
+KillMode=mixed
+TimeoutStopSec=10
+# A handled SIGTERM exits 0 and leaves the unit inactive. Startup, server, camera,
+# worker, or cleanup failure exits nonzero and remains eligible for restart.
 Restart=on-failure
 RestartSec=2
 User=dancam

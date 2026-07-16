@@ -119,6 +119,19 @@ validators. A connection attempt and every post-connect receive wait have explic
 deadlines. Backoff and UI freshness policy are app-owned, while heartbeat presence is
 the wire fact they consume.
 
+### Service shutdown
+
+The Pi owns a 2 second graceful connection deadline. Cancellation ends SSE and
+MJPEG response streams cooperatively, so responsive clients normally observe EOF
+before the deadline and reconnect through their existing liveness behavior. The
+server owner closes every connection still present at the deadline, including an
+unread client or an interrupted clip pull. There is no shutdown-specific 503,
+goodbye event, MJPEG frame-boundary guarantee, or universal response adapter.
+
+A clip pull interrupted by server shutdown keeps the bytes already received. Its
+existing validator-bound `Range` plus `If-Range` flow resumes that prefix after the
+Pi returns; connection close does not create a second recovery protocol.
+
 The AP must not resolve Apple's captive-probe domains to the Pi. Returning no answer
 keeps the probe from reaching HTTP and lets iOS classify the network as having no
 internet without opening the Captive Network Assistant sheet. This is a DNS/AP
@@ -548,3 +561,19 @@ sole one-shot operational probe, and added one atomically derived
 `recording_readiness` replacement shared by status, the initial SSE snapshot, and
 camera/storage deltas. This lets deployment and clients answer the same question from
 the same state instead of inventing route-specific readiness logic.
+
+### 2026-07-16: Bound shutdown at the server owner
+
+Ordinary Axum graceful shutdown waited forever for SSE and MJPEG bodies, turning a
+normal service stop into systemd SIGKILL. The boundary now lets those two streams
+observe process cancellation and gives the server owner a 2 second deadline for
+every connection. Residual clip pulls and unread clients end by connection close;
+the app's existing SSE/MJPEG reconnect and validator-bound range resume remain the
+recovery mechanisms.
+
+A universal cancellation body layer was rejected because it adds machinery to
+finite responses without strengthening the server-owned bound. Shutdown-specific
+503 responses and goodbye events were rejected because a response may already be
+streaming and connection loss already carries the required liveness meaning. A
+frame-boundary close promise was rejected because the bounded owner must be able to
+terminate a stalled connection at the deadline.

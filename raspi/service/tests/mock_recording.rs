@@ -15,7 +15,10 @@ use tower::ServiceExt;
 
 use dancam::{
     backend::{Backend, BackendError, MockBackend},
-    recorder::{parse_segment_filename, segment_filename, stamped_segment_filename, SegmentFacts},
+    recorder::{
+        parse_segment_filename, segment_filename, stamped_segment_filename, RecorderPhase,
+        SegmentFacts,
+    },
     storage::StorageCoordinator,
     AppState,
 };
@@ -102,6 +105,36 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
     assert_new_segments_are_stamped(&rec_dir.path, &[(first_segment, 1), (rolled_segment, 1)]);
     tokio::time::sleep(roll_interval * 2).await;
     assert_eq!(segment_snapshot(&rec_dir.path), snapshot);
+}
+
+#[tokio::test]
+async fn mock_shutdown_flushes_and_finalizes_active_recording() {
+    let rec_dir = TempRecDir::new();
+    let storage = storage_for(&rec_dir.path);
+    let backend = MockBackend::recording_to(storage, Duration::from_secs(30));
+    backend.set_context(Arc::from(BOOT_ID), std::time::Instant::now());
+    backend.start_recording().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    backend.shutdown().await.unwrap();
+
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Idle);
+    let segments = segment_ids(&rec_dir.path);
+    assert_eq!(segments, [0]);
+    let bytes = fs::read_dir(&rec_dir.path)
+        .unwrap()
+        .flatten()
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| parse_segment_filename(name).is_some())
+        })
+        .expect("mock shutdown should preserve a finalized segment")
+        .metadata()
+        .unwrap()
+        .len();
+    assert!(bytes > 0);
 }
 
 #[tokio::test]

@@ -40,6 +40,30 @@ Local runs default to the mock backend and loopback binding. The deployed unit s
 boot, and restarts the Rust service after failures. Recording itself still starts
 through the API rather than automatically at service start.
 
+## Lifecycle and bounded shutdown
+
+The service installs fallible SIGINT and SIGTERM monitors before constructing a
+backend. One shared cancellation token then connects the signal monitor, HTTP
+streams, camera or mock owner, heartbeat, telemetry, and ring GC. A coordinator
+owns every long-lived task. A signal or unexpected server completion cancels the
+token; cancellation is a clean exit only when the server, backend, and workers all
+join successfully.
+
+Cancellation starts teardown branches concurrently. The HTTP branch serves the
+Axum router through `axum-server` from the configured dual-stack listener. Its
+owned handle gives connections 2 seconds to drain and then closes every remaining
+connection. SSE and MJPEG additionally observe the token and normally reach EOF
+before that deadline. The camera owner performs strict footage-safe retirement at
+the same time, while heartbeat, telemetry, and GC stop scheduling new iterations
+and join. The mock backend likewise owns and joins its frame and recording tasks,
+flushing an active final segment before success.
+
+Started blocking filesystem work is not abortable. Its owning worker waits for the
+operation before joining, and Tokio may likewise wait for request-scoped blocking
+work after a force-closed request. A truly stalled filesystem can therefore still
+reach systemd's final SIGKILL; the existing abrupt-power-loss storage contract is
+the safety boundary for that exceptional case.
+
 ## Build and deployment
 
 Release code is cross-compiled on the Apple Silicon development Mac; it is never
@@ -251,3 +275,24 @@ characters on every access line. A short random token was rejected because it ga
 neither ordering nor a reset marker. A boot- or invocation-prefixed counter would
 disambiguate runs but lengthen the common case; the local workflow preferred the
 plain counter and accepted per-run-only uniqueness.
+
+### 2026-07-16 -- Own bounded shutdown in one lifecycle coordinator
+
+Connected SSE and MJPEG responses kept Axum's graceful drain alive indefinitely,
+so systemd killed the service after 90 seconds before Rust ever asked the camera
+child to finalize. The cgroup-wide SIGTERM could also kill Python first and make
+the still-running supervisor respawn it during shutdown.
+
+The service now installs signals before backend side effects and uses one shared
+cancellation token. An owned `axum-server` handle provides a testable in-process
+connection deadline while camera, mock, and background-worker cleanup begins in
+parallel. `KillMode=mixed` leaves SIGTERM with the Rust owner and retains a
+cgroup-wide SIGKILL at 10 seconds.
+
+A universal response-body wrapper was rejected because only SSE and MJPEG benefit
+from cooperative EOF; the server handle already bounds clips and stalled clients.
+Racing Axum's ordinary drain against a timer without `axum-server` was rejected
+because residual sockets would survive until process exit rather than close at the
+deadline, making the connection bound untestable in process. A global blocking-task
+registry was rejected because started blocking work cannot be aborted and its
+durability-sensitive owners already await it.

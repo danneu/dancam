@@ -1,6 +1,7 @@
 use std::{env, io, path::Path, sync::Arc, time::Duration};
 
 use tokio::{task::JoinHandle, time::Instant};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     backend::Backend,
@@ -236,12 +237,17 @@ pub fn spawn_gc(
     storage: Arc<StorageCoordinator>,
     backend: Arc<dyn Backend>,
     config: GcConfig,
+    shutdown: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(config.interval);
         let mut backoff = GcBackoff::new();
         loop {
-            interval.tick().await;
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return,
+                _ = interval.tick() => {}
+            }
             if !backoff.ready(Instant::now()) {
                 continue;
             }
@@ -261,6 +267,9 @@ pub fn spawn_gc(
                     )
                 })
                 .await;
+                if shutdown.is_cancelled() {
+                    return;
+                }
                 let outcome = match result {
                     Ok(outcome) => outcome,
                     Err(error) => blocking_failure(floor_bytes, error),
@@ -831,6 +840,7 @@ mod tests {
                     Some(10)
                 }),
             },
+            CancellationToken::new(),
         );
         for _ in 0..10_000 {
             tokio::task::yield_now().await;
@@ -877,6 +887,7 @@ mod tests {
                     Some(u64::from(remaining == 0))
                 }),
             },
+            CancellationToken::new(),
         );
         for _ in 0..1_000_000 {
             tokio::task::yield_now().await;

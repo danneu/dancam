@@ -92,6 +92,19 @@ the production unit fail closed while local mock runs remain usable without a
 dedicated mount. Unavailable evidence replaces prior storage rather than retaining a
 stale healthy sample.
 
+## Owned worker shutdown
+
+Heartbeat, telemetry, and ring GC are coordinator-owned tasks on the service's
+shared cancellation token. Cancellation wins before a worker schedules another
+iteration. An operation already started, including a blocking filesystem or GC
+pass, runs to completion before that worker joins. Telemetry checks cancellation
+again after observation and suppresses a sample that completed during shutdown.
+
+There is no process-wide blocking-task registry or two-phase admission protocol.
+Durability-sensitive workers already await their blocking operation, and Tokio owns
+started request-scoped blocking work even if a bounded server close drops the
+request that would have collected its result.
+
 ## Recorder-writable capacity
 
 Storage telemetry reports `used`, `total`, and exact
@@ -185,3 +198,16 @@ and SSE clients would observe different worlds. Retaining the last healthy files
 observation after a timeout was rejected because stale permission to record is more
 dangerous than unavailable evidence. Making recorder error a readiness reason was
 rejected because command ownership deliberately permits retry from that phase.
+
+### 2026-07-16 -- Join token-aware background workers
+
+Heartbeat, telemetry, and ring GC were previously detached tasks whose completion
+and shutdown were invisible to the service owner. The lifecycle coordinator now
+owns their handles and shares one cancellation token with them. Each worker stops
+scheduling new iterations, finishes any operation already underway, and joins;
+telemetry never publishes a sample completed after cancellation.
+
+A global `spawn_blocking` registry was rejected because started blocking work is
+not abortable and a registry cannot create a harder wall-clock bound. Keeping the
+ownership at each worker preserves the durability boundary and makes task failure
+observable without adding a second admission protocol.

@@ -337,7 +337,12 @@ async fn stalled_observation_bounds_status_events_and_telemetry_without_fanout()
     ));
     let state =
         state(rec_dir.path.clone(), backend.clone()).with_filesystem_observer(observer.clone());
-    dancam::events::spawn_telemetry(state.backend.clone(), observer, Duration::from_millis(25));
+    dancam::events::spawn_telemetry(
+        state.backend.clone(),
+        observer,
+        Duration::from_millis(25),
+        state.shutdown.clone(),
+    );
     let app = dancam::app(state);
 
     let started = Instant::now();
@@ -422,7 +427,12 @@ async fn stalled_telemetry_clears_stale_storage_then_a_fresh_probe_restores_it()
         state(rec_dir.path.clone(), backend.clone()).with_filesystem_observer(observer.clone());
 
     let started = Instant::now();
-    dancam::events::spawn_telemetry(state.backend.clone(), observer, Duration::from_millis(25));
+    dancam::events::spawn_telemetry(
+        state.backend.clone(),
+        observer,
+        Duration::from_millis(25),
+        state.shutdown.clone(),
+    );
     wait_until(|| entered.load(Ordering::SeqCst) == 1).await;
     wait_until(|| backend.telemetry_updates.load(Ordering::SeqCst) > 0).await;
     assert!(started.elapsed() < Duration::from_millis(1400));
@@ -442,6 +452,47 @@ async fn stalled_telemetry_clears_stale_storage_then_a_fresh_probe_restores_it()
             .is_some_and(|storage| storage.used == 128 * 1024 * 1024)
     })
     .await;
+}
+
+#[tokio::test]
+async fn telemetry_finishes_started_probe_but_suppresses_post_cancel_sample() {
+    let rec_dir = TempRecDir::new();
+    let backend = StubBackend::idle();
+    let entered = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let observer = Arc::new(FilesystemObserver::with_probe({
+        let entered = entered.clone();
+        let gate = gate.clone();
+        move |_| {
+            entered.fetch_add(1, Ordering::SeqCst);
+            let (lock, ready) = &*gate;
+            let mut released = lock.lock().unwrap();
+            while !*released {
+                released = ready.wait(released).unwrap();
+            }
+            filesystem_observation(None, 128 * 1024 * 1024, 0)
+        }
+    }));
+    let state = state(rec_dir.path.clone(), backend.clone());
+    let mut worker = dancam::events::spawn_telemetry(
+        state.backend.clone(),
+        observer,
+        Duration::from_millis(1),
+        state.shutdown.clone(),
+    );
+    wait_until(|| entered.load(Ordering::SeqCst) == 1).await;
+
+    state.shutdown.cancel();
+    assert!(tokio::time::timeout(Duration::from_millis(50), &mut worker)
+        .await
+        .is_err());
+    {
+        let (lock, ready) = &*gate;
+        *lock.lock().unwrap() = true;
+        ready.notify_one();
+    }
+    worker.await.unwrap();
+    assert_eq!(backend.telemetry_updates.load(Ordering::SeqCst), 0);
 }
 
 fn disk_usage(used: u64) -> dancam::sysfacts::DiskUsage {

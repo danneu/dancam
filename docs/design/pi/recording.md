@@ -38,8 +38,8 @@ The process protocol deliberately does not expose Picamera2 details to HTTP:
 - stdout is raw concatenated JPEG frames from the lores stream;
 - stdin is newline-delimited JSON commands: `start_recording`, `stop_recording`, and
   `shutdown`;
-- stderr is newline-delimited JSON lifecycle and telemetry events; lines that do
-  not decode as protocol events are treated as camera logs;
+- stderr is a mixed stream: JSON records carrying an `event` key must decode as a
+  supported lifecycle or telemetry event, while all other lines are camera logs;
 - recording bytes never cross the process boundary and are written directly under
   `DANCAM_REC_DIR`.
 
@@ -237,9 +237,20 @@ The supervisor starts with camera state `starting`. A child `ready` event change
 to `running`. Child error or exit removes the current preview frame, moves camera
 state through `restarting`, reconciles the recorder to error, and schedules a fresh
 child with exponential backoff from 250 ms to 10 seconds. A child that stays alive
-for 30 seconds resets the backoff. Service shutdown asks the child to stop, bounds
-both the command and exit wait at 2 seconds, then kills it if necessary and publishes
-camera `offline`.
+for 30 seconds resets the backoff. Once shutdown is observed, the supervisor checks
+it before every spawn and never admits another child. Service shutdown asks the
+child to stop, bounds the command and exit phases at 2 seconds each, and keeps the
+enclosing join alive for 8 seconds. Success requires a clean exit, stderr EOF,
+ordered application of queued terminal events, final metadata publication, child
+reap, and joined stdout/stderr readers. A forced kill still reaps the child and joins
+both readers, but makes shutdown fail. Cancellation during an active command takes
+this same graceful path rather than the ordinary forced-retirement path.
+
+The child and reader handles remain under the supervisor's resource-owning boundary
+until cleanup completes. Task failure, timeout, and shutdown all converge on
+explicit kill/reap and reader joins; no successful shutdown result is inferred only
+from the process disappearing. The mock owner has the same terminal property: it
+stops its frame producer and flushes, syncs, finalizes, and joins an active writer.
 
 The child samples `SensorTemperature` about every 2 seconds. A Picamera2
 `pre_callback` caches metadata from completed requests; the telemetry thread reads
@@ -523,3 +534,25 @@ because both allow work to outlive its response. An independent stderr hub write
 was rejected because scheduler order could let a late abandoned-child event beat a
 terminal failure. Holding the storage mutex across async execution was rejected in
 favor of the narrow async handoff gate.
+
+### 2026-07-16 -- Make cancellation a strict camera retirement
+
+Service shutdown previously reached the camera only after the HTTP server drained.
+With a long-lived client that point never arrived, while systemd could terminate
+the child directly and cause the unaware supervisor to respawn it. The old
+mid-command shutdown path also selected forced retirement, which could discard the
+terminal events needed to finalize active footage.
+
+Cancellation now prevents every later spawn and always sends the child shutdown
+command. Retirement does not report success until the child exits cleanly, stderr
+reaches EOF, queued events are applied in order, final metadata is published, the
+process is reaped, and both readers are joined. The 8 second enclosing deadline
+outlasts the two legitimate 2 second child phases while remaining below systemd's
+10 second bound. Forced kill remains cleanup, but never becomes a successful
+shutdown result.
+
+Treating process disappearance as success was rejected because it loses protocol,
+reader, and finalization failures. Aborting reader tasks immediately was rejected
+because terminal events can still be queued after the child exits. Keeping the
+mid-command force-kill shortcut was rejected because cancellation is precisely the
+case where preserving the last active segment matters.

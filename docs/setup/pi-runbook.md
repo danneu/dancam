@@ -467,6 +467,36 @@ systemctl status dancam        # running? enabled for boot?
 journalctl -u dancam -f        # live logs
 ```
 
+The deployed unit uses `KillMode=mixed` and `TimeoutStopSec=10`. SIGTERM reaches
+the Rust owner first; a normal stop must finalize the camera and exit 0, leaving
+`inactive (dead)`. The 10 second cgroup SIGKILL is only the final bound for a
+wedged process or uninterruptible filesystem operation.
+
+Verify the shutdown acceptance path on the real Pi after changing lifecycle,
+camera, HTTP streaming, or unit behavior. Start recording, open the app so SSE and
+preview are connected, and also hold one unread response. Then stop the service and
+check that it finishes in under 6 seconds, does not initialize libcamera again,
+leaves the unit inactive rather than failed, closes all clients, and preserves a
+playable final segment:
+
+```sh
+curl -sS http://dancam.local:8080/v1/events >/dev/null &
+EVENTS_PID=$!
+curl -sS http://dancam.local:8080/v1/preview/live.mjpeg >/dev/null &
+PREVIEW_PID=$!
+python3 -c 'import socket,time; s=socket.create_connection(("dancam.local",8080)); s.sendall(b"GET /v1/preview/live.mjpeg HTTP/1.1\r\nHost: dancam.local:8080\r\n\r\n"); time.sleep(15)' &
+UNREAD_PID=$!
+ssh dancam.local 'sudo systemd-run --wait --pipe /usr/bin/time -f %e systemctl stop dancam'
+wait "$EVENTS_PID" "$PREVIEW_PID" "$UNREAD_PID" || true
+ssh dancam.local 'systemctl is-failed dancam; systemctl status dancam --no-pager'
+ssh dancam.local 'journalctl -u dancam -n 120 --no-pager | grep -E "shutdown|Camera|libcamera"'
+ssh dancam.local 'LAST=$(find /data/rec -maxdepth 1 -type f -name "seg_*.ts" | sort | tail -n1); test -n "$LAST" && ffmpeg -v error -i "$LAST" -f null -'
+```
+
+`systemctl is-failed` should print `inactive`, elapsed time must be `< 6`, and the
+final ffmpeg command must be silent and successful. Restart with
+`ssh dancam.local 'sudo systemctl start dancam'` after the check.
+
 From the Mac, fetch recent service logs or follow them live over SSH:
 
 ```sh

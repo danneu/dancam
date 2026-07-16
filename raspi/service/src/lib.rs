@@ -19,6 +19,7 @@ use axum::{
     Router,
 };
 use socket2::{Domain, Protocol, Socket, Type};
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use crate::{backend::Backend, storage::StorageCoordinator};
@@ -54,6 +55,7 @@ pub struct AppState {
     pub backend: Arc<dyn Backend>,
     pub storage: Arc<StorageCoordinator>,
     pub filesystem: Arc<filesystem_observer::FilesystemObserver>,
+    pub shutdown: CancellationToken,
     pub(crate) time_store: Arc<time_sync::TimeStore>,
     request_seq: Arc<AtomicU64>,
     host_policy: Arc<HostPolicy>,
@@ -85,6 +87,7 @@ impl AppState {
             backend: Arc::new(backend),
             storage,
             filesystem,
+            shutdown: CancellationToken::new(),
             time_store,
             request_seq: Arc::new(AtomicU64::new(1)),
             host_policy: Arc::new(HostPolicy::default()),
@@ -124,6 +127,11 @@ impl AppState {
 
     pub fn with_service_port(mut self, port: u16) -> Self {
         self.host_policy = Arc::new(HostPolicy::new(port));
+        self
+    }
+
+    pub fn with_shutdown(mut self, shutdown: CancellationToken) -> Self {
+        self.shutdown = shutdown;
         self
     }
 }

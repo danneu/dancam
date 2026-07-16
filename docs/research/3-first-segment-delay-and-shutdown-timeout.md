@@ -332,3 +332,21 @@ journal read.
 - **Record-start latency:** after a deploy, let the clip list finish loading
   (or pre-warm with a few `curl /v1/clips` page fetches) before pressing
   Record; starts against a warm cache run at the ~5 s floor.
+
+## 9. Shutdown fix verification -- 2026-07-16
+
+The deterministic 90 second shutdown defect is fixed in the service and unit
+artifacts. The Rust suite proves that cancellation ends SSE and MJPEG streams,
+finite HTTP work drains, an unread connection cannot outlive the server deadline,
+an active camera recording finalizes before supervisor success with no respawn, and
+an active mock recording flushes and finalizes before its tasks join. The unit now
+uses `KillMode=mixed` and `TimeoutStopSec=10`.
+
+Real-Pi acceptance passed on 2026-07-16 with recording active, SSE and MJPEG clients
+connected, and a third MJPEG socket deliberately left unread across the stop. The
+client later drained 466,995 already-buffered bytes and reached connection close.
+`systemctl stop dancam` completed in 3.50 seconds, below the 6 second gate; systemd
+reported `Result=success`, `ExecMainStatus=0`, `ActiveState=inactive`, and
+`SubState=dead`. The journal showed no camera/libcamera initialization between the
+shutdown signal and deactivation. The last nonempty segment passed `ffmpeg -v error
+-i <segment> -f null -`, and the service restarted recording-ready after the check.

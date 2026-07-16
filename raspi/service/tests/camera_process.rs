@@ -432,7 +432,55 @@ async fn supervisor_confirms_start_stop_and_records_with_idle_preview_subscriber
         .collect();
     assert_new_segments_are_stamped(&rec_dir, &expected);
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
+async fn supervisor_shutdown_finalizes_active_recording_without_respawn() {
+    if !python3_available().await {
+        return;
+    }
+
+    let rec_dir = temp_rec_dir("supervisor-shutdown-finalize");
+    let config = CameraConfig::new(
+        "python3",
+        [
+            camera_script().to_string_lossy().to_string(),
+            "--fake".to_string(),
+            "--rec-dir".to_string(),
+            rec_dir.to_string_lossy().to_string(),
+            "--preview-fps".to_string(),
+            "10".to_string(),
+        ],
+    );
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage);
+    wait_for_camera_state(&backend, CameraState::Running).await;
+    backend.start_recording().await.unwrap();
+    wait_for_current_segment(&backend, 0).await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    control.shutdown().await.unwrap();
+
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Idle);
+    assert_eq!(backend.snapshot().camera_state, CameraState::Offline);
+    let segments = segment_ids(&rec_dir);
+    assert_eq!(segments, [0]);
+    let segment = fs::read_dir(&rec_dir)
+        .unwrap()
+        .flatten()
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| parse_segment_filename(name).is_some())
+        })
+        .expect("shutdown should preserve a finalized segment");
+    assert!(segment.metadata().unwrap().len() > 0);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(backend.snapshot().camera_state, CameraState::Offline);
+
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -479,7 +527,7 @@ async fn concurrent_start_and_stop_intents_dispatch_once() {
     assert_eq!(storage.allocate_start_segment().unwrap(), 2);
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Idle);
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -543,7 +591,7 @@ print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
             .get("path")
             .is_some_and(|path| path.contains("/v1/recording/start")));
     }
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 
     let rec_dir = temp_rec_dir("preflight-restarting");
@@ -562,7 +610,7 @@ print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
         Some("1"),
     )
     .await;
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 
     const READY: &str = r#"
@@ -576,7 +624,7 @@ for line in sys.stdin:
     let (backend, control) =
         CameraProcess::spawn(inline_camera_config(READY, &rec_dir, &[]), storage.clone());
     wait_for_camera_state(&backend, CameraState::Running).await;
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     assert_recording_preflight(
         &backend,
         storage,
@@ -703,7 +751,7 @@ for line in sys.stdin:
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
     backend.stop_recording().await.unwrap();
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_file(marker);
     let _ = fs::remove_file(pid_file);
     let _ = fs::remove_dir_all(rec_dir);
@@ -768,7 +816,7 @@ for line in sys.stdin:
     backend.start_recording().await.unwrap();
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_file(marker);
     let _ = fs::remove_file(pid_file);
     let _ = fs::remove_dir_all(rec_dir);
@@ -833,7 +881,7 @@ for line in sys.stdin:
     backend.start_recording().await.unwrap();
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_file(marker);
     let _ = fs::remove_file(pid_file);
     let _ = fs::remove_dir_all(rec_dir);
@@ -885,7 +933,7 @@ for line in sys.stdin:
     backend.start_recording().await.unwrap();
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_file(marker);
     let _ = fs::remove_dir_all(rec_dir);
 }
@@ -919,7 +967,7 @@ for line in sys.stdin:
             .unwrap()
     });
     wait_for_recorder_phase(&backend, RecorderPhase::Starting).await;
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
 
     assert_backend_error_response(
         request.await.unwrap(),
@@ -996,7 +1044,7 @@ for line in sys.stdin:
     backend.start_recording().await.unwrap();
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_file(marker);
     let _ = fs::remove_file(pid_file);
     let _ = fs::remove_dir_all(rec_dir);
@@ -1047,7 +1095,7 @@ for line in sys.stdin:
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
     assert_eq!(backend.snapshot().camera_state, CameraState::Running);
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1159,7 +1207,7 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
         .to_bytes()
         .is_empty());
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1200,7 +1248,7 @@ async fn supervisor_starts_after_six_digit_existing_segment_without_overwrite() 
     );
 
     backend.stop_recording().await.unwrap();
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1235,7 +1283,7 @@ async fn supervisor_marks_child_restarting_after_crash() {
     assert!(snapshot.recorder.detail.is_some());
     wait_for_camera_state(&backend, CameraState::Restarting).await;
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1269,7 +1317,7 @@ async fn supervisor_clears_sensor_temp_after_crash() {
     assert_eq!(sensor.current, None);
     assert!(sensor.max.is_some_and(|max| max >= 40.0));
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1314,7 +1362,7 @@ async fn preview_subscriber_gets_cached_latest_frame_on_connect() {
         .expect("preview stream should yield a frame");
     assert!(frame.starts_with(&[0xff, 0xd8]));
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1370,7 +1418,7 @@ async fn preview_slot_cleared_while_child_restarting() {
         "restart-window subscriber must not receive the stale pre-crash frame"
     );
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1576,7 +1624,7 @@ async fn supervisor_start_fails_closed_when_witness_is_corrupt() {
     assert_eq!(snapshot.recorder.current_segment, None);
     assert!(segment_ids(&rec_dir).is_empty());
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }
 
@@ -1650,6 +1698,6 @@ async fn supervisor_fake_driver_fails_closed_at_seq_ceiling() {
         "an out-of-range overflow segment was written: {raw_names:?}"
     );
 
-    control.shutdown().await;
+    let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_dir_all(rec_dir);
 }

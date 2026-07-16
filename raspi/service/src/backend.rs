@@ -12,6 +12,7 @@ use axum::{
     Json,
 };
 use bytes::Bytes;
+use futures_util::FutureExt;
 use tokio::{
     fs::OpenOptions,
     io::AsyncWriteExt,
@@ -100,6 +101,14 @@ pub trait Backend: Send + Sync + 'static {
     }
 
     fn update_storage(&self, _storage: Option<DiskUsage>, _recording_storage_available: bool) {}
+
+    async fn shutdown(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn wait_for_failure(&self) -> Result<(), String> {
+        std::future::pending().await
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +200,13 @@ pub struct MockBackend {
     recorder: Option<MockRecorder>,
     time_store: Arc<TimeStore>,
     boot_tag: Arc<StdMutex<Option<String>>>,
+    lifecycle: Arc<MockLifecycle>,
+}
+
+struct MockLifecycle {
+    shutdown: tokio_util::sync::CancellationToken,
+    frames_task: Mutex<Option<JoinHandle<()>>>,
+    frames_done: watch::Receiver<Option<Result<(), String>>>,
 }
 
 impl MockBackend {
@@ -232,7 +248,8 @@ impl MockBackend {
             )
         });
 
-        spawn_mock_frames(frames_tx.clone());
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let (frames_task, frames_done) = spawn_mock_frames(frames_tx.clone(), shutdown.clone());
 
         Self {
             frames_tx,
@@ -240,6 +257,11 @@ impl MockBackend {
             recorder,
             time_store,
             boot_tag,
+            lifecycle: Arc::new(MockLifecycle {
+                shutdown,
+                frames_task: Mutex::new(Some(frames_task)),
+                frames_done,
+            }),
         }
     }
 
@@ -349,6 +371,51 @@ impl Backend for MockBackend {
     fn update_storage(&self, storage: Option<DiskUsage>, recording_storage_available: bool) {
         self.hub
             .update_storage(storage, recording_storage_available);
+    }
+
+    async fn shutdown(&self) -> Result<(), String> {
+        self.lifecycle.shutdown.cancel();
+        if let Some(recorder) = &self.recorder {
+            recorder
+                .stop()
+                .await
+                .map_err(|error| error.message().to_string())?;
+        }
+        if let Some(task) = self.lifecycle.frames_task.lock().await.take() {
+            task.await
+                .map_err(|error| format!("mock frame producer failed: {error}"))?;
+        }
+        Ok(())
+    }
+
+    async fn wait_for_failure(&self) -> Result<(), String> {
+        let mut done = self.lifecycle.frames_done.clone();
+        let mut events = self.hub.connect().rx;
+        loop {
+            if let Some(result) = done.borrow().clone() {
+                return result
+                    .and_then(|()| Err("mock frame producer stopped unexpectedly".to_string()));
+            }
+            tokio::select! {
+                changed = done.changed() => changed
+                    .map_err(|_| "mock frame producer completion channel closed".to_string())?,
+                event = events.recv() => match event {
+                    Ok(crate::event_hub::SeqEvent {
+                        event: crate::events::Event::RecorderFailed { detail, .. },
+                        ..
+                    }) => return Err(format!("mock recording writer failed: {detail}")),
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        if self.hub.phase() == crate::recorder::RecorderPhase::Error {
+                            return Err("mock recording writer failed".to_string());
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return Err("mock event stream closed".to_string());
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -740,21 +807,36 @@ async fn open_mock_segment(
         .await
 }
 
-fn spawn_mock_frames(frames_tx: watch::Sender<Option<Bytes>>) {
-    tokio::spawn(async move {
-        let mut frames = MOCK_FRAME_BYTES.iter().cycle();
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
+fn spawn_mock_frames(
+    frames_tx: watch::Sender<Option<Bytes>>,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> (JoinHandle<()>, watch::Receiver<Option<Result<(), String>>>) {
+    let (done_tx, done_rx) = watch::channel(None);
+    let task = tokio::spawn(async move {
+        let result = std::panic::AssertUnwindSafe(async move {
+            let mut frames = MOCK_FRAME_BYTES.iter().cycle();
+            let mut interval = tokio::time::interval(Duration::from_millis(100));
 
-        loop {
-            interval.tick().await;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = shutdown.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
 
-            let frame = frames
-                .next()
-                .expect("cycled mock frames should never be exhausted");
+                let frame = frames
+                    .next()
+                    .expect("cycled mock frames should never be exhausted");
 
-            frames_tx.send_replace(Some(Bytes::from_static(frame)));
-        }
+                frames_tx.send_replace(Some(Bytes::from_static(frame)));
+            }
+        })
+        .catch_unwind()
+        .await
+        .map_err(|_| "mock frame producer panicked".to_string());
+        done_tx.send_replace(Some(result));
     });
+    (task, done_rx)
 }
 
 fn starting_session(events: &[SeqEvent]) -> Option<u64> {

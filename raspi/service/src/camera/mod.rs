@@ -9,6 +9,7 @@ use std::{
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures_util::FutureExt;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     process::{Child, ChildStdout, Command as TokioCommand},
@@ -36,6 +37,8 @@ const CHILD_EVENT_CAPACITY: usize = 256;
 const ADMISSION_TIMEOUT: Duration = Duration::from_millis(250);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+const SUPERVISOR_JOIN_TIMEOUT: Duration = Duration::from_secs(8);
+const FINAL_METADATA_TIMEOUT: Duration = Duration::from_secs(1);
 const BACKOFF_BASE: Duration = Duration::from_millis(250);
 const BACKOFF_CAP: Duration = Duration::from_secs(10);
 const BACKOFF_RESET_AFTER: Duration = Duration::from_secs(30);
@@ -45,6 +48,8 @@ pub struct CameraConfig {
     program: String,
     args: Vec<String>,
     rec_dir: PathBuf,
+    #[cfg(test)]
+    panic_after_segment_opened: bool,
 }
 
 impl CameraConfig {
@@ -58,6 +63,8 @@ impl CameraConfig {
             program: program.into(),
             args,
             rec_dir,
+            #[cfg(test)]
+            panic_after_segment_opened: false,
         }
     }
 
@@ -162,17 +169,43 @@ impl CameraProcess {
 
 pub struct SupervisorControl {
     shutdown_tx: Option<oneshot::Sender<()>>,
-    supervisor: tokio::task::JoinHandle<()>,
+    supervisor: tokio::task::JoinHandle<Result<(), String>>,
 }
 
 impl SupervisorControl {
-    pub async fn shutdown(mut self) {
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
-        }
+    pub async fn wait(&mut self) -> Result<(), String> {
+        (&mut self.supervisor)
+            .await
+            .map_err(|error| format!("camera supervisor task failed: {error}"))?
+    }
 
-        let _ =
-            tokio::time::timeout(SHUTDOWN_TIMEOUT + Duration::from_secs(1), self.supervisor).await;
+    pub async fn shutdown(mut self) -> Result<(), String> {
+        let request_error = self.shutdown_tx.take().and_then(|shutdown_tx| {
+            shutdown_tx
+                .send(())
+                .err()
+                .map(|_| "camera supervisor stopped before shutdown".to_string())
+        });
+
+        let supervisor_result =
+            match tokio::time::timeout(SUPERVISOR_JOIN_TIMEOUT, self.wait()).await {
+                Ok(result) => result,
+                Err(_) => {
+                    let deadline = "camera supervisor exceeded shutdown deadline";
+                    return match self.wait().await {
+                        Ok(()) => Err(deadline.to_string()),
+                        Err(error) => Err(format!("{deadline}; {error}")),
+                    };
+                }
+            };
+
+        match (request_error, supervisor_result) {
+            (None, Ok(())) => Ok(()),
+            (Some(error), Ok(())) | (None, Err(error)) => Err(error),
+            (Some(request_error), Err(supervisor_error)) => {
+                Err(format!("{request_error}; {supervisor_error}"))
+            }
+        }
     }
 }
 
@@ -392,17 +425,97 @@ async fn supervise(
     mut commands_rx: mpsc::Receiver<Command>,
     mut shutdown_rx: oneshot::Receiver<()>,
     time_store: Arc<TimeStore>,
-) {
+) -> Result<(), String> {
+    let mut child = None;
+    let result = std::panic::AssertUnwindSafe(supervise_loop(
+        config.clone(),
+        storage.clone(),
+        frames_tx.clone(),
+        hub.clone(),
+        &mut commands_rx,
+        &mut shutdown_rx,
+        time_store.clone(),
+        &mut child,
+    ))
+    .catch_unwind()
+    .await;
+    match result {
+        Ok(result) => result,
+        Err(_) => {
+            let retirement = match child.take() {
+                Some(running) => {
+                    retire_child(
+                        running,
+                        true,
+                        Some(RetirementContext {
+                            hub: &hub,
+                            storage,
+                            time_store,
+                        }),
+                    )
+                    .await
+                }
+                None => Ok(()),
+            };
+            finish_shutdown(&frames_tx, &hub);
+            match retirement {
+                Ok(()) => Err("camera supervisor panicked".to_string()),
+                Err(error) => Err(format!("camera supervisor panicked; {error}")),
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn supervise_loop(
+    config: CameraConfig,
+    storage: Arc<StorageCoordinator>,
+    frames_tx: watch::Sender<Option<Bytes>>,
+    hub: Arc<EventHub>,
+    commands_rx: &mut mpsc::Receiver<Command>,
+    shutdown_rx: &mut oneshot::Receiver<()>,
+    time_store: Arc<TimeStore>,
+    child: &mut Option<RunningChild>,
+) -> Result<(), String> {
     let mut backoff = BACKOFF_BASE;
     let mut next_spawn = tokio::time::Instant::now();
-    let mut child: Option<RunningChild> = None;
     let mut pending: Option<Command> = None;
 
     loop {
+        match shutdown_rx.try_recv() {
+            Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                if let Some(command) = pending.take() {
+                    let _ = command
+                        .ack_tx
+                        .send(Err(BackendError::camera_command_channel(
+                            "camera supervisor shut down",
+                        )));
+                }
+                let result = match child.take() {
+                    Some(running) => {
+                        retire_child(
+                            running,
+                            true,
+                            Some(RetirementContext {
+                                hub: &hub,
+                                storage: storage.clone(),
+                                time_store: time_store.clone(),
+                            }),
+                        )
+                        .await
+                    }
+                    None => Ok(()),
+                };
+                finish_shutdown(&frames_tx, &hub);
+                return result;
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+        }
+
         if child.is_none() && tokio::time::Instant::now() >= next_spawn {
             hub.drive_now(Input::CameraState(CameraState::Starting));
-            match spawn_running_child(&config, frames_tx.clone()).await {
-                Ok(running) => child = Some(running),
+            match spawn_running_child(&config, frames_tx.clone()) {
+                Ok(running) => *child = Some(running),
                 Err(error) => {
                     tracing::error!(%error, "failed to start camera child");
                     frames_tx.send_replace(None);
@@ -430,7 +543,7 @@ async fn supervise(
                 &hub,
                 storage.clone(),
                 time_store.clone(),
-                &mut shutdown_rx,
+                shutdown_rx,
             )
             .await;
             match outcome {
@@ -441,7 +554,9 @@ async fn supervise(
                     error,
                     ack_tx,
                 } => {
-                    retire_child(child.take().expect("executing child exists"), false).await;
+                    let _ =
+                        retire_child(child.take().expect("executing child exists"), false, None)
+                            .await;
                     note_child_lost(&frames_tx, &hub, &detail);
                     let _ = ack_tx.send(Err(error));
                     if started.elapsed() >= BACKOFF_RESET_AFTER {
@@ -457,7 +572,9 @@ async fn supervise(
                     error,
                     ack_tx,
                 } => {
-                    finish_child(child.take().expect("executing child exists"));
+                    let _ =
+                        retire_child(child.take().expect("executing child exists"), false, None)
+                            .await;
                     note_child_lost(&frames_tx, &hub, &detail);
                     let _ = ack_tx.send(Err(error));
                     if started.elapsed() >= BACKOFF_RESET_AFTER {
@@ -472,11 +589,20 @@ async fn supervise(
                     error,
                     ack_tx,
                 } => {
-                    retire_child(child.take().expect("executing child exists"), false).await;
+                    let result = retire_child(
+                        child.take().expect("executing child exists"),
+                        true,
+                        Some(RetirementContext {
+                            hub: &hub,
+                            storage: storage.clone(),
+                            time_store: time_store.clone(),
+                        }),
+                    )
+                    .await;
                     finish_shutdown(&frames_tx, &hub);
                     hub.drive_now(Input::Fail { detail });
                     let _ = ack_tx.send(Err(error));
-                    return;
+                    return result;
                 }
             }
         }
@@ -498,18 +624,25 @@ async fn supervise(
                             ));
                         }
                         if let Some(running) = child.take() {
-                            retire_child(running, true).await;
+                            let _ = retire_child(running, true, Some(RetirementContext {
+                                hub: &hub,
+                                storage: storage.clone(),
+                                time_store: time_store.clone(),
+                            })).await;
                         }
                         finish_shutdown(&frames_tx, &hub);
-                        return;
+                        return Err("camera command channel closed".to_string());
                     }
                 }
             }
             _ = tokio::time::sleep_until(pending_deadline), if pending.is_some() => {}
             _ = tokio::time::sleep_until(spawn_deadline), if child.is_none() => {}
-            signal = next_optional_child_signal(&mut child) => {
+            signal = next_optional_child_signal(child) => {
                 match signal {
                     ChildSignal::Event(event) => {
+                        #[cfg(test)]
+                        let panic_after_event = config.panic_after_segment_opened
+                            && matches!(event, ChildEvent::SegmentOpened { .. });
                         let fatal_detail = match &event {
                             ChildEvent::Error { detail } => Some(detail.clone()),
                             _ => None,
@@ -523,10 +656,14 @@ async fn supervise(
                             storage.clone(),
                             time_store.clone(),
                         ).await;
+                        #[cfg(test)]
+                        if panic_after_event {
+                            panic!("injected supervisor panic after segment opened");
+                        }
                         if let Some(detail) = fatal_detail {
                             let running = child.take().expect("fatal child exists");
                             let started = running.started;
-                            retire_child(running, false).await;
+                            let _ = retire_child(running, false, None).await;
                             note_child_lost(&frames_tx, &hub, &detail);
                             if started.elapsed() >= BACKOFF_RESET_AFTER {
                                 backoff = BACKOFF_BASE;
@@ -539,7 +676,7 @@ async fn supervise(
                     ChildSignal::Exited => {
                         let running = child.take().expect("child branch guarded");
                         let started = running.started;
-                        finish_child(running);
+                        let _ = retire_child(running, false, None).await;
                         note_child_lost(&frames_tx, &hub, "camera process exited");
                         if started.elapsed() >= BACKOFF_RESET_AFTER {
                             backoff = BACKOFF_BASE;
@@ -549,23 +686,29 @@ async fn supervise(
                     }
                 }
             }
-            _ = &mut shutdown_rx => {
+            _ = &mut *shutdown_rx => {
                 if let Some(command) = pending.take() {
                     let _ = command.ack_tx.send(Err(
                         BackendError::camera_command_channel("camera supervisor shut down"),
                     ));
                 }
                 if let Some(running) = child.take() {
-                    retire_child(running, true).await;
+                    let result = retire_child(running, true, Some(RetirementContext {
+                        hub: &hub,
+                        storage: storage.clone(),
+                        time_store: time_store.clone(),
+                    })).await;
+                    finish_shutdown(&frames_tx, &hub);
+                    return result;
                 }
                 finish_shutdown(&frames_tx, &hub);
-                return;
+                return Ok(());
             }
         }
     }
 }
 
-async fn spawn_child(config: &CameraConfig) -> std::io::Result<Child> {
+fn spawn_child(config: &CameraConfig) -> std::io::Result<Child> {
     TokioCommand::new(&config.program)
         .args(&config.args)
         .stdin(Stdio::piped())
@@ -584,8 +727,8 @@ struct RunningChild {
     stdin: Pin<Box<dyn AsyncWrite + Send>>,
     events_rx: mpsc::Receiver<ChildEvent>,
     events_open: bool,
-    stdout_task: tokio::task::JoinHandle<()>,
-    stderr_task: tokio::task::JoinHandle<()>,
+    stdout_task: tokio::task::JoinHandle<Result<(), String>>,
+    stderr_task: tokio::task::JoinHandle<Result<(), String>>,
     ready: bool,
     started: Instant,
     event_state: ChildEventState,
@@ -597,11 +740,11 @@ struct ChildEventState {
     pending_closed: Option<(u64, SegmentId)>,
 }
 
-async fn spawn_running_child(
+fn spawn_running_child(
     config: &CameraConfig,
     frames_tx: watch::Sender<Option<Bytes>>,
 ) -> std::io::Result<RunningChild> {
-    let mut child = spawn_child(config).await?;
+    let mut child = spawn_child(config)?;
     let stdout = child
         .stdout
         .take()
@@ -762,7 +905,8 @@ async fn execute_command(
         return ExecuteOutcome::Continue;
     };
 
-    drain_delivered_events(child, hub, event_context.storage, event_context.time_store).await;
+    let _delivered_failure =
+        drain_delivered_events(child, hub, event_context.storage, event_context.time_store).await;
     if target_reached(hub, &active) {
         let _ = command.ack_tx.send(Ok(()));
         return ExecuteOutcome::Continue;
@@ -931,8 +1075,12 @@ async fn drain_delivered_events(
     hub: &Arc<EventHub>,
     storage: Arc<StorageCoordinator>,
     time_store: Arc<TimeStore>,
-) {
+) -> Option<String> {
+    let mut failure = None;
     while let Ok(event) = child.events_rx.try_recv() {
+        if let ChildEvent::Error { detail } = &event {
+            failure.get_or_insert_with(|| detail.clone());
+        }
         apply_child_event(
             event,
             &mut child.ready,
@@ -943,33 +1091,126 @@ async fn drain_delivered_events(
         )
         .await;
     }
+    failure
 }
 
 fn target_reached(hub: &EventHub, active: &ActiveCommand) -> bool {
     hub.phase() == active.target && hub.session() == active.session
 }
 
-async fn retire_child(mut child: RunningChild, graceful: bool) {
+struct RetirementContext<'a> {
+    hub: &'a Arc<EventHub>,
+    storage: Arc<StorageCoordinator>,
+    time_store: Arc<TimeStore>,
+}
+
+async fn retire_child(
+    mut child: RunningChild,
+    graceful: bool,
+    context: Option<RetirementContext<'_>>,
+) -> Result<(), String> {
+    let mut failure = None;
     if graceful {
-        let _ = tokio::time::timeout(
+        match tokio::time::timeout(
             SHUTDOWN_TIMEOUT,
             write_command(&mut child.stdin, &ChildCommand::Shutdown),
         )
-        .await;
-        if tokio::time::timeout(SHUTDOWN_TIMEOUT, child.process.wait())
-            .await
-            .is_err()
+        .await
         {
-            let _ = child.process.kill().await;
-            let _ = child.process.wait().await;
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                failure = Some(format!(
+                    "camera shutdown command failed: {}",
+                    error.message()
+                ))
+            }
+            Err(_) => failure = Some("camera shutdown command timed out".to_string()),
         }
-    } else {
-        let _ = child.process.kill().await;
-        let _ = child.process.wait().await;
+
+        if failure.is_none() {
+            match tokio::time::timeout(SHUTDOWN_TIMEOUT, child.process.wait()).await {
+                Ok(Ok(status)) if status.success() => {}
+                Ok(Ok(status)) => {
+                    failure = Some(format!(
+                        "camera child exited unsuccessfully during shutdown: {status}"
+                    ));
+                }
+                Ok(Err(error)) => failure = Some(format!("failed to reap camera child: {error}")),
+                Err(_) => {
+                    failure = Some("camera child exceeded graceful shutdown deadline".to_string())
+                }
+            }
+        }
     }
-    finish_child(child);
+
+    if !graceful || failure.is_some() {
+        if let Err(error) = child.process.kill().await {
+            if error.kind() != std::io::ErrorKind::InvalidInput && failure.is_none() {
+                failure = Some(format!("failed to kill camera child: {error}"));
+            }
+        }
+        if let Err(error) = child.process.wait().await {
+            if failure.is_none() {
+                failure = Some(format!("failed to reap camera child: {error}"));
+            }
+        }
+        if graceful && failure.is_none() {
+            failure = Some("camera shutdown required forced retirement".to_string());
+        }
+    }
+
+    let stdin = std::mem::replace(&mut child.stdin, Box::pin(tokio::io::sink()));
+    drop(stdin);
+    if !graceful {
+        child.stderr_task.abort();
+        child.stdout_task.abort();
+    }
+    join_reader(&mut child.stderr_task, "stderr", &mut failure).await;
+    join_reader(&mut child.stdout_task, "stdout", &mut failure).await;
+
+    if let Some(context) = context {
+        if let Some(detail) =
+            drain_delivered_events(&mut child, context.hub, context.storage, context.time_store)
+                .await
+        {
+            failure.get_or_insert_with(|| format!("camera shutdown protocol failed: {detail}"));
+        }
+        if context.hub.phase() != RecorderPhase::Idle {
+            failure.get_or_insert_with(|| {
+                "camera shutdown completed without terminal recording finalization".to_string()
+            });
+        }
+    }
+
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
+async fn join_reader(
+    task: &mut tokio::task::JoinHandle<Result<(), String>>,
+    name: &str,
+    failure: &mut Option<String>,
+) {
+    match tokio::time::timeout(Duration::from_secs(1), &mut *task).await {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(error))) => {
+            failure.get_or_insert_with(|| format!("camera {name} reader failed: {error}"));
+        }
+        Ok(Err(error)) if error.is_cancelled() => {}
+        Ok(Err(error)) => {
+            failure.get_or_insert_with(|| format!("camera {name} reader failed: {error}"));
+        }
+        Err(_) => {
+            task.abort();
+            let _ = task.await;
+            failure.get_or_insert_with(|| format!("camera {name} reader did not reach EOF"));
+        }
+    }
+}
+
+#[cfg(test)]
 fn finish_child(child: RunningChild) {
     child.stdout_task.abort();
     child.stderr_task.abort();
@@ -994,17 +1235,43 @@ fn finish_shutdown(frames_tx: &watch::Sender<Option<Bytes>>, hub: &EventHub) {
 async fn read_stderr(
     stderr: impl AsyncRead + Unpin + Send + 'static,
     events_tx: mpsc::Sender<ChildEvent>,
-) {
+) -> Result<(), String> {
     let mut lines = BufReader::new(stderr).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        match serde_json::from_str::<ChildEvent>(&line) {
-            Ok(event) => {
+    loop {
+        let line = lines
+            .next_line()
+            .await
+            .map_err(|error| format!("failed reading camera child stderr: {error}"))?;
+        let Some(line) = line else {
+            return Ok(());
+        };
+        match classify_stderr_line(&line) {
+            Ok(Some(event)) => {
                 if events_tx.send(event).await.is_err() {
-                    return;
+                    return Ok(());
                 }
             }
-            Err(_) => tracing::info!(line = %line, "camera child stderr"),
+            Ok(None) => tracing::info!(line = %line, "camera child stderr"),
+            Err(detail) => {
+                tracing::error!(line = %line, %detail, "invalid camera child event");
+                if events_tx.send(ChildEvent::Error { detail }).await.is_err() {
+                    return Ok(());
+                }
+            }
         }
+    }
+}
+
+fn classify_stderr_line(line: &str) -> Result<Option<ChildEvent>, String> {
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(value) if value.get("event").is_some() => serde_json::from_value(value)
+            .map(Some)
+            .map_err(|error| format!("invalid camera event record: {error}")),
+        Ok(_) => Ok(None),
+        Err(error) if line.contains("\"event\"") => {
+            Err(format!("invalid camera event record: {error}"))
+        }
+        Err(_) => Ok(None),
     }
 }
 
@@ -1025,13 +1292,16 @@ async fn write_command(
         .map_err(|_| BackendError::camera_command_channel("camera command flush failed"))
 }
 
-async fn drain_stdout(mut stdout: ChildStdout, frames_tx: watch::Sender<Option<Bytes>>) {
+async fn drain_stdout(
+    mut stdout: ChildStdout,
+    frames_tx: watch::Sender<Option<Bytes>>,
+) -> Result<(), String> {
     let mut splitter = JpegSplitter::new();
     let mut buffer = [0_u8; 8192];
 
     loop {
         match stdout.read(&mut buffer).await {
-            Ok(0) => return,
+            Ok(0) => return Ok(()),
             Ok(bytes_read) => {
                 for frame in splitter.push(&buffer[..bytes_read]) {
                     frames_tx.send_replace(Some(Bytes::from(frame)));
@@ -1039,7 +1309,7 @@ async fn drain_stdout(mut stdout: ChildStdout, frames_tx: watch::Sender<Option<B
             }
             Err(error) => {
                 tracing::warn!(%error, "failed reading camera child stdout");
-                return;
+                return Err(error.to_string());
             }
         }
     }
@@ -1156,18 +1426,21 @@ async fn finalized_clip_meta(
     seq: SegmentId,
     time_store: Arc<TimeStore>,
 ) -> Option<ClipMeta> {
-    match tokio::task::spawn_blocking(move || {
+    let task = tokio::task::spawn_blocking(move || {
         finalize_clip_meta(storage.as_ref(), seq, time_store.as_ref())
-    })
-    .await
-    {
-        Ok(Ok(meta)) => meta,
-        Ok(Err(error)) => {
+    });
+    match tokio::time::timeout(FINAL_METADATA_TIMEOUT, task).await {
+        Ok(Ok(Ok(meta))) => meta,
+        Ok(Ok(Err(error))) => {
             tracing::error!(%error, seq, "failed to stat finalized camera segment");
             None
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             tracing::error!(%error, seq, "camera clip metadata task failed");
+            None
+        }
+        Err(_) => {
+            tracing::error!(seq, "camera clip metadata task timed out");
             None
         }
     }
@@ -1194,9 +1467,10 @@ mod tests {
     };
 
     use super::{
-        execute_command, finish_child, note_child_lost, retire_child, supervise, CameraBackend,
-        CameraConfig, CameraProcess, ChildCommand, ChildEvent, ChildEventState, Command,
-        CommandIntent, ExecuteOutcome, RunningChild, StartHandoffPause,
+        classify_stderr_line, execute_command, finish_child, note_child_lost, retire_child,
+        supervise, CameraBackend, CameraConfig, CameraProcess, ChildCommand, ChildEvent,
+        ChildEventState, Command, CommandIntent, ExecuteOutcome, RunningChild, StartHandoffPause,
+        SupervisorControl,
     };
     use crate::{
         backend::{Backend, BackendError},
@@ -1266,6 +1540,32 @@ mod tests {
                 detail: "camera failed".to_string()
             }
         );
+        assert_eq!(classify_stderr_line("libcamera diagnostic").unwrap(), None);
+        assert!(classify_stderr_line(r#"{"event":"future_event"}"#).is_err());
+        assert!(classify_stderr_line(r#"{"event":"ready"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn shutdown_joins_supervisor_after_request_channel_closes() {
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        drop(shutdown_rx);
+        let (finished_tx, finished_rx) = oneshot::channel();
+        let supervisor = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            let _ = finished_tx.send(());
+            Ok(())
+        });
+        let control = SupervisorControl {
+            shutdown_tx: Some(shutdown_tx),
+            supervisor,
+        };
+
+        let error = control.shutdown().await.unwrap_err();
+
+        assert!(error.contains("stopped before shutdown"));
+        finished_rx
+            .await
+            .expect("shutdown returned before the supervisor joined");
     }
 
     #[test]
@@ -1350,7 +1650,7 @@ mod tests {
         );
         assert_eq!(hub.phase(), crate::recorder::RecorderPhase::Idle);
         let _ = shutdown_tx.send(());
-        supervisor.await.unwrap();
+        let _supervisor_result = supervisor.await.unwrap();
     }
 
     #[tokio::test]
@@ -1423,7 +1723,7 @@ mod tests {
         assert_eq!(hub.phase(), RecorderPhase::Idle);
 
         let _ = shutdown_tx.send(());
-        supervisor.await.unwrap();
+        let _supervisor_result = supervisor.await.unwrap();
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1487,7 +1787,7 @@ for line in sys.stdin:
         assert_eq!(second.await.unwrap(), Ok(()));
         assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
 
-        control.shutdown().await;
+        let _shutdown_result = control.shutdown().await;
         let _ = fs::remove_dir_all(rec_dir);
     }
 
@@ -1569,8 +1869,8 @@ for line in sys.stdin:
             stdin: Box::pin(PendingWriter),
             events_rx,
             events_open: true,
-            stdout_task: tokio::spawn(std::future::pending()),
-            stderr_task: tokio::spawn(std::future::pending()),
+            stdout_task: tokio::spawn(std::future::pending::<Result<(), String>>()),
+            stderr_task: tokio::spawn(std::future::pending::<Result<(), String>>()),
             ready: true,
             started: std::time::Instant::now(),
             event_state: ChildEventState::default(),
@@ -1602,7 +1902,7 @@ for line in sys.stdin:
         else {
             panic!("stalled write did not retire the child");
         };
-        retire_child(child, false).await;
+        retire_child(child, false, None).await.unwrap();
         note_child_lost(&watch::channel::<Option<Bytes>>(None).0, &hub, &detail);
         let _ = ack_tx.send(Err(error));
 
@@ -1631,8 +1931,8 @@ for line in sys.stdin:
             stdin: Box::pin(PendingWriter),
             events_rx,
             events_open: true,
-            stdout_task: tokio::spawn(std::future::pending()),
-            stderr_task: tokio::spawn(std::future::pending()),
+            stdout_task: tokio::spawn(std::future::pending::<Result<(), String>>()),
+            stderr_task: tokio::spawn(std::future::pending::<Result<(), String>>()),
             ready: true,
             started: std::time::Instant::now(),
             event_state: ChildEventState::default(),
@@ -1669,6 +1969,62 @@ for line in sys.stdin:
         let _ = child.process.kill().await;
         let _ = child.process.wait().await;
         finish_child(child);
+    }
+
+    #[tokio::test]
+    async fn supervisor_panic_retains_child_ownership_and_finalizes_recording() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let rec_dir = std::env::temp_dir().join(format!("dancam-supervisor-panic-{nonce}"));
+        fs::create_dir_all(&rec_dir).unwrap();
+        let script = r#"
+printf '%s\n' '{"event":"ready"}' >&2
+while IFS= read -r line; do
+  case "$line" in
+    *start_recording*)
+      printf segment > "$1/seg_00000.ts"
+      printf '%s\n' '{"event":"recording_started","session_id":1}' >&2
+      printf '%s\n' '{"event":"segment_opened","session_id":1,"id":0}' >&2
+      ;;
+    *shutdown*)
+      printf '%s\n' '{"event":"recording_stopped","session_id":1}' >&2
+      exit 0
+      ;;
+  esac
+done
+"#;
+        let mut config = CameraConfig::new(
+            "sh",
+            [
+                "-c".to_string(),
+                script.to_string(),
+                "camera-test".to_string(),
+                rec_dir.to_string_lossy().to_string(),
+                "--rec-dir".to_string(),
+                rec_dir.to_string_lossy().to_string(),
+            ],
+        );
+        config.panic_after_segment_opened = true;
+        let storage = Arc::new(StorageCoordinator::new(rec_dir.clone()));
+        let (backend, mut control) = CameraProcess::spawn(config, storage);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while backend.snapshot().camera_state != CameraState::Running {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        backend.start_recording().await.unwrap();
+        let error = control.wait().await.unwrap_err();
+
+        assert!(error.contains("camera supervisor panicked"));
+        assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Idle);
+        assert_eq!(backend.snapshot().camera_state, CameraState::Offline);
+        assert!(fs::metadata(rec_dir.join("seg_00000.ts")).unwrap().len() > 0);
+        let _ = fs::remove_dir_all(rec_dir);
     }
 
     struct PendingWriter;

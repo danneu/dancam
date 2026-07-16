@@ -17,10 +17,13 @@ pub const BOUNDARY: &str = "dancamframe";
 pub const CONTENT_TYPE_VALUE: &str = "multipart/x-mixed-replace; boundary=dancamframe";
 
 pub async fn live_mjpeg(State(state): State<AppState>) -> Response<Body> {
-    let frames = state
-        .backend
-        .preview_frames()
-        .map(|frame| Ok::<Bytes, Infallible>(frame_part(&frame)));
+    let frames = futures_util::StreamExt::take_until(
+        state
+            .backend
+            .preview_frames()
+            .map(|frame| Ok::<Bytes, Infallible>(frame_part(&frame))),
+        state.shutdown.cancelled_owned(),
+    );
 
     let mut response = Response::new(Body::from_stream(frames));
     response
