@@ -47,10 +47,13 @@ The Pi remains the footage source of truth and serves one finished segment as ra
 `video/mp2t` bytes from `GET /v1/clips/{id}`. It does not serve MP4, HLS playlists,
 playback indexes, or thumbnails. AVPlayer never talks to the camera.
 
-One clip is one finished, H.264-only, video-only segment. The current app remux path
-does not support audio, HEVC, multiple video tracks, or stitching several segments
-onto one timeline. Broadening any of those assumptions requires a deliberate media
-design change on both the recording and playback sides.
+One clip is one finished, H.264-only, video-only segment. The remux path still converts
+exactly one segment into one independently durable MP4 and does not support audio, HEVC,
+or multiple video tracks. Incident detail may derive an ephemeral composition from
+several completed MP4 artifacts for unified playback, but it does not broaden the remux
+format, persist a stitched artifact, or change clip-viewer playback. Broadening those
+media assumptions requires a deliberate design change on both the recording and playback
+sides.
 
 ## Resumable clip pull
 

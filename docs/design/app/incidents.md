@@ -207,16 +207,29 @@ and Saving, Saved, Partial, or Unreadable state. The section header reports tota
 count and pulled bytes. The tab badge is the number of pending persisted or in-flight
 records.
 
-Readable rows push a detail screen containing one row per pulled artifact. MP4 segments
-play locally; MP4 and raw TS artifacts can be selected for sharing. Both list swipe and
-detail actions delete the entire phone-owned incident after confirmation. Deletion
-cancels queued work and an active matching pull, removes only the local directory,
-cancels its nudge, and never mutates the Pi ring. Unreadable rows have the same explicit
-delete escape hatch.
+Readable rows push a detail screen with one player whose ephemeral composition contains
+every on-disk, loadable MP4 artifact in ascending sequence order. Whole video tracks are
+inserted back-to-back using their real media durations. Missing, still-saving, raw-only,
+and unreadable segments are spliced out and annotated, so a pending incident becomes
+watchable as soon as its first MP4 arrives and grows as reconciliation installs more.
+The player and AVKit controller survive composition rebuilds and fullscreen presentation.
+Rebuilds preserve the playhead as a segment sequence plus offset, with forward bias when
+that segment disappears, and generation gating prevents stale builds from replacing a
+newer timeline. One failed player item triggers one disk rebuild for that playable set;
+a repeat failure leaves sharing and deletion available with an honest playback error.
 
-There is no stitched incident movie in v1. The durable unit remains one whole local
-artifact per covered Pi segment, which preserves partial evidence and makes interrupted
-work independently recoverable.
+Each pulled artifact remains a selectable row and the only share surface. Tapping a
+playable MP4 row seeks the unified player to that segment; raw TS rows select for sharing
+without seeking. Jump to press seeks to the marked segment's real composition position,
+or forward to the next playable segment when the marked footage is absent. Both list
+swipe and detail actions delete the entire phone-owned incident after confirmation.
+Deletion cancels queued work and an active matching pull, removes only the local
+directory, cancels its nudge, tears down any fullscreen playback, and never mutates the
+Pi ring. Unreadable rows have the same explicit delete escape hatch.
+
+Composition is presentation-only. No stitched movie is persisted or shared; the durable
+unit remains one whole local artifact per covered Pi segment, preserving partial evidence
+and keeping interrupted installation and repair independently recoverable.
 
 ## Testing obligations
 
@@ -232,9 +245,11 @@ Incident behavior is locked down at observable boundaries:
   lockouts, relaunch reconstruction, recording scoping, current-epoch negative evidence,
   ordered lifecycle forwarding, nudge transitions, cache reuse, active-pull removal,
   404 handling, background assertions, remux fallback, and durable installation; and
-- Home, shell, incident-list, and detail controller tests cover consistent button
-  enablement and accessibility, timer lifecycle, the pending tab badge, row ordering
-  and totals, unreadable deletion, local playback/share selection, and incident deletion.
+- Home, shell, incident-list, detail-controller, and composition-builder tests cover
+  consistent button enablement and accessibility, timer lifecycle, the pending tab badge,
+  row ordering and totals, unreadable deletion, real-duration timeline ordering, gap and
+  progress presentation, rebuild position and identity, stale completion, one-shot item
+  self-heal, playback/share selection, fullscreen teardown, and incident deletion.
 
 ## Decision log
 
@@ -329,3 +344,25 @@ different moments. A Pi incident or finalize endpoint was rejected because the o
 existing lifecycle and clip surfaces already contain enough evidence. Persisting
 status was rejected because a duplicated conclusion can drift from its segment facts
 and prevent later correction.
+
+### 2026-07-16: Compose pulled segments only for incident playback
+
+Reviewing an incident one segment at a time hid the event-shaped experience behind file
+boundaries, and a pending incident could not be watched until post-roll finished even
+when its pre-roll was already durable on the phone. The recorder's IDR-aligned,
+video-only segments and the remuxer's zero-start MP4 output make consecutive pulled
+artifacts safe to place back-to-back without changing the evidence model.
+
+The detail screen now derives one ephemeral `AVMutableComposition` from current disk
+state. The builder owns the composition, exact sequence-to-time map, and gap descriptors
+as one result so record duration rounding cannot move seeks away from the media timeline.
+The screen retains one player for its lifetime, replaces only its item, keys restoration
+to sequence plus offset, and rejects stale async builds by generation. Per-segment files
+remain the only durable and shareable artifacts.
+
+`AVQueuePlayer` was rejected because it lacks one scrubbable duration and exposes item
+boundaries. Persisting a stitched MP4 was rejected because it duplicates durable evidence
+and immediately becomes stale as reconciliation adds or repairs segments. Empty timeline
+slots were rejected because unknown edge durations and rounded metadata would create
+dead air and dishonest proportionality. Local HLS was rejected because the removed
+loopback playback stack added serving and handoff machinery without shortening pulls.

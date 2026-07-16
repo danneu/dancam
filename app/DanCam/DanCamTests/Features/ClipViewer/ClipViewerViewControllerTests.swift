@@ -829,43 +829,7 @@ struct ClipViewerViewControllerTests {
     }
 
     private func temporaryPlayableVideoFile() async throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appending(path: "\(UUID().uuidString).mp4")
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let input = AVAssetWriterInput(
-            mediaType: .video,
-            outputSettings: [
-                AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: 64,
-                AVVideoHeightKey: 64,
-            ]
-        )
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: input,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: 64,
-                kCVPixelBufferHeightKey as String: 64,
-            ]
-        )
-        #expect(writer.canAdd(input))
-        writer.add(input)
-        #expect(writer.startWriting())
-        writer.startSession(atSourceTime: .zero)
-
-        let pool = try #require(adaptor.pixelBufferPool)
-        var pixelBuffer: CVPixelBuffer?
-        let result = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
-        #expect(result == kCVReturnSuccess)
-        let buffer = try #require(pixelBuffer)
-        while input.isReadyForMoreMediaData == false {
-            await Task.yield()
-        }
-        #expect(adaptor.append(buffer, withPresentationTime: .zero))
-        input.markAsFinished()
-        await writer.finishWriting()
-        #expect(writer.status == .completed)
-        return url
+        try await makeTemporaryPlayableVideoFile()
     }
 
     private func waitUntil(_ condition: @escaping () -> Bool) async throws {
