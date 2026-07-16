@@ -1149,6 +1149,70 @@ for line in sys.stdin:
 }
 
 #[tokio::test]
+async fn reconciled_clip_is_listed_after_child_error_clears_current_segment() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, os, sys
+marker = sys.argv[1]
+session = None
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "shutdown":
+        sys.exit(0)
+    if command["cmd"] == "start_recording":
+        session = command["session_id"]
+        seq = command["start_segment_index"]
+        os.makedirs(sys.argv[-1], exist_ok=True)
+        open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq,"durable_bytes":7}), file=sys.stderr, flush=True)
+    if command["cmd"] == "stop_recording" and not os.path.exists(marker):
+        open(marker, "w").close()
+        print(json.dumps({"event":"error","detail":"injected finalization failure"}), file=sys.stderr, flush=True)
+        sys.exit(70)
+"#;
+    let rec_dir = temp_rec_dir("reconciled-clip-after-error");
+    let marker = rec_dir.with_extension("fail-once");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[&marker]);
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
+    let app =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage));
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    let start = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/start"))
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    wait_for_current_segment(&backend, 0).await;
+
+    let stop = app
+        .clone()
+        .oneshot(recording_request("/v1/recording/stop"))
+        .await
+        .unwrap();
+    assert_eq!(stop.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    let clips = app.oneshot(get_request("/v1/clips")).await.unwrap();
+    assert_eq!(clips.status(), StatusCode::OK);
+    let clips = response_json(clips).await;
+    assert_eq!(clips["clips"][0]["id"], 0);
+    assert!(clips["clips"][0]["bytes"]
+        .as_u64()
+        .is_some_and(|bytes| bytes > 0));
+
+    let _shutdown_result = control.shutdown().await;
+    let _ = fs::remove_file(marker);
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
 async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
     if !python3_available().await {
         return;

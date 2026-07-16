@@ -330,6 +330,11 @@ impl RecorderState {
         Some(self.session)
     }
 
+    pub fn owner_reconciled(&mut self) {
+        self.current_segment = None;
+        self.unpullable_floor = None;
+    }
+
     pub fn snapshot(&self) -> RecorderSnapshot {
         RecorderSnapshot {
             phase: self.phase,
@@ -684,6 +689,20 @@ mod tests {
         assert_eq!(snapshot.current_segment, None);
         assert_eq!(snapshot.detail.as_deref(), Some("camera process exited"));
         assert_eq!(recorder.unpullable_from(), Some(44));
+    }
+
+    #[test]
+    fn owner_reconciliation_releases_every_pull_exclusion() {
+        let mut recorder = RecorderState::new();
+        let session = recorder.start(43).unwrap();
+        assert!(recorder.apply(RecorderEvent::SegmentOpened { session, id: 43 }));
+        recorder.fail("owner failed");
+
+        recorder.owner_reconciled();
+
+        assert_eq!(recorder.phase(), RecorderPhase::Error);
+        assert_eq!(recorder.current_segment(), None);
+        assert_eq!(recorder.unpullable_from(), None);
     }
 
     #[test]

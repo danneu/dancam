@@ -146,6 +146,10 @@ impl World {
                 self.apply_segment_finalized(session, finalized)
             }
             Input::RecoveredClip { finalized } => vec![Event::ClipFinalized(finalized)],
+            Input::RecordingArtifactsReconciled => {
+                self.recorder.owner_reconciled();
+                Vec::new()
+            }
             Input::ClipRemoved { id } => vec![Event::ClipRemoved { id }],
             Input::RecordingStopped { session, finalized } => {
                 self.apply_recording_stopped(session, finalized, now_ms)
@@ -394,6 +398,7 @@ pub enum Input {
     RecoveredClip {
         finalized: ClipMeta,
     },
+    RecordingArtifactsReconciled,
     ClipRemoved {
         id: SegmentId,
     },

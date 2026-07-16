@@ -1344,6 +1344,7 @@ async fn reconcile_after_owner(
             hub.drive_now(Input::RecoveredClip { finalized });
         }
     }
+    hub.drive_now(Input::RecordingArtifactsReconciled);
     Ok(())
 }
 
