@@ -26,8 +26,8 @@ use crate::{
     AppState,
 };
 
-const DEFAULT_LIMIT: usize = 100;
-const MAX_LIMIT: usize = DEFAULT_LIMIT;
+const DEFAULT_LIMIT: usize = 20;
+const MAX_LIMIT: usize = 100;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ClipMeta {
@@ -654,7 +654,7 @@ mod tests {
     use super::{
         cursor_string, http_etag, io_error_to_clip_error, max_clip_seq, read_finished_clips,
         resolve_limit, resolve_range, resolve_segment, segment_paths_for_id, zero_byte_repair,
-        ClipError, RangeResolution, DEFAULT_LIMIT, MAX_LIMIT,
+        ClipError, RangeResolution, MAX_LIMIT,
     };
     use crate::recorder::{stamped_segment_filename, SegmentFacts};
     use crate::storage::StorageCoordinator;
@@ -1293,9 +1293,9 @@ mod tests {
 
     #[test]
     fn resolve_limit_uses_default_and_clamps_bounds() {
-        assert_eq!(resolve_limit(None), DEFAULT_LIMIT);
+        assert_eq!(resolve_limit(None), 20);
         assert_eq!(resolve_limit(Some(0)), 1);
-        assert_eq!(resolve_limit(Some(MAX_LIMIT + 1)), MAX_LIMIT);
+        assert_eq!(resolve_limit(Some(MAX_LIMIT + 1)), 100);
         assert_eq!(resolve_limit(Some(50)), 50);
     }
 

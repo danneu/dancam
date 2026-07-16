@@ -253,9 +253,9 @@ full-resolution capture that competes with recording.
 
 ## Clip listing, pull, and deletion
 
-`GET /v1/clips` lists finished segments newest first. `limit` defaults to and is
-clamped at 100. A decimal `cursor` is an exclusive upper sequence bound: the next
-page contains ids lower than it. Only descending order is supported. `from` and `to`
+`GET /v1/clips` lists finished segments newest first. `limit` defaults to 20 and is
+clamped at 100. A decimal `cursor` is an exclusive upper sequence bound: the next page
+contains ids lower than it. Only descending order is supported. `from` and `to`
 wall-clock filters are rejected with 400 until the contract can provide them without
 silently returning unfiltered results.
 
@@ -577,3 +577,11 @@ finite responses without strengthening the server-owned bound. Shutdown-specific
 streaming and connection loss already carries the required liveness meaning. A
 frame-boundary close promise was rejected because the bounded owner must be able to
 terminate a stalled connection at the deadline.
+
+### 2026-07-16: Default clip listings to 20 entries
+
+The app does not send an explicit clip-list limit, so the former 100-entry default
+made every head refresh do more storage work than its recent-footage surface needs.
+The default is now 20 entries. The explicit-request cap remains 100 so diagnostics
+and future bounded consumers retain the existing upper range without imposing it on
+ordinary app refreshes.

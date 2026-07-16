@@ -196,6 +196,25 @@ async fn clips_route_pages_with_limit_and_cursor() {
 }
 
 #[tokio::test]
+async fn clips_route_defaults_to_twenty_clips() {
+    let rec_dir = TempRecDir::new();
+    for seq in 0..25 {
+        rec_dir.write(&format!("seg_{seq:05}.ts"), b"segment");
+    }
+
+    let json = response_json(
+        dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
+            .oneshot(clips_request("/v1/clips"))
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(clip_ids(&json), (5..25).rev().collect::<Vec<_>>());
+    assert_eq!(json["next_cursor"], "5");
+}
+
+#[tokio::test]
 async fn clips_route_lists_mixed_bare_and_stamped_segments_by_seq() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00001.ts", b"one");
