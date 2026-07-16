@@ -47,6 +47,7 @@
             pkgs.rsync
             pkgs.mdbook
             pkgs.mdbook-linkcheck2
+            (pkgs.python3.withPackages (python: [ python.av ]))
             # Pi system-layer provisioning, version-managed like the Rust toolchain.
             # nixpkgs `ansible` is the batteries-included build that bundles
             # community.general (nmcli / locale_gen / ini_file), so no separate

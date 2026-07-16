@@ -16,6 +16,8 @@ All hot recording state lives under the configured recording directory, normally
 
 ```text
 /data/rec/
+  .dancam-seg_<seq>_<boottag>_<session>_<monoMs>.pending
+  .dancam-seg_<seq>_<boottag>_<session>_<monoMs>.open.ts
   seg_<seq>.ts
   seg_<seq>_<boottag>_<session>_<monoMs>.ts
   seg_<seq>_<boottag>_<session>_<monoMs>_<durMs>.ts
@@ -23,17 +25,17 @@ All hot recording state lives under the configured recording directory, normally
   time/<full-boot-uuid>.json
 ```
 
-Finished and open MPEG-TS segments stay flat in the recording directory. Stamped
-filenames are the durable index, and each operation scans the directory instead of
-maintaining an append log, snapshot, database, or in-memory canonical index.
+All MPEG-TS artifacts stay flat in the recording directory, and their names are the
+sole durable transaction ledger. Hidden `.pending` files are uncommitted and absent
+from every clip scan. Hidden `.open.ts` files have crossed durable publication but
+still belong to a live or dead owner. Ordinary `seg_` paths are finalized and
+listable. Each operation scans the directory instead of maintaining a second append
+log, snapshot, database, or in-memory canonical index.
 
-The bare filename is a real live state, not a compatibility form. It can exist while
-ffmpeg has created a segment but the watcher has not stamped it, after a stamping
-rename failure, or after power dies inside that window. A bare file carries only its
-sequence; all other facts are unknown.
-
-The finalized filename carries five immutable facts. The four-field stamped form is
-the live form and omits only `durMs`:
+The bare filename is a finalized unknown-facts form for footage without a stamp. It
+is never created by the current owner. A four-field stamped filename is also
+finalized and may result when crash recovery cannot derive a duration. The normal
+finalized filename carries five immutable facts:
 
 - `seq` is the stable clip id and total order. It is a decimal `u32`, zero-padded
   to at least five digits and allowed to grow wider after 99999.
@@ -41,8 +43,8 @@ the live form and omits only `durMs`:
   UUID after removing dashes.
 - `session` is a decimal `u64` identifying one contiguous recording run. It is
   `start_segment + 1`, so it is at least 1 and survives a service restart.
-- `monoMs` is the `CLOCK_BOOTTIME` millisecond reading captured when the segment
-  is first observed open.
+- `monoMs` is the `CLOCK_BOOTTIME` millisecond reading captured when Python creates
+  the segment transaction.
 - `durMs` is the measured MPEG-TS duration as a canonical decimal `u64`. It is added
   only after the writer has moved on and is immutable once present.
 
@@ -50,21 +52,17 @@ The Rust and Python parsers accept a name only when all numeric fields fit their
 declared integer types and rendering the parsed value reproduces the input
 byte-for-byte. Short sequence aliases, over-padding, uppercase or wrong-length boot
 tags, leading-zero numeric aliases, and the retired three-fact stamped form are
-invalid. Directory scans accept bare, four-field stamped, and five-field finalized
-forms. Duplicate recovery uses one total order everywhere: five-field finalized over
-four-field stamped over bare, then the lexicographically smallest ASCII filename
-within the same rank. Bulk deletion still removes every valid path for the id.
+invalid. Directory scans accept only bare, four-field stamped, and five-field
+finalized forms; hidden transaction artifacts are never candidates. Duplicate
+recovery uses one total order everywhere: five-field finalized over four-field
+stamped over bare, then the lexicographically smallest ASCII filename within the same
+rank. Bulk deletion still removes every valid finalized path for the id.
 
-The camera owner still asks ffmpeg to create bare `seg_%05d.ts` files. Its watcher
-detects a new open segment, captures boot time, renames the bare path to the stamped
-form, and then emits `segment_opened`. Renaming does not interrupt ffmpeg's open file
-descriptor. If stamping fails, the watcher logs the error and emits anyway; missing
-timestamp facts must not stop recording.
-
-When Rust finalizes a four-field segment, it measures the duration while the data is
-hot, renames the path to the five-field form under the storage mutation mutex, and
-fsyncs the recording directory before publishing `clip_finalized`. A measurement or
-rename failure leaves the four-field path usable and duration remains best-effort.
+Python creates a pending path before opening PyAV. Once one complete first access unit
+has been muxed and synced, it renames pending to committed-open and syncs the
+directory. Finalization closes PyAV, syncs, renames committed-open to the five-field
+final form, and syncs the directory again. Any failure is fatal; no lifecycle event
+is emitted for a transition that did not become durable.
 
 The Pi stores no per-segment JPEG thumbnail and exposes no thumbnail mutation path.
 The app derives first frames from ranged reads or its local clip cache.
@@ -72,7 +70,7 @@ The app derives first frames from ranged reads or its local clip cache.
 ## Segment and recording identity
 
 Sequence ids are never reused, including after their files have been deleted. The
-storage coordinator reserves a start id under its mutation mutex:
+storage coordinator reserves every id under its mutation mutex:
 
 1. Read `state/state.json` and its `high_water_seq`.
 2. Scan the recording directory for the greatest valid segment sequence.
@@ -81,8 +79,10 @@ storage coordinator reserves a start id under its mutation mutex:
 
 The state write creates `state/` as needed, writes and fsyncs a temporary file,
 renames it over `state.json`, and fsyncs the directory. The recording directory is
-also fsynced after first creating `state/`. A crash after reservation but before the
-first media write therefore cannot make the id available again.
+also fsynced after first creating `state/`. A crash after reservation but before
+media creation therefore consumes the id rather than making it available again.
+Rollover requests its next reservation only after the old finalization has been
+durably accepted.
 
 Committed witness state fails closed. Invalid JSON, a missing or incorrectly typed
 field, or a non-NotFound read error prevents recording start before the recorder state
@@ -91,13 +91,11 @@ recovery that leaves footage intact but deliberately lowers the floor to the sur
 file scan. A future data-partition format must carry the witness forward so deleting
 all footage does not permit aliasing.
 
-Start allocation fails when the maximum witness is `u32::MAX`; it never saturates to
+Allocation fails when the maximum witness is `u32::MAX`; it never saturates to
 or repeats the last id. `u32::MAX` is the final legal reservation. The controlled Rust
 mock and Python fake writers also fail closed rather than rolling over past the
-ceiling. The real ffmpeg path accepts only an `INT_MAX` start number and has no
-documented post-`INT_MAX` rollover behavior. Reaching that point at the configured
-segment cadence is outside the supported device lifetime, so the real path makes no
-runtime guarantee beyond it.
+ceiling. The PyAV owner cannot create an unreserved id, so the same explicit `u32`
+ceiling applies to real recording and every test backend.
 
 The recorder derives `session = start_segment + 1` from the durable reservation,
 not from a process-local counter. A recording is therefore identified by
@@ -157,15 +155,18 @@ That is sufficient for Mac tests but does not prove cross-process boot-id matchi
 
 ## In-flight durability and startup repair
 
-The camera watcher calls `fdatasync` on the open segment about every 2 seconds. This
-bounds power-cut loss to roughly the sync cadence plus encoder buffering instead of
-allowing a whole open segment to remain only in page cache. Periodic sync catches
-every `OSError`, logs only the first in a run of failures, and retries on the next
-cadence. Close-time and shutdown syncs also keep the watcher alive on sync errors. The
-Rust mock mirrors the cadence but keeps rollover and stop sync failures fatal.
+The camera owner calls `fdatasync` at durable publication, about every 2 seconds while
+committed-open, and at finalization. This bounds power-cut loss to roughly the sync
+cadence plus encoder buffering instead of allowing a whole open segment to remain
+only in page cache. Every write, mux, sync, close, or rename failure is fatal; the
+owner never logs and continues after losing the recording path.
 
-Before either backend starts, the storage coordinator scrubs zero-byte segment paths.
-It scans raw candidates before normal deduplication and groups them by sequence:
+After an owner is reaped and before the camera owner becomes ready, the storage
+coordinator scans hidden transaction artifacts. It removes every uncommitted path,
+raises the sequence witness first, and renames every committed-open path to its
+ordinary four-field finalized form before replacement. The pass is idempotent and a
+failure blocks camera readiness. It then scrubs zero-byte finalized paths before
+normal deduplication and groups them by sequence:
 
 - If every path for an id is empty, the coordinator first raises
   `high_water_seq` to at least the greatest fully deleted id, then unlinks all paths
@@ -176,9 +177,9 @@ It scans raw candidates before normal deduplication and groups them by sequence:
 This path-by-path rule deliberately prefers recoverable bytes over a stamped filename.
 A stamped empty file beside a bare nonempty file loses its timestamp facts but keeps
 the video. Truncated-but-nonzero segments remain available and can play through the
-power cut. Startup continues after a scrub failure so a missing or damaged data mount
-does not take the control and diagnostic API offline. No removal events are emitted
-before clients connect.
+power cut. The control and diagnostic API stays available after repair failure, but
+camera replacement and recording readiness remain blocked. No removal events are
+emitted before clients connect.
 
 ## Filesystem-backed reads
 
@@ -206,7 +207,8 @@ can re-list, and resumable pulls retain their representation boundary through th
 ## Mutation coordinator and manual deletion
 
 One `StorageCoordinator` owns recording-directory mutations. Its mutex serializes
-start reservation, duration persistence, boot scrub, manual deletion, and each GC
+every reservation, transaction reconciliation, duration persistence, boot scrub,
+manual deletion, and each GC
 delete. Recorder byte
 streaming and all non-mutating reads stay outside it. The composition root shares one
 coordinator between application state and the active backend, using the camera
@@ -553,3 +555,21 @@ duration only from the five-field finalized filename; durationless recovery file
 remain usable with unknown duration. The development Pi recording directory was reset
 at the transition. Retaining lazy migration was rejected because operationally
 clearing disposable footage is simpler and removes the SD contention path entirely.
+
+### 2026-07-16: Make artifact names the recording transaction ledger
+
+Watcher-observed FFmpeg files could be public before a decodable prefix was durable,
+and a close followed by a failed successor open could leave good footage hidden
+behind the live floor. A separate journal would add a second state that could skew
+from the bytes under the same power cut.
+
+The decision added explicit hidden uncommitted and committed-open names and retained
+ordinary `seg_` names as the only finalized clip namespace. Python advances names
+only after the required media and directory syncs. Rust validates each state before
+acknowledgement and reconciles the two hidden states after owner death: uncommitted is
+removed, committed-open is finalized, and sequence identity is never reused.
+
+A database, sidecar journal, and acknowledgement log were rejected because the
+recording directory already supplies an atomic, rebuildable ledger. Inferring state
+from file size or a watcher was rejected because neither proves which durability
+transition the producer completed.

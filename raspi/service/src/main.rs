@@ -61,7 +61,6 @@ async fn run(shutdown: CancellationToken) -> Result<(), String> {
                     config.rec_dir().to_path_buf(),
                     required_rec_mountpoint.as_deref(),
                 ));
-                scrub_unrecoverable_leftovers(storage.as_ref());
                 if shutdown.is_cancelled() {
                     return Ok(());
                 }
@@ -79,7 +78,7 @@ async fn run(shutdown: CancellationToken) -> Result<(), String> {
                     rec_dir,
                     required_rec_mountpoint.as_deref(),
                 ));
-                scrub_unrecoverable_leftovers(storage.as_ref());
+                prepare_recording_storage(storage.as_ref());
                 if shutdown.is_cancelled() {
                     return Ok(());
                 }
@@ -334,7 +333,24 @@ impl SignalMonitor {
     }
 }
 
-fn scrub_unrecoverable_leftovers(storage: &StorageCoordinator) {
+fn prepare_recording_storage(storage: &StorageCoordinator) {
+    match storage.reconcile_recording_artifacts() {
+        Ok(transactions)
+            if !transactions.removed_uncommitted.is_empty()
+                || !transactions.finalized.is_empty() =>
+        {
+            tracing::info!(
+                removed_uncommitted = transactions.removed_uncommitted.len(),
+                finalized = ?transactions.finalized,
+                "reconciled recording artifacts before readiness"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => tracing::error!(
+            %error,
+            "recording transaction reconciliation failed"
+        ),
+    }
     match storage.scrub_unrecoverable_segments() {
         Ok(report) if !report.deleted_ids.is_empty() => {
             tracing::info!(
@@ -350,12 +366,10 @@ fn scrub_unrecoverable_leftovers(storage: &StorageCoordinator) {
             );
         }
         Ok(_) => {}
-        Err(error) => {
-            tracing::error!(
-                %error,
-                "boot scrub of unrecoverable segments failed; continuing startup"
-            );
-        }
+        Err(error) => tracing::error!(
+            %error,
+            "recording startup scrub failed"
+        ),
     }
 }
 

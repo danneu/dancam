@@ -81,8 +81,9 @@ the preconditions and maintenance sequence.
 
 The development and car images share a base convergence layer. It includes:
 
-- the required card-layout gate, apt full-upgrade, Picamera2/ffmpeg/v4l2
-  runtime packages, and the IMX708 device-tree configuration;
+- the required card-layout gate, apt full-upgrade, Picamera2/PyAV/ffmpeg/v4l2
+  packages, a deployed-interpreter import check, and the IMX708 device-tree
+  configuration; PyAV is the recording runtime and ffmpeg is an operator validator;
 - Avahi scoping, the `en_US.UTF-8` locale, and the full `dancam-ap`
   NetworkManager profile except its PSK;
 - the fixed `dancam` system user and its `video` supplementary group;
@@ -261,3 +262,11 @@ The bootstrap, verification, and operations guide moved to the book's
 [Pi setup runbook](../../setup/pi-runbook.md) chapter so operators and readers
 have one browsable documentation site. `raspi/README.md` remains a short pointer
 from the Pi entry point rather than a second copy that could drift.
+
+### 2026-07-16 -- Converge distro PyAV as a camera runtime
+
+Direct per-segment PyAV replaced the FFmpeg recording subprocess, so an ambient or
+pip-installed binding would make camera readiness depend on image history. The
+playbook now installs distro `python3-av` beside Picamera2 and runs both imports
+through the deployed `python3` interpreter on every converge. Keeping ffmpeg as an
+operator media validator does not put it back on the recording path.

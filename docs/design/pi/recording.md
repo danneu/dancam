@@ -17,7 +17,7 @@ that expose recording state.
 One long-lived Python Picamera2 subprocess owns libcamera. The Rust service owns the
 HTTP API, recorder state, storage coordination, command deadlines, child restart
 policy, and preview fan-out. Keeping the camera stack out of process prevents a
-libcamera, Picamera2, or ffmpeg failure from taking down the control and diagnostic
+libcamera, Picamera2, or PyAV/libav failure from taking down the control and diagnostic
 API.
 
 The child configures the camera once and starts it once with two simultaneous
@@ -36,8 +36,8 @@ Rust service likewise publishes the latest complete JPEG to consumers.
 The process protocol deliberately does not expose Picamera2 details to HTTP:
 
 - stdout is raw concatenated JPEG frames from the lores stream;
-- stdin is newline-delimited JSON commands: `start_recording`, `stop_recording`, and
-  `shutdown`;
+- stdin is newline-delimited JSON commands for start, stop, shutdown, durable-event
+  acknowledgement, next-segment reservation, and transaction rejection;
 - stderr is a mixed stream: JSON records carrying an `event` key must decode as a
   supported lifecycle or telemetry event, while all other lines are camera logs;
 - recording bytes never cross the process boundary and are written directly under
@@ -45,7 +45,7 @@ The process protocol deliberately does not expose Picamera2 details to HTTP:
 
 The deployed child is `python3 /usr/local/lib/dancam/camera.py`. The program can be
 replaced through `DANCAM_CAMERA_CMD` for development, and the protocol is intended to
-survive a future all-Rust camera owner. That rewrite may remove Python and ffmpeg,
+survive a future all-Rust camera owner. That rewrite may remove Python and PyAV,
 but it must not collapse the crash boundary into the Rust HTTP service.
 
 ## Focus policy
@@ -69,18 +69,12 @@ Starting a recording attaches a Picamera2 `H264Encoder` to the main stream with:
 - an intra period of 30 frames;
 - no audio.
 
-The encoder feeds ffmpeg's segment muxer. The active output contract is equivalent
-to:
-
-```text
--bsf:v setts=pts=N*DURATION:dts=N*DURATION
--f segment
--segment_time 30
--segment_format mpegts
--reset_timestamps 1
--segment_start_number <durably-allocated-sequence>
-seg_%05d.ts
-```
+The encoder feeds a camera-owned output built directly on distro PyAV/libav. The
+owner imports and initializes PyAV before `ready`, opens one ordinary output-only
+MPEG-TS container per segment, and muxes each encoded H.264 access unit without an
+input demuxer or subprocess. It assigns packet PTS and DTS from a 30 fps frame
+counter, closes the old container before reserving or opening the next, and rolls on
+the first keyframe at or after 900 frames.
 
 MPEG-TS is the hot recording container because it remains structurally usable when
 power cuts through its tail. Short segments bound the footage exposed to one
@@ -97,46 +91,43 @@ testing show it improves the complete system without weakening recovery.
 
 ### Per-clip timestamp invariant
 
-Every served clip has a self-contained coded timeline. The ffmpeg filter forces
-`PTS == DTS` in coded order, and `-reset_timestamps 1` starts each segment near zero.
+Every served clip has a self-contained coded timeline. The owner assigns
+`PTS == DTS` in coded order and resets the frame counter for each segment, so each
+segment starts at zero.
 Within a valid clip, DTS increases strictly frame to frame and the PTS/DTS span never
 approaches the MPEG-TS 33-bit wrap.
 
 Consumers treat a duplicate or decreasing DTS, or an implausibly large span, as
 corruption or an out-of-contract producer. They degrade locally: the app drops the
 offending access unit and the Pi reports unknown duration. Neither condition may
-crash a consumer or fail an otherwise recoverable clip. The camera self-test asserts
-the exact timestamp-filter, segment-duration, and reset arguments so silently
-removing one fails before deployment.
+crash a consumer or fail an otherwise recoverable clip. The camera self-test
+initializes PyAV and pins the artifact grammar and explicit packet timeline.
 
 ## Segment observation and finalization
 
 Rust allocates the durable start segment before dispatch and derives the recording
 session from it. The child receives both `session_id` and `start_segment_index`,
-passes the start index to ffmpeg, and echoes the session on recording and segment
-lifecycle events. The [storage page](storage.md#segment-and-recording-identity) owns
-the witness and filename grammar.
+and creates that sequence only in a hidden uncommitted artifact. After muxing a
+complete first SPS/PPS/IDR access unit, Python flushes PyAV, syncs the file,
+atomically renames it to committed-open state, syncs the directory, and emits
+`segment_opened`. Rust validates the exact session, id, and committed-open artifact
+before acknowledging or publishing recording state. The
+[storage page](storage.md#segment-and-recording-identity) owns the witness and
+filename grammar.
 
-ffmpeg performs rollover and initially creates bare `seg_NNNNN.ts` paths. A
-session-scoped watcher observes names at or above the Rust-provided baseline. For
-each new id it stamps the file with boot, session, and monotonic facts, then emits:
+At rollover and stop, Python closes the container, flushes and syncs the file,
+renames committed-open state to the ordinary finalized filename carrying duration,
+syncs the directory, and emits `segment_finalized`. Rust validates the finalized
+artifact and the event's agreement with its durable duration fact, publishes
+`clip_finalized`, and acknowledges.
+Only then may Python ask Rust to reserve the next sequence and open its transaction.
+`recording_stopped` follows finalization and only clears the recorder after the last
+finalization was accepted.
 
-1. `segment_closed` for the previously observed open id, when one exists;
-2. `segment_opened` for the new id.
-
-The watcher reports rollover; it does not drive it. The final segment intentionally
-has no `segment_closed` event because no later file proves a rollover. A matching
-`recording_stopped` event is the finalization signal for that last open segment. Rust
-derives its metadata from the file, renames a measurable four-field path to the
-five-field finalized form with `durMs`, and fsyncs the recording directory before
-publishing the final clip and idle state. Rollover applies the same rename before its
-`clip_finalized` event. Duration persistence is best-effort: measurement or rename
-failure does not suppress otherwise valid finalized metadata.
-
-Every child lifecycle event is checked against the live session. Segment events are
-also checked against the allocated floor. Stale sessions and below-floor ids are
-dropped, so an abandoned or restarted child cannot finalize footage into a newer
-recording.
+Each lifecycle exchange retries lost messages within one monotonic deadline.
+Duplicates receive the already-committed acknowledgement without reapplying their
+effect. Stale sessions, wrong sequences, and artifacts in the wrong durable state
+change nothing and receive no acknowledgement, which makes the owner fail closed.
 
 ## Recorder state machine
 
@@ -149,9 +140,10 @@ The Rust service is the authority for recorder state. Its public snapshot contai
 
 Internally the recorder also carries the allocated start segment and an
 `unpullable_floor`. The floor, rather than `current_segment`, protects unfinished
-files: it exists throughout starting, recording, stopping, and error; advances when a
-new segment opens; and clears only after a clean stop has finalized the last segment.
-Clip list, pull, delete, and garbage collection exclude ids at or above it.
+files: it exists while a reserved or committed-open artifact may exist, advances past
+an accepted finalization so that footage is immediately pullable, returns to the new
+id after its open is accepted, and clears after a clean stop. Clip list, pull, delete,
+and garbage collection exclude ids at or above it.
 
 The service and camera child start automatically with systemd, but the recorder
 currently starts in `idle`. Recording begins only after `/v1/recording/start`; after a
@@ -161,15 +153,15 @@ boot remains future product behavior rather than a property of the current image
 Accepted inputs produce ordered domain transitions:
 
 - start moves clean idle or recoverable error to starting;
-- a matching `recording_started` or first `segment_opened` moves starting to
-  recording; if the segment observation wins that race, the later start confirmation
-  preserves the current id;
-- a segment-open input records the current id and atomically finalizes the previous
-  id when rollover is observed;
+- only a matching, durably validated first `segment_opened` moves starting to
+  recording and completes the start request; `recording_started` is obsolete and
+  cannot establish public state;
+- a standalone accepted `segment_finalized` publishes the clip and clears the live
+  id before any successor can be reserved or opened;
+- a later accepted segment open records the newly reserved current id;
 - stop moves starting or recording to stopping;
-- a matching stopped input atomically finalizes the last open id and returns to idle;
-  if the final file cannot be materialized, the recorder stays in error and keeps its
-  protective floor;
+- a matching stopped input returns to idle only after the last segment finalization
+  has already been accepted; missing finalization keeps the recorder in error;
 - child error, exit, spawn failure, or camera loss moves the live transition to
   recoverable error, clears `current_segment`, and preserves the protective floor.
 
@@ -219,6 +211,11 @@ backoff, child exit, and decoded child events in every lifecycle state:
 - child events continue to flow through the supervisor after successful commands, so
   rollover, stop, and telemetry retain one mutation owner.
 
+A stop admitted while start is pending remains queued behind that start. If durable
+open succeeds, start completes and stop performs the ordinary durable finalization.
+If start fails, owner retirement reconciles its artifacts first and the queued stop
+resolves idempotently against error/idle state without inventing stop metadata.
+
 Before reporting any post-transition failure, the supervisor drains every child
 event already delivered and checks the session-specific target once more. A delivered
 success wins. Otherwise timeout, write failure, child exit, child-reported error, or
@@ -233,10 +230,14 @@ important than returning at the exact deadline instant.
 
 ## Child supervision and telemetry
 
-The supervisor starts with camera state `starting`. A child `ready` event changes it
-to `running`. Child error or exit removes the current preview frame, moves camera
-state through `restarting`, reconciles the recorder to error, and schedules a fresh
-child with exponential backoff from 250 ms to 10 seconds. A child that stays alive
+The supervisor starts with camera state `starting`. Before initial readiness and
+before every replacement, Rust removes uncommitted artifacts and atomically turns
+every orphaned committed-open artifact into an ordinary finalized clip. Failure to
+reconcile blocks the child and keeps recording not ready. A child `ready` event then
+changes camera state to `running`. Child error or exit removes the current preview
+frame, moves camera state through `restarting`, reconciles and publishes any durable
+current footage, moves the recorder to error, and schedules a fresh child with
+exponential backoff from 250 ms to 10 seconds. A child that stays alive
 for 30 seconds resets the backoff. Once shutdown is observed, the supervisor checks
 it before every spawn and never admits another child. Service shutdown asks the
 child to stop, bounds the command and exit phases at 2 seconds each, and keeps the
@@ -273,12 +274,11 @@ is layered:
 
 1. Short, independently decodable MPEG-TS segments keep a severed tail from
    invalidating earlier footage.
-2. The camera watcher calls `fdatasync` on the open segment about every 2 seconds and
-   syncs again at close and shutdown. This bounds dirty page-cache exposure to the
-   cadence plus encoder buffering.
-3. [Pi storage](storage.md#in-flight-durability-and-startup-repair) scrubs
-   unrecoverable zero-byte leftovers before recording and preserves nonempty
-   truncated segments.
+2. The owner calls `fdatasync` at publication, about every 2 seconds while open, and
+   again at finalization; every artifact-state rename is followed by directory fsync.
+3. [Pi storage](storage.md#in-flight-durability-and-startup-repair) removes
+   unpublished leftovers, finalizes committed-open survivors, scrubs unrecoverable
+   zero-byte legacy segments, and preserves nonempty truncated footage.
 4. The data partition is journaled ext4, separate from a plain read-only ext4 car
    root. Segment-close durability and a small dirty-writeback window protect the
    filesystem-level boundary.
@@ -297,7 +297,8 @@ of complete crash safety.
 The design remains gated on real Pi Zero 2 W evidence:
 
 - run recording and preview concurrently at the deployed resolutions and cadences;
-- measure the Python camera process, ffmpeg, and Rust service RSS on the 512 MB board;
+- measure the Python camera process, PyAV/libav, and Rust service RSS on the 512 MB
+  board against the former FFmpeg baseline;
 - reject sustained swap, OOM behavior, dropped recording frames, or unstable preview;
 - exercise repeated hard power cuts across segment open, rollover, close, witness,
   and filesystem activity, then verify boot and footage recovery;
@@ -556,3 +557,23 @@ reader, and finalization failures. Aborting reader tasks immediately was rejecte
 because terminal events can still be queued after the child exits. Keeping the
 mid-command force-kill shortcut was rejected because cancellation is precisely the
 case where preserving the last active segment matters.
+
+### 2026-07-16 -- Replace hidden FFmpeg segmentation with transactional PyAV
+
+The FFmpeg input demuxer and segment muxer delayed first durable publication by about
+4.5-5 seconds and hid open, close, and rollover behind filesystem observation. A
+direct PyAV qualification on the real Pi kept every cold and warm durable-publication
+trial below 1 second while preserving the exact 30 fps, SPS/PPS/IDR, and independent
+decode contract.
+
+The decision made direct per-segment PyAV the sole production muxer and made hidden
+artifact states the durable transaction ledger. Python owns media and artifact
+transitions; Rust owns reservation, validation, acknowledgement, recovery, and public
+state. Finalize-before-reserve ordering ensures that a failed successor open cannot
+hide footage that already closed.
+
+Keeping FFmpeg plus a watcher was rejected because it retains both the startup floor
+and false lifecycle observations. Publishing a container header or incomplete access
+unit was rejected because it would make start success survive only in memory, not as
+independently decodable footage. A runtime fallback ladder was rejected because it
+would restore the hidden lifecycle the transaction removes.

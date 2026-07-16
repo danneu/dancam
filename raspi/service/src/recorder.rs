@@ -3,6 +3,20 @@ pub type SegmentId = u32;
 
 const SEGMENT_FILENAME_WIDTH: usize = 5;
 const BOOT_TAG_LEN: usize = 12;
+const RECORDING_ARTIFACT_PREFIX: &str = ".dancam-seg_";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordingArtifactState {
+    Uncommitted,
+    CommittedOpen,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordingArtifact {
+    pub state: RecordingArtifactState,
+    pub seq: SegmentId,
+    pub facts: SegmentFacts,
+}
 
 /// Render the flat recording segment filename. The width is a minimum: after
 /// `99999`, names grow wider and remain valid.
@@ -39,6 +53,58 @@ pub fn stamped_segment_filename(seq: SegmentId, facts: &SegmentFacts) -> String 
         Some(dur_ms) => format!("{}_{dur_ms}.ts", stamped.trim_end_matches(".ts")),
         None => stamped,
     }
+}
+
+pub fn recording_artifact_filename(
+    state: RecordingArtifactState,
+    seq: SegmentId,
+    facts: &SegmentFacts,
+) -> String {
+    let suffix = match state {
+        RecordingArtifactState::Uncommitted => ".pending",
+        RecordingArtifactState::CommittedOpen => ".open.ts",
+    };
+    format!(
+        "{RECORDING_ARTIFACT_PREFIX}{seq:0width$}_{}_{}_{}{suffix}",
+        facts.boot_tag,
+        facts.session,
+        facts.mono_ms,
+        width = SEGMENT_FILENAME_WIDTH,
+    )
+}
+
+pub fn parse_recording_artifact_filename(name: &str) -> Option<RecordingArtifact> {
+    let (body, state) = if let Some(body) = name
+        .strip_prefix(RECORDING_ARTIFACT_PREFIX)
+        .and_then(|body| body.strip_suffix(".pending"))
+    {
+        (body, RecordingArtifactState::Uncommitted)
+    } else {
+        (
+            name.strip_prefix(RECORDING_ARTIFACT_PREFIX)?
+                .strip_suffix(".open.ts")?,
+            RecordingArtifactState::CommittedOpen,
+        )
+    };
+    let parts = body.split('_').collect::<Vec<_>>();
+    let [seq_digits, boot_tag, session_digits, mono_digits] = parts.as_slice() else {
+        return None;
+    };
+    if !valid_boot_tag(boot_tag) {
+        return None;
+    }
+    let seq = seq_digits.parse::<SegmentId>().ok()?;
+    let facts = SegmentFacts {
+        boot_tag: (*boot_tag).to_string(),
+        session: session_digits.parse().ok()?,
+        mono_ms: mono_digits.parse().ok()?,
+        dur_ms: None,
+    };
+    (recording_artifact_filename(state, seq, &facts) == name).then_some(RecordingArtifact {
+        state,
+        seq,
+        facts,
+    })
 }
 
 /// Parse exactly the names this module can render, with no aliases.
@@ -194,12 +260,9 @@ impl RecorderState {
 
         match event {
             RecorderEvent::RecordingStarted { .. } => {
-                if self.phase == RecorderPhase::Starting {
-                    self.phase = RecorderPhase::Recording;
-                    true
-                } else {
-                    self.phase == RecorderPhase::Recording
-                }
+                // Process readiness is deliberately not recording readiness. Only a
+                // durably validated SegmentOpened may complete start.
+                false
             }
             RecorderEvent::SegmentOpened { id, .. } => {
                 if !self.accepts_segment(id) {
@@ -231,10 +294,16 @@ impl RecorderState {
                     );
                     return false;
                 }
-                matches!(
+                if !matches!(
                     self.phase,
                     RecorderPhase::Recording | RecorderPhase::Stopping
-                )
+                ) || self.current_segment != Some(id)
+                {
+                    return false;
+                }
+                self.current_segment = None;
+                self.unpullable_floor = id.checked_add(1);
+                true
             }
             RecorderEvent::RecordingStopped { .. } => {
                 if self.phase.is_active() {
@@ -329,8 +398,10 @@ impl RecorderEvent {
 #[cfg(test)]
 mod tests {
     use super::{
-        boot_tag, parse_segment_filename, segment_filename, stamped_segment_filename,
-        ParsedSegment, RecorderEvent, RecorderPhase, RecorderState, SegmentFacts,
+        boot_tag, parse_recording_artifact_filename, parse_segment_filename,
+        recording_artifact_filename, segment_filename, stamped_segment_filename, ParsedSegment,
+        RecorderEvent, RecorderPhase, RecorderState, RecordingArtifact, RecordingArtifactState,
+        SegmentFacts,
     };
 
     #[test]
@@ -346,6 +417,50 @@ mod tests {
         assert_eq!(segment_filename(0), "seg_00000.ts");
         assert_eq!(segment_filename(100000), "seg_100000.ts");
         assert_eq!(segment_filename(u32::MAX), "seg_4294967295.ts");
+    }
+
+    #[test]
+    fn recording_artifact_names_round_trip_exactly() {
+        let facts = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: 7,
+            mono_ms: 987654321,
+            dur_ms: None,
+        };
+        for state in [
+            RecordingArtifactState::Uncommitted,
+            RecordingArtifactState::CommittedOpen,
+        ] {
+            let name = recording_artifact_filename(state, 5, &facts);
+            assert_eq!(
+                parse_recording_artifact_filename(&name),
+                Some(RecordingArtifact {
+                    state,
+                    seq: 5,
+                    facts: facts.clone(),
+                })
+            );
+        }
+        assert_eq!(
+            recording_artifact_filename(RecordingArtifactState::Uncommitted, 5, &facts),
+            ".dancam-seg_00005_abc123def456_7_987654321.pending"
+        );
+        assert_eq!(
+            recording_artifact_filename(RecordingArtifactState::CommittedOpen, 5, &facts),
+            ".dancam-seg_00005_abc123def456_7_987654321.open.ts"
+        );
+        for invalid in [
+            ".dancam-seg_00005_ABC123DEF456_7_987654321.open.ts",
+            ".dancam-seg_00005_abc123def456_007_987654321.open.ts",
+            ".dancam-seg_00005_abc123def456_7_987654321.ts",
+            ".dancam-seg_4294967296_abc123def456_7_987654321.pending",
+        ] {
+            assert_eq!(
+                parse_recording_artifact_filename(invalid),
+                None,
+                "{invalid}"
+            );
+        }
     }
 
     #[test]
@@ -513,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn segment_opened_wins_the_start_race_and_started_preserves_current() {
+    fn segment_opened_is_the_only_start_truth_point() {
         let mut recorder = RecorderState::new();
         let session = recorder.start(43).unwrap();
 
@@ -521,7 +636,7 @@ mod tests {
         assert_eq!(recorder.snapshot().phase, RecorderPhase::Recording);
         assert_eq!(recorder.snapshot().current_segment.unwrap().id, 43);
 
-        assert!(recorder.apply(RecorderEvent::RecordingStarted { session }));
+        assert!(!recorder.apply(RecorderEvent::RecordingStarted { session }));
         assert_eq!(recorder.snapshot().current_segment.unwrap().id, 43);
     }
 

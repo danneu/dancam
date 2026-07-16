@@ -272,8 +272,6 @@ impl MockBackend {
             return;
         };
         self.hub
-            .drive_now(Input::Recorder(RecorderEvent::RecordingStarted { session }));
-        self.hub
             .drive_now(Input::Recorder(RecorderEvent::SegmentOpened {
                 session,
                 id: 0,
@@ -617,7 +615,13 @@ async fn run_mock_recording_writer(
         });
         return;
     }
-    hub.drive_now(Input::Recorder(RecorderEvent::RecordingStarted { session }));
+    if let Err(error) = flush_and_sync_mock_segment(&mut file).await {
+        tracing::error!(%error, seq, "failed to publish mock recording segment");
+        hub.drive_now(Input::Fail {
+            detail: format!("failed to publish mock recording segment {seq}: {error}"),
+        });
+        return;
+    }
     hub.drive_now(Input::Recorder(RecorderEvent::SegmentOpened {
         session,
         id: seq,
@@ -640,7 +644,17 @@ async fn run_mock_recording_writer(
                 let finalized =
                     finalized_clip_meta(storage.clone(), seq, time_store.clone())
                         .await;
-                hub.drive_now(Input::RecordingStopped { session, finalized });
+                if let Some(finalized) = finalized {
+                    hub.drive_now(Input::SegmentFinalized { session, finalized });
+                    hub.drive_now(Input::RecordingStopped {
+                        session,
+                        finalized: None,
+                    });
+                } else {
+                    hub.drive_now(Input::Fail {
+                        detail: format!("failed to stat final mock recording segment {seq}"),
+                    });
+                }
                 return;
             }
             _ = interval.tick() => {
@@ -668,19 +682,22 @@ async fn run_mock_recording_writer(
                             return;
                         }
                     };
+                    hub.drive_now(Input::SegmentFinalized { session, finalized });
                     // Fail closed at the seq ceiling rather than reissuing `u32::MAX`
                     // (a fresh `mono_ms` would mint a same-seq stamped twin inside one
                     // session). This is the within-recording complement to the
                     // start-allocation guard in storage.rs. The just-finalized `u32::MAX`
                     // segment is the last legal one.
-                    if seq == u32::MAX {
-                        tracing::error!(seq, "mock recording exhausted segment ids at u32::MAX");
-                        hub.drive_now(Input::Fail {
-                            detail: "mock recording exhausted segment ids at u32::MAX".to_string(),
-                        });
-                        return;
-                    }
-                    seq = seq.saturating_add(1);
+                    seq = match storage.allocate_start_segment() {
+                        Ok(seq) => seq,
+                        Err(error) => {
+                            tracing::error!(%error, seq, "mock recording could not reserve next segment");
+                            hub.drive_now(Input::Fail {
+                                detail: format!("mock recording could not reserve next segment: {error}"),
+                            });
+                            return;
+                        }
+                    };
                     file = match open_mock_segment(rec_dir.as_ref(), seq, session, boot_tag.as_ref())
                         .await
                     {
@@ -707,11 +724,17 @@ async fn run_mock_recording_writer(
                         });
                         return;
                     }
-                    hub.drive_now(Input::SegmentRollover {
+                    if let Err(error) = flush_and_sync_mock_segment(&mut file).await {
+                        tracing::error!(%error, seq, "failed to publish mock recording segment");
+                        hub.drive_now(Input::Fail {
+                            detail: format!("failed to publish mock recording segment {seq}: {error}"),
+                        });
+                        return;
+                    }
+                    hub.drive_now(Input::Recorder(RecorderEvent::SegmentOpened {
                         session,
-                        finalized,
-                        opened: seq,
-                    });
+                        id: seq,
+                    }));
                     segment_started = tokio::time::Instant::now();
                     sync_cadence =
                         InflightSyncCadence::new(segment_started, MOCK_INFLIGHT_SYNC_INTERVAL);

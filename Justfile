@@ -8,6 +8,12 @@ raspi-build:
 raspi-test:
     cargo test --manifest-path raspi/service/Cargo.toml
 
+# Exercise the Python muxer contract and the Rust transaction/duration boundary.
+raspi-camera-test:
+    python3 raspi/camera/camera.py --self-test
+    cargo test --manifest-path raspi/service/Cargo.toml ts_duration
+    cargo test --manifest-path raspi/service/Cargo.toml camera
+
 # Run the Raspberry Pi Rust service formatting and lint gate.
 raspi-check:
     cargo fmt --manifest-path raspi/service/Cargo.toml --check

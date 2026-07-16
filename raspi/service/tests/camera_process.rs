@@ -33,7 +33,7 @@ use dancam::{
     camera::{CameraConfig, CameraProcess},
     event_hub::EventConnection,
     events::Event,
-    recorder::{parse_segment_filename, RecorderPhase},
+    recorder::{parse_recording_artifact_filename, parse_segment_filename, RecorderPhase},
     storage::StorageCoordinator,
     world::CameraState,
     AppState,
@@ -246,6 +246,14 @@ async fn send_start_command(
     stdin.flush().await.unwrap();
 }
 
+async fn send_json(stdin: &mut tokio::process::ChildStdin, value: Value) {
+    stdin
+        .write_all(format!("{}\n", serde_json::to_string(&value).unwrap()).as_bytes())
+        .await
+        .unwrap();
+    stdin.flush().await.unwrap();
+}
+
 #[tokio::test]
 async fn python_fake_self_test_passes_without_picamera2() {
     if !python3_available().await {
@@ -302,19 +310,44 @@ async fn python_fake_contract_honors_start_segment_and_emits_lifecycle() {
     assert!(frame.ends_with(&[0xff, 0xd9]));
 
     send_start_command(&mut stdin, 99, 5).await;
-    let started = wait_for_event(&mut lines, "recording_started").await;
-    assert_eq!(started["session_id"], 99);
-    assert!(rec_dir.is_dir());
     let opened = wait_for_event(&mut lines, "segment_opened").await;
     assert_eq!(opened["session_id"], 99);
     assert_eq!(opened["id"], 5);
-    let closed = wait_for_event(&mut lines, "segment_closed").await;
-    assert_eq!(closed["session_id"], 99);
+    assert!(rec_dir.is_dir());
+    send_json(
+        &mut stdin,
+        serde_json::json!({"cmd":"ack_segment","kind":"opened","session_id":99,"id":5}),
+    )
+    .await;
+    let closed = wait_for_event(&mut lines, "segment_finalized").await;
     assert_eq!(closed["id"], 5);
+    send_json(
+        &mut stdin,
+        serde_json::json!({"cmd":"ack_segment","kind":"finalized","session_id":99,"id":5}),
+    )
+    .await;
+    wait_for_event(&mut lines, "segment_needed").await;
+    send_json(
+        &mut stdin,
+        serde_json::json!({"cmd":"segment_reserved","session_id":99,"id":6}),
+    )
+    .await;
     let rolled = wait_for_event(&mut lines, "segment_opened").await;
     assert_eq!(rolled["session_id"], 99);
     assert_eq!(rolled["id"], 6);
+    send_json(
+        &mut stdin,
+        serde_json::json!({"cmd":"ack_segment","kind":"opened","session_id":99,"id":6}),
+    )
+    .await;
     send_command(&mut stdin, "stop_recording").await;
+    let finalized = wait_for_event(&mut lines, "segment_finalized").await;
+    assert_eq!(finalized["id"], 6);
+    send_json(
+        &mut stdin,
+        serde_json::json!({"cmd":"ack_segment","kind":"finalized","session_id":99,"id":6}),
+    )
+    .await;
     let stopped = wait_for_event(&mut lines, "recording_stopped").await;
     assert_eq!(stopped["session_id"], 99);
     send_command(&mut stdin, "shutdown").await;
@@ -711,7 +744,10 @@ for line in sys.stdin:
             open(pid_file, "w").write(str(os.getpid()))
             while True:
                 time.sleep(1)
-        print(json.dumps({"event":"recording_started","session_id":session}), file=sys.stderr, flush=True)
+        seq = command["start_segment_index"]
+        os.makedirs(sys.argv[-1], exist_ok=True)
+        open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
     if command["cmd"] == "stop_recording":
         print(json.dumps({"event":"recording_stopped","session_id":session}), file=sys.stderr, flush=True)
 "#;
@@ -749,7 +785,6 @@ for line in sys.stdin:
     wait_for_camera_state(&backend, CameraState::Running).await;
     backend.start_recording().await.unwrap();
     assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Recording);
-    backend.stop_recording().await.unwrap();
 
     let _shutdown_result = control.shutdown().await;
     let _ = fs::remove_file(marker);
@@ -779,7 +814,10 @@ for line in sys.stdin:
             print(json.dumps({"event":"error","detail":"injected failure"}), file=sys.stderr, flush=True)
             while True:
                 time.sleep(1)
-        print(json.dumps({"event":"recording_started","session_id":session}), file=sys.stderr, flush=True)
+        seq = command["start_segment_index"]
+        os.makedirs(sys.argv[-1], exist_ok=True)
+        open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
 "#;
     let rec_dir = temp_rec_dir("child-error-recovery");
     let marker = rec_dir.with_extension("error-once");
@@ -844,7 +882,10 @@ for line in sys.stdin:
     if command["cmd"] == "shutdown":
         sys.exit(0)
     if command["cmd"] == "start_recording":
-        print(json.dumps({"event":"recording_started","session_id":command["session_id"]}), file=sys.stderr, flush=True)
+        session, seq = command["session_id"], command["start_segment_index"]
+        os.makedirs(sys.argv[-1], exist_ok=True)
+        open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
 "#;
     let rec_dir = temp_rec_dir("write-failure-recovery");
     let marker = rec_dir.with_extension("write-fail-once");
@@ -905,7 +946,10 @@ for line in sys.stdin:
         if not os.path.exists(marker):
             open(marker, "w").close()
             sys.exit(7)
-        print(json.dumps({"event":"recording_started","session_id":command["session_id"]}), file=sys.stderr, flush=True)
+        session, seq = command["session_id"], command["start_segment_index"]
+        os.makedirs(sys.argv[-1], exist_ok=True)
+        open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
 "#;
     let rec_dir = temp_rec_dir("exit-during-command");
     let marker = rec_dir.with_extension("exit-once");
@@ -999,7 +1043,10 @@ for line in sys.stdin:
         sys.exit(0)
     if command["cmd"] == "start_recording":
         session = command["session_id"]
-        print(json.dumps({"event":"recording_started","session_id":session}), file=sys.stderr, flush=True)
+        seq = command["start_segment_index"]
+        os.makedirs(sys.argv[-1], exist_ok=True)
+        open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
     if command["cmd"] == "stop_recording":
         if not os.path.exists(marker):
             open(marker, "w").close()
@@ -1057,7 +1104,7 @@ async fn recorder_failure_after_dispatch_has_its_own_http_error() {
     }
 
     const SCRIPT: &str = r#"
-import json, sys
+import json, os, sys
 session = None
 print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
 for line in sys.stdin:
@@ -1066,8 +1113,10 @@ for line in sys.stdin:
         sys.exit(0)
     if command["cmd"] == "start_recording":
         session = command["session_id"]
-        print(json.dumps({"event":"recording_started","session_id":session}), file=sys.stderr, flush=True)
-        print(json.dumps({"event":"segment_opened","session_id":session,"id":0}), file=sys.stderr, flush=True)
+        seq = command["start_segment_index"]
+        os.makedirs(sys.argv[-1], exist_ok=True)
+        open(os.path.join(sys.argv[-1], f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"), "wb").write(b"segment")
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
     if command["cmd"] == "stop_recording":
         print(json.dumps({"event":"recording_stopped","session_id":session}), file=sys.stderr, flush=True)
 "#;
@@ -1241,7 +1290,11 @@ async fn supervisor_starts_after_six_digit_existing_segment_without_overwrite() 
     backend.start_recording().await.unwrap();
     wait_for_current_segment(&backend, 100001).await;
     // start_segment 100001 -> session 100002.
-    assert_new_segments_are_stamped(&rec_dir, &[(100001, 100002)]);
+    assert!(fs::read_dir(&rec_dir).unwrap().any(|entry| {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        parse_recording_artifact_filename(&name)
+            .is_some_and(|artifact| artifact.seq == 100001 && artifact.facts.session == 100002)
+    }));
     assert_eq!(
         fs::read(rec_dir.join("seg_100000.ts")).unwrap().as_slice(),
         sentinel

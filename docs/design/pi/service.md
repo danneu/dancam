@@ -23,16 +23,16 @@ the Pi Zero 2 W's 512 MB of RAM.
 
 The camera remains out of process. The deployed Rust service starts and supervises
 `python3 /usr/local/lib/dancam/camera.py`, which owns Picamera2, libcamera, the
-hardware encoders, and ffmpeg. The service never links libcamera. A camera-stack
+hardware encoders, and PyAV/libav. The service never links libcamera. A camera-stack
 crash can interrupt recording, but it cannot take down the HTTP diagnostics and
 control process. The stdio protocol and restart behavior are specified by the
 [recording design](recording.md#camera-ownership-and-streams).
 
 The original service design expected an `rpicam-vid` child. Concurrent recording
 and preview later required one Picamera2 owner and added the Python, Picamera2,
-NumPy, and ffmpeg runtime stack to the image. This did not change the Rust service
-language or the subprocess crash boundary. A future Rust camera owner may remove
-that stack, but it remains a separate process.
+NumPy, and native media runtime stack to the image. This did not change the Rust
+service language or the subprocess crash boundary. A future Rust camera owner may
+remove that stack, but it remains a separate process.
 
 Local runs default to the mock backend and loopback binding. The deployed unit sets
 `DANCAM_BACKEND=camera` and `DANCAM_BIND=[::]:8080` in

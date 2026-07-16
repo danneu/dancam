@@ -15,7 +15,10 @@ use std::{
 
 use crate::{
     clips::{max_clip_seq, resolve_segment, segment_paths_for_id, zero_byte_repair},
-    recorder::{stamped_segment_filename, SegmentId},
+    recorder::{
+        parse_recording_artifact_filename, stamped_segment_filename, RecordingArtifactState,
+        SegmentFacts, SegmentId,
+    },
 };
 
 const STATE_DIR: &str = "state";
@@ -76,6 +79,123 @@ impl StorageCoordinator {
             witness.high_water_seq = next;
         })?;
         Ok(next)
+    }
+
+    pub fn validate_committed_open(&self, session: u64, id: SegmentId) -> io::Result<bool> {
+        let _guard = self
+            .mutation
+            .lock()
+            .expect("storage coordinator mutex poisoned");
+        self.ensure_rec_mounted()?;
+        let mut matched = false;
+        for entry in match fs::read_dir(self.rec_dir.as_ref()) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        } {
+            let entry = entry?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Some(artifact) = parse_recording_artifact_filename(&name) else {
+                continue;
+            };
+            if artifact.state == RecordingArtifactState::CommittedOpen
+                && artifact.seq == id
+                && artifact.facts.session == session
+            {
+                if matched || !entry.file_type()?.is_file() || entry.metadata()?.len() == 0 {
+                    return Ok(false);
+                }
+                matched = true;
+            }
+        }
+        Ok(matched)
+    }
+
+    pub fn validate_finalized(&self, session: u64, id: SegmentId) -> io::Result<bool> {
+        let _guard = self
+            .mutation
+            .lock()
+            .expect("storage coordinator mutex poisoned");
+        self.ensure_rec_mounted()?;
+        let Some(candidate) = resolve_segment(self.rec_dir.as_ref(), id)? else {
+            return Ok(false);
+        };
+        Ok(candidate.bytes > 0
+            && candidate
+                .facts
+                .is_some_and(|facts| facts.session == session && facts.dur_ms.is_some()))
+    }
+
+    /// Reconcile the recording directory after its owning Python process is gone.
+    /// Pending artifacts were never published and are removed. Committed-open
+    /// artifacts already crossed the durable publication point, so they become
+    /// ordinary finalized segments even when their duration cannot be recovered.
+    pub fn reconcile_recording_artifacts(&self) -> io::Result<RecordingReconcileReport> {
+        let _guard = self
+            .mutation
+            .lock()
+            .expect("storage coordinator mutex poisoned");
+        self.ensure_rec_mounted()?;
+        let rec_dir = self.rec_dir.as_ref();
+        let entries = match fs::read_dir(rec_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return Ok(RecordingReconcileReport::default())
+            }
+            Err(error) => return Err(error),
+        };
+
+        let mut artifacts = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if let Some(artifact) = parse_recording_artifact_filename(&name) {
+                artifacts.push((entry.path(), artifact));
+            }
+        }
+        artifacts.sort_by(|left, right| left.0.cmp(&right.0));
+        if let Some(max_id) = artifacts.iter().map(|(_, artifact)| artifact.seq).max() {
+            raise_witness_at_least(rec_dir, max_id)?;
+        }
+
+        let mut report = RecordingReconcileReport::default();
+        for (path, artifact) in artifacts {
+            match artifact.state {
+                RecordingArtifactState::Uncommitted => {
+                    fs::remove_file(&path)?;
+                    report.removed_uncommitted.push(path);
+                }
+                RecordingArtifactState::CommittedOpen => {
+                    let destination = rec_dir.join(stamped_segment_filename(
+                        artifact.seq,
+                        &SegmentFacts {
+                            dur_ms: None,
+                            ..artifact.facts
+                        },
+                    ));
+                    if destination.exists() {
+                        return Err(io::Error::new(
+                            ErrorKind::AlreadyExists,
+                            format!(
+                                "cannot reconcile {}: finalized destination {} already exists",
+                                path.display(),
+                                destination.display()
+                            ),
+                        ));
+                    }
+                    fs::rename(&path, &destination)?;
+                    report.finalized.push(artifact.seq);
+                }
+            }
+        }
+        if !report.removed_uncommitted.is_empty() || !report.finalized.is_empty() {
+            fsync_dir(rec_dir)?;
+        }
+        Ok(report)
     }
 
     pub fn delete_finished_segment(
@@ -238,6 +358,12 @@ pub enum DurationPersist {
 pub struct ScrubReport {
     pub deleted_ids: Vec<SegmentId>,
     pub repaired_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RecordingReconcileReport {
+    pub removed_uncommitted: Vec<PathBuf>,
+    pub finalized: Vec<SegmentId>,
 }
 
 #[derive(Debug)]
@@ -422,7 +548,10 @@ mod tests {
     use super::{state_path, DurationPersist, SegmentDeleteError, StorageCoordinator, STATE_DIR};
     use crate::{
         clips::resolve_segment,
-        recorder::{segment_filename, stamped_segment_filename, SegmentFacts, SegmentId},
+        recorder::{
+            recording_artifact_filename, segment_filename, stamped_segment_filename,
+            RecordingArtifactState, SegmentFacts, SegmentId,
+        },
     };
 
     #[test]
@@ -436,6 +565,73 @@ mod tests {
         write_segment(&rec_dir.path, 5);
         assert_eq!(coordinator.allocate_start_segment().unwrap(), 6);
         assert_eq!(read_high_water_seq(&rec_dir.path), 6);
+    }
+
+    #[test]
+    fn reconciliation_removes_uncommitted_and_finalizes_committed_open() {
+        let rec_dir = TempRecDir::new();
+        let pending_facts = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: 5,
+            mono_ms: 100,
+            dur_ms: None,
+        };
+        let open_facts = SegmentFacts {
+            session: 6,
+            mono_ms: 200,
+            ..pending_facts.clone()
+        };
+        let pending = rec_dir.path.join(recording_artifact_filename(
+            RecordingArtifactState::Uncommitted,
+            4,
+            &pending_facts,
+        ));
+        let open = rec_dir.path.join(recording_artifact_filename(
+            RecordingArtifactState::CommittedOpen,
+            5,
+            &open_facts,
+        ));
+        fs::write(&pending, b"not published").unwrap();
+        fs::write(&open, b"durable media").unwrap();
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        let report = coordinator.reconcile_recording_artifacts().unwrap();
+
+        assert_eq!(report.removed_uncommitted, [pending]);
+        assert_eq!(report.finalized, [5]);
+        assert!(!open.exists());
+        let finalized = rec_dir.path.join(stamped_segment_filename(5, &open_facts));
+        assert_eq!(fs::read(finalized).unwrap(), b"durable media");
+        assert!(read_high_water_seq(&rec_dir.path) >= 5);
+        assert_eq!(coordinator.allocate_start_segment().unwrap(), 6);
+        assert_eq!(
+            coordinator.reconcile_recording_artifacts().unwrap(),
+            super::RecordingReconcileReport::default()
+        );
+    }
+
+    #[test]
+    fn committed_open_validation_requires_exact_session_and_nonempty_bytes() {
+        let rec_dir = TempRecDir::new();
+        let facts = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: 9,
+            mono_ms: 100,
+            dur_ms: None,
+        };
+        let path = rec_dir.path.join(recording_artifact_filename(
+            RecordingArtifactState::CommittedOpen,
+            8,
+            &facts,
+        ));
+        fs::write(&path, b"").unwrap();
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        assert!(!coordinator.validate_committed_open(9, 8).unwrap());
+        fs::write(path, b"durable").unwrap();
+        assert!(coordinator.validate_committed_open(9, 8).unwrap());
+        assert!(!coordinator.validate_committed_open(10, 8).unwrap());
+        assert!(!coordinator.validate_committed_open(9, 7).unwrap());
     }
 
     #[test]

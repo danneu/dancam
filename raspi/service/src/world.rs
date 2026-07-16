@@ -142,11 +142,10 @@ impl World {
                 .into_iter()
                 .collect(),
             Input::Recorder(event) => self.apply_recorder_event(event, now_ms),
-            Input::SegmentRollover {
-                session,
-                finalized,
-                opened,
-            } => self.apply_segment_rollover(session, finalized, opened, now_ms),
+            Input::SegmentFinalized { session, finalized } => {
+                self.apply_segment_finalized(session, finalized)
+            }
+            Input::RecoveredClip { finalized } => vec![Event::ClipFinalized(finalized)],
             Input::ClipRemoved { id } => vec![Event::ClipRemoved { id }],
             Input::RecordingStopped { session, finalized } => {
                 self.apply_recording_stopped(session, finalized, now_ms)
@@ -251,37 +250,15 @@ impl World {
             .collect()
     }
 
-    fn apply_segment_rollover(
-        &mut self,
-        session: SessionId,
-        finalized: ClipMeta,
-        opened: SegmentId,
-        now_ms: u64,
-    ) -> Vec<Event> {
-        let closed = RecorderEvent::SegmentClosed {
-            session,
-            id: finalized.id,
-        };
-        if !self.recorder.apply(closed) {
-            return Vec::new();
-        }
-
-        let opened_event = RecorderEvent::SegmentOpened {
-            session,
-            id: opened,
-        };
-        if !self.recorder.apply(opened_event) {
-            return Vec::new();
-        }
-
-        vec![
-            Event::ClipFinalized(finalized),
-            Event::SegmentOpened {
+    fn apply_segment_finalized(&mut self, session: SessionId, finalized: ClipMeta) -> Vec<Event> {
+        self.recorder
+            .apply(RecorderEvent::SegmentClosed {
                 session,
-                id: opened,
-                at_ms: now_ms,
-            },
-        ]
+                id: finalized.id,
+            })
+            .then_some(Event::ClipFinalized(finalized))
+            .into_iter()
+            .collect()
     }
 
     fn apply_recording_stopped(
@@ -410,10 +387,12 @@ pub enum Input {
     },
     StopCommand,
     Recorder(RecorderEvent),
-    SegmentRollover {
+    SegmentFinalized {
         session: SessionId,
         finalized: ClipMeta,
-        opened: SegmentId,
+    },
+    RecoveredClip {
+        finalized: ClipMeta,
     },
     ClipRemoved {
         id: SegmentId,
@@ -626,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn rollover_finalizes_and_advances_floor_atomically() {
+    fn finalization_makes_old_segment_pullable_before_successor_opens() {
         let mut world = World::new(CameraState::Running);
         world.apply(Input::StartCommand { start_segment: 43 }, 5000);
         world.apply(
@@ -638,26 +617,15 @@ mod tests {
         );
 
         let events = world.apply(
-            Input::SegmentRollover {
+            Input::SegmentFinalized {
                 session: 44,
                 finalized: clip(43),
-                opened: 44,
             },
             8000,
         );
 
-        assert_eq!(
-            events,
-            vec![
-                Event::ClipFinalized(clip(43)),
-                Event::SegmentOpened {
-                    session: 44,
-                    id: 44,
-                    at_ms: 8000
-                }
-            ]
-        );
-        assert_eq!(world.current_segment(), Some(44));
+        assert_eq!(events, vec![Event::ClipFinalized(clip(43))]);
+        assert_eq!(world.current_segment(), None);
         assert_eq!(world.unpullable_from(), Some(44));
     }
 

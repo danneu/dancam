@@ -135,7 +135,8 @@ uname -a
 ## 4. Provision the system layer (Ansible)
 
 The Pi's onboard system state -- apt upgrade, the IMX708 camera overlay, the camera
-process dependencies (`python3-picamera2`, `ffmpeg`), mDNS scoping, the
+process dependencies (`python3-picamera2`, `python3-av`, plus `ffmpeg` as a media
+validator), mDNS scoping, the
 `en_US.UTF-8` locale, the `dancam-ap` access-point profile (without its password),
 the `dancam` service user's `video`-group membership, `/persist` and `/data` mounts,
 persistent journald backed by `/persist/journal`, `/data/rec` ownership, kernel
@@ -235,13 +236,14 @@ scp -i ~/.ssh/<your-key> <your-username>@dancam.local:/tmp/test.jpg ~/Desktop/da
 ## 6. Verify the camera process dependencies
 
 The production camera owner is a Python Picamera2 subprocess supervised by the Rust
-service. Provisioning (section 4) installed Picamera2 and `ffmpeg` from apt (not pip,
-so they match the Raspberry Pi OS libcamera stack, and without the desktop GUI
-recommends). Confirm the import path works -- the camera overlay from section 5 must
-already be enabled before the import/open path is useful on the Pi:
+service. Provisioning (section 4) installed Picamera2 and PyAV from apt, not pip, so
+they match the Raspberry Pi OS libcamera/libav stack and omit desktop GUI recommends.
+Confirm the exact deployed interpreter initializes both dependencies -- the camera
+overlay from section 5 must already be enabled before the camera open path is useful:
 
 ```sh
-python3 -c "from picamera2 import Picamera2; print('ok')"
+python3 -c "import av; from picamera2 import Picamera2; av.Packet(b''); print('ok')"
+sudo -u dancam python3 -c "import av; from picamera2 import Picamera2; av.Packet(b''); print('ok')"
 ```
 
 ## 7. Create the dev access point profile
@@ -405,33 +407,29 @@ headers. To eyeball the real camera feed, open the same URL in a browser or run:
 ffplay http://dancam.local:8080/v1/preview/live.mjpeg
 ```
 
-Smoke-test the camera owner directly on the Pi before trusting a longer run:
+Smoke-test the committed transaction through the real Rust service before trusting a
+longer run. Each start must return only after the first independently decodable access
+unit is durable; `time_total` must remain below 1 second:
 
 ```sh
-rm -rf ~/rec-smoke
-rm -f /tmp/dancam-camera-commands /tmp/dancam-preview.mjpeg /tmp/dancam-camera-events.log
-mkfifo /tmp/dancam-camera-commands
-python3 /usr/local/lib/dancam/camera.py \
-  --rec-dir ~/rec-smoke \
-  --preview-fps 10 \
-  < /tmp/dancam-camera-commands \
-  > /tmp/dancam-preview.mjpeg \
-  2> /tmp/dancam-camera-events.log &
-CAMERA_PID=$!
-exec 3> /tmp/dancam-camera-commands
-printf '{"cmd":"start_recording","session_id":1,"start_segment_index":0}\n' >&3
+curl -sS -o /dev/null -w 'cold start: %{time_total}s\n' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: smoke-start-1' \
+  -X POST http://127.0.0.1:8080/v1/recording/start
 sleep 35
-printf '{"cmd":"stop_recording"}\n' >&3
-printf '{"cmd":"start_recording","session_id":2,"start_segment_index":2}\n' >&3
+curl -fsS -o /dev/null \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: smoke-stop-1' \
+  -X POST http://127.0.0.1:8080/v1/recording/stop
+curl -sS -o /dev/null -w 'warm start: %{time_total}s\n' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: smoke-start-2' \
+  -X POST http://127.0.0.1:8080/v1/recording/start
 sleep 5
-printf '{"cmd":"stop_recording"}\n{"cmd":"shutdown"}\n' >&3
-exec 3>&-
-wait "$CAMERA_PID"
-grep -E '"ready"|"recording_started"|"recording_stopped"' /tmp/dancam-camera-events.log
-ls -lh ~/rec-smoke/seg_*.ts
-FIRST_SEGMENT="$(find ~/rec-smoke -maxdepth 1 -type f -name 'seg_*.ts' | sort | head -n1)"
+curl -fsS -o /dev/null \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: smoke-stop-2' \
+  -X POST http://127.0.0.1:8080/v1/recording/stop
+curl -fsS http://127.0.0.1:8080/v1/clips
+test -z "$(find /data/rec -maxdepth 1 -type f -name '.dancam-seg_*' -print -quit)"
+FIRST_SEGMENT="$(find /data/rec -maxdepth 1 -type f -name 'seg_*.ts' | sort | head -n1)"
 ffmpeg -v error -i "$FIRST_SEGMENT" -f null -
-rm -f /tmp/dancam-camera-commands
 ```
 
 For the real `jet` gate, run a longer room-temperature and warm soak, inspect CPU,

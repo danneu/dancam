@@ -375,7 +375,27 @@ enum ChildCommand {
         start_segment_index: SegmentId,
     },
     StopRecording,
+    AckSegment {
+        kind: SegmentAckKind,
+        session_id: u64,
+        id: SegmentId,
+    },
+    SegmentReserved {
+        session_id: u64,
+        id: SegmentId,
+    },
+    TransactionRejected {
+        session_id: u64,
+        detail: String,
+    },
     Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SegmentAckKind {
+    Opened,
+    Finalized,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, PartialEq)]
@@ -395,10 +415,15 @@ enum ChildEvent {
         session: u64,
         id: SegmentId,
     },
-    SegmentClosed {
+    SegmentFinalized {
         #[serde(rename = "session_id")]
         session: u64,
         id: SegmentId,
+        dur_ms: u64,
+    },
+    SegmentNeeded {
+        #[serde(rename = "session_id")]
+        session: u64,
     },
     RecordingStopped {
         #[serde(rename = "session_id")]
@@ -442,21 +467,27 @@ async fn supervise(
     match result {
         Ok(result) => result,
         Err(_) => {
-            let retirement = match child.take() {
+            let mut retirement = match child.take() {
                 Some(running) => {
                     retire_child(
                         running,
                         true,
                         Some(RetirementContext {
                             hub: &hub,
-                            storage,
-                            time_store,
+                            storage: storage.clone(),
+                            time_store: time_store.clone(),
                         }),
                     )
                     .await
                 }
                 None => Ok(()),
             };
+            if let Err(error) = reconcile_after_owner(storage, &hub, time_store).await {
+                retirement = Err(match retirement {
+                    Ok(()) => error,
+                    Err(retirement) => format!("{retirement}; {error}"),
+                });
+            }
             finish_shutdown(&frames_tx, &hub);
             match retirement {
                 Ok(()) => Err("camera supervisor panicked".to_string()),
@@ -514,6 +545,15 @@ async fn supervise_loop(
 
         if child.is_none() && tokio::time::Instant::now() >= next_spawn {
             hub.drive_now(Input::CameraState(CameraState::Starting));
+            if let Err(error) =
+                reconcile_after_owner(storage.clone(), &hub, time_store.clone()).await
+            {
+                tracing::error!(%error, "recording reconciliation blocked camera replacement");
+                hub.drive_now(Input::CameraState(CameraState::Restarting));
+                next_spawn = tokio::time::Instant::now() + backoff;
+                backoff = (backoff * 2).min(BACKOFF_CAP);
+                continue;
+            }
             match spawn_running_child(&config, frames_tx.clone()) {
                 Ok(running) => *child = Some(running),
                 Err(error) => {
@@ -557,6 +597,16 @@ async fn supervise_loop(
                     let _ =
                         retire_child(child.take().expect("executing child exists"), false, None)
                             .await;
+                    let detail = match reconcile_after_owner(
+                        storage.clone(),
+                        &hub,
+                        time_store.clone(),
+                    )
+                    .await
+                    {
+                        Ok(()) => detail,
+                        Err(error) => format!("{detail}; {error}"),
+                    };
                     note_child_lost(&frames_tx, &hub, &detail);
                     let _ = ack_tx.send(Err(error));
                     if started.elapsed() >= BACKOFF_RESET_AFTER {
@@ -575,6 +625,16 @@ async fn supervise_loop(
                     let _ =
                         retire_child(child.take().expect("executing child exists"), false, None)
                             .await;
+                    let detail = match reconcile_after_owner(
+                        storage.clone(),
+                        &hub,
+                        time_store.clone(),
+                    )
+                    .await
+                    {
+                        Ok(()) => detail,
+                        Err(error) => format!("{detail}; {error}"),
+                    };
                     note_child_lost(&frames_tx, &hub, &detail);
                     let _ = ack_tx.send(Err(error));
                     if started.elapsed() >= BACKOFF_RESET_AFTER {
@@ -643,12 +703,12 @@ async fn supervise_loop(
                         #[cfg(test)]
                         let panic_after_event = config.panic_after_segment_opened
                             && matches!(event, ChildEvent::SegmentOpened { .. });
-                        let fatal_detail = match &event {
+                        let mut fatal_detail = match &event {
                             ChildEvent::Error { detail } => Some(detail.clone()),
                             _ => None,
                         };
                         let running = child.as_mut().expect("child branch guarded");
-                        apply_child_event(
+                        let response = apply_child_event(
                             event,
                             &mut running.ready,
                             &mut running.event_state,
@@ -656,6 +716,14 @@ async fn supervise_loop(
                             storage.clone(),
                             time_store.clone(),
                         ).await;
+                        if let Some(response) = response {
+                            if let Err(error) = write_command(&mut running.stdin, &response).await {
+                                tracing::error!(?error, "failed to acknowledge camera lifecycle event");
+                                fatal_detail.get_or_insert_with(|| {
+                                    "camera lifecycle acknowledgement write failed".to_string()
+                                });
+                            }
+                        }
                         #[cfg(test)]
                         if panic_after_event {
                             panic!("injected supervisor panic after segment opened");
@@ -664,6 +732,10 @@ async fn supervise_loop(
                             let running = child.take().expect("fatal child exists");
                             let started = running.started;
                             let _ = retire_child(running, false, None).await;
+                            let detail = match reconcile_after_owner(storage.clone(), &hub, time_store.clone()).await {
+                                Ok(()) => detail,
+                                Err(error) => format!("{detail}; {error}"),
+                            };
                             note_child_lost(&frames_tx, &hub, &detail);
                             if started.elapsed() >= BACKOFF_RESET_AFTER {
                                 backoff = BACKOFF_BASE;
@@ -677,7 +749,11 @@ async fn supervise_loop(
                         let running = child.take().expect("child branch guarded");
                         let started = running.started;
                         let _ = retire_child(running, false, None).await;
-                        note_child_lost(&frames_tx, &hub, "camera process exited");
+                        let detail = match reconcile_after_owner(storage.clone(), &hub, time_store.clone()).await {
+                            Ok(()) => "camera process exited".to_string(),
+                            Err(error) => format!("camera process exited; {error}"),
+                        };
+                        note_child_lost(&frames_tx, &hub, &detail);
                         if started.elapsed() >= BACKOFF_RESET_AFTER {
                             backoff = BACKOFF_BASE;
                         }
@@ -737,7 +813,8 @@ struct RunningChild {
 #[derive(Default)]
 struct ChildEventState {
     last_opened: Option<(u64, SegmentId)>,
-    pending_closed: Option<(u64, SegmentId)>,
+    last_finalized: Option<(u64, SegmentId)>,
+    reserved: Option<(u64, SegmentId)>,
 }
 
 fn spawn_running_child(
@@ -877,16 +954,7 @@ async fn execute_command(
         storage,
         time_store,
     };
-    let failure = match write_until_terminal(
-        child,
-        &active,
-        command.deadline,
-        hub,
-        &event_context,
-        shutdown_rx,
-    )
-    .await
-    {
+    let failure = match write_until_terminal(child, &active, command.deadline, shutdown_rx).await {
         Ok(()) => wait_for_target(
             child,
             &active,
@@ -986,30 +1054,18 @@ async fn write_until_terminal(
     child: &mut RunningChild,
     active: &ActiveCommand,
     deadline: tokio::time::Instant,
-    hub: &Arc<EventHub>,
-    event_context: &EventContext,
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> Result<(), TerminalFailure> {
     let write = write_command(&mut child.stdin, &active.child_command);
     tokio::pin!(write);
-    loop {
-        tokio::select! {
-            result = &mut write => return result.map_err(|_| TerminalFailure::Write),
-            event = child.events_rx.recv(), if child.events_open => match event {
-                Some(event) => {
-                    if let Some(detail) = apply_command_event(event, &mut child.ready, &mut child.event_state, hub, event_context.storage.clone(), event_context.time_store.clone()).await {
-                        return Err(TerminalFailure::ChildError(detail));
-                    }
-                }
-                None => child.events_open = false,
-            },
+    tokio::select! {
+            result = &mut write => result.map_err(|_| TerminalFailure::Write),
             result = child.process.wait() => {
                 if let Err(error) = result { tracing::warn!(%error, "failed waiting for camera child"); }
-                return Err(TerminalFailure::Exited);
+                Err(TerminalFailure::Exited)
             }
-            _ = tokio::time::sleep_until(deadline) => return Err(TerminalFailure::Timeout),
-            _ = &mut *shutdown_rx => return Err(TerminalFailure::Shutdown),
-        }
+            _ = tokio::time::sleep_until(deadline) => Err(TerminalFailure::Timeout),
+            _ = &mut *shutdown_rx => Err(TerminalFailure::Shutdown),
     }
 }
 
@@ -1038,7 +1094,7 @@ async fn wait_for_target(
         tokio::select! {
             event = child.events_rx.recv(), if child.events_open => match event {
                 Some(event) => {
-                    if let Some(detail) = apply_command_event(event, &mut child.ready, &mut child.event_state, hub, event_context.storage.clone(), event_context.time_store.clone()).await {
+                    if let Some(detail) = apply_command_event(child, event, hub, event_context.storage.clone(), event_context.time_store.clone()).await {
                         return Err(CommandFailure::Terminal(TerminalFailure::ChildError(detail)));
                     }
                 }
@@ -1055,9 +1111,8 @@ async fn wait_for_target(
 }
 
 async fn apply_command_event(
+    child: &mut RunningChild,
     event: ChildEvent,
-    ready: &mut bool,
-    event_state: &mut ChildEventState,
     hub: &Arc<EventHub>,
     storage: Arc<StorageCoordinator>,
     time_store: Arc<TimeStore>,
@@ -1066,7 +1121,20 @@ async fn apply_command_event(
         ChildEvent::Error { detail } => Some(detail.clone()),
         _ => None,
     };
-    apply_child_event(event, ready, event_state, hub, storage, time_store).await;
+    let response = apply_child_event(
+        event,
+        &mut child.ready,
+        &mut child.event_state,
+        hub,
+        storage,
+        time_store,
+    )
+    .await;
+    if let Some(response) = response {
+        if write_command(&mut child.stdin, &response).await.is_err() {
+            return Some("camera lifecycle acknowledgement write failed".to_string());
+        }
+    }
     detail
 }
 
@@ -1081,7 +1149,7 @@ async fn drain_delivered_events(
         if let ChildEvent::Error { detail } = &event {
             failure.get_or_insert_with(|| detail.clone());
         }
-        apply_child_event(
+        let _ = apply_child_event(
             event,
             &mut child.ready,
             &mut child.event_state,
@@ -1107,7 +1175,7 @@ struct RetirementContext<'a> {
 async fn retire_child(
     mut child: RunningChild,
     graceful: bool,
-    context: Option<RetirementContext<'_>>,
+    mut context: Option<RetirementContext<'_>>,
 ) -> Result<(), String> {
     let mut failure = None;
     if graceful {
@@ -1128,16 +1196,44 @@ async fn retire_child(
         }
 
         if failure.is_none() {
-            match tokio::time::timeout(SHUTDOWN_TIMEOUT, child.process.wait()).await {
-                Ok(Ok(status)) if status.success() => {}
-                Ok(Ok(status)) => {
-                    failure = Some(format!(
-                        "camera child exited unsuccessfully during shutdown: {status}"
-                    ));
-                }
-                Ok(Err(error)) => failure = Some(format!("failed to reap camera child: {error}")),
-                Err(_) => {
-                    failure = Some("camera child exceeded graceful shutdown deadline".to_string())
+            let deadline = tokio::time::Instant::now() + SHUTDOWN_TIMEOUT;
+            loop {
+                tokio::select! {
+                    result = child.process.wait() => {
+                        match result {
+                            Ok(status) if status.success() => {}
+                            Ok(status) => failure = Some(format!(
+                                "camera child exited unsuccessfully during shutdown: {status}"
+                            )),
+                            Err(error) => failure = Some(format!("failed to reap camera child: {error}")),
+                        }
+                        break;
+                    }
+                    event = child.events_rx.recv(), if child.events_open => match event {
+                        Some(event) => {
+                            if let Some(context) = context.as_ref() {
+                                let response = apply_child_event(
+                                    event,
+                                    &mut child.ready,
+                                    &mut child.event_state,
+                                    context.hub,
+                                    context.storage.clone(),
+                                    context.time_store.clone(),
+                                ).await;
+                                if let Some(response) = response {
+                                    if write_command(&mut child.stdin, &response).await.is_err() {
+                                        failure = Some("camera lifecycle acknowledgement failed during shutdown".to_string());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        None => child.events_open = false,
+                    },
+                    _ = tokio::time::sleep_until(deadline) => {
+                        failure = Some("camera child exceeded graceful shutdown deadline".to_string());
+                        break;
+                    }
                 }
             }
         }
@@ -1168,7 +1264,7 @@ async fn retire_child(
     join_reader(&mut child.stderr_task, "stderr", &mut failure).await;
     join_reader(&mut child.stdout_task, "stdout", &mut failure).await;
 
-    if let Some(context) = context {
+    if let Some(context) = context.take() {
         if let Some(detail) =
             drain_delivered_events(&mut child, context.hub, context.storage, context.time_store)
                 .await
@@ -1214,6 +1310,40 @@ async fn join_reader(
 fn finish_child(child: RunningChild) {
     child.stdout_task.abort();
     child.stderr_task.abort();
+}
+
+async fn reconcile_after_owner(
+    storage: Arc<StorageCoordinator>,
+    hub: &Arc<EventHub>,
+    time_store: Arc<TimeStore>,
+) -> Result<(), String> {
+    let reconcile_storage = storage.clone();
+    let report =
+        tokio::task::spawn_blocking(move || reconcile_storage.reconcile_recording_artifacts())
+            .await
+            .map_err(|error| format!("recording reconciliation task failed: {error}"))?
+            .map_err(|error| format!("recording reconciliation failed: {error}"))?;
+    let scrub_storage = storage.clone();
+    tokio::task::spawn_blocking(move || scrub_storage.scrub_unrecoverable_segments())
+        .await
+        .map_err(|error| format!("recording scrub task failed: {error}"))?
+        .map_err(|error| format!("recording scrub failed: {error}"))?;
+
+    for id in report.finalized {
+        let Some(finalized) = finalized_clip_meta(storage.clone(), id, time_store.clone()).await
+        else {
+            return Err(format!("failed to publish reconciled segment {id}"));
+        };
+        if hub.current_segment() == Some(id) && hub.session() == finalized.session.unwrap_or(0) {
+            hub.drive_now(Input::SegmentFinalized {
+                session: hub.session(),
+                finalized,
+            });
+        } else {
+            hub.drive_now(Input::RecoveredClip { finalized });
+        }
+    }
+    Ok(())
 }
 
 fn note_child_lost(frames_tx: &watch::Sender<Option<Bytes>>, hub: &EventHub, detail: &str) {
@@ -1322,88 +1452,195 @@ async fn apply_child_event(
     hub: &Arc<EventHub>,
     storage: Arc<StorageCoordinator>,
     time_store: Arc<TimeStore>,
-) {
+) -> Option<ChildCommand> {
     match event {
         ChildEvent::Ready => {
             *ready = true;
             hub.drive_now(Input::CameraState(CameraState::Running));
+            None
         }
         ChildEvent::SensorTemp { celsius } => {
             hub.drive_now(Input::SensorTemp {
                 celsius: celsius.filter(|value| value.is_finite()),
             });
+            None
         }
         ChildEvent::RecordingStarted { session } => {
-            hub.drive_now(Input::Recorder(RecorderEvent::RecordingStarted { session }));
+            tracing::warn!(session, "ignoring obsolete recording_started truth claim");
+            None
         }
         ChildEvent::SegmentOpened { session, id } => {
-            if let Some((closed_session, closed_id)) = event_state.pending_closed.take() {
-                if closed_session == session {
-                    match finalized_clip_meta(storage.clone(), closed_id, time_store.clone()).await
-                    {
-                        Some(finalized) => {
-                            hub.drive_now(Input::SegmentRollover {
-                                session,
-                                finalized,
-                                opened: id,
-                            });
-                            event_state.last_opened = Some((session, id));
-                        }
-                        None => {
-                            hub.drive_now(Input::Fail {
-                                detail: format!("failed to stat finalized segment {closed_id}"),
-                            });
-                        }
-                    }
-                } else {
-                    tracing::warn!(
-                        closed_session,
-                        opened_session = session,
-                        "dropping cross-session segment rollover"
-                    );
-                    hub.drive_now(Input::Recorder(RecorderEvent::SegmentOpened {
-                        session,
-                        id,
-                    }));
-                    event_state.last_opened = Some((session, id));
-                }
-            } else {
-                hub.drive_now(Input::Recorder(RecorderEvent::SegmentOpened {
+            if event_state.last_opened == Some((session, id)) {
+                return Some(ChildCommand::AckSegment {
+                    kind: SegmentAckKind::Opened,
+                    session_id: session,
+                    id,
+                });
+            }
+            let expected = event_state
+                .reserved
+                .map_or_else(|| hub.unpullable_from(), |(_, id)| Some(id));
+            if session != hub.session() || expected != Some(id) {
+                tracing::warn!(
                     session,
                     id,
-                }));
-                event_state.last_opened = Some((session, id));
+                    live_session = hub.session(),
+                    ?expected,
+                    "dropping unexpected segment_opened"
+                );
+                return None;
             }
+            let check_storage = storage.clone();
+            let durable = tokio::task::spawn_blocking(move || {
+                check_storage.validate_committed_open(session, id)
+            })
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false);
+            if !durable {
+                hub.drive_now(Input::Fail {
+                    detail: format!("segment {id} was not durably committed-open"),
+                });
+                return None;
+            }
+            let accepted = !hub
+                .drive_now(Input::Recorder(RecorderEvent::SegmentOpened {
+                    session,
+                    id,
+                }))
+                .is_empty();
+            if !accepted {
+                return None;
+            }
+            event_state.last_opened = Some((session, id));
+            event_state.reserved = None;
+            Some(ChildCommand::AckSegment {
+                kind: SegmentAckKind::Opened,
+                session_id: session,
+                id,
+            })
         }
-        ChildEvent::SegmentClosed { session, id } => {
-            event_state.pending_closed = Some((session, id))
+        ChildEvent::SegmentFinalized {
+            session,
+            id,
+            dur_ms,
+        } => {
+            if event_state.last_finalized == Some((session, id)) {
+                return Some(ChildCommand::AckSegment {
+                    kind: SegmentAckKind::Finalized,
+                    session_id: session,
+                    id,
+                });
+            }
+            if event_state.last_opened != Some((session, id)) || session != hub.session() {
+                tracing::warn!(
+                    session,
+                    id,
+                    live_session = hub.session(),
+                    "dropping unexpected segment_finalized"
+                );
+                return None;
+            }
+            let check_storage = storage.clone();
+            let durable =
+                tokio::task::spawn_blocking(move || check_storage.validate_finalized(session, id))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or(false);
+            if !durable {
+                hub.drive_now(Input::Fail {
+                    detail: format!("segment {id} was not durably finalized"),
+                });
+                return None;
+            }
+            let Some(finalized) = finalized_clip_meta(storage, id, time_store).await else {
+                hub.drive_now(Input::Fail {
+                    detail: format!("failed to stat finalized segment {id}"),
+                });
+                return None;
+            };
+            if finalized.dur_ms != Some(dur_ms) {
+                hub.drive_now(Input::Fail {
+                    detail: format!("segment {id} duration disagreed with durable media"),
+                });
+                return None;
+            }
+            let accepted = !hub
+                .drive_now(Input::SegmentFinalized { session, finalized })
+                .is_empty();
+            if !accepted {
+                return None;
+            }
+            event_state.last_finalized = Some((session, id));
+            Some(ChildCommand::AckSegment {
+                kind: SegmentAckKind::Finalized,
+                session_id: session,
+                id,
+            })
+        }
+        ChildEvent::SegmentNeeded { session } => {
+            if let Some((reserved_session, id)) = event_state.reserved {
+                return (reserved_session == session).then_some(ChildCommand::SegmentReserved {
+                    session_id: session,
+                    id,
+                });
+            }
+            if session != hub.session()
+                || hub.phase() != RecorderPhase::Recording
+                || hub.snapshot().recorder.current_segment.is_some()
+            {
+                tracing::warn!(
+                    session,
+                    live_session = hub.session(),
+                    "dropping unexpected segment_needed"
+                );
+                return None;
+            }
+            let reserve_storage = storage;
+            match tokio::task::spawn_blocking(move || reserve_storage.allocate_start_segment())
+                .await
+            {
+                Ok(Ok(id)) => {
+                    event_state.reserved = Some((session, id));
+                    Some(ChildCommand::SegmentReserved {
+                        session_id: session,
+                        id,
+                    })
+                }
+                Ok(Err(error)) => Some(ChildCommand::TransactionRejected {
+                    session_id: session,
+                    detail: format!("segment reservation failed: {error}"),
+                }),
+                Err(error) => Some(ChildCommand::TransactionRejected {
+                    session_id: session,
+                    detail: format!("segment reservation task failed: {error}"),
+                }),
+            }
         }
         ChildEvent::RecordingStopped { session } => {
-            let mut final_stat_failed = false;
-            let finalized = match event_state.last_opened {
-                Some((opened_session, id)) if opened_session == session => {
-                    match finalized_clip_meta(storage, id, time_store).await {
-                        Some(finalized) => Some(finalized),
-                        None => {
-                            final_stat_failed = true;
-                            hub.drive_now(Input::Fail {
-                                detail: format!("failed to stat final segment {id}"),
-                            });
-                            None
-                        }
-                    }
+            if let Some((opened_session, id)) = event_state.last_opened {
+                if opened_session == session && event_state.last_finalized != Some((session, id)) {
+                    hub.drive_now(Input::Fail {
+                        detail: format!("failed to stat final segment {id}"),
+                    });
+                    return None;
                 }
-                _ => None,
-            };
-            if !final_stat_failed {
-                hub.drive_now(Input::RecordingStopped { session, finalized });
             }
-            event_state.pending_closed = None;
+            hub.drive_now(Input::RecordingStopped {
+                session,
+                finalized: None,
+            });
             event_state.last_opened = None;
+            event_state.last_finalized = None;
+            event_state.reserved = None;
+            None
         }
         ChildEvent::Error { detail } => {
             tracing::error!(%detail, "camera child error event");
             hub.drive_now(Input::Fail { detail });
+            None
         }
     }
 }
@@ -1520,13 +1757,6 @@ mod tests {
             )
             .unwrap(),
             ChildEvent::SegmentOpened { session: 7, id: 5 }
-        );
-        assert_eq!(
-            serde_json::from_str::<ChildEvent>(
-                r#"{"event":"segment_closed","session_id":7,"id":5}"#
-            )
-            .unwrap(),
-            ChildEvent::SegmentClosed { session: 7, id: 5 }
         );
         assert_eq!(
             serde_json::from_str::<ChildEvent>(r#"{"event":"recording_stopped","session_id":7}"#)
@@ -1737,6 +1967,7 @@ mod tests {
         let rec_dir = std::env::temp_dir().join(format!("dancam-blocked-allocation-{nonce}"));
         let script = r#"
 import json, sys, threading
+from pathlib import Path
 print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
 threading.Timer(0.05, lambda: print(json.dumps({"event":"sensor_temp","celsius":42.0}), file=sys.stderr, flush=True)).start()
 for line in sys.stdin:
@@ -1744,7 +1975,11 @@ for line in sys.stdin:
     if command["cmd"] == "shutdown":
         sys.exit(0)
     if command["cmd"] == "start_recording":
-        print(json.dumps({"event":"recording_started","session_id":command["session_id"]}), file=sys.stderr, flush=True)
+        session = command["session_id"]
+        seq = command["start_segment_index"]
+        path = Path(sys.argv[-1]) / f".dancam-seg_{seq:05d}_abc123def456_{session}_1.open.ts"
+        path.write_bytes(b"segment")
+        print(json.dumps({"event":"segment_opened","session_id":session,"id":seq}), file=sys.stderr, flush=True)
 "#;
         let config = CameraConfig::new(
             "python3",
@@ -1984,11 +2219,13 @@ printf '%s\n' '{"event":"ready"}' >&2
 while IFS= read -r line; do
   case "$line" in
     *start_recording*)
-      printf segment > "$1/seg_00000.ts"
-      printf '%s\n' '{"event":"recording_started","session_id":1}' >&2
+      cp "$2" "$1/.dancam-seg_00000_abc123def456_1_1.open.ts"
+      printf '%s\n' '{"event":"segment_opened","session_id":1,"id":0}' >&2
       printf '%s\n' '{"event":"segment_opened","session_id":1,"id":0}' >&2
       ;;
     *shutdown*)
+      mv "$1/.dancam-seg_00000_abc123def456_1_1.open.ts" "$1/seg_00000_abc123def456_1_1_30000.ts"
+      printf '%s\n' '{"event":"segment_finalized","session_id":1,"id":0,"dur_ms":30000}' >&2
       printf '%s\n' '{"event":"recording_stopped","session_id":1}' >&2
       exit 0
       ;;
@@ -2002,6 +2239,10 @@ done
                 script.to_string(),
                 "camera-test".to_string(),
                 rec_dir.to_string_lossy().to_string(),
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets/clips/seg_00000.ts")
+                    .to_string_lossy()
+                    .to_string(),
                 "--rec-dir".to_string(),
                 rec_dir.to_string_lossy().to_string(),
             ],
@@ -2023,7 +2264,14 @@ done
         assert!(error.contains("camera supervisor panicked"));
         assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Idle);
         assert_eq!(backend.snapshot().camera_state, CameraState::Offline);
-        assert!(fs::metadata(rec_dir.join("seg_00000.ts")).unwrap().len() > 0);
+        assert!(fs::read_dir(&rec_dir).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("seg_00000_")
+                && entry.metadata().unwrap().len() > 0
+        }));
         let _ = fs::remove_dir_all(rec_dir);
     }
 
