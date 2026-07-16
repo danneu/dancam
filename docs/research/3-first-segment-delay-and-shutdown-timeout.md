@@ -350,3 +350,83 @@ reported `Result=success`, `ExecMainStatus=0`, `ActiveState=inactive`, and
 `SubState=dead`. The journal showed no camera/libcamera initialization between the
 shutdown signal and deactivation. The last nonempty segment passed `ffmpeg -v error
 -i <segment> -f null -`, and the service restarted recording-ready after the check.
+
+## 10. Direct per-segment PyAV qualification -- 2026-07-16
+
+Direct per-segment PyAV is the first qualifying muxer candidate. The later explicit
+libav helper, FFmpeg CLI/source-trace, and other native-muxer ladder entries were not
+attempted because selection stops at the first candidate that passes every gate.
+
+The real Pi ran Python 3.13.5, PyAV 14.2.0, Picamera2 0.3.36, and Debian/Raspberry Pi
+FFmpeg `7.1.5-0+deb13u1+rpt1`. The throwaway owner retained the deployed Picamera2
+capture, preview, and hardware H.264 encoder shape, but replaced `FfmpegOutput` and
+the segment muxer with one ordinary PyAV MPEG-TS output container at a time. It
+assigned the configured 30 fps timeline explicitly and closed the old container
+before opening the next one. No product file changed.
+
+The Rust service was stopped and idle for every candidate measurement. The harness
+waited for the owner `ready` event before sending `start_recording`; no `/v1/clips`
+request ran concurrently. Start receipt and durable publication used the same
+Pi-kernel `CLOCK_BOOTTIME` clock. Publication followed PyAV packet mux, forced packet
+flush, file `fdatasync`, and recording-directory `fsync`. At that exact point the
+harness copied only the reported durable byte count and independently decoded one
+complete frame from that prefix.
+
+Two setup corrections preceded the qualifying campaign:
+
+- The first launch never entered a measurement window. Picamera2 rejected the
+  wrapper with `Must pass Output` before encoder start because the throwaway class
+  did not yet inherit Picamera2's required `Output` base. It created no media.
+- The first complete campaign lazily imported PyAV and the H.264 encoder class after
+  start receipt. Its five cold results were 1694.969, 2290.656, 1742.922, 1427.596,
+  and 1825.275 ms, so that prototype shape failed the gate; its five already-loaded
+  second sessions were 97.439-109.249 ms. Moving candidate initialization before
+  `ready` made the readiness claim honest, without changing Picamera2, Rust, HTTP,
+  or any qualification gate. The complete campaign was then rerun from scratch.
+
+The qualifying campaign produced these candidate-local publication latencies:
+
+| Trial | Cold first session (ms) | Warm second session (ms) |
+| ---: | ---: | ---: |
+| 1 | 437.510 | 101.763 |
+| 2 | 364.773 | 142.554 |
+| 3 | 358.373 | 94.739 |
+| 4 | 360.648 | 106.566 |
+| 5 | 360.405 | 90.008 |
+
+Every result is below 1 second. The cold median was 360.648 ms and the warm median
+was 101.763 ms. The ten synced publication prefixes were 18,236-23,876 bytes; every
+one independently demuxed and decoded a complete frame with no FFmpeg error.
+
+The media and lifecycle gates also passed:
+
+- The 35-second run closed its first segment at exactly 900 packets and
+  30.000 seconds. Its next segment contained 142 packets before stop.
+- Across all 11 ordinary campaign segments, the first PTS and DTS were zero,
+  `PTS == DTS` for every packet, DTS was strictly increasing, and every adjacent
+  delta was exactly 3000 ticks at the MPEG-TS 90 kHz time base. Every segment began
+  with a keyframe carrying SPS, PPS, and IDR NAL units and decoded in full without
+  error.
+- Each of five second sessions created a distinct file. The SHA-256 digest of the
+  first session's first segment remained unchanged after the second session.
+- All ten normal stops reported the PyAV container and underlying file released,
+  with no child process. Every owner then shut down with exit status 0, and no
+  throwaway owner or FFmpeg process remained.
+- Malformed JSON before start emitted an explicit parse error, created no segment,
+  and did not resemble a recording. Synthetic open, write, mux, sync, and close
+  failures each emitted their named error and terminated the owner nonzero: open
+  and close exited 1; write, mux, and sync exited 70 from the encoder callback.
+
+The 35-second recording-load run reached 107,708 KiB owner RSS, 47.236 C SoC, and
+47.0 C sensor temperature. The maximum across all five qualifying trials was
+111,728 KiB RSS. `vcgencmd get_throttled` remained `0x0`, the kernel journal showed
+no OOM kill or throttling event, and the exact 900-packet/30-second first segment
+showed no dropped recording frame. This was the investigation sanity run, not the
+successor's matched room-temperature and thermal-equilibrium soak campaign.
+
+Before each direct campaign the deployed owner hash matched the repository's
+`raspi/camera/camera.py`. After each campaign systemd restarted that committed owner,
+the throwaway processes were absent, and `/v1/status.recording_readiness.ready`
+returned true. The qualifying result selects direct per-segment PyAV for the
+successor implementation; only that committed implementation can provide the later
+end-to-end latency and durability-campaign evidence.
