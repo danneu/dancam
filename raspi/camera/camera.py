@@ -40,6 +40,9 @@ FAKE_SENSOR_TEMP_SPAN_C = 8.0
 U32_MAX = 0xFFFF_FFFF
 U64_MAX = 0xFFFF_FFFF_FFFF_FFFF
 BOOT_TAG_WIDTH = 12
+RECORDING_FAULT_ENV = "DANCAM_RECORDING_FAULT"
+# Acceptance-only operations; the deployed unit never sets this environment variable.
+RECORDING_FAULT_OPERATIONS = {"open", "write", "mux", "sync", "close", "finalize"}
 SEGMENT_RE = re.compile(r"^seg_([0-9]+)(?:_([0-9a-f]{12})_([0-9]+)_([0-9]+)(?:_([0-9]+))?)?\.ts$")
 ARTIFACT_RE = re.compile(
     r"^\.dancam-seg_([0-9]+)_([0-9a-f]{12})_([0-9]+)_([0-9]+)(\.pending|\.open\.ts)$"
@@ -222,6 +225,50 @@ def fsync_dir(path: Path) -> None:
     finally:
         os.close(fd)
 
+
+class RecordingFaults:
+    def __init__(self, spec: str | None):
+        self.operation: str | None = None
+        self.occurrence = 1
+        self.calls = 0
+        self.lock = threading.Lock()
+        if spec is None or not spec.strip():
+            return
+        match = re.fullmatch(r"([a-z]+)(?::([1-9][0-9]*))?", spec.strip())
+        if match is None or match.group(1) not in RECORDING_FAULT_OPERATIONS:
+            allowed = ", ".join(sorted(RECORDING_FAULT_OPERATIONS))
+            raise ValueError(
+                f"{RECORDING_FAULT_ENV} must be OPERATION[:OCCURRENCE], operation one of {allowed}"
+            )
+        self.operation = match.group(1)
+        if match.group(2) is not None:
+            self.occurrence = int(match.group(2))
+
+    def targets(self, operation: str) -> bool:
+        return self.operation == operation
+
+    def hit(self, operation: str) -> None:
+        if not self.targets(operation):
+            return
+        with self.lock:
+            self.calls += 1
+            if self.calls == self.occurrence:
+                raise OSError(errno.EIO, f"injected recording {operation} failure")
+
+
+class FaultingWriteFile:
+    def __init__(self, wrapped: Any, faults: RecordingFaults):
+        self.wrapped = wrapped
+        self.faults = faults
+
+    def write(self, data: Any) -> int:
+        self.faults.hit("write")
+        return self.wrapped.write(data)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.wrapped, name)
+
+
 class SensorTempSampler:
     def __init__(
         self,
@@ -333,12 +380,14 @@ class TransactionalFile:
         session_id: int,
         seq: int,
         exchange: LifecycleExchange,
+        faults: RecordingFaults | None = None,
     ):
         self.rec_dir = rec_dir
         self.boot_tag = boot_tag
         self.session_id = session_id
         self.seq = seq
         self.exchange = exchange
+        self.faults = faults or RecordingFaults(None)
         self.opened_mono_ms = mono_ms()
         self.pending_path = rec_dir / recording_artifact_filename(
             "uncommitted", seq, boot_tag, session_id, self.opened_mono_ms
@@ -346,13 +395,20 @@ class TransactionalFile:
         self.open_path = rec_dir / recording_artifact_filename(
             "committed_open", seq, boot_tag, session_id, self.opened_mono_ms
         )
-        self.file = self.pending_path.open("w+b", buffering=0)
+        self.faults.hit("open")
+        raw_file = self.pending_path.open("w+b", buffering=0)
+        self.file = (
+            FaultingWriteFile(raw_file, self.faults)
+            if self.faults.targets("write")
+            else raw_file
+        )
         self.committed = False
         self.frames = 0
         self.sync_shutdown = threading.Event()
         self.sync_thread: threading.Thread | None = None
 
     def sync(self) -> None:
+        self.faults.hit("sync")
         self.file.flush()
         if hasattr(os, "fdatasync"):
             os.fdatasync(self.file.fileno())
@@ -418,6 +474,7 @@ class TransactionalFile:
             self.pending_path.unlink(missing_ok=True)
             fsync_dir(self.rec_dir)
             return None
+        self.faults.hit("finalize")
         dur_ms = round(self.frames * 1000 / RECORDING_FPS)
         destination = self.rec_dir / stamped_segment_filename(
             self.seq,
@@ -435,6 +492,20 @@ class TransactionalFile:
 
 
 def run_self_test() -> int:
+    faults = RecordingFaults("mux:2")
+    faults.hit("mux")
+    try:
+        faults.hit("mux")
+        raise AssertionError("second mux fault occurrence did not fire")
+    except OSError as error:
+        assert error.errno == errno.EIO
+        assert "injected recording mux failure" in str(error)
+    try:
+        RecordingFaults("unknown")
+        raise AssertionError("invalid recording fault was accepted")
+    except ValueError:
+        pass
+
     assert compute_skip(30, 12) == 3
     assert compute_skip(30, 10) == 3
     assert compute_skip(30, 15) == 2
@@ -701,6 +772,7 @@ class FakeCameraDriver:
         frames: "queue.Queue[bytes]",
         shutdown: threading.Event,
         exchange: LifecycleExchange,
+        faults: RecordingFaults,
     ):
         self.rec_dir = rec_dir
         self.fake_sensor_fps = fake_sensor_fps
@@ -709,6 +781,7 @@ class FakeCameraDriver:
         self.frames = frames
         self.shutdown = shutdown
         self.exchange = exchange
+        self.faults = faults
         self.skip = compute_skip(fake_sensor_fps, preview_fps)
         self.boot_tag = read_boot_tag()
         self.preview_thread: threading.Thread | None = None
@@ -783,7 +856,12 @@ class FakeCameraDriver:
             raise RuntimeError("segment id outside u32 range")
         assert self.current_session_id is not None
         segment = TransactionalFile(
-            self.rec_dir, self.boot_tag, self.current_session_id, seq, self.exchange
+            self.rec_dir,
+            self.boot_tag,
+            self.current_session_id,
+            seq,
+            self.exchange,
+            self.faults,
         )
         segment.file.write(FAKE_SEGMENT[: 2 * 188])
         segment.frames = 2
@@ -839,6 +917,7 @@ def segmented_pyav_output_type(Output: type[Any], av: Any) -> type[Any]:
             session_id: int,
             start_segment_index: int,
             exchange: LifecycleExchange,
+            faults: RecordingFaults | None = None,
         ):
             super().__init__()
             self.needs_add_stream = True
@@ -847,6 +926,7 @@ def segmented_pyav_output_type(Output: type[Any], av: Any) -> type[Any]:
             self.session_id = session_id
             self.seq = start_segment_index
             self.exchange = exchange
+            self.faults = faults or RecordingFaults(None)
             self.transaction: TransactionalFile | None = None
             self.container: Any = None
             self.stream: Any = None
@@ -943,6 +1023,7 @@ def segmented_pyav_output_type(Output: type[Any], av: Any) -> type[Any]:
             encoded.time_base = Fraction(1, RECORDING_FPS)
             encoded.is_keyframe = keyframe
             encoded.stream = self.stream
+            self.faults.hit("mux")
             self.container.mux(encoded)
             self.transaction.frames += 1
             if not self.transaction.committed:
@@ -950,7 +1031,12 @@ def segmented_pyav_output_type(Output: type[Any], av: Any) -> type[Any]:
 
         def _open_container(self, seq: int) -> None:
             self.transaction = TransactionalFile(
-                self.rec_dir, self.boot_tag, self.session_id, seq, self.exchange
+                self.rec_dir,
+                self.boot_tag,
+                self.session_id,
+                seq,
+                self.exchange,
+                self.faults,
             )
             try:
                 self.container = av.open(
@@ -973,6 +1059,7 @@ def segmented_pyav_output_type(Output: type[Any], av: Any) -> type[Any]:
             self.transaction = None
             self.stream = None
             transaction.stop_periodic_sync()
+            self.faults.hit("close")
             container.close()
             transaction.finalize()
 
@@ -987,12 +1074,14 @@ class RealCameraDriver:
         frames: "queue.Queue[bytes]",
         shutdown: threading.Event,
         exchange: LifecycleExchange,
+        faults: RecordingFaults,
     ):
         self.rec_dir = rec_dir
         self.preview_fps = preview_fps
         self.frames = frames
         self.shutdown = shutdown
         self.exchange = exchange
+        self.faults = faults
         self.boot_tag = read_boot_tag()
         self.picam2: Any = None
         self.preview_encoder: Any = None
@@ -1074,6 +1163,7 @@ class RealCameraDriver:
             session_id,
             start_segment_index,
             self.exchange,
+            self.faults,
         )
         self.h264_encoder = H264Encoder(
             bitrate=10_000_000, repeat=True, iperiod=RECORDING_FPS
@@ -1116,6 +1206,11 @@ def run(args: argparse.Namespace) -> int:
     if args.fake_segment_secs <= 0:
         emit_event("error", detail="--fake-segment-secs must be positive")
         return 1
+    try:
+        faults = RecordingFaults(os.environ.get(RECORDING_FAULT_ENV))
+    except ValueError as error:
+        emit_event("error", detail=str(error))
+        return 1
 
     rec_dir = Path(args.rec_dir).expanduser()
     frames: "queue.Queue[bytes]" = queue.Queue(maxsize=1)
@@ -1136,6 +1231,7 @@ def run(args: argparse.Namespace) -> int:
             frames=frames,
             shutdown=shutdown,
             exchange=exchange,
+            faults=faults,
         )
     else:
         driver = RealCameraDriver(
@@ -1144,6 +1240,7 @@ def run(args: argparse.Namespace) -> int:
             frames=frames,
             shutdown=shutdown,
             exchange=exchange,
+            faults=faults,
         )
 
     try:

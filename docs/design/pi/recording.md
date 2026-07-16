@@ -133,6 +133,12 @@ Duplicates receive the already-committed acknowledgement without reapplying thei
 effect. Stale sessions, wrong sequences, and artifacts in the wrong durable state
 change nothing and receive no acknowledgement, which makes the owner fail closed.
 
+Deterministic acceptance can select one named lifecycle operation and occurrence
+through `DANCAM_RECORDING_FAULT=OPERATION[:OCCURRENCE]`. The owner injects an I/O
+failure at the actual open, write, mux, sync, close, or finalize boundary. It parses
+the selector before readiness, and the deployed systemd unit never sets it. This is
+an offline validation seam, not an HTTP capability or a runtime fallback.
+
 ## Recorder state machine
 
 The Rust service is the authority for recorder state. Its public snapshot contains:
@@ -596,3 +602,17 @@ Queue overflow remains fatal, and stop joins the worker before idle, so callback
 isolation does not weaken recording truth. Under the same loaded real-Pi harness,
 preview delivered 10.00 fps with a 184 ms maximum interval while recording retained
 its exact 30 fps timeline.
+
+### 2026-07-16 -- Keep lifecycle fault injection dormant in production
+
+The transactional protocol requires end-to-end proof at the concrete PyAV and
+filesystem operations, but permissions and process kills cannot deterministically
+reach write, mux, sync, or close boundaries. A disabled-by-default environment
+selector now fails one named operation and occurrence inside the committed owner.
+The service then observes the real owner exit, artifact state, reconciliation,
+public state, and replacement behavior.
+
+An HTTP fault endpoint was rejected because it would expose destructive validation
+behavior on the product surface. Throwaway owner patches were rejected because they
+cannot prove the committed service/owner boundary. The production unit omits the
+selector, so normal recording does not take an alternate muxer or lifecycle path.
