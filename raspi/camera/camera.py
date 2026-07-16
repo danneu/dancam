@@ -31,6 +31,7 @@ LIFECYCLE_DEADLINE_SECS = 2.0
 LIFECYCLE_RETRY_SECS = 0.25
 RECORDING_FPS = 30
 SEGMENT_FRAMES = 30 * RECORDING_FPS
+MUX_QUEUE_FRAMES = 4 * RECORDING_FPS
 SENSOR_TEMP_INTERVAL_SECS = 2.0
 SENSOR_TEMP_JOIN_TIMEOUT = 1.0
 FAKE_SENSOR_TEMP_BASE_C = 40.0
@@ -348,7 +349,8 @@ class TransactionalFile:
         self.file = self.pending_path.open("w+b", buffering=0)
         self.committed = False
         self.frames = 0
-        self.last_sync = time.monotonic()
+        self.sync_shutdown = threading.Event()
+        self.sync_thread: threading.Thread | None = None
 
     def sync(self) -> None:
         self.file.flush()
@@ -356,7 +358,6 @@ class TransactionalFile:
             os.fdatasync(self.file.fileno())
         else:
             os.fsync(self.file.fileno())
-        self.last_sync = time.monotonic()
 
     def commit(self) -> None:
         self.sync()
@@ -364,12 +365,34 @@ class TransactionalFile:
         fsync_dir(self.rec_dir)
         self.committed = True
         self.exchange.acknowledge("segment_opened", self.session_id, self.seq)
+        self.sync_thread = threading.Thread(
+            target=self._sync_loop,
+            name=f"segment-sync-{self.seq}",
+            daemon=True,
+        )
+        self.sync_thread.start()
 
-    def periodic_sync(self) -> None:
-        if time.monotonic() - self.last_sync >= INFLIGHT_FLUSH_INTERVAL_SECS:
-            self.sync()
+    def _sync_loop(self) -> None:
+        while not self.sync_shutdown.wait(INFLIGHT_FLUSH_INTERVAL_SECS):
+            try:
+                self.sync()
+            except BaseException as error:
+                emit_event(
+                    "error",
+                    detail=f"recording in-flight sync failed for segment {self.seq}: {error}",
+                )
+                os._exit(70)
+
+    def stop_periodic_sync(self) -> None:
+        self.sync_shutdown.set()
+        if self.sync_thread is not None:
+            self.sync_thread.join(timeout=1)
+            if self.sync_thread.is_alive():
+                raise TimeoutError(f"segment {self.seq} sync worker did not stop")
+            self.sync_thread = None
 
     def finalize(self) -> Path | None:
+        self.stop_periodic_sync()
         if not self.file.closed:
             self.sync()
             self.file.close()
@@ -575,6 +598,7 @@ def run_self_test() -> int:
         for access_unit, keyframe in access_units:
             output.outputframe(access_unit, keyframe=keyframe)
         output.stop()
+        assert output.mux_thread is None
         assert exchange.opened_prefix_decoded
         finalized = list(rec_dir.glob("seg_*.ts"))
         assert len(finalized) == 1
@@ -777,8 +801,6 @@ class FakeCameraDriver:
                         next_seq = self.exchange.reserve(self.current_session_id or 0)
                         self.segment = self._open_segment(next_seq)
                         self.segment_started_at = time.monotonic()
-                    elif self.segment is not None:
-                        self.segment.periodic_sync()
                 time.sleep(0.05)
         except Exception as error:
             emit_event("error", detail=f"fake recording lifecycle failed: {error}")
@@ -819,10 +841,20 @@ def segmented_pyav_output_type(Output: type[Any], av: Any) -> type[Any]:
             self.container: Any = None
             self.stream: Any = None
             self.stream_spec: tuple[str, dict[str, Any]] | None = None
+            self.mux_queue: "queue.Queue[tuple[bytes, bool] | None]" = queue.Queue(
+                maxsize=MUX_QUEUE_FRAMES
+            )
+            self.mux_thread: threading.Thread | None = None
 
         def start(self) -> None:
             self._open_container(self.seq)
             super().start()
+            self.mux_thread = threading.Thread(
+                target=self._mux_loop,
+                name=f"segment-mux-{self.session_id}",
+                daemon=True,
+            )
+            self.mux_thread.start()
 
         def _add_stream(self, encoder_stream: Any, codec_name: str, **kwargs: Any) -> None:
             if encoder_stream != "video" or codec_name != "h264":
@@ -850,35 +882,61 @@ def segmented_pyav_output_type(Output: type[Any], av: Any) -> type[Any]:
         ) -> None:
             del timestamp, packet
             try:
-                if audio or not self.recording or self.transaction is None:
+                if audio or not self.recording:
                     return
-                if self.stream is None:
-                    raise RuntimeError("H.264 stream was not initialized")
-                if self.transaction.frames == 0 and not keyframe:
-                    raise RuntimeError("segment did not begin with SPS/PPS/IDR")
-                if self.transaction.frames >= SEGMENT_FRAMES and keyframe:
-                    self._finalize_container()
-                    self.seq = self.exchange.reserve(self.session_id)
-                    self._open_container(self.seq)
-                encoded = av.Packet(bytes(frame))
-                encoded.pts = self.transaction.frames
-                encoded.dts = self.transaction.frames
-                encoded.time_base = Fraction(1, RECORDING_FPS)
-                encoded.is_keyframe = keyframe
-                encoded.stream = self.stream
-                self.container.mux(encoded)
-                self.transaction.frames += 1
-                if not self.transaction.committed:
-                    self.transaction.commit()
-                else:
-                    self.transaction.periodic_sync()
+                self.mux_queue.put_nowait((bytes(frame), keyframe))
+            except queue.Full:
+                emit_event("error", detail="recording mux queue overflowed")
+                os._exit(70)
             except BaseException as error:
                 emit_event("error", detail=f"recording mux lifecycle failed: {error}")
                 os._exit(70)
 
         def stop(self) -> None:
             super().stop()
-            self._finalize_container()
+            try:
+                self.mux_queue.put(None, timeout=LIFECYCLE_DEADLINE_SECS)
+            except queue.Full as error:
+                raise TimeoutError("recording mux queue did not drain for stop") from error
+            if self.mux_thread is not None:
+                self.mux_thread.join(timeout=LIFECYCLE_DEADLINE_SECS * 3)
+                if self.mux_thread.is_alive():
+                    raise TimeoutError("recording mux worker did not stop")
+                self.mux_thread = None
+
+        def _mux_loop(self) -> None:
+            try:
+                while True:
+                    item = self.mux_queue.get()
+                    if item is None:
+                        self._finalize_container()
+                        return
+                    frame, keyframe = item
+                    self._mux_frame(frame, keyframe)
+            except BaseException as error:
+                emit_event("error", detail=f"recording mux lifecycle failed: {error}")
+                os._exit(70)
+
+        def _mux_frame(self, frame: bytes, keyframe: bool) -> None:
+            if self.transaction is None or self.stream is None:
+                raise RuntimeError("H.264 stream was not initialized")
+            if self.transaction.frames == 0 and not keyframe:
+                raise RuntimeError("segment did not begin with SPS/PPS/IDR")
+            if self.transaction.frames >= SEGMENT_FRAMES and keyframe:
+                self._finalize_container()
+                self.seq = self.exchange.reserve(self.session_id)
+                self._open_container(self.seq)
+            assert self.transaction is not None
+            encoded = av.Packet(frame)
+            encoded.pts = self.transaction.frames
+            encoded.dts = self.transaction.frames
+            encoded.time_base = Fraction(1, RECORDING_FPS)
+            encoded.is_keyframe = keyframe
+            encoded.stream = self.stream
+            self.container.mux(encoded)
+            self.transaction.frames += 1
+            if not self.transaction.committed:
+                self.transaction.commit()
 
         def _open_container(self, seq: int) -> None:
             self.transaction = TransactionalFile(
@@ -904,6 +962,7 @@ def segmented_pyav_output_type(Output: type[Any], av: Any) -> type[Any]:
             self.container = None
             self.transaction = None
             self.stream = None
+            transaction.stop_periodic_sync()
             container.close()
             transaction.finalize()
 

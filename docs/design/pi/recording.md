@@ -72,9 +72,13 @@ Starting a recording attaches a Picamera2 `H264Encoder` to the main stream with:
 The encoder feeds a camera-owned output built directly on distro PyAV/libav. The
 owner imports and initializes PyAV before `ready`, opens one ordinary output-only
 MPEG-TS container per segment, and muxes each encoded H.264 access unit without an
-input demuxer or subprocess. It assigns packet PTS and DTS from a 30 fps frame
-counter, closes the old container before reserving or opening the next, and rolls on
-the first keyframe at or after 900 frames.
+input demuxer or subprocess. The Picamera2 output callback copies each complete
+access unit into a bounded queue; overflow is fatal rather than dropping recording
+frames. A dedicated mux worker assigns packet PTS and DTS from a 30 fps frame
+counter, performs the PyAV and transaction work, closes the old container before
+reserving or opening the next, and rolls on the first keyframe at or after 900
+frames. Keeping storage latency off Picamera2's callback path preserves preview
+delivery through publication, periodic sync, and rollover.
 
 MPEG-TS is the hot recording container because it remains structurally usable when
 power cuts through its tail. Short segments bound the footage exposed to one
@@ -577,3 +581,18 @@ and false lifecycle observations. Publishing a container header or incomplete ac
 unit was rejected because it would make start success survive only in memory, not as
 independently decodable footage. A runtime fallback ladder was rejected because it
 would restore the hidden lifecycle the transaction removes.
+
+### 2026-07-16 -- Isolate transactional mux work from camera callbacks
+
+The first committed real-Pi acceptance run kept recording exact but exposed preview
+stalls above the 200 ms gate. Moving periodic sync to its own thread removed random
+SD-writeback stalls, but first publication and rollover still produced 249 ms and
+233 ms gaps because those synchronous transaction boundaries ran inside Picamera2's
+encoded-frame callback.
+
+The decision made the callback a bounded access-unit handoff and moved PyAV muxing,
+sync, lifecycle acknowledgement, rollover, and finalization to a dedicated worker.
+Queue overflow remains fatal, and stop joins the worker before idle, so callback
+isolation does not weaken recording truth. Under the same loaded real-Pi harness,
+preview delivered 10.00 fps with a 184 ms maximum interval while recording retained
+its exact 30 fps timeline.
