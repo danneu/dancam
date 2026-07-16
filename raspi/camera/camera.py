@@ -304,9 +304,10 @@ class SensorTempSampler:
 
 
 class LifecycleExchange:
-    def __init__(self):
+    def __init__(self, emit: Callable[..., None] = emit_event):
         self.condition = threading.Condition()
         self.responses: dict[tuple[str, int, int | None], dict[str, Any]] = {}
+        self.emit = emit
 
     def deliver(self, command: dict[str, Any]) -> bool:
         cmd = command.get("cmd")
@@ -364,7 +365,7 @@ class LifecycleExchange:
                 if now >= deadline:
                     raise TimeoutError(f"{event} acknowledgement timed out")
                 if now >= next_emit:
-                    emit_event(event, **fields)
+                    self.emit(event, **fields)
                     next_emit = now + LIFECYCLE_RETRY_SECS
                 response = self.responses.pop(key, None)
                 if response is not None:
@@ -696,6 +697,38 @@ def run_self_test() -> int:
     assert exchange.deliver(
         {"cmd": "ack_segment", "kind": "opened", "session_id": 7, "id": 5}
     )
+
+    retry_events: list[tuple[str, dict[str, Any]]] = []
+    retry_exchange = LifecycleExchange(
+        emit=lambda event, **fields: retry_events.append((event, fields))
+    )
+    retry_error: list[BaseException] = []
+
+    def await_open_ack() -> None:
+        try:
+            retry_exchange.acknowledge(
+                "segment_opened", 7, 5, durable_bytes=4096
+            )
+        except BaseException as error:
+            retry_error.append(error)
+
+    retry_thread = threading.Thread(target=await_open_ack)
+    retry_thread.start()
+    retry_deadline = time.monotonic() + 1
+    while len(retry_events) < 2 and time.monotonic() < retry_deadline:
+        time.sleep(0.01)
+    assert len(retry_events) >= 2
+    assert retry_exchange.deliver(
+        {"cmd": "ack_segment", "kind": "opened", "session_id": 8, "id": 5}
+    )
+    time.sleep(0.05)
+    assert retry_thread.is_alive()
+    assert retry_exchange.deliver(
+        {"cmd": "ack_segment", "kind": "opened", "session_id": 7, "id": 5}
+    )
+    retry_thread.join(timeout=1)
+    assert not retry_thread.is_alive()
+    assert not retry_error
     return 0
 
 

@@ -565,6 +565,64 @@ async fn concurrent_start_and_stop_intents_dispatch_once() {
 }
 
 #[tokio::test]
+async fn stop_queued_behind_failed_start_resolves_without_stop_metadata() {
+    if !python3_available().await {
+        return;
+    }
+
+    const SCRIPT: &str = r#"
+import json, sys, time
+print(json.dumps({"event":"ready"}), file=sys.stderr, flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command["cmd"] == "shutdown":
+        sys.exit(0)
+    if command["cmd"] == "start_recording":
+        time.sleep(0.1)
+        print(json.dumps({"event":"error","detail":"injected start failure"}), file=sys.stderr, flush=True)
+        sys.exit(70)
+    if command["cmd"] == "stop_recording":
+        print(json.dumps({"event":"error","detail":"stop was dispatched after failed start"}), file=sys.stderr, flush=True)
+        sys.exit(71)
+"#;
+    let rec_dir = temp_rec_dir("queued-stop-failed-start");
+    let config = inline_camera_config(SCRIPT, &rec_dir, &[]);
+    let storage = storage_for(&rec_dir);
+    let (backend, control) = CameraProcess::spawn(config, storage.clone());
+    let app =
+        dancam::app(AppState::new(BOOT_ID.to_string(), backend.clone()).with_storage(storage));
+    wait_for_camera_state(&backend, CameraState::Running).await;
+
+    let start_app = app.clone();
+    let start = tokio::spawn(async move {
+        start_app
+            .oneshot(recording_request("/v1/recording/start"))
+            .await
+            .unwrap()
+    });
+    wait_for_recorder_phase(&backend, RecorderPhase::Starting).await;
+    let stop = app
+        .oneshot(recording_request("/v1/recording/stop"))
+        .await
+        .unwrap();
+    let start = start.await.unwrap();
+
+    assert_eq!(start.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(stop.status(), StatusCode::OK);
+    assert_eq!(backend.snapshot().recorder.phase, RecorderPhase::Error);
+    assert!(segment_ids(&rec_dir).is_empty());
+    assert!(!fs::read_dir(&rec_dir).unwrap().flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".dancam-seg_"))
+    }));
+
+    let _shutdown_result = control.shutdown().await;
+    let _ = fs::remove_dir_all(rec_dir);
+}
+
+#[tokio::test]
 async fn recording_http_preflight_reports_each_non_running_camera_state() {
     if !python3_available().await {
         return;

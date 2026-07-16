@@ -1716,18 +1716,20 @@ mod tests {
     };
 
     use super::{
-        classify_stderr_line, execute_command, finish_child, note_child_lost, retire_child,
-        supervise, CameraBackend, CameraConfig, CameraProcess, ChildCommand, ChildEvent,
-        ChildEventState, Command, CommandIntent, ExecuteOutcome, RunningChild, StartHandoffPause,
-        SupervisorControl,
+        apply_child_event, classify_stderr_line, execute_command, finish_child, note_child_lost,
+        retire_child, supervise, CameraBackend, CameraConfig, CameraProcess, ChildCommand,
+        ChildEvent, ChildEventState, Command, CommandIntent, ExecuteOutcome, RunningChild,
+        StartHandoffPause, SupervisorControl,
     };
     use crate::{
         backend::{Backend, BackendError},
         event_hub::EventHub,
-        recorder::RecorderPhase,
+        recorder::{
+            recording_artifact_filename, RecorderPhase, RecordingArtifactState, SegmentFacts,
+        },
         storage::StorageCoordinator,
         time_sync::TimeStore,
-        world::CameraState,
+        world::{CameraState, Input},
     };
 
     #[test]
@@ -1789,6 +1791,88 @@ mod tests {
         assert_eq!(classify_stderr_line("libcamera diagnostic").unwrap(), None);
         assert!(classify_stderr_line(r#"{"event":"future_event"}"#).is_err());
         assert!(classify_stderr_line(r#"{"event":"ready"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_event_guards_drop_stale_and_wrong_then_ack_duplicate() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let rec_dir = std::env::temp_dir().join(format!("dancam-event-guards-{nonce}"));
+        fs::create_dir_all(&rec_dir).unwrap();
+        let storage = Arc::new(StorageCoordinator::new(rec_dir.clone()));
+        let hub = Arc::new(EventHub::new(CameraState::Running));
+        hub.drive_now(Input::StartCommand { start_segment: 5 });
+        let facts = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: 6,
+            mono_ms: 1,
+            dur_ms: None,
+        };
+        let artifact = rec_dir.join(recording_artifact_filename(
+            RecordingArtifactState::CommittedOpen,
+            5,
+            &facts,
+        ));
+        fs::write(&artifact, b"durable").unwrap();
+        let mut ready = true;
+        let mut event_state = ChildEventState::default();
+        let time_store = Arc::new(TimeStore::in_memory());
+
+        for event in [
+            ChildEvent::SegmentOpened {
+                session: 7,
+                id: 5,
+                durable_bytes: 7,
+            },
+            ChildEvent::SegmentOpened {
+                session: 6,
+                id: 6,
+                durable_bytes: 7,
+            },
+        ] {
+            assert!(apply_child_event(
+                event,
+                &mut ready,
+                &mut event_state,
+                &hub,
+                storage.clone(),
+                time_store.clone(),
+            )
+            .await
+            .is_none());
+        }
+        assert_eq!(hub.phase(), RecorderPhase::Starting);
+        assert_eq!(hub.current_segment(), None);
+
+        for _ in 0..2 {
+            let response = apply_child_event(
+                ChildEvent::SegmentOpened {
+                    session: 6,
+                    id: 5,
+                    durable_bytes: 7,
+                },
+                &mut ready,
+                &mut event_state,
+                &hub,
+                storage.clone(),
+                time_store.clone(),
+            )
+            .await;
+            assert!(matches!(
+                response,
+                Some(ChildCommand::AckSegment {
+                    kind: super::SegmentAckKind::Opened,
+                    session_id: 6,
+                    id: 5,
+                })
+            ));
+        }
+        assert_eq!(hub.phase(), RecorderPhase::Recording);
+        assert_eq!(hub.current_segment(), Some(5));
+
+        let _ = fs::remove_dir_all(rec_dir);
     }
 
     #[tokio::test]
