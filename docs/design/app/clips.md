@@ -33,7 +33,11 @@ match the current request. A head is authoritative from its returned cursor thro
 the newest ID. A page is authoritative from its returned cursor up to, but excluding,
 its requested cursor. The feature intersects that interval with the authorized target,
 discarding overshoot clips and negative evidence below the target. Current-epoch
-`clip_finalized` facts and removal tombstones win over stale list contents.
+interval authority governs list rows, while removal tombstones win over responses that
+were already in flight when removal became known. A `clip_finalized` received while a
+list request is in flight likewise wins over that request's older positive or negative
+evidence. The protection ends with that request; a request issued after the event is
+authoritative and may replace or remove the event-created row.
 
 One central scheduler runs only with a fresh epoch, no in-flight request, and no page
 failure. A failed head or page settles once, retains refresh, browse, and incident
@@ -284,6 +288,21 @@ viewer:
   responses, and Home disappearance during shared recovery.
 
 ## Decision log
+
+### 2026-07-17: Scope finalized-row protection to requests already in flight
+
+The reducer previously protected every `clip_finalized` row for the rest of its
+coverage epoch. That made a list requested after the event unable to serve as the
+authoritative catalog: it could neither replace changed metadata nor prove that the row
+was absent. Protection now belongs to the request that was already in flight when the
+event arrived. Its older response cannot overwrite the ordered event, while every later
+request remains authoritative under the existing interval, tombstone, deletion,
+browsing, recovery, and incident rules.
+
+Clearing all event protection before applying any list response was rejected because a
+response already in flight is older than the event. Starting a new clip-list scheduling
+goal after finalization was rejected because the next ordinary request already provides
+the required authority without broadening network work.
 
 ### 2026-07-15: Centralize pagination behind fresh coverage epochs
 

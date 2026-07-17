@@ -851,14 +851,13 @@ struct AppFeatureTests {
 
         await store.send(.event(.clipFinalized(folded))) {
             $0.clips.clips = [folded]
-            $0.clips.clipFinalizeEpoch[3] = 1
+            $0.clips.request?.finalizedClipIDs = [3]
         }
         await store.send(.clips(.clipsResponse(epoch: 1, generation: 1, .success(stale)))) {
             $0.clips.clips = [folded] + stale.clips
             $0.clips.status = .idle
             $0.clips.hasLoadedOnce = true
             $0.clips.lastSuccessfulHeadEpoch = 1
-            $0.clips.clipFinalizeEpoch = [3: 1]
             $0.clips.inFlightRequests = []
             $0.clips.headRequest = nil
         }

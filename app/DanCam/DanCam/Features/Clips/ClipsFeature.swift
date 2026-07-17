@@ -20,7 +20,6 @@ enum ClipsFeature {
         var headEpoch = 0
         var lastSuccessfulHeadEpoch = 0
         var hasLoadedOnce = false
-        var clipFinalizeEpoch: [Int: Int] = [:]
 
         var epoch: ClipCoverageEpoch?
         var hasAuthoritativeCoverage = false
@@ -43,6 +42,7 @@ enum ClipsFeature {
             var cursor: ClipCursor?
             var target: ClipCursor?
             var advancesBrowseFrontier: Bool
+            var finalizedClipIDs: Set<Int> = []
         }
 
         static func == (lhs: State, rhs: State) -> Bool {
@@ -59,7 +59,6 @@ enum ClipsFeature {
                 && lhs.headEpoch == rhs.headEpoch
                 && lhs.lastSuccessfulHeadEpoch == rhs.lastSuccessfulHeadEpoch
                 && lhs.hasLoadedOnce == rhs.hasLoadedOnce
-                && lhs.clipFinalizeEpoch == rhs.clipFinalizeEpoch
         }
     }
 
@@ -136,9 +135,7 @@ enum ClipsFeature {
             return schedule(state: &state, dependencies: dependencies)
 
         case .clipFinalized(let clip):
-            if let epoch = state.epoch {
-                state.clipFinalizeEpoch[clip.id] = epoch.rawValue
-            }
+            state.request?.finalizedClipIDs.insert(clip.id)
             state.clips = merged(
                 existing: state.clips,
                 incoming: [clip],
@@ -347,14 +344,14 @@ enum ClipsFeature {
         let incoming = response.clips.filter { clip in
             clip.id >= lower
                 && (upper.map { clip.id < $0 } ?? true)
-                && state.clipFinalizeEpoch[clip.id] != request.epoch.rawValue
+                && request.finalizedClipIDs.contains(clip.id) == false
         }
         let incomingIDs = Set(incoming.map(\.id))
         let candidates = Set(state.clips.map(\.id)).union(state.pendingDeleteIDs)
         let authoritativeAbsent = candidates.filter { id in
             guard id >= lower, upper.map({ id < $0 }) ?? true else { return false }
             guard incomingIDs.contains(id) == false else { return false }
-            return state.clipFinalizeEpoch[id] != request.epoch.rawValue
+            return request.finalizedClipIDs.contains(id) == false
         }
         for id in authoritativeAbsent {
             state.removalTombstones[id] = state.requestSeq
@@ -377,7 +374,6 @@ enum ClipsFeature {
             state.nextCursor = lower == 0 ? nil : established
             state.userLoadMorePending = false
         }
-        state.clipFinalizeEpoch = state.clipFinalizeEpoch.filter { $0.value >= request.epoch.rawValue }
         pruneTombstones(state: &state)
     }
 

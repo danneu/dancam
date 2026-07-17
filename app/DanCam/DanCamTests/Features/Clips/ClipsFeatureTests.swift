@@ -206,6 +206,45 @@ struct ClipsFeatureTests {
         #expect(state.clips.first == finalized)
     }
 
+    @Test func finalizedClipWithoutInFlightRequestCanBeReplacedByLaterList() throws {
+        var state = loadedFreshState(ids: [6, 5, 4], cursor: ClipCursor(4))
+        let finalized = CameraSamples.clip(id: 7, durMs: 99_000)
+        let catalog = CameraSamples.clip(id: 7, durMs: 30_000)
+        send(.clipFinalized(finalized), to: &state)
+
+        send(.refresh, to: &state)
+        let head = try #require(state.request)
+        respond(
+            head,
+            with: .success(ClipsResponse(
+                clips: [catalog] + CameraSamples.clipsResponse(ids: [6, 5, 4]).clips,
+                serverTimeMs: 123_456_789,
+                nextCursor: ClipCursor(4)
+            )),
+            to: &state
+        )
+
+        #expect(state.clips.first == catalog)
+    }
+
+    @Test func finalizedClipWithoutInFlightRequestCanBeRemovedByLaterList() throws {
+        var state = loadedFreshState(ids: [6, 5, 4], cursor: ClipCursor(4))
+        send(.clipFinalized(CameraSamples.clip(id: 7)), to: &state)
+
+        send(.refresh, to: &state)
+        let head = try #require(state.request)
+        respond(
+            head,
+            with: .success(CameraSamples.clipsResponse(
+                ids: [6, 5, 4],
+                nextCursor: ClipCursor(4)
+            )),
+            to: &state
+        )
+
+        #expect(state.clips.map(\.id) == [6, 5, 4])
+    }
+
     @Test func sharedRecoverySurvivesHomeDisappearance() async throws {
         let started = AsyncSignal()
         let release = AsyncSignal()

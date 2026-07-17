@@ -128,4 +128,10 @@ view and request-scoped event protection.
 ## Commit progress
 
 - [x] 1. fix(raspi): publish finalized clips from validated artifacts
-- [ ] 2. fix(app): scope finalized clip protection to in-flight requests
+- [x] 2. fix(app): scope finalized clip protection to in-flight requests
+
+## Implementation notes
+
+- App protection lives on `ClipsFeature.State.Request` as the IDs finalized after
+  that request was issued. Request settlement or retirement therefore removes the
+  protection without a separate pruning lifecycle.
