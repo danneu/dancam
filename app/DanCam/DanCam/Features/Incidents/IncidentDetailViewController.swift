@@ -12,6 +12,28 @@ nonisolated struct IncidentArtifactRow: Equatable, Sendable, Identifiable {
     var id: Int { seq }
 }
 
+nonisolated enum IncidentSegmentRowPresentation: Equatable, Sendable {
+    case waiting
+    case artifact(IncidentArtifactRow)
+}
+
+nonisolated struct IncidentSegmentRow: Equatable, Sendable, Identifiable {
+    var seq: Int
+    var presentation: IncidentSegmentRowPresentation
+
+    var id: Int { seq }
+
+    var artifact: IncidentArtifactRow? {
+        guard case let .artifact(artifact) = presentation else { return nil }
+        return artifact
+    }
+
+    var isWaiting: Bool {
+        if case .waiting = presentation { return true }
+        return false
+    }
+}
+
 typealias IncidentTimelineBuild = @Sendable (
     _ segments: [IncidentSegment],
     _ directoryURL: URL
@@ -42,7 +64,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
     private var timelineBuildTask: Task<Void, Never>?
     private var buildGeneration = 0
     private var record: IncidentRecord?
-    private var rows: [IncidentArtifactRow] = []
+    private var rows: [IncidentSegmentRow] = []
     private var selectedRow: IncidentArtifactRow?
     private var timeline: IncidentPlaybackTimeline?
     private var selfHealAttemptedIdentity: [IncidentPlaybackIdentity]?
@@ -249,7 +271,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         navigationItem.title = Formatters.incidentPressedAt(
             Date(timeIntervalSince1970: Double(record.pressedAtMs) / 1_000)
         )
-        rows = artifactRows(record: record)
+        rows = segmentRows(record: record)
         reconcileSelection()
         renderPendingProgress(record: record)
         tableView.reloadData()
@@ -257,21 +279,27 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         startTimelineBuild(record: record, forceReplacement: false)
     }
 
-    private func artifactRows(record: IncidentRecord) -> [IncidentArtifactRow] {
+    private func segmentRows(record: IncidentRecord) -> [IncidentSegmentRow] {
         let directory = dependencies.incidentStore.directoryURL(record.id)
         return record.wanted.sorted(by: { $0.seq < $1.seq }).compactMap { segment in
+            if segment.state == .unresolved || segment.state == .wanted {
+                return IncidentSegmentRow(seq: segment.seq, presentation: .waiting)
+            }
             guard segment.state == .pulled else { return nil }
             let stem = String(format: "seg_%05d", segment.seq)
             for kind in [IncidentArtifactKind.mp4, .ts] {
                 let url = directory.appending(path: "\(stem).\(kind.rawValue)")
                 if FileManager.default.fileExists(atPath: url.path) {
-                    return IncidentArtifactRow(
+                    return IncidentSegmentRow(
                         seq: segment.seq,
-                        durationMs: segment.durMs,
-                        bytes: segment.bytes ?? 0,
-                        kind: kind,
-                        url: url,
-                        isPlayable: false
+                        presentation: .artifact(IncidentArtifactRow(
+                            seq: segment.seq,
+                            durationMs: segment.durMs,
+                            bytes: segment.bytes ?? 0,
+                            kind: kind,
+                            url: url,
+                            isPlayable: false
+                        ))
                     )
                 }
             }
@@ -281,7 +309,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
 
     private func reconcileSelection() {
         guard let selected = selectedRow else { return }
-        guard let retained = rows.first(where: { $0.url == selected.url }) else {
+        guard let retained = rows.compactMap(\.artifact).first(where: { $0.url == selected.url }) else {
             shareCoordinator?.cancel()
             selectedRow = nil
             shareButton.isEnabled = false
@@ -320,11 +348,12 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         timelineBuildTask = nil
         let playableSeqs = Set(result.segments.map(\.seq))
         rows = rows.map { row in
-            var row = row
-            row.isPlayable = row.kind == .mp4 && playableSeqs.contains(row.seq)
-            return row
+            guard var artifact = row.artifact else { return row }
+            artifact.isPlayable = artifact.kind == .mp4 && playableSeqs.contains(artifact.seq)
+            return IncidentSegmentRow(seq: row.seq, presentation: .artifact(artifact))
         }
-        if let selected = selectedRow, let retained = rows.first(where: { $0.url == selected.url }) {
+        if let selected = selectedRow,
+           let retained = rows.compactMap(\.artifact).first(where: { $0.url == selected.url }) {
             selectedRow = retained
         }
         renderTimelineChrome(result: result, record: record)
@@ -380,6 +409,9 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         progressLabel.text = record.status == .pending
             ? "Saving \(pulled) of \(record.wanted.count) segments"
             : "\(pulled) of \(record.wanted.count) segments saved"
+        if record.status == .pending, gapLabel.text == "All saved segments are playable." {
+            setGapText(nil)
+        }
         if timeline == nil || timeline?.segments.isEmpty == true {
             placeholderLabel.text = record.status == .pending
                 ? "Saving incident video..."
@@ -389,14 +421,17 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
     }
 
     private func renderTimelineChrome(result: IncidentPlaybackTimeline, record: IncidentRecord) {
-        let saving = result.gaps.filter { $0.reason == .saving }.map(\.seq)
         let missing = result.gaps.filter { $0.reason == .missing }.map(\.seq)
         let unavailable = result.gaps.filter { $0.reason == .unavailable }.map(\.seq)
         var lines: [String] = []
-        if saving.isEmpty == false { lines.append("Still saving: \(sequenceList(saving))") }
         if missing.isEmpty == false { lines.append("Missing: \(sequenceList(missing))") }
         if unavailable.isEmpty == false { lines.append("Unavailable for playback: \(sequenceList(unavailable))") }
-        gapLabel.text = lines.isEmpty ? "All saved segments are playable." : lines.joined(separator: "\n")
+        let gapText = if lines.isEmpty {
+            record.status == .pending ? nil : "All saved segments are playable."
+        } else {
+            lines.joined(separator: "\n")
+        }
+        setGapText(gapText)
         jumpToPressButton.isEnabled = result.segments.isEmpty == false
 
         if result.segments.isEmpty {
@@ -414,6 +449,11 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
 
     private func sequenceList(_ seqs: [Int]) -> String {
         seqs.map(String.init).joined(separator: ", ")
+    }
+
+    private func setGapText(_ text: String?) {
+        gapLabel.text = text
+        gapLabel.isHidden = text == nil
     }
 
     private func observePlayerItem(_ item: AVPlayerItem) {
@@ -448,31 +488,55 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         let cell = tableView.dequeueReusableCell(withIdentifier: "segment")
             ?? UITableViewCell(style: .subtitle, reuseIdentifier: "segment")
         let row = rows[indexPath.row]
-        cell.textLabel?.text = String(format: "seg_%05d.%@", row.seq, row.kind.rawValue)
+        cell.accessoryView = nil
+        cell.accessibilityTraits.remove(.notEnabled)
+        cell.selectionStyle = .default
+        cell.textLabel?.textColor = .label
+        cell.detailTextLabel?.textColor = .secondaryLabel
+        cell.imageView?.image = nil
+
+        guard let artifact = row.artifact else {
+            cell.textLabel?.text = "Segment \(row.seq)"
+            cell.detailTextLabel?.text = "Waiting to save"
+            cell.accessoryType = .none
+            let indicator = UIActivityIndicatorView(style: .medium)
+            indicator.startAnimating()
+            cell.accessoryView = indicator
+            cell.accessibilityTraits.insert(.notEnabled)
+            cell.selectionStyle = .none
+            cell.textLabel?.textColor = .secondaryLabel
+            return cell
+        }
+
+        cell.textLabel?.text = String(format: "seg_%05d.%@", artifact.seq, artifact.kind.rawValue)
         let action: String
-        if row.isPlayable {
+        if artifact.isPlayable {
             action = "Tap to play"
-        } else if row.kind == .mp4 {
+        } else if artifact.kind == .mp4 {
             action = "Share only - unavailable for playback"
         } else {
             action = "Share only"
         }
         cell.detailTextLabel?.text = [
-            row.durationMs.map(Formatters.approximateDuration),
-            row.bytes > 0 ? Formatters.byteSize(row.bytes) : nil,
+            artifact.durationMs.map(Formatters.approximateDuration),
+            artifact.bytes > 0 ? Formatters.byteSize(artifact.bytes) : nil,
             action,
         ].compactMap { $0 }.joined(separator: " - ")
-        cell.accessoryType = row.isPlayable ? .disclosureIndicator : .none
-        cell.imageView?.image = UIImage(systemName: row.isPlayable ? "play.rectangle" : "doc")
+        cell.accessoryType = artifact.isPlayable ? .disclosureIndicator : .none
+        cell.imageView?.image = UIImage(systemName: artifact.isPlayable ? "play.rectangle" : "doc")
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+        rows[indexPath.row].artifact == nil ? nil : indexPath
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         guard shareCoordinator?.isPreparing != true else { return }
-        let row = rows[indexPath.row]
-        selectedRow = row
+        guard let artifact = rows[indexPath.row].artifact else { return }
+        selectedRow = artifact
         shareButton.isEnabled = true
-        if row.isPlayable, let start = timeline?.startTime(for: row.seq) {
+        if artifact.isPlayable, let start = timeline?.startTime(for: artifact.seq) {
             player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
         }
         tableView.deselectRow(at: indexPath, animated: true)
@@ -520,7 +584,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         selectedRow = nil
         shareButton.isEnabled = false
         if let record {
-            rows = artifactRows(record: record)
+            rows = segmentRows(record: record)
             tableView.reloadData()
             startTimelineBuild(record: record, forceReplacement: false)
         }
@@ -558,7 +622,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         isPresentingFullScreen = value
     }
 
-    var rowsForTesting: [IncidentArtifactRow] { rows }
+    var rowsForTesting: [IncidentSegmentRow] { rows }
     var isSharePreparingForTesting: Bool { shareCoordinator?.isPreparing ?? false }
     var sharePreparationAccessibilityLabelForTesting: String? { shareButton.customView?.accessibilityLabel }
     var isShareButtonEnabledForTesting: Bool { shareButton.isEnabled }
@@ -577,6 +641,14 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
 
     func selectRowForTesting(at index: Int) {
         tableView(tableView, didSelectRowAt: IndexPath(row: index, section: 0))
+    }
+
+    func cellForTesting(at index: Int) -> UITableViewCell {
+        tableView(tableView, cellForRowAt: IndexPath(row: index, section: 0))
+    }
+
+    func waitForTimelineBuildForTesting() async {
+        await timelineBuildTask?.value
     }
 
     func shareTappedForTesting() { shareTapped() }

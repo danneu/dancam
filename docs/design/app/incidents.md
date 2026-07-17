@@ -218,7 +218,16 @@ that segment disappears, and generation gating prevents stale builds from replac
 newer timeline. One failed player item triggers one disk rebuild for that playable set;
 a repeat failure leaves sharing and deletion available with an honest playback error.
 
-Each pulled artifact remains a selectable row and the only share surface. Tapping a
+The segment list renders every currently known unresolved, wanted, or installed sequence
+in ascending order. Unresolved and wanted segments appear as muted, disabled waiting
+rows with an in-progress indicator and no artifact type or share surface. They transition
+in place to their installed presentation when the artifact lands, while newly discovered
+pre-roll or post-roll sequences interleave as the planner expands coverage. Lost,
+clipped, and artifact-less pulled segments remain annotation-only. The aggregate saving
+progress line stays visible, while detail annotations report only missing and unavailable
+segments rather than repeating the waiting state.
+
+Each installed artifact remains a selectable row and the only share surface. Tapping a
 playable MP4 row seeks the unified player to that segment; raw TS rows select for sharing
 without seeking. Jump to press seeks to the marked segment's real composition position,
 or forward to the next playable segment when the marked footage is absent. Both list
@@ -366,3 +375,22 @@ and immediately becomes stale as reconciliation adds or repairs segments. Empty 
 slots were rejected because unknown edge durations and rounded metadata would create
 dead air and dishonest proportionality. Local HLS was rejected because the removed
 loopback playback stack added serving and handoff machinery without shortening pulls.
+
+### 2026-07-17: Show pending segments as waiting rows
+
+The artifact-only detail list started nearly empty after an incident press and inserted
+rows unpredictably as files arrived. A separate "Still saving" annotation duplicated the
+aggregate progress line without showing which future artifact would occupy each sequence
+position.
+
+The detail screen now derives rows from every currently known segment. Unresolved and
+wanted sequences use an inert waiting presentation that cannot carry an artifact URL or
+kind; installed artifacts retain their existing playback and sharing behavior. This keeps
+sequence order visible immediately and lets a row change presentation when installation
+publishes the updated record.
+
+Optional artifact fields on the existing row were rejected because they would make
+invalid waiting/share states representable. A separate pending section was rejected
+because lower-sequence backfill could not interleave with installed rows. Keeping the
+"Still saving" annotation was rejected because waiting rows and aggregate progress
+already communicate the saving state.

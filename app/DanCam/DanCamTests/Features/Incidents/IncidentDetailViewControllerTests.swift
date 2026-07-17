@@ -36,7 +36,7 @@ struct IncidentDetailViewControllerTests {
         evidenceOnly.wanted[0].bytes = 999
         send(evidenceOnly, fixture: fixture)
         try await waitUntilAsync {
-            await builds.value == 2 && controller.rowsForTesting.first?.bytes == 999
+            await builds.value == 2 && controller.rowsForTesting.first?.artifact?.bytes == 999
         }
         #expect(player.currentItem === originalItem)
 
@@ -130,6 +130,89 @@ struct IncidentDetailViewControllerTests {
         #expect(controller.timelineForTesting?.segments.map(\.seq) == [42, 43])
     }
 
+    @Test
+    func rowsIncludeOnlyWaitingAndInstalledSegmentsInSequenceOrder() throws {
+        let fixture = try makeFixture(kind: .ts)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var record = fixture.record
+        record.wanted = [
+            IncidentSegment(seq: 45, state: .pulled, durMs: 100, bytes: 5),
+            IncidentSegment(seq: 44, state: .lost, durMs: 100),
+            IncidentSegment(seq: 43, state: .pulled, durMs: 100, bytes: 2),
+            IncidentSegment(seq: 42, state: .clipped),
+            IncidentSegment(seq: 41, state: .wanted, durMs: 100),
+            IncidentSegment(seq: 40, state: .unresolved),
+        ]
+        send(record, fixture: fixture)
+        let controller = makeController(fixture: fixture, preparer: .unavailable)
+
+        controller.loadViewIfNeeded()
+
+        #expect(controller.rowsForTesting.map(\.seq) == [40, 41, 43])
+        #expect(controller.rowsForTesting.map(\.isWaiting) == [true, true, false])
+        #expect(controller.rowsForTesting.last?.artifact?.kind == .ts)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func waitingRowIsInertThenTransitionsAndAcceptsLowerBackfill() async throws {
+        let fixture = try await makePlaybackFixture(playableSeqs: [43])
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var pending = fixture.record
+        pending.updateSegment(IncidentSegment(seq: 42, state: .wanted, durMs: 100))
+        send(pending, fixture: fixture)
+        let controller = makeController(fixture: fixture, preparer: .unavailable)
+        controller.loadViewIfNeeded()
+        try await waitUntil { controller.timelineForTesting?.segments.map(\.seq) == [43] }
+        controller.playerForTesting.pause()
+        await controller.playerForTesting.seek(
+            to: controller.timelineForTesting?.duration ?? .zero,
+            toleranceBefore: .zero,
+            toleranceAfter: .zero
+        )
+        let timeBeforeSelection = controller.playerForTesting.currentTime()
+        let waitingCell = controller.cellForTesting(at: 0)
+
+        controller.selectRowForTesting(at: 0)
+
+        #expect(controller.hasSelectedRowForTesting == false)
+        #expect(controller.isShareButtonEnabledForTesting == false)
+        #expect(CMTimeCompare(controller.playerForTesting.currentTime(), timeBeforeSelection) == 0)
+        #expect(waitingCell.accessibilityTraits.contains(.notEnabled))
+        #expect(waitingCell.accessoryType == .none)
+        #expect(waitingCell.selectionStyle == .none)
+        let indicator = try #require(waitingCell.accessoryView as? UIActivityIndicatorView)
+        #expect(indicator.isAnimating)
+
+        _ = try await makeTemporaryPlayableVideoFile(
+            at: artifactURL(seq: 42, kind: .mp4, fixture: fixture),
+            frameCount: 3
+        )
+        var installed = pending
+        var segment = try #require(installed.segment(seq: 42))
+        segment.markPulled(bytes: 3)
+        installed.updateSegment(segment)
+        send(installed, fixture: fixture)
+        try await waitUntil {
+            controller.timelineForTesting?.segments.map(\.seq) == [42, 43]
+                && controller.rowsForTesting.first?.artifact?.isPlayable == true
+        }
+
+        controller.selectRowForTesting(at: 0)
+        let installedStart = try #require(controller.timelineForTesting?.startTime(for: 42))
+        try await waitUntil {
+            CMTimeCompare(controller.playerForTesting.currentTime(), installedStart) == 0
+        }
+        #expect(controller.hasSelectedRowForTesting)
+        #expect(controller.isShareButtonEnabledForTesting)
+
+        var backfilled = installed
+        backfilled.updateSegment(IncidentSegment(seq: 41, state: .unresolved))
+        send(backfilled, fixture: fixture)
+
+        #expect(controller.rowsForTesting.map(\.seq) == [41, 42, 43])
+        #expect(controller.rowsForTesting.map(\.isWaiting) == [true, false, false])
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func emptyTimelineTransitionsBetweenSavingPlayingAndNothingPlayable() async throws {
         let fixture = try makeFixture(kind: .ts)
@@ -142,20 +225,20 @@ struct IncidentDetailViewControllerTests {
         ])))
         let controller = makeController(fixture: fixture, preparer: .unavailable)
         controller.loadViewIfNeeded()
-        try await waitUntil {
-            controller.placeholderTextForTesting == "Saving incident video..."
-                && controller.gapTextForTesting == "Still saving: 43"
-        }
+        #expect(controller.placeholderTextForTesting == "Saving incident video...")
         #expect(controller.isJumpToPressEnabledForTesting == false)
         #expect(controller.progressTextForTesting == "Saving 0 of 1 segments")
-        #expect(controller.gapTextForTesting == "Still saving: 43")
+        #expect(controller.gapTextForTesting == nil)
+        #expect(controller.rowsForTesting.map(\.seq) == [43])
+        #expect(controller.rowsForTesting.first?.isWaiting == true)
 
         let url = artifactURL(seq: 43, kind: .mp4, fixture: fixture)
         _ = try await makeTemporaryPlayableVideoFile(at: url, frameCount: 180)
         var pulled = pending
         pulled.wanted[0].markPulled(bytes: 3)
         send(pulled, fixture: fixture)
-        try await waitUntil { controller.timelineForTesting?.segments.map(\.seq) == [43] }
+        await controller.waitForTimelineBuildForTesting()
+        #expect(controller.timelineForTesting?.segments.map(\.seq) == [43])
         #expect(controller.placeholderTextForTesting == nil)
         #expect(controller.isJumpToPressEnabledForTesting)
         #expect(controller.gapTextForTesting == "All saved segments are playable.")
@@ -166,11 +249,40 @@ struct IncidentDetailViewControllerTests {
         pulled.wanted[0].bytes = 4
         pulled.wanted.append(IncidentSegment(seq: 44, state: .lost, durMs: 100))
         send(pulled, fixture: fixture)
-        try await waitUntil { controller.timelineForTesting?.segments.isEmpty == true }
+        await controller.waitForTimelineBuildForTesting()
+        #expect(controller.timelineForTesting?.segments.isEmpty == true)
         #expect(controller.placeholderTextForTesting == "No playable video is available.")
         #expect(controller.isJumpToPressEnabledForTesting == false)
         #expect(controller.progressTextForTesting == "1 of 2 segments saved")
         #expect(controller.gapTextForTesting == "Missing: 44\nUnavailable for playback: 43")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func correctivePendingRecordClearsAllPlayableClaimBeforeTimelineRebuild() async throws {
+        let fixture = try await makePlaybackFixture(playableSeqs: [43])
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let gate = CorrectiveTimelineBuildGate()
+        let controller = makeController(
+            fixture: fixture,
+            preparer: .unavailable,
+            timelineBuild: { segments, directoryURL in
+                await gate.build(segments: segments, directoryURL: directoryURL)
+            }
+        )
+        controller.loadViewIfNeeded()
+        try await waitUntil {
+            controller.gapTextForTesting == "All saved segments are playable."
+        }
+
+        var corrective = fixture.record
+        corrective.updateSegment(IncidentSegment(seq: 44, state: .wanted, durMs: 100))
+        send(corrective, fixture: fixture)
+        await gate.correctiveBuildStarted.wait()
+
+        #expect(controller.progressTextForTesting == "Saving 1 of 2 segments")
+        #expect(controller.gapTextForTesting == nil)
+        #expect(controller.rowsForTesting.map(\.seq) == [43, 44])
+        await gate.releaseCorrectiveBuild.signal()
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -526,20 +638,26 @@ struct IncidentDetailViewControllerTests {
         ])))
     }
 
-    private func waitUntil(_ condition: @escaping () -> Bool) async throws {
+    private func waitUntil(
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: @escaping () -> Bool
+    ) async throws {
         for _ in 0..<300 {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        Issue.record("Timed out waiting for condition.")
+        Issue.record("Timed out waiting for condition.", sourceLocation: sourceLocation)
     }
 
-    private func waitUntilAsync(_ condition: @escaping () async -> Bool) async throws {
+    private func waitUntilAsync(
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: @escaping () async -> Bool
+    ) async throws {
         for _ in 0..<300 {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        Issue.record("Timed out waiting for async condition.")
+        Issue.record("Timed out waiting for async condition.", sourceLocation: sourceLocation)
     }
 }
 
@@ -576,6 +694,25 @@ private actor TimelineBuildGate {
         if segments.count == 1 {
             await firstBuildStarted.signal()
             await releaseFirstBuild.wait()
+        }
+        return await IncidentPlaybackTimelineBuilder.build(
+            segments: segments,
+            directoryURL: directoryURL
+        )
+    }
+}
+
+private actor CorrectiveTimelineBuildGate {
+    let correctiveBuildStarted = AsyncSignal()
+    let releaseCorrectiveBuild = AsyncSignal()
+
+    func build(
+        segments: [IncidentSegment],
+        directoryURL: URL
+    ) async -> sending IncidentPlaybackTimeline {
+        if segments.contains(where: { $0.state == .wanted }) {
+            await correctiveBuildStarted.signal()
+            await releaseCorrectiveBuild.wait()
         }
         return await IncidentPlaybackTimelineBuilder.build(
             segments: segments,
