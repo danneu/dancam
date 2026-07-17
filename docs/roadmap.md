@@ -310,23 +310,23 @@ mock first.
   - [ ] Add a calendar jump backed by the reserved `from`/`to` window params.
   - [ ] Add an incidents filter using phone-owned incident membership after
             `nova`; do not depend on the Pi clip body's reserved `locked` field.
-- [ ] **Swoop `nova` -- Phone-owned incidents (manual).** While connected and
+- [x] **Swoop `nova` -- Phone-owned incidents (manual).** While connected and
       recording, one tap saves roughly 30 s before plus 15 s after the press by
       pulling covering finished segments into permanent iPhone storage. The Pi and
       wire contract stay unchanged: the app resolves the window from the existing
       clips list, resumable ranged pull, and event stream. Build mock-first.
-  - [ ] Add the Codable incident model, Application Support directory store,
+  - [x] Add the Codable incident model, Application Support directory store,
             crash reconciliation, and pure wanted-set/evidence planner.
-  - [ ] Capture a durable phone-local mark from the folded recorder state; add
+  - [x] Capture a durable phone-local mark from the folded recorder state; add
             the enabled-only-while-connected-and-recording Home button and cooldown.
   - [x] Reconcile pending incidents across authoritative, fresh-epoch clip
             coverage while preserving event and session evidence ordering;
             deduplicate foreground-resumable pulls, remux to per-segment MP4, retain
             raw TS on remux failure, and classify evidence-backed partial saves.
-  - [ ] Add the Incidents tab and local detail surface for status, playback,
+  - [x] Add the Incidents tab and local detail surface for status, playback,
             sharing, storage totals, unreadable-directory deletion, and incident
             deletion without touching the Pi ring.
-  - [ ] Finish live saving-state polish, short background-task grace, and the
+  - [x] Finish live saving-state polish, short background-task grace, and the
             local reopen nudge lifecycle.
 - [ ] **Swoop `reef` -- CarPlay auto start/stop** on CarPlay connect/disconnect.
 - [ ] **Swoop `sage` -- CarPlay status panel** (Driving Task template). _Gated on the
