@@ -26,7 +26,7 @@ struct EventsClientTests {
     @Test(.tags(.networking))
     func deChunksEventsBeforeSSEParsing() async throws {
         let body = SSEWireBuilder.event(
-            data: Data("{\"type\":\"storage_changed\",\"storage\":{\"used\":1,\"total\":2,\"recording_capacity_bytes\":3},\"recording_readiness\":{\"ready\":true,\"reason\":null}}".utf8)
+            data: Data("{\"type\":\"storage_changed\",\"storage\":{\"used\":1,\"total\":2,\"recording_capacity_bytes\":3},\"storage_generation\":\"00000000-0000-4000-8000-000000000001\",\"recording_readiness\":{\"ready\":true,\"reason\":null}}".utf8)
         )
         let chunkedBody = MJPEGWireBuilder.chunked(body, chunkSizes: [3, 2])
         let wire = SSEWireBuilder.response(
@@ -42,6 +42,7 @@ struct EventsClientTests {
 
         #expect(events == [.storageChanged(
             storage: Storage(used: 1, total: 2, recordingCapacityBytes: 3),
+            storageGeneration: "00000000-0000-4000-8000-000000000001",
             recordingReadiness: .ready
         )])
     }

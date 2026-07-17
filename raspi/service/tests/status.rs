@@ -74,23 +74,22 @@ impl Backend for StubBackend {
     fn update_telemetry(
         &self,
         storage: Option<dancam::sysfacts::DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
         soc_temp_c: Option<f32>,
         mem: Option<dancam::sysfacts::MemInfo>,
         cpu: dancam::cpu::Cpu,
     ) {
         self.telemetry_updates.fetch_add(1, Ordering::SeqCst);
         self.hub
-            .update_telemetry(storage, recording_storage_available, soc_temp_c, mem, cpu);
+            .update_telemetry(storage, storage_generation, soc_temp_c, mem, cpu);
     }
 
     fn update_storage(
         &self,
         storage: Option<dancam::sysfacts::DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
     ) {
-        self.hub
-            .update_storage(storage, recording_storage_available);
+        self.hub.update_storage(storage, storage_generation);
     }
 }
 
@@ -171,7 +170,7 @@ async fn status_reports_each_camera_readiness_reason_with_camera_precedence() {
     ] {
         let rec_dir = TempRecDir::new();
         let backend = StubBackend::camera(camera_state);
-        backend.hub.update_storage(None, false);
+        backend.hub.update_storage(None, None);
         let json = response_json(
             dancam::app(state(rec_dir.path.clone(), backend))
                 .oneshot(status_request())
@@ -215,7 +214,7 @@ async fn startup_seed_applies_mount_witness_before_serving() {
         let observer = Arc::new(FilesystemObserver::with_probe_and_mount_requirement(
             move |_| FilesystemObservation {
                 storage: None,
-                recording_storage_available: available,
+                storage_generation: available.then(storage_generation),
                 current_segment: None,
             },
             true,
@@ -237,7 +236,7 @@ async fn startup_seed_timeout_continues_failed_closed() {
             std::thread::sleep(Duration::from_millis(1_200));
             FilesystemObservation {
                 storage: Some(disk_usage(1)),
-                recording_storage_available: true,
+                storage_generation: Some(storage_generation()),
                 current_segment: None,
             }
         },
@@ -304,9 +303,10 @@ async fn status_reports_fsm_owned_open_segment_metadata_while_recording() {
 async fn stalled_observation_bounds_status_events_and_telemetry_without_fanout() {
     let rec_dir = TempRecDir::new();
     let backend = StubBackend::recording_segment(0);
-    backend
-        .hub
-        .update_storage(Some(disk_usage(64 * 1024 * 1024)), true);
+    backend.hub.update_storage(
+        Some(disk_usage(64 * 1024 * 1024)),
+        Some(storage_generation()),
+    );
 
     let entered = Arc::new(AtomicUsize::new(0));
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
@@ -396,9 +396,10 @@ async fn stalled_observation_bounds_status_events_and_telemetry_without_fanout()
 async fn stalled_telemetry_clears_stale_storage_then_a_fresh_probe_restores_it() {
     let rec_dir = TempRecDir::new();
     let backend = StubBackend::idle();
-    backend
-        .hub
-        .update_storage(Some(disk_usage(64 * 1024 * 1024)), true);
+    backend.hub.update_storage(
+        Some(disk_usage(64 * 1024 * 1024)),
+        Some(storage_generation()),
+    );
     let entered = Arc::new(AtomicUsize::new(0));
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
     let observer = Arc::new(FilesystemObserver::with_probe({
@@ -437,7 +438,8 @@ async fn stalled_telemetry_clears_stale_storage_then_a_fresh_probe_restores_it()
     wait_until(|| backend.telemetry_updates.load(Ordering::SeqCst) > 0).await;
     assert!(started.elapsed() < Duration::from_millis(1400));
     assert_eq!(backend.snapshot().storage, None);
-    assert!(backend.snapshot().recording_readiness.ready);
+    assert!(!backend.snapshot().recording_readiness.ready);
+    assert_eq!(backend.snapshot().storage_generation, None);
     assert_eq!(entered.load(Ordering::SeqCst), 1);
 
     {
@@ -510,12 +512,16 @@ fn filesystem_observation(
 ) -> FilesystemObservation {
     FilesystemObservation {
         storage: Some(disk_usage(used)),
-        recording_storage_available: true,
+        storage_generation: Some(storage_generation()),
         current_segment: current_segment.map(|id| ObservedSegment {
             id,
             dur_ms: Some(dur_ms),
         }),
     }
+}
+
+fn storage_generation() -> String {
+    "00000000-0000-4000-8000-000000000001".to_string()
 }
 
 async fn response_json(response: axum::response::Response) -> Value {

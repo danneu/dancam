@@ -97,7 +97,10 @@ inode when the tested path is `/`, rather than parsing `/proc/mounts`.
 
 `/data` is the only hot recording partition. The deployed service records under
 `/data/rec` with `DANCAM_REQUIRE_REC_MOUNT=/data`. The app's format-card operation
-reformats `/data` only.
+reformats `/data` only. The recording namespace's generation and sequence witness
+live under `/data/rec/state/` and move with its footage. Formatting or deliberately
+resetting that namespace causes the service to mint a new generation before recording
+becomes ready.
 
 `/persist` is the small writable OS-state island. It carries
 `/persist/journal`, NetworkManager state, and systemd-timesync state, all of which
@@ -253,3 +256,12 @@ writable root could be bricked by a power cut and could not support a safe app-d
 data format. Journald on `/data` would erase the evidence most needed when that
 partition failed. Industrial PLP media was deferred on cost and supply, and
 synchronous `discard` was rejected in favor of periodic fstrim.
+
+### 2026-07-17 -- Keep storage identity inside the recording namespace
+
+The durable storage generation lives beside the sequence witness under `/data/rec`,
+not in `/persist` or machine identity. This makes it survive service and OS restarts
+and move with a deliberately preserved recording namespace, while format and reset
+operations naturally create a new identity. Keeping it in OS state was rejected
+because replacing or cloning recording media would detach identity from the footage it
+names.

@@ -62,8 +62,8 @@ sides.
 ## Resumable clip pull
 
 `ClipPullClient` streams each clip into a temporary `.ts` file. Its public event stream
-reports the opened file, byte progress, representation restarts, and a completed result
-that includes the validator associated with the final bytes.
+reports the opened file, byte progress, and a completed result for the exact validator
+requested by the caller.
 
 The first attempt sends a plain `GET`. Once bytes are on disk, later attempts request
 `Range: bytes=<offset>-` with `If-Range` set to the current quoted ETag. A `206` is
@@ -71,17 +71,14 @@ accepted only when `Content-Range` starts at the exact on-disk byte count, reach
 representation end, and agrees with the already-known total length. A `416` completes
 only when the app already has the entire expected file.
 
-A ranged request may receive `200` when the representation changed. The app accepts
-that restart only when the response carries a new ETag. It truncates and seeks the
-temporary file to byte zero, replaces the resume validator, emits `.restarted`, and
-writes the new representation. A ranged `200` with the same or missing validator is
-malformed and terminal; accepting it would permit an endless truncate-rewrite loop
-that looked like forward progress.
+A changed validator is terminal stale-representation evidence. A ranged `200` with the
+same or missing validator is malformed and terminal. Either failure deletes the
+temporary file and does not restart under another representation. A caller can obtain
+fresh catalog metadata and make a new generation-scoped demand instead of silently
+changing identity mid-work.
 
-The completed `ClipPullResult.resolvedETag` begins with the list validator and tracks
-any validator change accepted from a response. It is therefore not necessarily the ETag
-from the list row that opened the viewer. Downstream cache insert must use this resolved
-value so restarted bytes cannot be filed under a stale identity.
+The completed `ClipPullResult.resolvedETag` is exactly the raw canonical validator
+from the requested clip row.
 
 ### Progress-bounded retry
 
@@ -168,10 +165,10 @@ the roughly 38 MB pull and the remux. A cache miss follows:
 1. pull raw TS;
 2. show a short preparing phase;
 3. remux to a fast-start MP4;
-4. move the MP4 into the cache under the pull's resolved validator; and
+4. move the MP4 into the cache under the pull's canonical validator; and
 5. play that cached file.
 
-Cache identity is `(clip id, canonical ETag)`, encoded as
+Cache identity is `(storage generation, clip id, canonical ETag)`, encoded as
 `clip-<id>-<etagToken>.mp4`. `etagToken` strips an optional `W/` prefix and surrounding
 quotes before filename encoding, so the raw list spelling and quoted HTTP spelling of
 one validator hit the same file. A genuinely different validator misses, preventing a
@@ -193,6 +190,25 @@ The cache is regenerable because the Pi SD card is the primary footage store. Th
 Filesystem work runs behind a serial actor so directory enumeration, stale-version
 sweeps, moves, modification-date updates, eviction, and version wipes stay off the
 main actor and cannot interleave with thumbnail lookups or concurrent inserts.
+
+## Shared media coordinator
+
+One process-lifetime actor-backed `ClipMediaClient` owns all clip media demand from
+thumbnails, the viewer, incident preservation, and deletion. Its exact work key is
+`(storage generation, clip id, canonical ETag)`. Concurrent full-media consumers join
+one pull and remux. Starting full work supersedes bounded-prefix work for that key,
+while a later thumbnail joins the full result and derives its JPEG from the MP4.
+
+A successful full pipeline commits both the MP4 cache artifact and a thumbnail. Each
+consumer receives a private hard-link or copy lease so cache eviction, deletion, or
+another generation's insert cannot remove a file while playback or incident install
+still uses it. Releasing the last interested consumer cancels temporary work and
+cleans invocation-owned artifacts without sweeping another key's files.
+
+Incident preservation has stronger evidence semantics than playback. It installs the
+remuxed MP4 when available, but if remux fails after a complete raw pull it permanently
+installs the TS instead. Failures in regenerable MP4 or thumbnail caches do not fail
+permanent incident installation.
 
 ## Clip viewer lifecycle
 
@@ -224,8 +240,8 @@ flow.
 The phone generates first-frame thumbnails. The Pi has no `/thumb` route, JPEG cache,
 ffmpeg thumbnail process, or thumbnail write path on the crash-safety SD card.
 
-`ThumbnailLoader` is view-driven and injected. Each `(clip id, canonical ETag)` follows
-a cache-first pipeline:
+`ThumbnailLoader` is view-driven and injected. Each
+`(storage generation, clip id, canonical ETag)` follows a cache-first pipeline:
 
 1. return an in-memory `NSCache` image;
 2. decode `thumb-<id>-<etagToken>.jpg` from `Caches/thumbnails/`;
@@ -267,8 +283,8 @@ viewer:
 
 - pull tests cover progress, exact range resume, 503 ride-through, connect and stream
   drops, receive-idle timeouts before and after progress, both exhaustion budgets,
-  validator-changing restarts, malformed `200`/`206` responses, terminal statuses,
-  and resolved-ETag reporting;
+  stale-representation rejection, malformed `200`/`206` responses, terminal statuses,
+  and exact resolved-ETag reporting;
 - demux and remux tests cover fixture playability and fast-start layout, chunk-boundary
   invariance, truncated and garbage-damaged TS, sync-aligned packet corruption,
   PAT/PMT recovery, timestamp anomalies, first-keyframe recovery, DTS discontinuity,
@@ -569,3 +585,21 @@ window, unknown-length pull, and remux/cache preparation now use an indeterminat
 spinner. Known-length pulling uses the bar, animation waits for initial layout, and the
 playing state hides it. The cache-lookup window remains stateless setup rather than a
 new viewer-domain phase, so a cache hit transitions directly from no state to playing.
+
+### 2026-07-17: Centralize generation-scoped clip media work
+
+Viewer, incident, and thumbnail paths previously owned independent pulls, remuxes,
+temporary files, and cleanup. Simultaneous demand could download and decode the same
+clip more than once, while id-plus-validator identity could alias after a recording
+namespace reset.
+
+One actor-backed media coordinator now keys work by storage generation, clip id, and
+canonical validator. Full-media demand single-flights and supersedes prefix work;
+consumers use leased artifacts; successful full work produces MP4 and thumbnail;
+incident preservation retains complete raw TS when remux fails and treats cache writes
+as non-blocking. A validator change ends the old demand instead of changing identity
+inside it.
+
+Independent feature pipelines and a global filename sweep were rejected because they
+cannot coordinate ownership safely. Making thumbnail work always pull the full clip
+was rejected because rows without full-media demand still need a bounded network cost.

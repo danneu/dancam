@@ -517,7 +517,8 @@ events with `seq` and body, and TRACE adds heartbeats.
 Reset recorded footage: to clear all recordings from the Pi -- after a filename-format
 change, or just to reclaim the card -- use `just raspi-reset-data`. It stops `dancam`,
 deletes everything under `/data/rec` (segments plus the witness/time state, so the next
-run restarts at seq 0 / session 1), then restarts the service and waits for
+run mints a new storage generation and restarts at seq 0 / session 1), then restarts
+the service and waits for
 `/v1/status.recording_readiness.ready == true`. Override the 60 second wait with
 `DANCAM_RECORDING_READINESS_TIMEOUT`. It refuses to run unless `/data` is a mounted filesystem, and it always
 attempts to restart `dancam` even if the wipe or the run is interrupted -- failing loudly
@@ -533,7 +534,9 @@ DANCAM_YES=1 just raspi-reset-data    # unattended
 Use this reset as the clean-break operation after an incompatible recording-format
 change. The service does not migrate old footage during listing; recognized
 durationless recovery files remain pullable with unknown duration, while unrecognized
-names are ignored. Resetting also clears the sequence witness and time anchors.
+names are ignored. Resetting also clears the sequence witness and time anchors. The
+new generation prevents prior phone caches and interrupted media demand from matching
+the reset namespace even when sequence and byte counts repeat.
 
 For an A/B picture comparison, `just raspi-hdr on` enables the IMX708's on-sensor
 HDR and `just raspi-hdr off` disables it. The command stops `dancam` because the

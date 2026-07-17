@@ -16,7 +16,7 @@ const OBSERVATION_DEADLINE: Duration = Duration::from_secs(1);
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FilesystemObservation {
     pub storage: Option<DiskUsage>,
-    pub recording_storage_available: bool,
+    pub storage_generation: Option<String>,
     pub current_segment: Option<ObservedSegment>,
 }
 
@@ -43,7 +43,7 @@ where
 pub struct FilesystemObserver {
     permit: Arc<Semaphore>,
     probe: Arc<dyn FilesystemProbe>,
-    recording_mount_required: bool,
+    _recording_mount_required: bool,
 }
 
 impl FilesystemObserver {
@@ -74,14 +74,14 @@ impl FilesystemObserver {
         Self {
             permit: Arc::new(Semaphore::new(1)),
             probe: Arc::new(probe),
-            recording_mount_required,
+            _recording_mount_required: recording_mount_required,
         }
     }
 
     pub fn unavailable_observation(&self) -> FilesystemObservation {
         FilesystemObservation {
             storage: None,
-            recording_storage_available: !self.recording_mount_required,
+            storage_generation: None,
             current_segment: None,
         }
     }
@@ -135,7 +135,7 @@ impl FilesystemProbe for DefaultProbe {
 
         FilesystemObservation {
             storage,
-            recording_storage_available: self.storage.recording_storage_available().is_ok(),
+            storage_generation: self.storage.storage_generation().ok(),
             current_segment,
         }
     }
@@ -231,7 +231,7 @@ mod tests {
                 total: 10,
                 recording_capacity_bytes: 10,
             }),
-            recording_storage_available: true,
+            storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
             current_segment: None,
         }
     }

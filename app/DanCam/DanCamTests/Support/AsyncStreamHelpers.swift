@@ -21,6 +21,10 @@ actor AsyncSignal {
             waiter.resume()
         }
     }
+
+    func hasSignaled() -> Bool {
+        isSignaled
+    }
 }
 
 actor RequestCapture {

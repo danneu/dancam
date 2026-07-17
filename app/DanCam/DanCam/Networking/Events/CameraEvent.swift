@@ -11,7 +11,11 @@ nonisolated enum CameraEvent: Decodable, Equatable, Sendable {
     case recordingStopped(session: UInt64, atMs: UInt64)
     case recorderFailed(session: UInt64, detail: String, atMs: UInt64)
     case cameraStateChanged(state: CameraState, recordingReadiness: RecordingReadiness)
-    case storageChanged(storage: Storage?, recordingReadiness: RecordingReadiness)
+    case storageChanged(
+        storage: Storage?,
+        storageGeneration: String?,
+        recordingReadiness: RecordingReadiness
+    )
     case tempChanged(TempC)
     case memChanged(total: UInt64, available: UInt64, swapTotal: UInt64, swapUsed: UInt64)
     case cpuChanged(CPU)
@@ -57,6 +61,7 @@ extension CameraEvent {
 
     nonisolated private struct StorageChangedPayload: Decodable {
         var storage: Storage?
+        var storageGeneration: String?
         var recordingReadiness: RecordingReadiness
     }
 
@@ -118,6 +123,7 @@ extension CameraEvent {
             let payload = try StorageChangedPayload(from: decoder)
             self = .storageChanged(
                 storage: payload.storage,
+                storageGeneration: payload.storageGeneration,
                 recordingReadiness: payload.recordingReadiness
             )
         case "temp_changed":
@@ -151,6 +157,7 @@ nonisolated struct World: Codable, Equatable, Sendable {
     var bootTag: String? = nil
     var uptimeS: UInt64
     var storage: Storage?
+    var storageGeneration: String? = nil
     var tempC: TempC
     var mem: Mem?
     var cpu: CPU
@@ -196,8 +203,9 @@ extension World {
         case .cameraStateChanged(let state, let recordingReadiness):
             next.cameraState = state
             next.recordingReadiness = recordingReadiness
-        case .storageChanged(let storage, let recordingReadiness):
+        case .storageChanged(let storage, let storageGeneration, let recordingReadiness):
             next.storage = storage
+            next.storageGeneration = storageGeneration
             next.recordingReadiness = recordingReadiness
         case .tempChanged(let tempC):
             next.tempC = tempC

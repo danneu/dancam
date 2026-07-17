@@ -164,10 +164,11 @@ nonisolated struct RecordingAttribution: Equatable, Sendable {
 
     static func from(
         status: LiveRecordingStatus,
+        storageGeneration: String?,
         worldBootTag: String?,
         recorder: RecorderTruth
     ) -> Self? {
-        guard let worldBootTag else { return nil }
+        guard let storageGeneration, let worldBootTag else { return nil }
 
         switch status {
         case .none:
@@ -178,12 +179,20 @@ nonisolated struct RecordingAttribution: Equatable, Sendable {
             // misattributed recording.
             guard case .live(let snapshot) = recorder else { return nil }
             return RecordingAttribution(
-                id: RecordingID(bootTag: worldBootTag, session: snapshot.session),
+                id: RecordingID(
+                    storageGeneration: storageGeneration,
+                    bootTag: worldBootTag,
+                    session: snapshot.session
+                ),
                 freshness: .live
             )
         case .live(let segment):
             return RecordingAttribution(
-                id: RecordingID(bootTag: worldBootTag, session: segment.sessionId),
+                id: RecordingID(
+                    storageGeneration: storageGeneration,
+                    bootTag: worldBootTag,
+                    session: segment.sessionId
+                ),
                 freshness: segment.isTicking ? .live : .lastKnown
             )
         }
@@ -193,12 +202,14 @@ nonisolated struct RecordingAttribution: Equatable, Sendable {
 nonisolated struct LiveRecordingInputs: Equatable, Sendable {
     var recording: RecordingFeature.State
     var recorder: RecorderTruth
+    var storageGeneration: String?
     var worldBootTag: String?
 
     static func from(_ state: AppFeature.State) -> Self {
         LiveRecordingInputs(
             recording: state.recording,
             recorder: state.link.recorderTruth,
+            storageGeneration: state.link.world?.storageGeneration,
             worldBootTag: state.link.world?.bootTag
         )
     }

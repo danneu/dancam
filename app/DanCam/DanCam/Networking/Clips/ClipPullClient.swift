@@ -24,6 +24,7 @@ nonisolated enum ClipPullError: Error, Equatable, Sendable {
 
     case http(Int)
     case malformedResponse(String)
+    case staleRepresentation
     case file(String)
     case transport(TransportFailure)
     case exhausted(ExhaustionReason)
@@ -36,6 +37,8 @@ extension ClipPullError: LocalizedError {
             "Clip pull failed with HTTP \(status)."
         case .malformedResponse(let message):
             "Clip pull response was invalid: \(message)"
+        case .staleRepresentation:
+            "Clip changed while it was being pulled."
         case .file(let message):
             "Could not save clip file: \(message)"
         case .transport(let failure):
@@ -160,10 +163,9 @@ nonisolated struct ClipPullClient {
             }
             let start = clock.now
 
-            // State that persists across reconnect attempts. `resumeETag` is the
-            // quoted validator the next `If-Range` carries; it always describes the
-            // bytes currently on disk (initialized from the list etag, replaced by
-            // an accepted `200`'s own `ETag` whenever the file is rewritten from 0).
+            // State that persists across reconnect attempts. The quoted list validator
+            // is immutable authority for this demand; a changed response invalidates
+            // the demand instead of silently re-keying downloaded bytes.
             var bytesWritten: UInt64 = 0
             var expectedBytes: UInt64?
             var resumeETag = httpEntityTag(listETag)
@@ -305,11 +307,9 @@ nonisolated struct ClipPullClient {
                             clipID: clipID,
                             head: head,
                             usedRange: usedRange,
-                            fileHandle: fileHandle,
                             bytesWritten: &bytesWritten,
                             expectedBytes: &expectedBytes,
-                            resumeETag: &resumeETag,
-                            continuation: continuation
+                            resumeETag: &resumeETag
                         )
                         wroteBodyBytesThisAttempt = try writeDecodedChunks(
                             from: leftoverBody,
@@ -400,11 +400,9 @@ nonisolated struct ClipPullClient {
         clipID: Int,
         head: HTTPResponseHead,
         usedRange: Bool,
-        fileHandle: FileHandle,
         bytesWritten: inout UInt64,
         expectedBytes: inout UInt64?,
-        resumeETag: inout String,
-        continuation: AsyncThrowingStream<ClipPullEvent, Error>.Continuation
+        resumeETag: inout String
     ) throws -> HTTPBodyDecoder {
         let status = head.statusCode
         if status == 503 {
@@ -421,10 +419,10 @@ nonisolated struct ClipPullClient {
             guard status == 200 else {
                 throw ClipPullError.http(status)
             }
-            expectedBytes = contentLength(from: head)
-            if let etag = head.headerValue("etag") {
-                resumeETag = etag
+            guard head.headerValue("etag") == resumeETag else {
+                throw ClipPullError.staleRepresentation
             }
+            expectedBytes = contentLength(from: head)
             return HTTPBodyDecoder(head: head)
         }
 
@@ -442,27 +440,20 @@ nonisolated struct ClipPullClient {
             else {
                 throw ClipPullError.malformedResponse("Invalid 206 Content-Range for resume.")
             }
+            guard head.headerValue("etag") == resumeETag else {
+                throw ClipPullError.staleRepresentation
+            }
             return HTTPBodyDecoder(head: head)
         case 200:
-            // The validator changed (`If-Range` ignored): the disk now holds the wrong
-            // representation. Truncate, rewrite from 0, and track the new validator so
-            // a later drop resumes against it rather than the stale list etag.
-            guard let etag = head.headerValue("etag"), etag != resumeETag else {
+            guard head.headerValue("etag") != nil,
+                  head.headerValue("etag") != resumeETag else {
                 throw ClipPullError.malformedResponse("Ranged 200 did not carry a new validator.")
             }
-            try mappingLocalFileErrors("reset clip file for restart") {
-                try fileHandle.truncate(atOffset: 0)
-                try fileHandle.seek(toOffset: 0)
-            }
-            let bytesDiscarded = bytesWritten
+            let discardedBytes = bytesWritten
             logger.notice(
-                "clip_id=\(clipID, privacy: .public) phase=pull_restart reason=validator_changed bytes_discarded=\(bytesDiscarded, privacy: .public)"
+                "clip_id=\(clipID, privacy: .public) phase=pull_stale reason=validator_changed bytes_discarded=\(discardedBytes, privacy: .public)"
             )
-            bytesWritten = 0
-            expectedBytes = contentLength(from: head)
-            resumeETag = etag
-            continuation.yield(.restarted)
-            return HTTPBodyDecoder(head: head)
+            throw ClipPullError.staleRepresentation
         case 416:
             // The drop landed at EOF and the server now sees the request as past the
             // end; only complete if the whole file is already on disk.
@@ -486,13 +477,6 @@ nonisolated struct ClipPullClient {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory
         let prefix = "clip-\(clipID)-"
-
-        for url in (try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        )) ?? [] where url.lastPathComponent.hasPrefix(prefix) && url.pathExtension == "ts" {
-            try? fileManager.removeItem(at: url)
-        }
 
         let outputURL = directory.appending(path: "\(prefix)\(UUID().uuidString).ts")
         guard fileManager.createFile(atPath: outputURL.path, contents: nil) else {

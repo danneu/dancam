@@ -127,7 +127,9 @@ renames committed-open state to the ordinary finalized filename carrying duratio
 syncs the directory, and emits `segment_finalized`. Rust validates the finalized
 artifact and the event's agreement with its durable duration fact. That validation
 returns the accepted artifact view; Rust publishes `clip_finalized` from its id,
-session, bytes, duration, and ETag without another catalog lookup, then acknowledges.
+storage generation, session, bytes, duration, and ETag without another catalog
+lookup, then acknowledges. Finalization fails closed if generation evidence is
+unavailable.
 Clock-derived `start_ms` is nullable enrichment: an unavailable or unusable offset
 leaves it null and `time_approximate` true without blocking finalization.
 Only then may Python ask Rust to reserve the next sequence and open its transaction.
@@ -668,3 +670,14 @@ Retrying the catalog lookup was rejected because it creates two competing artifa
 views inside one finalization. Making missing clock data fatal was rejected because
 wall time is enrichment rather than recording truth. Scanning mock media at close was
 rejected because the mock does not need to invent a durable duration fact.
+
+### 2026-07-17 -- Bind recordings and finalization to storage generation
+
+Boot tag and session identify a recording only inside one logical recording
+namespace. Resetting the namespace can reuse both, and sequence-plus-size validators
+can likewise collide with old app media.
+
+Recording identity is now `(storage_generation, boot_tag, session)`, and every
+finalized clip carries the same generation in metadata and its validator. The owner
+publishes only after the storage coordinator returns verified generation evidence;
+unavailable evidence blocks finalization rather than minting an ambiguous clip.

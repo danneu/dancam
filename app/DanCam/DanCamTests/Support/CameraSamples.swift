@@ -2,6 +2,8 @@ import Foundation
 @testable import DanCam
 
 enum CameraSamples {
+    static let storageGeneration = StorageGeneration.legacy
+
     static func world(
         phase: RecorderPhase = .idle,
         session: UInt64 = 7,
@@ -10,6 +12,7 @@ enum CameraSamples {
         cameraState: CameraState = .running,
         recordingReadiness: RecordingReadiness = .ready,
         storage: Storage? = Storage(used: 100, total: 1_000),
+        storageGeneration: String? = storageGeneration,
         tempC: TempC = TempC(),
         mem: Mem? = nil,
         cpu: CPU = CPU(),
@@ -30,6 +33,7 @@ enum CameraSamples {
             bootTag: bootTag,
             uptimeS: uptimeS,
             storage: storage,
+            storageGeneration: storage == nil ? nil : storageGeneration,
             tempC: tempC,
             mem: mem,
             cpu: cpu,
@@ -47,6 +51,7 @@ enum CameraSamples {
     ) -> Clip {
         Clip(
             id: id,
+            storageGeneration: storageGeneration,
             startMs: startMs,
             durMs: durMs,
             bytes: UInt64(id * 100),

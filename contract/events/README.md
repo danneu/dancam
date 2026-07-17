@@ -33,10 +33,11 @@ SSE framing.
 - `seq` is not in JSON. It is carried only by the SSE `id:` line.
 - `at_ms` and `t_ms` are milliseconds since Pi boot, paired with `boot_id`.
   They are display and ordering aids, not wall-clock evidence.
-- A recording is identified by the pair (`boot_tag`, `session`). Finished
-  clips carry both as nullable fields -- present together for a stamped
-  segment, both null for a bare one. The snapshot pairs its top-level
-  `boot_tag` with `recorder.session` to name the recording being written.
+- A recording is identified by (`storage_generation`, `boot_tag`, `session`).
+  The generation is the durable recording-namespace UUID, while the boot tag
+  and session identify one recording inside that namespace. Finished clips
+  carry the generation and both nullable recording fields -- the latter are
+  present together for a stamped segment and both null for a bare one.
 - Authoritative event order is the SSE `id:` sequence.
 - `segment_opened` and `clip_finalized` are separate events. Rollover emits
   `clip_finalized` for the old segment and `segment_opened` for the new one.
@@ -60,12 +61,22 @@ therefore not itself a readiness reason.
 
 ## Storage Telemetry
 
+The snapshot's nullable `storage_generation` and `storage` values are operational
+evidence from the same bounded probe. The generation becomes non-null only after the
+configured recording mount is verified and its durable witness is initialized.
+`storage_changed` replaces generation, storage, and readiness atomically.
+
 The snapshot's nullable `storage` value and `storage_changed.storage` have the same
 complete shape: quantized `used` and `total` filesystem bytes plus exact
 `recording_capacity_bytes`. Capacity is the maximum block pool writable by the
 non-root recorder after root-reserved blocks and the ring GC floor are excluded;
 it is not current free space. A failed probe produces `storage: null`, which clients
-fold as a direct replacement while the event stream remains online.
+fold as a direct replacement while the event stream remains online; it also clears
+`storage_generation` and makes recording unavailable.
+
+Finished clip metadata carries a raw canonical validator of
+`<storage_generation>-<id>-<bytes>`. HTTP quotes that value in `ETag` and clients use
+the raw value in media identity.
 
 ## Recorder Snapshot
 

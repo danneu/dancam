@@ -11,6 +11,7 @@ enum IncidentsFeature {
 
     nonisolated struct PullRequest: Equatable, Sendable {
         var seq: Int
+        var storageGeneration: String = StorageGeneration.legacy
         var etag: String
         var incidentIDs: [UUID]
     }
@@ -72,10 +73,12 @@ enum IncidentsFeature {
             guard let world,
                   hasLoadedStore,
                   world.recorder.phase.claimsRecording,
+                  let storageGeneration = world.storageGeneration,
                   let bootTag = world.bootTag,
                   let segment = world.recorder.currentSegment,
                   let openSegmentAnchor,
                   openSegmentAnchor.recordingID == RecordingID(
+                      storageGeneration: storageGeneration,
                       bootTag: bootTag,
                       session: world.recorder.session
                   ),
@@ -243,11 +246,14 @@ enum IncidentsFeature {
             )
 
         case .clipRemoved(let seq):
-            guard state.activePull?.seq != seq else { return .none }
+            guard let storageGeneration = world?.storageGeneration else { return .none }
+            guard state.activePull?.seq != seq
+                    || state.activePull?.storageGeneration != storageGeneration else { return .none }
 
             var changed: [IncidentRecord] = []
             for original in state.incidents {
-                guard var segment = original.segment(seq: seq),
+                guard original.storageGeneration == storageGeneration,
+                      var segment = original.segment(seq: seq),
                       segment.state == .wanted
                         || (segment.state == .lost && segment.lossEvidence == .inferredAbsence) else { continue }
                 var record = original
@@ -269,10 +275,16 @@ enum IncidentsFeature {
             let changedIDs = Set(records.map(\.id))
             state.pendingPersistIDs.formUnion(changedIDs)
             state.pullQueue = state.pullQueue.compactMap { request in
-                guard request.seq == seq else { return request }
+                guard request.seq == seq,
+                      request.storageGeneration == storageGeneration else { return request }
                 let remaining = request.incidentIDs.filter { changedIDs.contains($0) == false }
                 guard remaining.isEmpty == false else { return nil }
-                return PullRequest(seq: request.seq, etag: request.etag, incidentIDs: remaining)
+                return PullRequest(
+                    seq: request.seq,
+                    storageGeneration: request.storageGeneration,
+                    etag: request.etag,
+                    incidentIDs: remaining
+                )
             }
             return persist(records: records, previous: state.incidents, dependencies: dependencies) {
                 .lossRecordsPersisted(records, success: $0)
@@ -377,8 +389,16 @@ enum IncidentsFeature {
                     ))
 
                 case .pull(let seq, let etag, let incidentIDs):
+                    let storageGeneration = state.incidents
+                        .first { incidentIDs.contains($0.id) }?
+                        .storageGeneration ?? StorageGeneration.legacy
                     enqueue(
-                        PullRequest(seq: seq, etag: etag, incidentIDs: incidentIDs),
+                        PullRequest(
+                            seq: seq,
+                            storageGeneration: storageGeneration,
+                            etag: etag,
+                            incidentIDs: incidentIDs
+                        ),
                         state: &state
                     )
 
@@ -470,7 +490,12 @@ enum IncidentsFeature {
                 state.pullQueue = state.pullQueue.compactMap { request in
                     let incidentIDs = request.incidentIDs.filter { $0 != id }
                     guard incidentIDs.isEmpty == false else { return nil }
-                    return PullRequest(seq: request.seq, etag: request.etag, incidentIDs: incidentIDs)
+                    return PullRequest(
+                        seq: request.seq,
+                        storageGeneration: request.storageGeneration,
+                        etag: request.etag,
+                        incidentIDs: incidentIDs
+                    )
                 }
                 if state.activePull?.incidentIDs.contains(id) == true {
                     state.activePull = nil
@@ -678,30 +703,37 @@ enum IncidentsFeature {
         markIncidentIDs: [UUID],
         dependencies: AppDependencies
     ) async -> PullOutcome {
-        if let cached = await dependencies.clipCache.lookup(request.seq, request.etag) {
+        let clip = Clip(
+            id: request.seq,
+            storageGeneration: request.storageGeneration,
+            startMs: nil,
+            durMs: nil,
+            bytes: 0,
+            locked: false,
+            etag: request.etag,
+            timeApproximate: true
+        )
+        let cancellation = PullTaskCancellation()
+        let token = await dependencies.incidentBackgroundTask.begin {
+            cancellation.cancel()
+        }
+        let task = Task<PullOutcome, Never> {
             do {
-                await dependencies.incidentArtifactInstaller.writeThumbnail(
-                    cached,
-                    .mp4,
-                    request.seq,
+                let bytes = try await dependencies.clipMedia.preserve(
+                    clip,
+                    request.incidentIDs,
                     markIncidentIDs
                 )
-                let bytes = try await dependencies.incidentArtifactInstaller.install(
-                    cached,
-                    .mp4,
-                    request.seq,
-                    request.incidentIDs
-                )
                 return .completed(bytes: bytes)
+            } catch is CancellationError {
+                return .failed
+            } catch ClipPullError.http(404) {
+                return .notFound
             } catch {
                 return .failed
             }
         }
-
-        let task = Task {
-            await networkPull(request, markIncidentIDs: markIncidentIDs, dependencies: dependencies)
-        }
-        let token = await dependencies.incidentBackgroundTask.begin { task.cancel() }
+        cancellation.set(task)
         let result = await withTaskCancellationHandler {
             await task.value
         } onCancel: {
@@ -711,60 +743,25 @@ enum IncidentsFeature {
         return result
     }
 
-    private static func networkPull(
-        _ request: PullRequest,
-        markIncidentIDs: [UUID],
-        dependencies: AppDependencies
-    ) async -> PullOutcome {
-        do {
-            var result: ClipPullResult?
-            for try await event in dependencies.clipPull.pull(request.seq, request.etag) {
-                try Task.checkCancellation()
-                if case .completed(let completed) = event {
-                    result = completed
-                }
-            }
-            guard let result else { return .failed }
-            defer { try? FileManager.default.removeItem(at: result.fileURL) }
+    private nonisolated final class PullTaskCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: Task<PullOutcome, Never>?
+        private var isCancelled = false
 
-            await dependencies.incidentArtifactInstaller.writeThumbnail(
-                result.fileURL,
-                .ts,
-                request.seq,
-                markIncidentIDs
-            )
+        func set(_ task: Task<PullOutcome, Never>) {
+            lock.lock()
+            self.task = task
+            let shouldCancel = isCancelled
+            lock.unlock()
+            if shouldCancel { task.cancel() }
+        }
 
-            do {
-                let remuxed = try await dependencies.clipRemuxer.remux(result.fileURL, request.seq)
-                defer {
-                    if remuxed.fileURL != result.fileURL {
-                        try? FileManager.default.removeItem(at: remuxed.fileURL)
-                    }
-                }
-                let bytes = try await dependencies.incidentArtifactInstaller.install(
-                    remuxed.fileURL,
-                    .mp4,
-                    request.seq,
-                    request.incidentIDs
-                )
-                return .completed(bytes: bytes)
-            } catch is CancellationError {
-                return .failed
-            } catch {
-                let bytes = try await dependencies.incidentArtifactInstaller.install(
-                    result.fileURL,
-                    .ts,
-                    request.seq,
-                    request.incidentIDs
-                )
-                return .completed(bytes: bytes)
-            }
-        } catch is CancellationError {
-            return .failed
-        } catch ClipPullError.http(404) {
-            return .notFound
-        } catch {
-            return .failed
+        func cancel() {
+            lock.lock()
+            isCancelled = true
+            let task = task
+            lock.unlock()
+            task?.cancel()
         }
     }
 
@@ -801,8 +798,13 @@ enum IncidentsFeature {
     private static func recorderState(_ world: World?) -> IncidentRecorderState {
         guard let world else { return .unknown }
         guard world.recorder.phase.isActive,
+              let storageGeneration = world.storageGeneration,
               let bootTag = world.bootTag else { return .notRecording }
-        return .recording(RecordingID(bootTag: bootTag, session: world.recorder.session))
+        return .recording(RecordingID(
+            storageGeneration: storageGeneration,
+            bootTag: bootTag,
+            session: world.recorder.session
+        ))
     }
 
     private static func updateAnchor(
@@ -812,13 +814,18 @@ enum IncidentsFeature {
     ) {
         guard let world,
               world.recorder.phase.claimsRecording,
+              let storageGeneration = world.storageGeneration,
               let bootTag = world.bootTag,
               let segment = world.recorder.currentSegment else {
             state.openSegmentAnchor = nil
             return
         }
 
-        let recordingID = RecordingID(bootTag: bootTag, session: world.recorder.session)
+        let recordingID = RecordingID(
+            storageGeneration: storageGeneration,
+            bootTag: bootTag,
+            session: world.recorder.session
+        )
         if state.openSegmentAnchor?.recordingID == recordingID,
            state.openSegmentAnchor?.seq == segment.id {
             return

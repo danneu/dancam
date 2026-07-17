@@ -292,18 +292,17 @@ impl Backend for CameraBackend {
     fn update_telemetry(
         &self,
         storage: Option<DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
     ) {
         self.hub
-            .update_telemetry(storage, recording_storage_available, soc_temp_c, mem, cpu);
+            .update_telemetry(storage, storage_generation, soc_temp_c, mem, cpu);
     }
 
-    fn update_storage(&self, storage: Option<DiskUsage>, recording_storage_available: bool) {
-        self.hub
-            .update_storage(storage, recording_storage_available);
+    fn update_storage(&self, storage: Option<DiskUsage>, storage_generation: Option<String>) {
+        self.hub.update_storage(storage, storage_generation);
     }
 }
 
@@ -1560,9 +1559,11 @@ async fn apply_child_event(
                 let Some(candidate) = check_storage.validate_finalized(session, id)? else {
                     return Ok(None);
                 };
+                let storage_generation = check_storage.storage_generation()?;
                 let durable_dur_ms = candidate.facts.as_ref().and_then(|facts| facts.dur_ms);
                 let finalized = clip_meta_from_candidate(
                     candidate,
+                    &storage_generation,
                     durable_dur_ms,
                     metadata_time_store.as_ref(),
                 );
@@ -1970,7 +1971,7 @@ mod tests {
         assert_eq!(meta.session, Some(6));
         assert_eq!(meta.bytes, 7);
         assert_eq!(meta.dur_ms, Some(300));
-        assert_eq!(meta.etag, "5-7");
+        assert_eq!(meta.etag, format!("{}-5-7", meta.storage_generation));
         assert_eq!(meta.start_ms, None);
         assert!(meta.time_approximate);
 

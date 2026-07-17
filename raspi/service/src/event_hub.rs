@@ -156,14 +156,14 @@ impl EventHub {
     pub fn update_telemetry(
         &self,
         storage: Option<crate::sysfacts::DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
         soc_temp_c: Option<f32>,
         mem: Option<crate::sysfacts::MemInfo>,
         cpu: Cpu,
     ) {
         self.drive_now(Input::Telemetry {
             storage,
-            recording_storage_available,
+            storage_generation,
             soc_temp_c,
             mem,
             cpu,
@@ -173,11 +173,11 @@ impl EventHub {
     pub fn update_storage(
         &self,
         storage: Option<crate::sysfacts::DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
     ) {
         self.drive_now(Input::Storage {
             storage,
-            recording_storage_available,
+            storage_generation,
         });
     }
 
@@ -291,7 +291,9 @@ mod tests {
                             total: 100 * STORAGE_QUANTUM,
                             recording_capacity_bytes: 90 * STORAGE_QUANTUM,
                         }),
-                        recording_storage_available: true,
+                        storage_generation: Some(
+                            "00000000-0000-4000-8000-000000000001".to_string(),
+                        ),
                         soc_temp_c: None,
                         mem: None,
                         cpu: Cpu::empty(),

@@ -1277,10 +1277,12 @@ struct AppFeatureTests {
 
         await store.send(.event(.storageChanged(
             storage: Storage(used: 1, total: 2, recordingCapacityBytes: 3),
+            storageGeneration: CameraSamples.storageGeneration,
             recordingReadiness: .ready
         ))) {
             var nextWorld = world
             nextWorld.storage = Storage(used: 1, total: 2, recordingCapacityBytes: 3)
+            nextWorld.storageGeneration = CameraSamples.storageGeneration
             $0.link = .online(nextWorld)
         }
         let storageWorld = try #require(store.state.link.world)

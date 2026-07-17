@@ -79,8 +79,41 @@ impl StorageCoordinator {
 
         update_witness(self.rec_dir.as_ref(), |witness| {
             witness.high_water_seq = next;
+            witness.high_water_initialized = true;
         })?;
         Ok(next)
+    }
+
+    /// Return the durable identity of the configured recording namespace.
+    ///
+    /// The generation lives in the same fsync-backed witness as the sequence
+    /// high-water mark. Reading operational evidence may enrich a legacy
+    /// witness, but it never lowers that witness or changes an existing
+    /// generation.
+    pub fn storage_generation(&self) -> io::Result<String> {
+        let _guard = self
+            .mutation
+            .lock()
+            .expect("storage coordinator mutex poisoned");
+        self.ensure_rec_mounted()?;
+        fs::create_dir_all(self.rec_dir.as_ref())?;
+
+        let scanned_high_water = max_clip_seq(self.rec_dir.as_ref())?;
+        let mut state = read_witness_state(self.rec_dir.as_ref())?.unwrap_or(StateWitness {
+            high_water_seq: scanned_high_water.unwrap_or(0),
+            high_water_initialized: scanned_high_water.is_some(),
+            storage_generation: None,
+            extra: serde_json::Map::new(),
+        });
+        if let Some(generation) = &state.storage_generation {
+            validate_storage_generation(generation)?;
+            return Ok(generation.clone());
+        }
+
+        let generation = uuid::Uuid::new_v4().hyphenated().to_string();
+        state.storage_generation = Some(generation.clone());
+        write_witness(self.rec_dir.as_ref(), &state)?;
+        Ok(generation)
     }
 
     pub fn validate_committed_open(
@@ -297,7 +330,9 @@ impl StorageCoordinator {
             .expect("storage coordinator mutex poisoned");
         self.ensure_rec_mounted()?;
         let rec_dir = self.rec_dir.as_ref();
-        if read_witness_state(rec_dir)?.is_some_and(|witness| witness.high_water_seq >= batch_max) {
+        if read_witness_state(rec_dir)?.is_some_and(|witness| {
+            witness.high_water_initialized && witness.high_water_seq >= batch_max
+        }) {
             return Ok(());
         }
         raise_witness_at_least(rec_dir, ceiling)
@@ -432,7 +467,9 @@ fn mount_witness_error(mountpoint: &Path, detail: impl std::fmt::Display) -> io:
 }
 
 fn next_start_segment(rec_dir: &Path) -> io::Result<SegmentId> {
-    let witness = read_witness_state(rec_dir)?.map(|state| state.high_water_seq);
+    let witness = read_witness_state(rec_dir)?
+        .filter(|state| state.high_water_initialized)
+        .map(|state| state.high_water_seq);
     let scanned = max_clip_seq(rec_dir)?;
     match witness.into_iter().chain(scanned).max() {
         // Fail closed at the ceiling rather than reissuing `u32::MAX` (which would mint a
@@ -455,8 +492,23 @@ fn segment_ceiling_error() -> io::Error {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StateWitness {
     high_water_seq: SegmentId,
+    #[serde(
+        default = "high_water_was_initialized",
+        skip_serializing_if = "high_water_is_initialized"
+    )]
+    high_water_initialized: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    storage_generation: Option<String>,
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
+}
+
+fn high_water_was_initialized() -> bool {
+    true
+}
+
+fn high_water_is_initialized(value: &bool) -> bool {
+    *value
 }
 
 fn read_witness_state(rec_dir: &Path) -> io::Result<Option<StateWitness>> {
@@ -475,10 +527,19 @@ fn read_witness_state(rec_dir: &Path) -> io::Result<Option<StateWitness>> {
 fn update_witness(rec_dir: &Path, mutate: impl FnOnce(&mut StateWitness)) -> io::Result<()> {
     let mut state = read_witness_state(rec_dir)?.unwrap_or_else(|| StateWitness {
         high_water_seq: 0,
+        high_water_initialized: false,
+        storage_generation: Some(uuid::Uuid::new_v4().hyphenated().to_string()),
         extra: serde_json::Map::new(),
     });
     mutate(&mut state);
 
+    if state.storage_generation.is_none() {
+        state.storage_generation = Some(uuid::Uuid::new_v4().hyphenated().to_string());
+    }
+    write_witness(rec_dir, &state)
+}
+
+fn write_witness(rec_dir: &Path, state: &StateWitness) -> io::Result<()> {
     let state_dir = rec_dir.join(STATE_DIR);
     fs::create_dir_all(&state_dir)?;
     fsync_dir(rec_dir)?;
@@ -486,7 +547,7 @@ fn update_witness(rec_dir: &Path, mutate: impl FnOnce(&mut StateWitness)) -> io:
     let tmp_path = state_dir.join(TMP_STATE_FILE);
     let final_path = state_dir.join(STATE_FILE);
     let file = File::create(&tmp_path)?;
-    serde_json::to_writer(&file, &state)?;
+    serde_json::to_writer(&file, state)?;
     file.sync_all()?;
     drop(file);
 
@@ -495,16 +556,35 @@ fn update_witness(rec_dir: &Path, mutate: impl FnOnce(&mut StateWitness)) -> io:
     Ok(())
 }
 
+fn validate_storage_generation(generation: &str) -> io::Result<()> {
+    let parsed = uuid::Uuid::parse_str(generation).map_err(|error| {
+        io::Error::new(
+            ErrorKind::InvalidData,
+            format!("storage_generation is not a UUID: {error}"),
+        )
+    })?;
+    if parsed.hyphenated().to_string() != generation {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "storage_generation must be a canonical lowercase UUID",
+        ));
+    }
+    Ok(())
+}
+
 /// Write-ahead raise: durably ensure high_water_seq >= floor before any unlink.
 /// No-ops (no write, no fsync) when the committed witness already covers it --
 /// GC deletes oldest ids, so at steady state this saves an fsync per eviction.
 fn raise_witness_at_least(rec_dir: &Path, floor: SegmentId) -> io::Result<()> {
-    if read_witness_state(rec_dir)?.is_some_and(|witness| witness.high_water_seq >= floor) {
+    if read_witness_state(rec_dir)?
+        .is_some_and(|witness| witness.high_water_initialized && witness.high_water_seq >= floor)
+    {
         return Ok(());
     }
 
     update_witness(rec_dir, |witness| {
         witness.high_water_seq = witness.high_water_seq.max(floor);
+        witness.high_water_initialized = true;
     })
 }
 
@@ -548,7 +628,7 @@ fn corrupt_witness_error(path: &Path, source: impl std::fmt::Display) -> io::Err
     io::Error::new(
         ErrorKind::InvalidData,
         format!(
-            "{} is corrupt or unreadable ({source}); delete state.json to recover. Footage is untouched; only the segment id floor is lost.",
+            "{} is corrupt or unreadable ({source}); delete state.json to reset the namespace. Footage is untouched, surviving files determine the sequence floor, and the service mints a new storage generation.",
             path.display()
         ),
     )
@@ -1355,6 +1435,64 @@ mod tests {
             std::io::ErrorKind::InvalidData
         );
         assert!(rec_dir.path.join(stamped_name(7)).is_file());
+    }
+
+    #[test]
+    fn storage_generation_survives_coordinator_restart() {
+        let rec_dir = TempRecDir::new();
+        let first = StorageCoordinator::new(rec_dir.path.clone())
+            .storage_generation()
+            .unwrap();
+        let second = StorageCoordinator::new(rec_dir.path.clone())
+            .storage_generation()
+            .unwrap();
+
+        assert_eq!(second, first);
+        assert_eq!(
+            read_witness_json(&rec_dir.path)["storage_generation"],
+            first
+        );
+    }
+
+    #[test]
+    fn storage_generation_does_not_reserve_segment_zero() {
+        let rec_dir = TempRecDir::new();
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        coordinator.storage_generation().unwrap();
+
+        assert_eq!(coordinator.allocate_start_segment().unwrap(), 0);
+        assert_eq!(read_high_water_seq(&rec_dir.path), 0);
+    }
+
+    #[test]
+    fn storage_generation_enriches_legacy_witness_without_lowering_high_water() {
+        let rec_dir = TempRecDir::new();
+        write_witness(&rec_dir.path, 42);
+
+        let generation = StorageCoordinator::new(rec_dir.path.clone())
+            .storage_generation()
+            .unwrap();
+
+        assert_eq!(read_high_water_seq(&rec_dir.path), 42);
+        assert_eq!(
+            read_witness_json(&rec_dir.path)["storage_generation"],
+            generation
+        );
+    }
+
+    #[test]
+    fn reset_namespace_mints_a_different_storage_generation() {
+        let rec_dir = TempRecDir::new();
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+        let first = coordinator.storage_generation().unwrap();
+
+        fs::remove_dir_all(rec_dir.path.join(STATE_DIR)).unwrap();
+        let second = StorageCoordinator::new(rec_dir.path.clone())
+            .storage_generation()
+            .unwrap();
+
+        assert_ne!(second, first);
     }
 
     fn write_segment(rec_dir: &Path, seq: SegmentId) {

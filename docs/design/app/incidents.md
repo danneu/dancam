@@ -25,7 +25,7 @@ A press is accepted only when all of these facts are present together:
 - the event stream has an online world;
 - the incident store has loaded successfully;
 - the recorder claims an active recording;
-- the world has a complete `RecordingID(bootTag, session)`; and
+- the world has a complete `RecordingID(storageGeneration, bootTag, session)`; and
 - the current open segment matches the app's monotonic open-segment anchor.
 
 The mark persists the recording identity, open segment sequence, estimated age within
@@ -148,10 +148,12 @@ Incidents/<uuid>/
   thumb.jpg
 ```
 
-`incident.json` stores resumable facts: the mark, window settings, recording identity,
-and each segment's sequence, resolution state, evidence class, ETag, duration, and
-bytes. It does not store derived incident status. Introducing SwiftData or another
-index would create a second truth that could drift from the media directory.
+`incident.json` stores resumable facts: the mark, window settings, generation-scoped
+recording identity, and each segment's sequence, resolution state, evidence class,
+ETag, duration, and bytes. Legacy records missing generation decode into a reserved
+all-zero legacy namespace; they never match live Pi media implicitly. It does not store
+derived incident status. Introducing SwiftData or another index would create a second
+truth that could drift from the media directory.
 
 Record updates use atomic file replacement. A segment's resolved metadata is persisted
 before cache reuse or network pull begins. Media is copied to a same-directory `.part`
@@ -160,11 +162,11 @@ launch scan deletes abandoned staging files and promotes complete final MP4 or T
 artifacts into the record, healing a crash between artifact rename and record update.
 Unreadable directories remain visible and deletable instead of being silently erased.
 
-The reconciler first reuses a matching cached MP4 when one exists. Otherwise it uses
-the normal resumable ranged pull, writes a thumbnail for the marked segment, and remuxes
-MPEG-TS to MP4 without re-encoding. If remux fails, the raw TS remains durable,
-shareable evidence. Overlapping incidents needing the same sequence and ETag share one
-network pull, then install a complete artifact into each incident directory.
+The reconciler asks the process-wide media coordinator to preserve a generation-scoped
+clip. It reuses or joins the same full pull and remux used by the viewer and other
+incidents, then installs a complete artifact into each incident directory. If remux
+fails after a complete pull, raw TS remains durable, shareable evidence; cache insertion
+or thumbnail failure does not block or undo a saved incident.
 
 Every fact transition is one ordered effect: persist the record, update the local
 notification for the derived-status transition, publish the record to reducer state,
@@ -394,3 +396,14 @@ invalid waiting/share states representable. A separate pending section was rejec
 because lower-sequence backfill could not interleave with installed rows. Keeping the
 "Still saving" annotation was rejected because waiting rows and aggregate progress
 already communicate the saving state.
+
+### 2026-07-17: Preserve incidents through the shared media coordinator
+
+Incident reconciliation previously coordinated only overlapping incident pulls, while
+viewer and thumbnail demand could duplicate the same work. It also lacked a durable
+namespace fact to distinguish reused recording and segment identities.
+
+Incident records and recording identity now carry storage generation, and the
+reconciler uses the process-wide media coordinator. Regenerable-cache failure cannot
+turn permanent MP4 or raw-TS evidence back into pending work. Legacy records remain
+readable in a reserved namespace without matching current media.

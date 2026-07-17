@@ -3,6 +3,7 @@ import Testing
 @testable import DanCam
 
 struct ClipsClientTests {
+    private let storageGeneration = "00000000-0000-4000-8000-000000000001"
     @Test(
         .tags(.networking),
         arguments: ["0", String(UInt32.max)]
@@ -55,8 +56,8 @@ struct ClipsClientTests {
         let response = try decodeClipsResponse("""
         {
           "clips": [
-            { "id": 7, "boot_tag": "7f3a91c2b0d4", "session": 3, "start_ms": null,
-              "dur_ms": null, "bytes": 39123456, "locked": false, "etag": "7-39123456",
+            { "id": 7, "storage_generation": "\(storageGeneration)", "boot_tag": "7f3a91c2b0d4", "session": 3, "start_ms": null,
+              "dur_ms": null, "bytes": 39123456, "locked": false, "etag": "\(storageGeneration)-7-39123456",
               "time_approximate": true }
           ],
           "server_time_ms": 1719338400000,
@@ -74,8 +75,8 @@ struct ClipsClientTests {
         let response = try decodeClipsResponse("""
         {
           "clips": [
-            { "id": 7, "start_ms": null, "dur_ms": null, "bytes": 39123456,
-              "locked": false, "etag": "7-39123456", "time_approximate": true }
+            { "id": 7, "storage_generation": "\(storageGeneration)", "start_ms": null, "dur_ms": null, "bytes": 39123456,
+              "locked": false, "etag": "\(storageGeneration)-7-39123456", "time_approximate": true }
           ],
           "server_time_ms": 1719338400000,
           "next_cursor": "7"
@@ -92,8 +93,8 @@ struct ClipsClientTests {
         let payload = Data("""
         {
           "clips": [
-            { "id": 7, "start_ms": null, "dur_ms": null, "bytes": 39123456,
-              "locked": false, "etag": "7-39123456", "time_approximate": true }
+            { "id": 7, "storage_generation": "\(storageGeneration)", "start_ms": null, "dur_ms": null, "bytes": 39123456,
+              "locked": false, "etag": "\(storageGeneration)-7-39123456", "time_approximate": true }
           ],
           "server_time_ms": 1719338400000,
           "next_cursor": "7"
@@ -127,11 +128,12 @@ struct ClipsClientTests {
             clips: [
                 Clip(
                     id: 7,
+                    storageGeneration: storageGeneration,
                     startMs: nil,
                     durMs: nil,
                     bytes: 39123456,
                     locked: false,
-                    etag: "7-39123456",
+                    etag: "\(storageGeneration)-7-39123456",
                     timeApproximate: true
                 ),
             ],

@@ -19,6 +19,17 @@ nonisolated struct IncidentArtifactInstaller: Sendable {
         _ seq: Int,
         _ incidentIDs: [UUID]
     ) async -> Void
+    var writeThumbnailData: @Sendable (_ jpeg: Data, _ incidentIDs: [UUID]) async -> Void
+
+    init(
+        install: @escaping @Sendable (URL, IncidentArtifactKind, Int, [UUID]) async throws -> [UUID: UInt64],
+        writeThumbnail: @escaping @Sendable (URL, IncidentArtifactKind, Int, [UUID]) async -> Void,
+        writeThumbnailData: @escaping @Sendable (Data, [UUID]) async -> Void = { _, _ in }
+    ) {
+        self.install = install
+        self.writeThumbnail = writeThumbnail
+        self.writeThumbnailData = writeThumbnailData
+    }
 
     static func live(directoryURL: @escaping @Sendable (UUID) -> URL) -> IncidentArtifactInstaller {
         IncidentArtifactInstaller(
@@ -39,6 +50,9 @@ nonisolated struct IncidentArtifactInstaller: Sendable {
                     incidentIDs: incidentIDs,
                     directoryURL: directoryURL
                 )
+            },
+            writeThumbnailData: { jpeg, incidentIDs in
+                await writeThumbnailData(jpeg, incidentIDs: incidentIDs, directoryURL: directoryURL)
             }
         )
     }
@@ -49,7 +63,8 @@ nonisolated struct IncidentArtifactInstaller: Sendable {
             let bytes = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
             return Dictionary(uniqueKeysWithValues: incidentIDs.map { ($0, bytes) })
         },
-        writeThumbnail: { _, _, _, _ in }
+        writeThumbnail: { _, _, _, _ in },
+        writeThumbnailData: { _, _ in }
     )
 
     @concurrent
@@ -124,6 +139,21 @@ nonisolated struct IncidentArtifactInstaller: Sendable {
             }
         } catch {
             // A missing thumbnail is cosmetic and must never fail incident preservation.
+        }
+    }
+
+    @concurrent
+    private static func writeThumbnailData(
+        _ jpeg: Data,
+        incidentIDs: [UUID],
+        directoryURL: @escaping @Sendable (UUID) -> URL
+    ) async {
+        for incidentID in incidentIDs {
+            guard Task.isCancelled == false else { return }
+            try? jpeg.write(
+                to: directoryURL(incidentID).appending(path: "thumb.jpg"),
+                options: .atomic
+            )
         }
     }
 }

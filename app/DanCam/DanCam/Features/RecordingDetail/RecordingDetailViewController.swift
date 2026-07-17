@@ -202,6 +202,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         )
         let showsLiveRow = RecordingAttribution.from(
             status: status,
+            storageGeneration: inputs.storageGeneration,
             worldBootTag: inputs.worldBootTag,
             recorder: inputs.recorder
         )?.id == recordingID

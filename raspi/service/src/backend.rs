@@ -93,14 +93,14 @@ pub trait Backend: Send + Sync + 'static {
     fn update_telemetry(
         &self,
         _storage: Option<DiskUsage>,
-        _recording_storage_available: bool,
+        _storage_generation: Option<String>,
         _soc_temp_c: Option<f32>,
         _mem: Option<MemInfo>,
         _cpu: Cpu,
     ) {
     }
 
-    fn update_storage(&self, _storage: Option<DiskUsage>, _recording_storage_available: bool) {}
+    fn update_storage(&self, _storage: Option<DiskUsage>, _storage_generation: Option<String>) {}
 
     async fn shutdown(&self) -> Result<(), String> {
         Ok(())
@@ -357,18 +357,17 @@ impl Backend for MockBackend {
     fn update_telemetry(
         &self,
         storage: Option<DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
     ) {
         self.hub
-            .update_telemetry(storage, recording_storage_available, soc_temp_c, mem, cpu);
+            .update_telemetry(storage, storage_generation, soc_temp_c, mem, cpu);
     }
 
-    fn update_storage(&self, storage: Option<DiskUsage>, recording_storage_available: bool) {
-        self.hub
-            .update_storage(storage, recording_storage_available);
+    fn update_storage(&self, storage: Option<DiskUsage>, storage_generation: Option<String>) {
+        self.hub.update_storage(storage, storage_generation);
     }
 
     async fn shutdown(&self) -> Result<(), String> {
@@ -583,6 +582,16 @@ async fn run_mock_recording_writer(
         session,
         start_segment,
     } = context;
+    let storage_generation = match storage.storage_generation() {
+        Ok(generation) => generation,
+        Err(error) => {
+            tracing::error!(%error, "mock recording storage identity unavailable");
+            hub.drive_now(Input::Fail {
+                detail: format!("mock recording storage identity unavailable: {error}"),
+            });
+            return;
+        }
+    };
     let rec_dir = storage.rec_dir();
     let mut seq = start_segment;
     let (mut file, mut segment_facts) =
@@ -646,6 +655,7 @@ async fn run_mock_recording_writer(
                 }
                 let finalized = clip_meta_from_artifact(
                     seq,
+                    &storage_generation,
                     segment_bytes,
                     segment_facts,
                     None,
@@ -669,6 +679,7 @@ async fn run_mock_recording_writer(
                     }
                     let finalized = clip_meta_from_artifact(
                         seq,
+                        &storage_generation,
                         segment_bytes,
                         segment_facts,
                         None,

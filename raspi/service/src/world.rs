@@ -82,7 +82,7 @@ pub struct World {
     recorder: RecorderState,
     camera_state: CameraState,
     storage: Option<DiskUsage>,
-    recording_storage_available: bool,
+    storage_generation: Option<String>,
     temp_c: TempC,
     mem: Option<MemInfo>,
     cpu: Cpu,
@@ -95,7 +95,7 @@ impl World {
             recorder: RecorderState::new(),
             camera_state,
             storage: None,
-            recording_storage_available: true,
+            storage_generation: None,
             temp_c: TempC::empty(),
             mem: None,
             cpu: Cpu::empty(),
@@ -112,6 +112,7 @@ impl World {
             boot_tag: crate::recorder::boot_tag(boot_id),
             uptime_s,
             storage: self.storage.clone(),
+            storage_generation: self.storage_generation.clone(),
             temp_c: self.temp_c.clone(),
             mem: self.mem.clone(),
             cpu: self.cpu.clone(),
@@ -184,15 +185,15 @@ impl World {
             }
             Input::Telemetry {
                 storage,
-                recording_storage_available,
+                storage_generation,
                 soc_temp_c,
                 mem,
                 cpu,
-            } => self.apply_telemetry(storage, recording_storage_available, soc_temp_c, mem, cpu),
+            } => self.apply_telemetry(storage, storage_generation, soc_temp_c, mem, cpu),
             Input::Storage {
                 storage,
-                recording_storage_available,
-            } => self.apply_storage(storage, recording_storage_available),
+                storage_generation,
+            } => self.apply_storage(storage, storage_generation),
             Input::SensorTemp { celsius } => self.apply_sensor_temp(celsius),
             Input::TimeSynced => {
                 if self.time_synced {
@@ -292,12 +293,12 @@ impl World {
     fn apply_telemetry(
         &mut self,
         storage: Option<DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
     ) -> Vec<Event> {
-        let mut events = self.apply_storage(storage, recording_storage_available);
+        let mut events = self.apply_storage(storage, storage_generation);
         if self.temp_c.soc.observe(soc_temp_c) {
             events.push(Event::TempChanged {
                 soc: self.temp_c.soc.clone(),
@@ -329,19 +330,21 @@ impl World {
     fn apply_storage(
         &mut self,
         storage: Option<DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
     ) -> Vec<Event> {
         let storage = storage.map(quantize_storage);
         let prior_readiness = self.recording_readiness();
-        self.recording_storage_available = recording_storage_available;
+        let generation_changed = self.storage_generation != storage_generation;
+        self.storage_generation = storage_generation.clone();
         let readiness = self.recording_readiness();
-        if self.storage == storage && prior_readiness == readiness {
+        if self.storage == storage && !generation_changed && prior_readiness == readiness {
             return Vec::new();
         }
 
         self.storage = storage.clone();
         vec![Event::StorageChanged {
             storage,
+            storage_generation,
             recording_readiness: readiness,
         }]
     }
@@ -351,7 +354,7 @@ impl World {
             CameraState::Starting => Some(RecordingReadinessReason::CameraStarting),
             CameraState::Restarting => Some(RecordingReadinessReason::CameraRestarting),
             CameraState::Offline => Some(RecordingReadinessReason::CameraOffline),
-            CameraState::Running if !self.recording_storage_available => {
+            CameraState::Running if self.storage_generation.is_none() => {
                 Some(RecordingReadinessReason::RecordingStorageUnavailable)
             }
             CameraState::Running => None,
@@ -412,14 +415,14 @@ pub enum Input {
     CameraState(CameraState),
     Telemetry {
         storage: Option<DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
         soc_temp_c: Option<f32>,
         mem: Option<MemInfo>,
         cpu: Cpu,
     },
     Storage {
         storage: Option<DiskUsage>,
-        recording_storage_available: bool,
+        storage_generation: Option<String>,
     },
     SensorTemp {
         celsius: Option<f32>,
@@ -539,7 +542,7 @@ mod tests {
         world.apply(
             Input::Storage {
                 storage: storage.clone(),
-                recording_storage_available: true,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
             },
             1,
         );
@@ -547,7 +550,7 @@ mod tests {
         let events = world.apply(
             Input::Storage {
                 storage,
-                recording_storage_available: false,
+                storage_generation: None,
             },
             2,
         );
@@ -581,6 +584,16 @@ mod tests {
     #[test]
     fn recorder_error_does_not_block_readiness_when_camera_and_storage_are_ready() {
         let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::Telemetry {
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
+                storage: None,
+                soc_temp_c: None,
+                mem: None,
+                cpu: Cpu::empty(),
+            },
+            0,
+        );
         world.apply(Input::StartCommand { start_segment: 1 }, 1);
         world.apply(
             Input::Fail {
@@ -693,7 +706,7 @@ mod tests {
 
         let events = world.apply(
             Input::Telemetry {
-                recording_storage_available: true,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
@@ -711,6 +724,7 @@ mod tests {
                         total: 476 * STORAGE_QUANTUM,
                         recording_capacity_bytes: sample_storage().recording_capacity_bytes,
                     }),
+                    storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string(),),
                     recording_readiness: super::RecordingReadiness {
                         ready: true,
                         reason: None,
@@ -761,7 +775,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
-                recording_storage_available: true,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 storage: Some(sample_storage()),
                 soc_temp_c: None,
                 mem: None,
@@ -773,7 +787,7 @@ mod tests {
         assert_eq!(
             world.apply(
                 Input::Telemetry {
-                    recording_storage_available: true,
+                    storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                     storage: None,
                     soc_temp_c: None,
                     mem: None,
@@ -783,6 +797,7 @@ mod tests {
             ),
             vec![Event::StorageChanged {
                 storage: None,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string(),),
                 recording_readiness: super::RecordingReadiness {
                     ready: true,
                     reason: None,
@@ -797,7 +812,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
-                recording_storage_available: true,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
@@ -809,7 +824,7 @@ mod tests {
         assert!(world
             .apply(
                 Input::Telemetry {
-                    recording_storage_available: true,
+                    storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                     storage: Some(DiskUsage {
                         used: 149 * STORAGE_QUANTUM + 60_012_345,
                         total: 476 * STORAGE_QUANTUM + 1,
@@ -840,12 +855,13 @@ mod tests {
             }],
         };
         let input = |cpu| Input::Telemetry {
-            recording_storage_available: true,
+            storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
             storage: None,
             soc_temp_c: None,
             mem: None,
             cpu,
         };
+        world.apply(input(Cpu::empty()), 0);
         assert_eq!(
             world.apply(input(baseline.clone()), 1),
             vec![Event::CpuChanged {
@@ -881,7 +897,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
-                recording_storage_available: true,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
@@ -893,7 +909,7 @@ mod tests {
         assert_eq!(
             world.apply(
                 Input::Telemetry {
-                    recording_storage_available: true,
+                    storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                     storage: Some(DiskUsage {
                         used: 152 * STORAGE_QUANTUM + 7,
                         total: 476 * STORAGE_QUANTUM + 1,
@@ -915,6 +931,7 @@ mod tests {
                         total: 476 * STORAGE_QUANTUM,
                         recording_capacity_bytes: sample_storage().recording_capacity_bytes,
                     }),
+                    storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string(),),
                     recording_readiness: super::RecordingReadiness {
                         ready: true,
                         reason: None,
@@ -940,7 +957,7 @@ mod tests {
         for current in [51.5, 62.0] {
             world.apply(
                 Input::Telemetry {
-                    recording_storage_available: true,
+                    storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                     storage: None,
                     soc_temp_c: Some(current),
                     mem: None,
@@ -953,7 +970,7 @@ mod tests {
         assert_eq!(
             world.apply(
                 Input::Telemetry {
-                    recording_storage_available: true,
+                    storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                     storage: None,
                     soc_temp_c: Some(51.5),
                     mem: None,
@@ -1019,7 +1036,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
-                recording_storage_available: true,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 storage: None,
                 soc_temp_c: Some(51.5),
                 mem: None,
@@ -1176,7 +1193,7 @@ mod tests {
         let mut world = World::new(CameraState::Running);
         world.apply(
             Input::Telemetry {
-                recording_storage_available: true,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 storage: Some(sample_storage()),
                 soc_temp_c: Some(sample_soc_temp()),
                 mem: Some(sample_mem()),
@@ -1233,13 +1250,14 @@ mod tests {
     fn clip(id: u32) -> ClipMeta {
         ClipMeta {
             id,
+            storage_generation: "00000000-0000-4000-8000-000000000001".to_string(),
             boot_tag: None,
             session: None,
             start_ms: None,
             dur_ms: None,
             bytes: 7,
             locked: false,
-            etag: format!("{id}-7"),
+            etag: format!("00000000-0000-4000-8000-000000000001-{id}-7"),
             time_approximate: true,
         }
     }

@@ -4,10 +4,13 @@ import Testing
 
 @MainActor
 struct IncidentReconcilerTests {
-    @Test func queuedPullWaitsForForegroundWhileActivePullKeepsBackgroundGrace() async {
+    @Test func queuedPullWaitsForForegroundWhileActivePullKeepsBackgroundGrace() async throws {
         let request = IncidentsFeature.PullRequest(seq: 10, etag: "e10", incidentIDs: [])
         let pullStarted = AsyncSignal()
         let releasePull = AsyncSignal()
+        let cached = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try Data().write(to: cached)
+        defer { try? FileManager.default.removeItem(at: cached) }
         let state = IncidentsFeature.State(
             pullQueue: [request],
             hasLoadedStore: true
@@ -17,7 +20,7 @@ struct IncidentReconcilerTests {
                 lookup: { _, _ in
                     await pullStarted.signal()
                     await releasePull.wait()
-                    return URL(filePath: "/tmp/cached.mp4")
+                    return cached
                 },
                 insert: { _, _, source in source }
             ),
@@ -557,7 +560,7 @@ struct IncidentReconcilerTests {
                     bytes: 1,
                     elapsed: .seconds(1),
                     throughputMbps: 1,
-                    resolvedETag: etag
+                    resolvedETag: httpEntityTag(etag)
                 )))
                 continuation.finish()
             }

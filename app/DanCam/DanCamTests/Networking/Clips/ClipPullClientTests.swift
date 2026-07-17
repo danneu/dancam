@@ -10,6 +10,7 @@ struct ClipPullClientTests {
             headers: [
                 ("Content-Type", "application/mp2t"),
                 ("Content-Length", "\(body.count)"),
+                ("ETag", "\"1-12\""),
             ],
             body: body
         )
@@ -324,14 +325,18 @@ struct ClipPullClientTests {
     @Test(.tags(.networking))
     func totalReconnectCeilingStopsForeverProgressingLink() async throws {
         let maxTotalReconnects = 3
-        let steps = (0...maxTotalReconnects).map { index in
-            ScriptedResponder.Step.drop([
-                ok200(
-                    total: 100,
-                    etag: "fresh-\(index)",
-                    body: Data([UInt8(index)])
-                ),
-            ])
+        var steps: [ScriptedResponder.Step] = [
+            .drop([ok200(total: 100, etag: "initial", body: Data([0]))]),
+        ]
+        for index in 1...maxTotalReconnects {
+            steps.append(.drop([partial206(
+                start: index,
+                end: 99,
+                total: 100,
+                etag: "initial",
+                body: Data([UInt8(index)]),
+                contentLength: 100 - index
+            )]))
         }
         let responder = ScriptedResponder(steps)
         let client = try makeClient(
@@ -502,48 +507,51 @@ struct ClipPullClientTests {
     }
 
     @Test(.tags(.networking))
-    func restartsAndTracksTheNewValidatorWhenItChanges() async throws {
+    func changedValidatorMakesResumedDemandStale() async throws {
         let oldBytes = Data("abcdefghij".utf8) // 10 bytes
-        let newBytes = Data("ABCDEF".utf8) // 6 bytes
         let call1 = ok200(total: 12, etag: "old", body: oldBytes)
-        // Validator changed -> the server ignores If-Range and re-200s the new
-        // representation; it drops again partway.
-        let call2 = ok200(total: newBytes.count, etag: "new", body: Data(newBytes.prefix(2)))
-        let call3 = partial206(
-            start: 2,
-            end: 5,
-            total: newBytes.count,
-            etag: "new",
-            body: Data(newBytes.dropFirst(2))
-        )
+        let call2 = ok200(total: 6, etag: "new", body: Data("AB".utf8))
 
-        let responder = ScriptedResponder([.drop([call1]), .drop([call2]), .finish([call3])])
+        let responder = ScriptedResponder([.drop([call1]), .finish([call2])])
         let client = try makeClient(responder)
 
-        let events = try await collect(client.pull(106, "old"))
+        let error = await pullError(client.pull(106, "old"))
         let requests = await responder.requests
-        try #require(requests.count == 3)
-
-        // The third request resumes against the *new* validator, not the stale list etag.
-        let resume = String(decoding: requests[2], as: UTF8.self)
-        #expect(resume.contains("\r\nRange: bytes=2-\r\n"))
-        #expect(resume.contains("\r\nIf-Range: \"new\"\r\n"))
-
-        let result = try requireCompleted(events)
-        defer { try? FileManager.default.removeItem(at: result.fileURL) }
-        let restartIndex = try requireSingleRestartIndex(events)
-        let firstPostRestartProgress = try #require(firstProgressIndex(in: events, after: restartIndex))
-
-        #expect(progressValues(events).map(\.bytesWritten) == [10, 2, 6])
-        #expect(firstPostRestartProgress > restartIndex)
-        // Truncated and rewritten -- no stale tail from the 10-byte old representation.
-        #expect(try Data(contentsOf: result.fileURL) == newBytes)
-        #expect(result.bytes == UInt64(newBytes.count))
-        #expect(result.resolvedETag == "\"new\"")
+        #expect(requests.count == 2)
+        #expect(error as? ClipPullError == .staleRepresentation)
+        #expect(tempClipFiles(clipID: 106).isEmpty)
     }
 
     @Test(.tags(.networking))
-    func restartedPrecedesPostTruncationProgressEvenWhenProgressDoesNotRewind() async throws {
+    func changedValidatorOnPartialResponseMakesResumedDemandStale() async throws {
+        let oldBytes = Data("abcdefghij".utf8)
+        let call1 = ok200(total: 12, etag: "old", body: oldBytes)
+        let call2 = partial206(
+            start: 10,
+            end: 11,
+            total: 12,
+            etag: "new",
+            body: Data("kl".utf8)
+        )
+        let responder = ScriptedResponder([.drop([call1]), .finish([call2])])
+        let client = try makeClient(responder)
+
+        var openedURL: URL?
+        var pullFailure: Error?
+        do {
+            for try await event in client.pull(116, "old") {
+                if case .opened(let url) = event { openedURL = url }
+            }
+        } catch {
+            pullFailure = error
+        }
+
+        #expect(pullFailure as? ClipPullError == .staleRepresentation)
+        #expect(openedURL.map { FileManager.default.fileExists(atPath: $0.path) } == false)
+    }
+
+    @Test(.tags(.networking))
+    func changedValidatorNeverPublishesRestartOrReplacementProgress() async throws {
         let oldPrefix = Data("ab".utf8)
         let newBytes = Data("ABCDEF".utf8)
         let call1 = ok200(total: 4, etag: "old", body: oldPrefix)
@@ -552,30 +560,11 @@ struct ClipPullClientTests {
         let responder = ScriptedResponder([.drop([call1]), .finish([call2])])
         let client = try makeClient(responder)
 
-        let events = try await collect(client.pull(107, "old"))
+        let error = await pullError(client.pull(107, "old"))
         let requests = await responder.requests
-        try #require(requests.count == 2)
-
-        let progress = progressValues(events)
-        #expect(progress.map(\.bytesWritten) == [2, 6])
-        try #require(progress.count == 2)
-        try #require(progress[1].bytesWritten >= progress[0].bytesWritten)
-
-        let restartIndex = try requireSingleRestartIndex(events)
-        let firstPostRestartProgress = try #require(firstProgressIndex(in: events, after: restartIndex))
-        let completedIndex = try #require(events.firstIndex { event in
-            if case .completed = event {
-                return true
-            }
-            return false
-        })
-
-        #expect(firstPostRestartProgress > restartIndex)
-        #expect(firstPostRestartProgress < completedIndex)
-
-        let result = try requireCompleted(events)
-        defer { try? FileManager.default.removeItem(at: result.fileURL) }
-        #expect(try Data(contentsOf: result.fileURL) == newBytes)
+        #expect(requests.count == 2)
+        #expect(error as? ClipPullError == .staleRepresentation)
+        #expect(tempClipFiles(clipID: 107).isEmpty)
     }
 
     // MARK: - Helpers

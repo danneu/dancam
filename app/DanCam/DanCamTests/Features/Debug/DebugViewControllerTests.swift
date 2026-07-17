@@ -167,6 +167,7 @@ struct DebugViewControllerTests {
 
         appStore.send(.event(.storageChanged(
             storage: Storage(used: 600, total: 1_000, recordingCapacityBytes: 800),
+            storageGeneration: CameraSamples.storageGeneration,
             recordingReadiness: .ready
         )))
         appStore.send(.event(.memChanged(total: 1_000, available: 100, swapTotal: 1_000, swapUsed: 800)))

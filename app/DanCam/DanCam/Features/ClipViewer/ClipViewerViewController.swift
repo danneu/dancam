@@ -34,8 +34,8 @@ final class ClipViewerViewController: UIViewController {
     private var playerViewController: AVPlayerViewController?
     private var currentItemStatusObservation: NSKeyValueObservation?
     private var currentPlaybackSource: PlaybackSource?
+    private var currentMediaLease: ClipMediaLease?
     private var currentItemURL: URL?
-    private var temporaryFiles: Set<URL> = []
     private var didSelfHealCacheHitFailure = false
     private var isPresentingFullScreen = false
     private var hasCompletedFirstLayout = false
@@ -70,7 +70,7 @@ final class ClipViewerViewController: UIViewController {
         configureShareCoordinator()
 
         pullTask = Task { [weak self] in
-            await self?.loadFromCacheThenPlayOrPull()
+            self?.startPull()
         }
     }
 
@@ -324,22 +324,10 @@ final class ClipViewerViewController: UIViewController {
         startPull()
     }
 
-    private func loadFromCacheThenPlayOrPull() async {
-        if let cachedURL = await dependencies.clipCache.lookup(clip.id, clip.etag) {
-            guard Task.isCancelled == false else { return }
-            play(cachedURL, source: .cacheHit)
-            return
-        }
-
-        guard Task.isCancelled == false else { return }
-        startPull()
-    }
-
     private func startPull() {
         shareCoordinator?.cancel()
         pullTask?.cancel()
         pullTask = nil
-        removeTemporaryFiles()
         detachPlayer()
         progressView.setProgress(0, animated: false)
         state = .pulling(PullProgress(bytesWritten: 0, expected: clip.bytes > 0 ? clip.bytes : nil))
@@ -351,52 +339,38 @@ final class ClipViewerViewController: UIViewController {
 
     private func runPullRemuxCacheAndPlay() async {
         do {
-            for try await event in dependencies.clipPull.pull(clip.id, clip.etag) {
-                try Task.checkCancellation()
-                switch event {
-                case .opened(let fileURL):
-                    temporaryFiles.insert(fileURL)
-                case .restarted:
-                    break
-                case .progress(let bytesWritten, let expected):
-                    state = .pulling(PullProgress(bytesWritten: bytesWritten, expected: expected))
-                case .completed(let result):
-                    try await prepareAndPlay(result)
-                    pullTask = nil
-                    return
-                }
+            let lease = try await dependencies.clipMedia.playback(clip) { [weak self] progress in
+                await self?.apply(progress)
             }
+            try Task.checkCancellation()
+            play(lease.url, source: lease.isCacheHit ? .cacheHit : .freshRemux)
+            currentMediaLease = lease
             pullTask = nil
         } catch is CancellationError {
-            removeTemporaryFiles()
         } catch {
             fail(message: error.localizedDescription)
         }
     }
 
-    private func prepareAndPlay(_ result: ClipPullResult) async throws {
-        temporaryFiles.insert(result.fileURL)
-        state = .preparing
-
-        let remuxedResult = try await dependencies.clipRemuxer.remux(result.fileURL, clip.id)
-        try Task.checkCancellation()
-        temporaryFiles.insert(remuxedResult.fileURL)
-
-        let cachedURL = try await dependencies.clipCache.insert(
-            clip.id,
-            result.resolvedETag,
-            remuxedResult.fileURL
-        )
-        try Task.checkCancellation()
-
-        if cachedURL != remuxedResult.fileURL {
-            temporaryFiles.remove(remuxedResult.fileURL)
+    private func apply(_ progress: ClipMediaProgress) {
+        if progress.isPreparing {
+            state = .preparing
+        } else {
+            state = .pulling(PullProgress(
+                bytesWritten: progress.bytesWritten,
+                expected: progress.expectedBytes
+            ))
         }
-        if cachedURL != result.fileURL {
-            removeTemporaryFile(result.fileURL)
-        }
+    }
 
-        play(cachedURL, source: .freshRemux)
+    private func invalidateMediaAndRepull() {
+        pullTask?.cancel()
+        pullTask = Task { [weak self] in
+            guard let self else { return }
+            await dependencies.clipMedia.remove(clip)
+            guard Task.isCancelled == false else { return }
+            startPull()
+        }
     }
 
     private func play(_ url: URL, source: PlaybackSource) {
@@ -471,7 +445,7 @@ final class ClipViewerViewController: UIViewController {
             Log.playback.notice(
                 "clip_id=\(self.clip.id, privacy: .public) phase=self_heal decision=repull source=cacheHit"
             )
-            startPull()
+            invalidateMediaAndRepull()
         case .cacheHit, .freshRemux:
             Log.playback.notice(
                 "clip_id=\(self.clip.id, privacy: .public) phase=self_heal decision=fail source=\(source?.logLabel ?? "unknown", privacy: .public)"
@@ -485,7 +459,6 @@ final class ClipViewerViewController: UIViewController {
     private func fail(message: String) {
         pullTask?.cancel()
         pullTask = nil
-        removeTemporaryFiles()
         detachPlayer()
         state = .failed(message: message)
     }
@@ -568,6 +541,7 @@ final class ClipViewerViewController: UIViewController {
         player = nil
         currentPlaybackSource = nil
         currentItemURL = nil
+        currentMediaLease = nil
 
         if let playerViewController {
             playerViewController.willMove(toParent: nil)
@@ -582,24 +556,11 @@ final class ClipViewerViewController: UIViewController {
         pullTask?.cancel()
         pullTask = nil
         detachPlayer()
-        removeTemporaryFiles()
     }
 
     private func setSharePreparationControls(preparing: Bool) {
         shareButton.isEnabled = preparing == false && state?.isPlaying == true
         deleteButton.isEnabled = preparing == false
-    }
-
-    private func removeTemporaryFile(_ url: URL) {
-        temporaryFiles.remove(url)
-        try? FileManager.default.removeItem(at: url)
-    }
-
-    private func removeTemporaryFiles() {
-        for url in temporaryFiles {
-            try? FileManager.default.removeItem(at: url)
-        }
-        temporaryFiles.removeAll()
     }
 
     private struct PullProgress: Equatable {

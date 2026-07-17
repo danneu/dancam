@@ -712,6 +712,11 @@ struct ClipViewerViewControllerTests {
             clipPull: clipPull,
             clipRemuxer: remuxer,
             clipCache: clipCache,
+            clipMedia: viewerMedia(
+                clipPull: clipPull,
+                clipCache: clipCache,
+                remuxer: remuxer
+            ),
             shareArtifactPreparer: shareArtifactPreparer
         )
         let store = AppStore(
@@ -724,6 +729,90 @@ struct ClipViewerViewControllerTests {
             store: store,
             clip: clip,
             sharePresentation: sharePresentation
+        )
+    }
+
+    private func viewerMedia(
+        clipPull: ClipPullClient,
+        clipCache: ClipCache,
+        remuxer: ClipRemuxer
+    ) -> ClipMediaClient {
+        let invalidations = ViewerMediaInvalidations()
+        return ClipMediaClient(
+            thumbnail: { _ in nil },
+            playback: { clip, progress in
+                let skipCache = await invalidations.take(clip.id)
+                if skipCache == false,
+                   let cached = await clipCache.lookup(clip.id, clip.etag) {
+                    return ClipMediaLease(
+                        url: cached,
+                        kind: .mp4,
+                        thumbnailJPEG: nil,
+                        isCacheHit: true,
+                        release: {}
+                    )
+                }
+
+                var pullResult: ClipPullResult?
+                let files = ViewerMediaFileTracker()
+                return try await withTaskCancellationHandler {
+                  do {
+                    for try await event in clipPull.pull(clip.id, clip.etag) {
+                        try Task.checkCancellation()
+                        switch event {
+                        case .opened(let url):
+                            files.track(url)
+                        case .restarted:
+                            break
+                        case .progress(let bytesWritten, let expected):
+                            await progress(ClipMediaProgress(
+                                bytesWritten: bytesWritten,
+                                expectedBytes: expected,
+                                isPreparing: false
+                            ))
+                        case .completed(let result):
+                            pullResult = result
+                        }
+                    }
+                    guard let completed = pullResult else {
+                        throw TestError.unexpectedPull
+                    }
+                    await progress(ClipMediaProgress(
+                        bytesWritten: completed.bytes,
+                        expectedBytes: completed.bytes,
+                        isPreparing: true
+                    ))
+                    let remuxed = try await remuxer.remux(completed.fileURL, clip.id)
+                    files.track(remuxed.fileURL)
+                    let cached = try await clipCache.insert(
+                        clip.id,
+                        completed.resolvedETag,
+                        remuxed.fileURL
+                    )
+                    if completed.fileURL != cached {
+                        try? FileManager.default.removeItem(at: completed.fileURL)
+                    }
+                    files.keep(cached)
+                    return ClipMediaLease(
+                        url: cached,
+                        kind: .mp4,
+                        thumbnailJPEG: nil,
+                        isCacheHit: false,
+                        release: {}
+                    )
+                } catch {
+                    files.cleanup()
+                    throw error
+                  }
+                } onCancel: {
+                    files.cleanup()
+                }
+            },
+            preserve: { _, _, _ in [:] },
+            remove: { clip in
+                await invalidations.mark(clip.id)
+                await clipCache.remove(clip.id)
+            }
         )
     }
 
@@ -873,5 +962,44 @@ private final class CallLog<Value>: @unchecked Sendable {
         let values = stored
         lock.unlock()
         return values
+    }
+}
+
+private actor ViewerMediaInvalidations {
+    private var clipIDs: Set<Int> = []
+
+    func mark(_ clipID: Int) {
+        clipIDs.insert(clipID)
+    }
+
+    func take(_ clipID: Int) -> Bool {
+        clipIDs.remove(clipID) != nil
+    }
+}
+
+private final class ViewerMediaFileTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls: Set<URL> = []
+
+    func track(_ url: URL) {
+        lock.lock()
+        urls.insert(url)
+        lock.unlock()
+    }
+
+    func keep(_ url: URL) {
+        lock.lock()
+        urls.remove(url)
+        lock.unlock()
+    }
+
+    func cleanup() {
+        lock.lock()
+        let cleanup = urls
+        urls.removeAll()
+        lock.unlock()
+        for url in cleanup {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

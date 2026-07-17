@@ -43,17 +43,8 @@ nonisolated struct ClipRemuxer: Sendable {
     }
 
     private static func prepareOutputURL(clipID: Int) throws -> URL {
-        let fileManager = FileManager.default
-        let directory = fileManager.temporaryDirectory
+        let directory = FileManager.default.temporaryDirectory
         let prefix = "clip-\(clipID)-"
-
-        for url in (try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        )) ?? [] where url.lastPathComponent.hasPrefix(prefix) && url.pathExtension == "mp4" {
-            try? fileManager.removeItem(at: url)
-        }
-
         return directory.appending(path: "\(prefix)\(UUID().uuidString).mp4")
     }
 }

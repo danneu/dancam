@@ -44,6 +44,7 @@ nonisolated struct ClipsResponse: Codable, Equatable, Sendable {
 
 nonisolated struct Clip: Codable, Equatable, Sendable {
     var id: Int
+    var storageGeneration: String = StorageGeneration.legacy
     var startMs: UInt64?
     var durMs: UInt64?
     var bytes: UInt64
@@ -55,8 +56,15 @@ nonisolated struct Clip: Codable, Equatable, Sendable {
 }
 
 nonisolated struct RecordingID: Hashable, Sendable {
+    var storageGeneration: String = StorageGeneration.legacy
     var bootTag: String
     var session: UInt64
+}
+
+nonisolated enum StorageGeneration {
+    /// Isolates phone-owned records created before storage generations existed.
+    /// The Pi only mints random v4 UUIDs, so this value can never alias live media.
+    static let legacy = "00000000-0000-0000-0000-000000000000"
 }
 
 extension Clip {
@@ -70,6 +78,10 @@ extension Clip {
     /// Non-nil only when the clip carries both stamped facts (all-or-nothing on the wire).
     nonisolated var recordingID: RecordingID? {
         guard let bootTag, let session else { return nil }
-        return RecordingID(bootTag: bootTag, session: session)
+        return RecordingID(
+            storageGeneration: storageGeneration,
+            bootTag: bootTag,
+            session: session
+        )
     }
 }

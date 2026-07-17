@@ -107,7 +107,8 @@ async fn clips_route_lists_finished_clips_and_headers() {
     assert_eq!(clips.len(), 2);
     assert_eq!(clips[0]["id"], 1);
     assert_eq!(clips[0]["bytes"], 7);
-    assert_eq!(clips[0]["etag"], "1-7");
+    let generation = clips[0]["storage_generation"].as_str().unwrap();
+    assert_eq!(clips[0]["etag"], format!("{generation}-1-7"));
     assert_eq!(clips[0]["boot_tag"], Value::Null);
     assert_eq!(clips[0]["start_ms"], Value::Null);
     assert_eq!(clips[0]["dur_ms"], Value::Null);
@@ -233,7 +234,8 @@ async fn clips_route_lists_mixed_bare_and_stamped_segments_by_seq() {
     assert_eq!(clip_ids(&json), [3, 2, 1]);
     let clips = json["clips"].as_array().unwrap();
     assert_eq!(clips[0]["bytes"], 5);
-    assert_eq!(clips[0]["etag"], "3-5");
+    let generation = clips[0]["storage_generation"].as_str().unwrap();
+    assert_eq!(clips[0]["etag"], format!("{generation}-3-5"));
 }
 
 #[tokio::test]
@@ -346,9 +348,35 @@ async fn clips_route_returns_unavailable_for_unreadable_existing_dir() {
 }
 
 #[tokio::test]
+async fn list_and_pull_fail_closed_for_invalid_storage_generation() {
+    let rec_dir = TempRecDir::new();
+    rec_dir.write("seg_00007.ts", b"clip-bytes");
+    fs::create_dir(rec_dir.path.join("state")).unwrap();
+    fs::write(
+        rec_dir.path.join("state/state.json"),
+        br#"{"high_water_seq":7,"storage_generation":"NOT-A-UUID"}"#,
+    )
+    .unwrap();
+    let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+
+    let listing = app
+        .clone()
+        .oneshot(clips_request("/v1/clips"))
+        .await
+        .unwrap();
+    let pull = app.oneshot(clip_request("/v1/clips/7")).await.unwrap();
+
+    assert_eq!(listing.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(pull.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
 async fn serve_clip_returns_exact_bytes_and_headers() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
+    let generation = StorageCoordinator::new(rec_dir.path.clone())
+        .storage_generation()
+        .unwrap();
 
     let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(clip_request("/v1/clips/7"))
@@ -375,7 +403,11 @@ async fn serve_clip_returns_exact_bytes_and_headers() {
         Some("bytes")
     );
     // Quoted entity-tag, quotes included -- pins the wire form the app octet-matches.
-    assert_eq!(header_value(&response, header::ETAG), Some("\"7-10\""));
+    let expected_etag = format!("\"{generation}-7-10\"");
+    assert_eq!(
+        header_value(&response, header::ETAG),
+        Some(expected_etag.as_str())
+    );
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(body, Bytes::from_static(b"clip-bytes"));
@@ -385,6 +417,9 @@ async fn serve_clip_returns_exact_bytes_and_headers() {
 async fn serve_clip_resolves_stamped_segment_by_id() {
     let rec_dir = TempRecDir::new();
     rec_dir.write(&stamped_name(7), b"stamped-bytes");
+    let generation = StorageCoordinator::new(rec_dir.path.clone())
+        .storage_generation()
+        .unwrap();
 
     let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(clip_request("/v1/clips/7"))
@@ -393,7 +428,11 @@ async fn serve_clip_resolves_stamped_segment_by_id() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(header_value(&response, header::CONTENT_LENGTH), Some("13"));
-    assert_eq!(header_value(&response, header::ETAG), Some("\"7-13\""));
+    let expected_etag = format!("\"{generation}-7-13\"");
+    assert_eq!(
+        header_value(&response, header::ETAG),
+        Some(expected_etag.as_str())
+    );
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(body, Bytes::from_static(b"stamped-bytes"));
 }
@@ -425,10 +464,15 @@ async fn list_and_pull_choose_lexicographically_smallest_finalized_duplicate() {
         .await;
         assert_eq!(listed["clips"][0]["dur_ms"], 300);
         assert_eq!(listed["clips"][0]["bytes"], 9);
-        assert_eq!(listed["clips"][0]["etag"], "7-9");
+        let generation = listed["clips"][0]["storage_generation"].as_str().unwrap();
+        assert_eq!(listed["clips"][0]["etag"], format!("{generation}-7-9"));
 
         let response = app.oneshot(clip_request("/v1/clips/7")).await.unwrap();
-        assert_eq!(header_value(&response, header::ETAG), Some("\"7-9\""));
+        let expected_etag = format!("\"{generation}-7-9\"");
+        assert_eq!(
+            header_value(&response, header::ETAG),
+            Some(expected_etag.as_str())
+        );
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(body, Bytes::from_static(b"preferred"));
     }
@@ -438,6 +482,9 @@ async fn list_and_pull_choose_lexicographically_smallest_finalized_duplicate() {
 async fn serve_clip_open_ended_range_returns_partial_content() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
+    let generation = StorageCoordinator::new(rec_dir.path.clone())
+        .storage_generation()
+        .unwrap();
 
     let response = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()))
         .oneshot(clip_request_with_headers(
@@ -457,7 +504,11 @@ async fn serve_clip_open_ended_range_returns_partial_content() {
         header_value(&response, header::ACCEPT_RANGES),
         Some("bytes")
     );
-    assert_eq!(header_value(&response, header::ETAG), Some("\"7-10\""));
+    let expected_etag = format!("\"{generation}-7-10\"");
+    assert_eq!(
+        header_value(&response, header::ETAG),
+        Some(expected_etag.as_str())
+    );
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(body, Bytes::from_static(b"p-bytes"));
@@ -505,7 +556,13 @@ async fn serve_clip_closed_and_suffix_ranges_slice_the_body() {
 async fn serve_clip_honors_matching_if_range_and_ignores_a_mismatch() {
     let rec_dir = TempRecDir::new();
     rec_dir.write("seg_00007.ts", b"clip-bytes");
+    let generation = StorageCoordinator::new(rec_dir.path.clone())
+        .storage_generation()
+        .unwrap();
     let app = dancam::app(state(rec_dir.path.clone(), StubBackend::idle()));
+    let matching_etag = format!("\"{generation}-7-10\"");
+    let unquoted_etag = format!("{generation}-7-10");
+    let different_etag = format!("\"{generation}-7-999\"");
 
     // Quoted, matching validator -> the Range is honored (206).
     let matching = app
@@ -514,7 +571,7 @@ async fn serve_clip_honors_matching_if_range_and_ignores_a_mismatch() {
             "/v1/clips/7",
             &[
                 (header::RANGE.as_str(), "bytes=3-"),
-                (header::IF_RANGE.as_str(), "\"7-10\""),
+                (header::IF_RANGE.as_str(), matching_etag.as_str()),
             ],
         ))
         .await
@@ -528,7 +585,7 @@ async fn serve_clip_honors_matching_if_range_and_ignores_a_mismatch() {
             "/v1/clips/7",
             &[
                 (header::RANGE.as_str(), "bytes=3-"),
-                (header::IF_RANGE.as_str(), "7-10"),
+                (header::IF_RANGE.as_str(), unquoted_etag.as_str()),
             ],
         ))
         .await
@@ -544,7 +601,7 @@ async fn serve_clip_honors_matching_if_range_and_ignores_a_mismatch() {
             "/v1/clips/7",
             &[
                 (header::RANGE.as_str(), "bytes=3-"),
-                (header::IF_RANGE.as_str(), "\"7-999\""),
+                (header::IF_RANGE.as_str(), different_etag.as_str()),
             ],
         ))
         .await

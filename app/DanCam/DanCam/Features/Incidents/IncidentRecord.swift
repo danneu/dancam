@@ -120,6 +120,7 @@ nonisolated struct IncidentRecord: Codable, Equatable, Sendable, Identifiable {
 
     var id: UUID
     var pressedAtMs: UInt64
+    var storageGeneration: String
     var bootTag: String
     var session: UInt64
     var markSeq: Int
@@ -142,6 +143,7 @@ nonisolated struct IncidentRecord: Codable, Equatable, Sendable, Identifiable {
     ) {
         self.id = id
         self.pressedAtMs = pressedAtMs
+        storageGeneration = recordingID.storageGeneration
         bootTag = recordingID.bootTag
         session = recordingID.session
         self.markSeq = markSeq
@@ -153,7 +155,11 @@ nonisolated struct IncidentRecord: Codable, Equatable, Sendable, Identifiable {
     }
 
     var recordingID: RecordingID {
-        RecordingID(bootTag: bootTag, session: session)
+        RecordingID(
+            storageGeneration: storageGeneration,
+            bootTag: bootTag,
+            session: session
+        )
     }
 
     var coveredDurationMs: UInt64 {
@@ -188,5 +194,35 @@ nonisolated struct IncidentRecord: Codable, Equatable, Sendable, Identifiable {
 
     func segment(seq: Int) -> IncidentSegment? {
         wanted.first { $0.seq == seq }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case pressedAtMs
+        case storageGeneration
+        case bootTag
+        case session
+        case markSeq
+        case markAgeMs
+        case preMs
+        case postMs
+        case slackMs
+        case wanted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        pressedAtMs = try container.decode(UInt64.self, forKey: .pressedAtMs)
+        storageGeneration = try container.decodeIfPresent(String.self, forKey: .storageGeneration)
+            ?? StorageGeneration.legacy
+        bootTag = try container.decode(String.self, forKey: .bootTag)
+        session = try container.decode(UInt64.self, forKey: .session)
+        markSeq = try container.decode(Int.self, forKey: .markSeq)
+        markAgeMs = try container.decode(UInt64.self, forKey: .markAgeMs)
+        preMs = try container.decode(UInt64.self, forKey: .preMs)
+        postMs = try container.decode(UInt64.self, forKey: .postMs)
+        slackMs = try container.decode(UInt64.self, forKey: .slackMs)
+        wanted = try container.decode([IncidentSegment].self, forKey: .wanted)
     }
 }

@@ -32,6 +32,7 @@ const MAX_LIMIT: usize = 100;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ClipMeta {
     pub id: u32,
+    pub storage_generation: String,
     pub boot_tag: Option<String>,
     pub session: Option<u64>,
     pub start_ms: Option<u64>,
@@ -143,18 +144,22 @@ pub async fn serve_clip(
         return Err(ClipError::NotFound);
     }
 
-    let rec_dir = state.storage.rec_dir();
-    let segment = tokio::task::spawn_blocking(move || resolve_segment(rec_dir.as_ref(), id))
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "clip resolve task failed");
-            ClipError::Unavailable
-        })?
-        .map_err(|error| {
-            tracing::error!(%error, id, "failed to resolve clip");
-            ClipError::Unavailable
-        })?
-        .ok_or(ClipError::NotFound)?;
+    let storage = state.storage.clone();
+    let (storage_generation, segment) = tokio::task::spawn_blocking(move || {
+        let generation = storage.storage_generation()?;
+        let segment = resolve_segment(storage.rec_dir().as_ref(), id)?;
+        Ok::<_, io::Error>((generation, segment))
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "clip resolve task failed");
+        ClipError::Unavailable
+    })?
+    .map_err(|error| {
+        tracing::error!(%error, id, "failed to resolve clip");
+        ClipError::Unavailable
+    })?;
+    let segment = segment.ok_or(ClipError::NotFound)?;
     let mut file = File::open(segment.path)
         .await
         .map_err(io_error_to_clip_error)?;
@@ -164,7 +169,7 @@ pub async fn serve_clip(
     }
 
     let total = metadata.len();
-    let etag = http_etag(id, total);
+    let etag = http_etag(&storage_generation, id, total);
 
     let range = header_str(&headers, header::RANGE);
     // RFC 9110: If-Range uses a strong octet-for-octet validator comparison; a
@@ -199,6 +204,9 @@ pub async fn delete_clip(
     let storage = state.storage.clone();
     let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
+        storage
+            .storage_generation()
+            .map_err(SegmentDeleteError::Io)?;
         storage.delete_finished_segment(id, || backend.unpullable_from())
     })
     .await
@@ -216,8 +224,8 @@ pub async fn delete_clip(
 /// `ETag` response header and the `If-Range` comparison so a raw-vs-quoted
 /// mismatch can never silently downgrade a resume to a `200` restart. The JSON
 /// clips list keeps the raw/unquoted `{seq}-{bytes}` value; the app quotes it.
-fn http_etag(seq: u32, bytes: u64) -> String {
-    format!("\"{seq}-{bytes}\"")
+fn http_etag(storage_generation: &str, seq: u32, bytes: u64) -> String {
+    format!("\"{storage_generation}-{seq}-{bytes}\"")
 }
 
 fn header_str(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
@@ -333,6 +341,7 @@ pub(crate) fn read_finished_clips(
     limit: usize,
     time_store: &TimeStore,
 ) -> io::Result<FinishedClipsPage> {
+    let storage_generation = storage.storage_generation()?;
     let candidates = segment_candidates(storage.rec_dir().as_ref())?;
     let unpullable_from = live_floor();
     let mut candidates: Vec<_> = candidates
@@ -352,7 +361,7 @@ pub(crate) fn read_finished_clips(
         .into_iter()
         .map(|candidate| {
             let dur_ms = candidate.facts.as_ref().and_then(|facts| facts.dur_ms);
-            clip_meta_from_candidate(candidate, dur_ms, time_store)
+            clip_meta_from_candidate(candidate, &storage_generation, dur_ms, time_store)
         })
         .collect();
 
@@ -384,6 +393,7 @@ pub(crate) fn finalize_clip_meta(
     seq: SegmentId,
     time_store: &TimeStore,
 ) -> io::Result<Option<ClipMeta>> {
+    let storage_generation = storage.storage_generation()?;
     let rec_dir = storage.rec_dir();
     let Some(segment) = resolve_segment(rec_dir.as_ref(), seq)? else {
         return Ok(None);
@@ -404,7 +414,7 @@ pub(crate) fn finalize_clip_meta(
             }
         }
     }
-    let meta = clip_meta_from_candidate(segment.clone(), dur_ms, time_store);
+    let meta = clip_meta_from_candidate(segment.clone(), &storage_generation, dur_ms, time_store);
     if !meta.time_approximate || segment.facts.is_none() {
         return Ok(Some(meta));
     }
@@ -412,6 +422,7 @@ pub(crate) fn finalize_clip_meta(
     let disk_time_store = TimeStore::load(rec_dir.join("time"));
     Ok(Some(clip_meta_from_candidate(
         segment,
+        &storage_generation,
         dur_ms,
         &disk_time_store,
     )))
@@ -555,11 +566,13 @@ fn max_segment_seq(candidates: &[SegmentCandidate]) -> Option<u32> {
 
 pub(crate) fn clip_meta_from_candidate(
     candidate: SegmentCandidate,
+    storage_generation: &str,
     dur_ms: Option<u64>,
     time_store: &TimeStore,
 ) -> ClipMeta {
     clip_meta_from_artifact(
         candidate.seq,
+        storage_generation,
         candidate.bytes,
         candidate.facts,
         dur_ms,
@@ -569,6 +582,7 @@ pub(crate) fn clip_meta_from_candidate(
 
 pub(crate) fn clip_meta_from_artifact(
     id: SegmentId,
+    storage_generation: &str,
     bytes: u64,
     facts: Option<SegmentFacts>,
     dur_ms: Option<u64>,
@@ -579,13 +593,14 @@ pub(crate) fn clip_meta_from_artifact(
     let session = facts.as_ref().map(|facts| facts.session);
     ClipMeta {
         id,
+        storage_generation: storage_generation.to_string(),
         boot_tag,
         session,
         start_ms,
         dur_ms,
         bytes,
         locked: false,
-        etag: format!("{id}-{bytes}"),
+        etag: format!("{storage_generation}-{id}-{bytes}"),
         time_approximate: start_ms.is_none(),
     }
 }
@@ -688,7 +703,10 @@ mod tests {
 
     #[test]
     fn http_etag_quotes_the_seq_bytes_pair() {
-        assert_eq!(http_etag(1, 7), "\"1-7\"");
+        assert_eq!(
+            http_etag("00000000-0000-4000-8000-000000000001", 1, 7),
+            "\"00000000-0000-4000-8000-000000000001-1-7\""
+        );
     }
 
     #[test]
@@ -796,7 +814,10 @@ mod tests {
         );
         assert_eq!(next_cursor, None);
         assert_eq!(clips[0].bytes, 3);
-        assert_eq!(clips[0].etag, "2-3");
+        assert_eq!(
+            clips[0].etag,
+            format!("{}-2-3", clips[0].storage_generation)
+        );
     }
 
     #[test]
@@ -849,7 +870,10 @@ mod tests {
         if result.is_ok() {
             return;
         }
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied | io::ErrorKind::InvalidData
+        ));
     }
 
     #[test]
@@ -1005,7 +1029,10 @@ mod tests {
 
         assert_eq!(clips.iter().map(|clip| clip.id).collect::<Vec<_>>(), [8, 7]);
         assert_eq!(clips[1].bytes, 7);
-        assert_eq!(clips[1].etag, "7-7");
+        assert_eq!(
+            clips[1].etag,
+            format!("{}-7-7", clips[1].storage_generation)
+        );
         assert_eq!(next_cursor, None);
     }
 
@@ -1041,18 +1068,16 @@ mod tests {
     }
 
     #[test]
-    fn finalize_duration_persistence_failure_keeps_computed_metadata() {
+    fn finalize_fails_closed_when_storage_generation_is_unavailable() {
         let rec_dir = temp_rec_dir();
         let mount = temp_rec_dir();
         write_file(&rec_dir.path, &stamped_name(7), &pts_segment());
         let storage = StorageCoordinator::new(rec_dir.path.clone())
             .with_required_mountpoint(mount.path.clone());
 
-        let meta = super::finalize_clip_meta(&storage, 7, &TimeStore::in_memory())
-            .unwrap()
-            .unwrap();
+        let error = super::finalize_clip_meta(&storage, 7, &TimeStore::in_memory()).unwrap_err();
 
-        assert_eq!(meta.dur_ms, Some(300));
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(rec_dir.path.join(stamped_name(7)).is_file());
     }
 

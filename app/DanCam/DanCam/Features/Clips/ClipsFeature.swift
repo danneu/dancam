@@ -406,7 +406,7 @@ enum ClipsFeature {
         dependencies: AppDependencies
     ) -> Effect<Action> {
         .run(id: "clip-delete-\(clip.id)", cancelInFlight: true) { send in
-            await dependencies.clipCache.remove(clip.id)
+            await dependencies.clipMedia.remove(clip)
             do {
                 try await dependencies.clips.delete(clip.id)
                 guard Task.isCancelled == false else { return }

@@ -142,16 +142,18 @@ private nonisolated final class ThumbnailEntry {
 }
 
 private nonisolated struct ThumbnailKey: Hashable, Sendable {
+    let storageGeneration: String
     let id: Int
     let token: String
 
     init(_ clip: Clip) {
+        storageGeneration = clip.storageGeneration
         id = clip.id
         token = CacheKey.etagToken(clip.etag)
     }
 
     var nsString: NSString {
-        "\(id)-\(token)" as NSString
+        "\(storageGeneration)-\(id)-\(token)" as NSString
     }
 }
 
@@ -256,12 +258,10 @@ private actor Loader {
         cancelIfNoInterest(key: key, entry: entry)
     }
 
-    /// The one uniform interest-withdrawal rule: when both token sets are empty and the
-    /// entry is still `queued` (never granted a permit), drop it before it costs any bytes.
-    /// A `running` entry is past the cancel point and finishes, populating the cache.
+    /// The one uniform interest-withdrawal rule: final withdrawal cancels queued or
+    /// running work. This also lets full-media escalation stop an outstanding prefix.
     private func cancelIfNoInterest(key: ThumbnailKey, entry: ThumbnailEntry) {
         guard entry.strongTokens.isEmpty, entry.prefetchTokens.isEmpty else { return }
-        guard entry.state == .queued else { return }
         entry.task?.cancel()
     }
 

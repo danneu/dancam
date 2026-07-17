@@ -188,7 +188,7 @@ struct ClipRemuxerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func liveRemuxFailureRemovesStaleAndPartialOutputs() async throws {
+    func liveRemuxFailurePreservesOtherOutputsAndRemovesItsPartialOutput() async throws {
         let clipID = 91_001
         let invalidSourceURL = temporaryURL(extension: "ts")
         let staleURL = FileManager.default.temporaryDirectory
@@ -219,7 +219,7 @@ struct ClipRemuxerTests {
             Issue.record("Expected ClipRemuxError.invalidTransportStream, got \(error).")
         }
 
-        #expect(remuxOutputs(clipID: clipID).isEmpty)
+        #expect(remuxOutputs(clipID: clipID) == [staleURL])
     }
 
     private func durationSeconds(_ duration: Duration) -> Double {

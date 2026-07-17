@@ -516,6 +516,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
         liveRecordingStatus = status
         recordingAttribution = RecordingAttribution.from(
             status: status,
+            storageGeneration: inputs.storageGeneration,
             worldBootTag: inputs.worldBootTag,
             recorder: inputs.recorder
         )

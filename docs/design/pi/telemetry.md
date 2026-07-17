@@ -44,19 +44,19 @@ camera-first precedence order:
 3. `camera_offline`
 4. `recording_storage_unavailable`
 
-The shared world derives readiness from camera state and the recording-storage mount
-witness. Storage readiness uses the same configured `DANCAM_REQUIRE_REC_MOUNT`
-witness as recording mutations. When no mount is required, storage readiness
-succeeds; on the deployed unit, the required `/data` witness makes a missing or
-wrong recording mount fail closed.
+The shared world derives readiness from camera state and verified recording-storage
+identity. Storage readiness requires the configured `DANCAM_REQUIRE_REC_MOUNT`
+witness, when present, and a successfully initialized generation witness in the
+recording namespace. The deployed `/data` mount and local development directory use
+the same fail-closed generation rule.
 
 Camera and storage observations update readiness inside the same serialized world
 transition. Every `camera_state_changed` event carries the new camera state and its
 complete matching readiness replacement. Every `storage_changed` event carries the
-complete nullable storage replacement and matching readiness. A mount-only
-readiness change therefore emits `storage_changed` even when the quantized byte
-values have not changed. Clients never have to combine a new camera or storage fact
-with stale readiness.
+complete nullable generation and storage replacements plus matching readiness. A
+mount- or generation-only readiness change therefore emits `storage_changed` even
+when the quantized byte values have not changed. Clients never have to combine a new
+storage identity, measurement, or readiness fact with stale peers.
 
 Recorder lifecycle is deliberately not a readiness input. In particular, recorder
 error remains retryable and is not another non-ready reason. Readiness answers
@@ -67,9 +67,10 @@ recorder failure after an attempt.
 ## Bounded filesystem observation
 
 Startup, periodic telemetry, status, and initial SSE snapshots share one
-`FilesystemObserver`. It combines three facts in one blocking observation:
+`FilesystemObserver`. It combines four facts in one blocking observation:
 
 - the authoritative recording-mount witness;
+- the durable recording-namespace generation;
 - `statvfs` disk usage and recording capacity; and
 - the best-effort duration of the current segment when a snapshot needs it.
 
@@ -85,12 +86,11 @@ seconds. Status and the first SSE snapshot additionally observe the current segm
 so they can publish a fresh best-effort duration without creating a second
 filesystem path.
 
-When the observation times out or its task fails, storage becomes `null` and current
-segment duration becomes `null`. A configured recording mount becomes unavailable;
-an environment with no required mount remains storage-ready. This distinction lets
-the production unit fail closed while local mock runs remain usable without a
-dedicated mount. Unavailable evidence replaces prior storage rather than retaining a
-stale healthy sample.
+When the observation times out or its task fails, generation, storage, and current
+segment duration become `null`, and recording becomes unavailable. Local mock runs do
+not need a dedicated mount, but they still initialize the generation witness in their
+recording directory. Unavailable evidence replaces prior identity and storage rather
+than retaining a stale healthy sample.
 
 ## Owned worker shutdown
 
@@ -211,3 +211,16 @@ A global `spawn_blocking` registry was rejected because started blocking work is
 not abortable and a registry cannot create a harder wall-clock bound. Keeping the
 ownership at each worker preserves the durability boundary and makes task failure
 observable without adding a second admission protocol.
+
+### 2026-07-17 -- Publish verified storage identity with readiness
+
+Mount availability and byte counts did not distinguish one logical recording
+namespace from another. The filesystem observer now initializes and samples the
+durable generation beside mount and capacity evidence. The world replaces generation,
+storage, and readiness in one transition, clearing all three when evidence becomes
+unavailable.
+
+Publishing generation through an independent request was rejected because clients
+could combine it with storage and readiness from another observation. Retaining the
+last generation on probe failure was rejected because it would authorize media work
+against unverified storage.

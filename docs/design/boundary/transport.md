@@ -195,7 +195,9 @@ milliseconds since Pi boot, paired with `boot_id`; they are ordering and display
 not wall-clock evidence.
 
 The snapshot contains recorder state, camera state, recording readiness, boot
-identity, uptime, storage, temperatures, memory, per-core CPU, and time-sync state.
+identity, storage generation, uptime, storage, temperatures, memory, per-core CPU,
+and time-sync state. Generation is nullable operational evidence and becomes present
+only after the configured recording mount and durable witness are verified.
 Telemetry values are observations coarsened at the service boundary:
 
 - temperature uses 0.5 C steps and exposes current plus maximum since service start;
@@ -205,8 +207,9 @@ Telemetry values are observations coarsened at the service boundary:
 - CPU utilization is reported per runtime-discovered logical core as whole-percent
   current and 1m/5m/15m EWMA values.
 
-Camera or storage observations that affect recording readiness publish the complete
-replacement readiness shape in the same event. Sensor current temperature becomes
+Camera observations that affect recording readiness publish the complete replacement
+readiness shape in the same event. Storage observations atomically replace generation,
+storage measurements, and readiness. Sensor current temperature becomes
 null when the camera child is not running, while its process-lifetime maximum remains.
 The [event reference](../../reference/events.md) is the exact contract for event
 bodies, replacement rules, recorder identity, and readiness reasons.
@@ -259,9 +262,10 @@ contains ids lower than it. Only descending order is supported. `from` and `to`
 wall-clock filters are rejected with 400 until the contract can provide them without
 silently returning unfiltered results.
 
-Each clip carries `id`, nullable `boot_tag`, nullable `session`, nullable `start_ms`,
-nullable `dur_ms`, `bytes`, reserved `locked` (always false in v1), an unquoted
-`etag` of `<id>-<bytes>`, and `time_approximate`. The response also carries nullable
+Each clip carries `storage_generation`, `id`, nullable `boot_tag`, nullable `session`,
+nullable `start_ms`, nullable `dur_ms`, `bytes`, reserved `locked` (always false in
+v1), an unquoted `etag` of `<storage_generation>-<id>-<bytes>`, and
+`time_approximate`. The response also carries nullable
 `server_time_ms` and `next_cursor`. Bare segment names honestly produce null stamped
 facts. A listing or lookup scan error other than a missing recording directory returns
 503 rather than a false empty list or 404.
@@ -270,9 +274,11 @@ facts. A listing or lookup scan error other than a missing recording directory r
 responses return 200; one satisfiable byte range returns 206 with `Content-Range`;
 invalid, multiple, zero-length, or out-of-bounds ranges return 416 with
 `Content-Range: bytes */<length>`. Responses carry `Accept-Ranges: bytes` and a
-strong quoted ETag `"<id>-<bytes>"`. A mismatched `If-Range` ignores the range and
-returns the complete 200 representation, allowing the app to truncate and restart
-rather than append bytes from a changed body.
+strong quoted ETag `"<storage_generation>-<id>-<bytes>"`. A mismatched `If-Range`
+ignores the range and returns the complete 200 representation as required by HTTP range
+semantics. The app treats a changed validator as stale representation evidence and a
+ranged 200 without that change as malformed; neither starts a replacement transfer
+inside that media request.
 
 For pull, 404 means the id is absent, has become unpullable, or lost the normal race
 with GC or manual deletion. A non-NotFound open, metadata, seek, or scan failure is
@@ -585,3 +591,16 @@ made every head refresh do more storage work than its recent-footage surface nee
 The default is now 20 entries. The explicit-request cap remains 100 so diagnostics
 and future bounded consumers retain the existing upper range without imposing it on
 ordinary app refreshes.
+
+### 2026-07-17: Carry durable storage identity across the media boundary
+
+Sequence ids, recording sessions, and byte lengths can repeat after the recording
+namespace is reset or replaced. The API now exposes the verified storage generation
+in snapshots, storage deltas, clip metadata, finalization, and the raw clip validator.
+Generation, storage telemetry, and readiness replace atomically, while media routes
+fail closed when generation evidence is unavailable.
+
+The app treats any validator change during a ranged pull as a stale representation
+instead of silently restarting under the original demand. Machine identity and boot
+identity were rejected as namespace identity because the card can move independently
+and the namespace survives reboot.

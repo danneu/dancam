@@ -313,19 +313,22 @@ struct LiveRecordingStatusTests {
         let liveRecorder = RecorderTruth.live(recorder(session: 9, currentSegment: nil))
 
         // No world boot tag, or a .none status -> no attribution regardless of recorder.
-        #expect(RecordingAttribution.from(status: .pending, worldBootTag: nil, recorder: liveRecorder) == nil)
-        #expect(RecordingAttribution.from(status: .none, worldBootTag: "7f3a91c2b0d4", recorder: liveRecorder) == nil)
+        #expect(RecordingAttribution.from(status: .pending, storageGeneration: CameraSamples.storageGeneration, worldBootTag: nil, recorder: liveRecorder) == nil)
+        #expect(RecordingAttribution.from(status: .none, storageGeneration: CameraSamples.storageGeneration, worldBootTag: "7f3a91c2b0d4", recorder: liveRecorder) == nil)
+        #expect(RecordingAttribution.from(status: .pending, storageGeneration: nil, worldBootTag: "7f3a91c2b0d4", recorder: liveRecorder) == nil)
 
         // Pending pairs the world boot tag with the live recorder snapshot's session.
         #expect(RecordingAttribution.from(
             status: .pending,
+            storageGeneration: CameraSamples.storageGeneration,
             worldBootTag: "7f3a91c2b0d4",
             recorder: liveRecorder
-        ) == RecordingAttribution(id: RecordingID(bootTag: "7f3a91c2b0d4", session: 9), freshness: .live))
+        ) == RecordingAttribution(id: RecordingID(storageGeneration: CameraSamples.storageGeneration, bootTag: "7f3a91c2b0d4", session: 9), freshness: .live))
 
         // A non-live recorder cannot source a session, so pending degrades to no attribution.
         #expect(RecordingAttribution.from(
             status: .pending,
+            storageGeneration: CameraSamples.storageGeneration,
             worldBootTag: "7f3a91c2b0d4",
             recorder: .unknown
         ) == nil)
@@ -333,14 +336,16 @@ struct LiveRecordingStatusTests {
         // Ticking/frozen pair the world boot tag with the live segment's own session.
         #expect(RecordingAttribution.from(
             status: .live(tickingSegment),
+            storageGeneration: CameraSamples.storageGeneration,
             worldBootTag: "7f3a91c2b0d4",
             recorder: liveRecorder
-        ) == RecordingAttribution(id: RecordingID(bootTag: "7f3a91c2b0d4", session: 5), freshness: .live))
+        ) == RecordingAttribution(id: RecordingID(storageGeneration: CameraSamples.storageGeneration, bootTag: "7f3a91c2b0d4", session: 5), freshness: .live))
         #expect(RecordingAttribution.from(
             status: .live(frozenSegment),
+            storageGeneration: CameraSamples.storageGeneration,
             worldBootTag: "7f3a91c2b0d4",
             recorder: liveRecorder
-        ) == RecordingAttribution(id: RecordingID(bootTag: "7f3a91c2b0d4", session: 6), freshness: .lastKnown))
+        ) == RecordingAttribution(id: RecordingID(storageGeneration: CameraSamples.storageGeneration, bootTag: "7f3a91c2b0d4", session: 6), freshness: .lastKnown))
     }
 
     @Test func liveRecordingInputsUseLastKnownWorldBootTag() {
@@ -357,6 +362,7 @@ struct LiveRecordingStatusTests {
         #expect(LiveRecordingInputs.from(state) == LiveRecordingInputs(
             recording: .recording,
             recorder: .lastKnown(world.recorder),
+            storageGeneration: CameraSamples.storageGeneration,
             worldBootTag: "7f3a91c2b0d4"
         ))
     }

@@ -58,6 +58,7 @@ pub enum Event {
     },
     StorageChanged {
         storage: Option<DiskUsage>,
+        storage_generation: Option<String>,
         recording_readiness: RecordingReadiness,
     },
     TempChanged {
@@ -90,6 +91,7 @@ pub struct Snapshot {
     pub boot_tag: Option<String>,
     pub uptime_s: u64,
     pub storage: Option<DiskUsage>,
+    pub storage_generation: Option<String>,
     pub temp_c: TempC,
     pub mem: Option<MemInfo>,
     pub cpu: Cpu,
@@ -172,7 +174,7 @@ pub fn spawn_telemetry(
             }
             backend.update_telemetry(
                 observation.storage,
-                observation.recording_storage_available,
+                observation.storage_generation,
                 crate::sysfacts::soc_temp_c(),
                 crate::sysfacts::mem_info(),
                 cpu_sampler.sample(),
@@ -189,7 +191,7 @@ pub async fn seed_filesystem_observation(state: &AppState) {
         .unwrap_or_else(|| state.filesystem.unavailable_observation());
     state
         .backend
-        .update_storage(observation.storage, observation.recording_storage_available);
+        .update_storage(observation.storage, observation.storage_generation);
 }
 
 async fn materialize_snapshot<T>(state: &AppState, finalize: impl FnOnce() -> T) -> T
@@ -235,7 +237,7 @@ async fn observe_filesystem(
         .unwrap_or_else(|| state.filesystem.unavailable_observation());
     state.backend.update_storage(
         observation.storage.clone(),
-        observation.recording_storage_available,
+        observation.storage_generation.clone(),
     );
     observation
 }
@@ -293,7 +295,7 @@ mod tests {
             &mut snapshot,
             &FilesystemObservation {
                 storage: None,
-                recording_storage_available: true,
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 current_segment: Some(ObservedSegment {
                     id: 44,
                     dur_ms: Some(30000),
@@ -331,6 +333,7 @@ mod tests {
                     total: 32_000_000_000,
                     recording_capacity_bytes: 29_000_000_000,
                 }),
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 temp_c: TempC {
                     soc: TempReading {
                         current: Some(51.5),
@@ -382,13 +385,14 @@ mod tests {
             },
             Event::ClipFinalized(ClipMeta {
                 id: 42,
+                storage_generation: "00000000-0000-4000-8000-000000000001".to_string(),
                 boot_tag: Some("7f3a91c2b0d4".into()),
                 session: Some(7),
                 start_ms: None,
                 dur_ms: Some(30000),
                 bytes: 1_048_576,
                 locked: false,
-                etag: "42-1048576".to_string(),
+                etag: "00000000-0000-4000-8000-000000000001-42-1048576".to_string(),
                 time_approximate: true,
             }),
             Event::ClipRemoved { id: 42 },
@@ -418,6 +422,7 @@ mod tests {
                     total: 32_000_000_000,
                     recording_capacity_bytes: 29_000_000_000,
                 }),
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
                 recording_readiness: RecordingReadiness {
                     ready: true,
                     reason: None,

@@ -22,6 +22,7 @@
     "total": 32000000000,
     "recording_capacity_bytes": 29000000000
   },
+  "storage_generation": "00000000-0000-4000-8000-000000000001",
   "temp_c": {
     "soc": {
       "current": 51.5,

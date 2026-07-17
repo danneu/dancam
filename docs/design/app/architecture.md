@@ -89,6 +89,12 @@ pull, artifact installation, log export, and share preparation use such explicit
 boundaries. The root architecture does not impose blanket `Sendable` annotations on
 all state, actions, or dependency closures just in case.
 
+Clip media coordination is a process-lifetime actor dependency. It serializes mutable
+work ownership and single-flight state off the main actor while its Sendable facade is
+shared by reducers, UIKit viewers, incident reconciliation, and thumbnail loading.
+Individual consumers own cancellation tokens and leased results rather than the actor
+depending on a UI scene lifetime.
+
 ## Process-owned domain root
 
 `AppFeature` is the process domain root shared by phone and future CarPlay scenes. Its
@@ -390,3 +396,15 @@ connection, recording, clips, and incidents. Lazy initialization by the first ph
 scene was rejected because CarPlay can be the process's only initial scene. Durable
 cleanup on disconnect was rejected because termination does not guarantee that
 callback.
+
+### 2026-07-17: Put clip media ownership behind one process actor
+
+Media demand crosses reducer effects and UIKit controller lifetimes, so feature-local
+tasks could neither single-flight work nor clean it up safely. The dependency bag now
+owns one actor-backed media client for the process. It keys work by durable media
+identity, tracks consumer interest, and returns leased artifacts while keeping the
+main-actor store free of filesystem and media pipeline state.
+
+Scene-owned coordinators were rejected because phone and CarPlay or incident work can
+overlap without sharing a scene. Store-owned task dictionaries were rejected because
+viewer lifetime and artifact leasing are not reducer state.

@@ -22,15 +22,15 @@ struct LinkTests {
         let world = CameraSamples.world(storage: nil)
 
         var online = Link.online(world)
-        online.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
+        online.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), storageGeneration: CameraSamples.storageGeneration, recordingReadiness: .ready))
         #expect(online.world?.storage == Storage(used: 10, total: 20, recordingCapacityBytes: 15))
 
         var connecting = Link.connecting(last: world)
-        connecting.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
+        connecting.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), storageGeneration: CameraSamples.storageGeneration, recordingReadiness: .ready))
         #expect(connecting == .connecting(last: world))
 
         var offline = Link.offline(last: world)
-        offline.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), recordingReadiness: .ready))
+        offline.fold(.storageChanged(storage: Storage(used: 10, total: 20, recordingCapacityBytes: 15), storageGeneration: CameraSamples.storageGeneration, recordingReadiness: .ready))
         #expect(offline == .offline(last: world))
     }
 

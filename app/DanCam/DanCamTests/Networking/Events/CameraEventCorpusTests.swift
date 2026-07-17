@@ -3,6 +3,7 @@ import Testing
 @testable import DanCam
 
 struct CameraEventCorpusTests {
+    private let corpusStorageGeneration = "00000000-0000-4000-8000-000000000001"
     @Test(.tags(.networking))
     func goldenCorpusDecodesWithoutUnknownEvents() throws {
         let decoder = JSONDecoder()
@@ -65,6 +66,7 @@ struct CameraEventCorpusTests {
                 total: 32_000_000_000,
                 recordingCapacityBytes: 29_000_000_000
             ),
+            storageGeneration: corpusStorageGeneration,
             tempC: TempC(
                 soc: TempReading(current: 51.5, max: 62.5),
                 sensor: TempReading(max: 49.0)
@@ -79,11 +81,12 @@ struct CameraEventCorpusTests {
         #expect(opened == .segmentOpened(session: 7, id: 43, atMs: 5_400))
         #expect(finalized == .clipFinalized(Clip(
             id: 42,
+            storageGeneration: corpusStorageGeneration,
             startMs: nil,
             durMs: 30_000,
             bytes: 1_048_576,
             locked: false,
-            etag: "42-1048576",
+            etag: "\(corpusStorageGeneration)-42-1048576",
             timeApproximate: true,
             bootTag: "7f3a91c2b0d4",
             session: 7
@@ -114,6 +117,7 @@ struct CameraEventCorpusTests {
                 total: 32_000_000_000,
                 recordingCapacityBytes: 29_000_000_000
             ),
+            storageGeneration: corpusStorageGeneration,
             recordingReadiness: .ready
         ))
 
@@ -135,7 +139,11 @@ struct CameraEventCorpusTests {
         let replacement = Storage(used: 4, total: 8, recordingCapacityBytes: 6)
         let afterStorage = World.folding(
             initial,
-            .storageChanged(storage: replacement, recordingReadiness: notReady)
+            .storageChanged(
+                storage: replacement,
+                storageGeneration: CameraSamples.storageGeneration,
+                recordingReadiness: notReady
+            )
         )
         #expect(afterStorage.storage == replacement)
         #expect(afterStorage.recordingReadiness == notReady)

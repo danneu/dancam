@@ -69,8 +69,14 @@ The app derives first frames from ranged reads or its local clip cache.
 
 ## Segment and recording identity
 
-Sequence ids are never reused, including after their files have been deleted. The
-storage coordinator reserves every id under its mutation mutex:
+`state/state.json` durably owns both the lowercase UUID `storage_generation` and the
+sequence high-water witness. The generation is stable across service and Pi restarts
+and moves with the recording namespace. A legacy witness is enriched in place without
+lowering its high-water mark. Initializing generation on an empty namespace does not
+reserve segment 0.
+
+Sequence ids are never reused within one generation, including after their files have
+been deleted. The storage coordinator reserves every id under its mutation mutex:
 
 1. Read `state/state.json` and its `high_water_seq`.
 2. Scan the recording directory for the greatest valid segment sequence.
@@ -84,12 +90,13 @@ media creation therefore consumes the id rather than making it available again.
 Rollover requests its next reservation only after the old finalization has been
 durably accepted.
 
-Committed witness state fails closed. Invalid JSON, a missing or incorrectly typed
-field, or a non-NotFound read error prevents recording start before the recorder state
-machine or camera child changes. Deleting `state/state.json` is a manual emergency
-recovery that leaves footage intact but deliberately lowers the floor to the surviving
-file scan. A future data-partition format must carry the witness forward so deleting
-all footage does not permit aliasing.
+Committed witness state fails closed. Invalid JSON, an incorrectly typed required
+field, an invalid generation, or a non-NotFound read error prevents recording start
+before the recorder state machine or camera child changes. Deleting
+`state/state.json` deliberately resets the namespace: surviving footage establishes
+the next sequence floor, but the service mints a new generation so old app media can
+never alias the reset namespace. Moving or cloning a namespace as the same logical
+storage must carry the witness with its footage.
 
 Allocation fails when the maximum witness is `u32::MAX`; it never saturates to
 or repeats the last id. `u32::MAX` is the final legal reservation. The controlled Rust
@@ -99,7 +106,8 @@ ceiling applies to real recording and every test backend.
 
 The recorder derives `session = start_segment + 1` from the durable reservation,
 not from a process-local counter. A recording is therefore identified by
-`(boottag, session)` and can be reconstructed from the card alone. A same-boot
+`(storage_generation, boottag, session)` and can be reconstructed from the card
+alone. A same-boot
 service restart obtains a new start id and cannot merge the next recording into the
 previous one. The Pi exposes per-clip facts; grouping clips into recordings remains an
 app-side view.
@@ -192,7 +200,9 @@ Clip listing, lookup, pull, current-segment enrichment,
 next-sequence selection, and GC all scan or open the flat recording directory. A
 missing recording directory is a truthful empty listing. Other scan failures fail
 closed: list and lookup return 503 rather than turning an unreadable directory into an
-empty list or a false 404, and start allocation does not lower its floor.
+empty list or a false 404, and start allocation does not lower its floor. List, pull,
+delete, recording start, and finalization also fail closed unless the generation
+witness is available.
 
 Listings include finalized segments only, order newest first, and use a cursor as a
 strict lower-sequence boundary. The server clamps page size and returns a next cursor
@@ -200,8 +210,9 @@ only while older candidates remain. A five-field filename supplies duration with
 opening media. Durationless four-field or bare recovery files remain listable and
 pullable with `dur_ms: null`; listing never scans media or rewrites filenames.
 
-An immutable clip `ETag` derives from stable facts such as sequence and byte length,
-never inode, mtime, or path.
+An immutable clip's raw canonical validator is
+`<storage_generation>-<id>-<bytes>`. HTTP quotes that value in `ETag`; neither form
+depends on inode, mtime, or path.
 
 Media reads do not take the mutation mutex. A reader opens the segment and streams
 from its file descriptor. POSIX unlink semantics let an already-open pull finish after
@@ -593,3 +604,19 @@ prefix to preserve and decode while leaving continued append lock-free.
 Requiring equality with the later file length was rejected because healthy growth can
 race event handling. Trusting the count without checking the artifact was rejected
 because an acknowledgement must remain grounded in the on-disk transaction ledger.
+
+### 2026-07-17: Scope media identity to a durable storage generation
+
+Sequence ids and byte counts are stable only inside one recording namespace. Resetting
+or replacing the namespace could otherwise make new footage look identical to cached
+media and interrupted transfers from the old card.
+
+The sequence witness now also carries a canonical lowercase UUID generation. It is
+initialized only after mount verification, survives restart and namespace moves, and
+changes on a deliberate witness reset. Clip and recording identity, finalization, and
+validators include that generation, while missing evidence fails media operations
+closed. Legacy witnesses are enriched without lowering their sequence floor.
+
+Boot ids, card serial numbers, paths, and inode metadata were rejected because none is
+the durable logical identity of the recording namespace. Preserving id-only identity
+was rejected because it aliases after a reset.

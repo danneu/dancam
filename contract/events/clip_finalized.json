@@ -1,5 +1,6 @@
 {
   "type": "clip_finalized",
+  "storage_generation": "00000000-0000-4000-8000-000000000001",
   "id": 42,
   "boot_tag": "7f3a91c2b0d4",
   "session": 7,
@@ -7,6 +8,6 @@
   "dur_ms": 30000,
   "bytes": 1048576,
   "locked": false,
-  "etag": "42-1048576",
+  "etag": "00000000-0000-4000-8000-000000000001-42-1048576",
   "time_approximate": true
 }

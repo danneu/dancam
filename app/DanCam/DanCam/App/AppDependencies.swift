@@ -6,6 +6,7 @@ struct AppDependencies {
     var clipPull: ClipPullClient
     var clipRemuxer: ClipRemuxer
     var clipCache: ClipCache
+    var clipMedia: ClipMediaClient
     var incidentStore: IncidentStore
     var incidentNotifier: IncidentNotifier
     var incidentArtifactInstaller: IncidentArtifactInstaller
@@ -28,6 +29,7 @@ struct AppDependencies {
         clipPull: ClipPullClient = .noop,
         clipRemuxer: ClipRemuxer = .noop,
         clipCache: ClipCache = .noop,
+        clipMedia: ClipMediaClient? = nil,
         incidentStore: IncidentStore = .noop,
         incidentNotifier: IncidentNotifier = .noop,
         incidentArtifactInstaller: IncidentArtifactInstaller = .noop,
@@ -57,7 +59,16 @@ struct AppDependencies {
         self.incidentNotifier = incidentNotifier
         self.incidentArtifactInstaller = incidentArtifactInstaller
         self.incidentBackgroundTask = incidentBackgroundTask
-        self.thumbnailLoader = thumbnailLoader
+        let resolvedMedia = clipMedia ?? ClipMediaClient(
+            clipPull: clipPull,
+            clipRemuxer: clipRemuxer,
+            clipCache: clipCache,
+            thumbnailCache: .noop,
+            thumbnailLoader: thumbnailLoader,
+            incidentArtifactInstaller: incidentArtifactInstaller
+        )
+        self.clipMedia = resolvedMedia
+        self.thumbnailLoader = clipMedia == nil ? thumbnailLoader : resolvedMedia.thumbnailLoader
         self.preview = preview
         self.recording = recording
         self.time = time
@@ -90,31 +101,60 @@ struct AppDependencies {
             receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
         )
         clipRemuxer = .live
-        clipCache = .live(
+        let liveClipCache = ClipCache.live(
             rootDirectory: FileManager.default
                 .urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appending(path: "clips", directoryHint: .isDirectory),
             now: { Date() }
         )
+        clipCache = liveClipCache
         incidentStore = .live(
             rootDirectory: FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appending(path: "Incidents", directoryHint: .isDirectory)
         )
         incidentNotifier = .live
-        incidentArtifactInstaller = .live(directoryURL: incidentStore.directoryURL)
+        let liveArtifactInstaller = IncidentArtifactInstaller.live(directoryURL: incidentStore.directoryURL)
+        incidentArtifactInstaller = liveArtifactInstaller
         incidentBackgroundTask = .live
-        thumbnailLoader = .live(
-            baseURL: configuration.cameraAPIBaseURL,
-            pinning: configuration.cameraAPIInterfacePinning,
-            connectTimeout: configuration.cameraAPIConnectTimeout,
-            receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout,
-            clipCache: clipCache,
-            thumbnailsRootDirectory: FileManager.default
+        let liveThumbnailCache = ThumbnailCache.live(
+            rootDirectory: FileManager.default
                 .urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appending(path: "thumbnails", directoryHint: .isDirectory),
             now: { Date() }
         )
+        let liveThumbnailLoader = ThumbnailLoader(
+            prefixClient: .live(
+                baseURL: configuration.cameraAPIBaseURL,
+                pinning: configuration.cameraAPIInterfacePinning,
+                connectTimeout: configuration.cameraAPIConnectTimeout,
+                receiveIdleTimeout: configuration.cameraAPIReceiveIdleTimeout
+            ),
+            thumbnailCache: liveThumbnailCache,
+            clipCacheLookup: liveClipCache.lookup,
+            decodeTSPrefix: { data, clipID, size in
+                try await ThumbnailDecoder.firstFrameImage(
+                    fromTSPrefix: data,
+                    clipID: clipID,
+                    maxPixelSize: size
+                )
+            },
+            decodeMP4: { url, size in
+                try await ThumbnailDecoder.firstFrameImage(fromMP4: url, maxPixelSize: size)
+            },
+            maxConcurrent: 3,
+            prefixByteLimit: 2 * 1024 * 1024
+        )
+        let liveClipMedia = ClipMediaClient(
+            clipPull: clipPull,
+            clipRemuxer: clipRemuxer,
+            clipCache: liveClipCache,
+            thumbnailCache: liveThumbnailCache,
+            thumbnailLoader: liveThumbnailLoader,
+            incidentArtifactInstaller: liveArtifactInstaller
+        )
+        clipMedia = liveClipMedia
+        thumbnailLoader = liveClipMedia.thumbnailLoader
         preview = .live(
             baseURL: configuration.cameraAPIBaseURL,
             pinning: configuration.cameraAPIInterfacePinning,
