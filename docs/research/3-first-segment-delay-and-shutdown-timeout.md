@@ -539,7 +539,7 @@ failure, and sequence-ceiling failure. The final suite passed 215 unit tests and
 integration tests; formatting and Clippy with warnings denied also passed. The PyAV
 self-test, provisioning lint, mdBook build, and link checker passed.
 
-### Abrupt power cut: uncommitted state
+### Abrupt power cut: uncommitted state, inconclusive trial
 
 The first PO6 cut froze both the Rust service and camera owner immediately after
 segment 269 appeared as a zero-byte uncommitted artifact, then removed power for at
@@ -550,13 +550,16 @@ designed: the uncommitted artifact and every hidden transaction path were absent
 the witness remained 269, and a later recording allocated 270, finalized, listed,
 and decoded without error.
 
-The whole-device restore did not pass. On that first post-cut boot the kernel wrote
+The trial could not prove the first-boot recovery outcome. On that first post-cut
+boot the kernel wrote
 the Wi-Fi firmware into the BCM43430 over SDIO, read it back, and found a mismatch at
 offset 415,744. `brcmfmac` then reported `dongle image file download failed`, and
 the SDIO host reported that `mmc1` never released its inhibit bits. No `wlan0` device
 was created; NetworkManager completed startup with loopback only, so Avahi had no LAN
 interface on which to advertise `dancam.local`. The service and camera continued
-locally, but the Pi remained unreachable until a second power cycle.
+locally, but the Pi remained unreachable until a second power cycle. That second
+boot could itself have removed the pending artifact, so the later clean directory
+cannot discharge the required first-boot observation.
 
 The second boot loaded the same firmware successfully, created `wlan0`, and regained
 its prior `192.168.1.160` lease. The installed `firmware-brcm80211` package verified
@@ -572,10 +575,11 @@ or the radio caused that one transfer to fail.
 
 This campaign does not claim the following obligations:
 
-- PO6 remains failed and incomplete. The first uncommitted cut passed recording
-  cleanup and sequence recovery but required a second power cycle to restore Wi-Fi.
-  That boot failure needs a durable disposition before repeating the uncommitted cut
-  and testing committed-open and finalized states.
+- PO6 remains unproven. The first uncommitted cut preserved the witness and later
+  recovered above it, but a transient Wi-Fi initialization failure prevented
+  first-boot observation and made the trial inconclusive. Repeat it with boot-local
+  evidence capture before testing committed-open and finalized states; track the
+  Wi-Fi incident separately unless it recurs with the cuts.
 - PO7 still needs matched 60-minute room-temperature and 60-minute
   warm-equilibrium runs for both the former FFmpeg stack and this PyAV stack in the
   same enclosure and ambient conditions.
