@@ -670,14 +670,14 @@ identify persistent mux, service, or link contention. The campaign accepts PO7's
 bench resource and operational gates while preserving the outlier in the evidence.
 It makes no enclosure or hot-ambient thermal claim.
 
-### Acceptance still requiring dedicated campaigns
+### Deferred qualification
 
-This campaign does not claim the following obligations:
+PO8 accepts the committed provisioning declaration, lint, current-image check mode,
+runtime imports, regressions, and documentation without requiring a destructive
+fresh-image cycle for this recording-path migration. Two converges from a newly
+flashed image remain explicitly unclaimed and move to the next car-image
+qualification.
 
-- PO8 still needs two provisioning converges on a fresh image. The committed local
-  provisioning, runtime import, regression, and documentation checks have passed,
-  but the existing development image is not fresh-image evidence.
-
-Enclosure and hot-ambient thermal qualification is deliberately unclaimed until an
+Enclosure and hot-ambient thermal qualification is likewise unclaimed until an
 enclosure exists; Icebox swoop `kiln` preserves the matched former-FFmpeg and PyAV
-campaign.
+campaign. Neither deferral changes the accepted transactional recording behavior.

@@ -337,9 +337,11 @@ mock first.
       automatic Photos export.
 - [ ] **Swoop `vine` -- Power-loss hardening for real.** Power-good GPIO + clean
       shutdown; supercap go/no-go; validate crash recovery in the actual car.
-- [ ] **Later / follow-on passes.** Replace the Python Picamera2 camera owner with an
-      all-Rust camera binary before or during the read-only car-image pass; HDR tuning;
-      auth hardening (token, then pinned-cert TLS); GPS
+- [ ] **Later / follow-on passes.** Before the next read-only car-image
+      qualification, revalidate the distro PyAV dependency with two provisioning
+      converges from a newly flashed image. Replace the Python Picamera2 camera owner
+      with an all-Rust camera binary before or during that pass; HDR tuning; auth
+      hardening (token, then pinned-cert TLS); GPS
       time source; parked / sentry
       mode (gated on a future constant-power topology -- v1 power is switched /
       drive-only, see the [OS image design](design/pi/os-image.md#power-topology)).
