@@ -122,14 +122,19 @@ struct HomeViewControllerTests {
         let now = try date(2026, 1, 3, hour: 12, calendar: calendar)
         let fetchSpy = HomeFetchSpy()
         let clips = [
-            datedClip(id: 10, start: try date(2026, 1, 3, hour: 11, calendar: calendar)),
-            datedClip(id: 9, start: try date(2026, 1, 3, hour: 10, calendar: calendar)),
+            datedClip(id: 15, start: try date(2026, 1, 3, hour: 11, calendar: calendar)),
+            datedClip(id: 14, start: try date(2026, 1, 3, hour: 10, calendar: calendar)),
+            datedClip(id: 13, start: try date(2026, 1, 3, hour: 9, calendar: calendar)),
+            datedClip(id: 12, start: try date(2026, 1, 3, hour: 8, calendar: calendar)),
+            datedClip(id: 11, start: try date(2026, 1, 3, hour: 7, calendar: calendar)),
+            datedClip(id: 10, start: try date(2026, 1, 2, hour: 11, calendar: calendar)),
+            datedClip(id: 9, start: try date(2026, 1, 2, hour: 10, calendar: calendar)),
             CameraSamples.clip(id: 8, durMs: 30_000, timeApproximate: true),
             datedClip(id: 7, start: try date(2026, 1, 2, hour: 9, calendar: calendar)),
             datedClip(id: 6, start: try date(2026, 1, 2, hour: 8, calendar: calendar)),
             datedClip(id: 5, start: try date(2026, 1, 1, hour: 7, calendar: calendar)),
         ]
-        let controller = makeController(
+        let (controller, store) = makeControllerAndStore(
             clips: clips,
             loader: .noop,
             clipsClient: fetchSpy.client(),
@@ -140,14 +145,14 @@ struct HomeViewControllerTests {
         let window = try embed(controller)
         defer { window.isHidden = true }
 
-        let firstIndexPath = try #require(controller.indexPathForTesting(rowID: .finished(10)))
+        let firstIndexPath = try #require(controller.indexPathForTesting(rowID: .finished(15)))
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: firstIndexPath)
-        try await Task.sleep(for: .milliseconds(40))
-        #expect(await fetchSpy.requestedCursors() == [])
+        #expect(store.state.clips.isPaging == false)
 
         let lastIndexPath = try #require(controller.indexPathForTesting(rowID: .finished(5)))
         #expect(lastIndexPath.section != firstIndexPath.section)
         controller.tableView(UITableView(), willDisplay: UITableViewCell(), forRowAt: lastIndexPath)
+        #expect(store.state.clips.isPaging)
 
         try await waitForCursors(fetchSpy, [ClipCursor(5)])
     }
@@ -1350,20 +1355,27 @@ struct HomeViewControllerTests {
         return (window, navigationController)
     }
 
-    private func waitUntil(_ condition: @escaping () -> Bool) async throws {
+    private func waitUntil(
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: @escaping () -> Bool
+    ) async throws {
         for _ in 0..<200 {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        Issue.record("Timed out waiting for condition.")
+        Issue.record("Timed out waiting for condition.", sourceLocation: sourceLocation)
     }
 
-    private func waitForCursors(_ spy: HomeFetchSpy, _ expected: [ClipCursor?]) async throws {
+    private func waitForCursors(
+        _ spy: HomeFetchSpy,
+        _ expected: [ClipCursor?],
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
         for _ in 0..<200 {
             if await spy.requestedCursors() == expected { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        Issue.record("Timed out waiting for cursor requests.")
+        Issue.record("Timed out waiting for cursor requests.", sourceLocation: sourceLocation)
     }
 
     private func datedClip(id: Int, start: Date, bootTag: String? = nil) -> Clip {

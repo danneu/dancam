@@ -3,27 +3,12 @@ import Foundation
 import OSLog
 
 nonisolated enum ClipRemuxerEngine {
+    @concurrent
     static func remux(
         sourceURL: URL,
         outputURL: URL,
         clipID: Int
     ) async throws -> ClipRemuxResult {
-        let worker = Task.detached(priority: .userInitiated) {
-            try remuxSynchronously(sourceURL: sourceURL, outputURL: outputURL, clipID: clipID)
-        }
-
-        return try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
-        }
-    }
-
-    private static func remuxSynchronously(
-        sourceURL: URL,
-        outputURL: URL,
-        clipID: Int
-    ) throws -> ClipRemuxResult {
         try Task.checkCancellation()
         let fileManager = FileManager.default
         try? fileManager.removeItem(at: outputURL)
@@ -38,7 +23,7 @@ nonisolated enum ClipRemuxerEngine {
             "clip_id=\(clipID, privacy: .public) first_decode_ticks=\(clip.firstDecodeTicks, privacy: .public)"
         )
 
-        let result = try write(clip: clip, to: outputURL)
+        let result = try await write(clip: clip, to: outputURL)
         Log.remux.notice(
             "clip_id=\(clipID, privacy: .public) phase=remux_finish out_bytes=\(result.bytes, privacy: .public) duration_s=\(seconds(in: result.duration), privacy: .public)"
         )
@@ -48,7 +33,7 @@ nonisolated enum ClipRemuxerEngine {
     static func write(
         clip: DemuxedH264Clip,
         to outputURL: URL
-    ) throws -> ClipRemuxResult {
+    ) async throws -> ClipRemuxResult {
         let fileManager = FileManager.default
         try? fileManager.removeItem(at: outputURL)
 
@@ -80,7 +65,7 @@ nonisolated enum ClipRemuxerEngine {
                 try Task.checkCancellation()
                 while input.isReadyForMoreMediaData == false {
                     try Task.checkCancellation()
-                    Thread.sleep(forTimeInterval: 0.002)
+                    try await Task.sleep(for: .milliseconds(2))
                 }
 
                 let sampleBuffer = try H264CoreMediaSamples.makeSampleBuffer(
@@ -94,7 +79,7 @@ nonisolated enum ClipRemuxerEngine {
             }
 
             input.markAsFinished()
-            try finish(writer)
+            try await finish(writer)
         } catch {
             writer.cancelWriting()
             try? fileManager.removeItem(at: outputURL)
@@ -114,12 +99,9 @@ nonisolated enum ClipRemuxerEngine {
         )
     }
 
-    private static func finish(_ writer: AVAssetWriter) throws {
-        let semaphore = DispatchSemaphore(value: 0)
-        writer.finishWriting {
-            semaphore.signal()
-        }
-        semaphore.wait()
+    private static func finish(_ writer: AVAssetWriter) async throws {
+        await writer.finishWriting()
+        try Task.checkCancellation()
 
         guard writer.status == .completed else {
             throw ClipRemuxError.writer(writer.error?.localizedDescription ?? "Could not finish MP4 writer.")

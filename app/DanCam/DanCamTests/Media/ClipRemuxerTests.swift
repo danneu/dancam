@@ -3,6 +3,7 @@ import Foundation
 import Testing
 @testable import DanCam
 
+@Suite(.serialized)
 struct ClipRemuxerTests {
     @Test(.timeLimit(.minutes(1)))
     func liveRemuxesTransportStreamFixtureToPlayableMP4() async throws {
@@ -178,7 +179,7 @@ struct ClipRemuxerTests {
             try? FileManager.default.removeItem(at: outputURL)
         }
 
-        _ = try ClipRemuxerEngine.write(clip: clip, to: outputURL)
+        _ = try await ClipRemuxerEngine.write(clip: clip, to: outputURL)
 
         let asset = AVURLAsset(url: outputURL)
         let videoTracks = try await asset.loadTracks(withMediaType: .video)

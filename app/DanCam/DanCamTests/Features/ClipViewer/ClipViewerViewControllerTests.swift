@@ -400,7 +400,7 @@ struct ClipViewerViewControllerTests {
         controller.shareTappedForTesting()
 
         try await waitUntil { pullCalls.values().count == 1 }
-        #expect(controller.statusText == "\(Formatters.byteSize(0)) of \(Formatters.byteSize(1))")
+        #expect(controller.progressIndicatorForTesting == .determinate)
         #expect(controller.currentPlayerItemURL == nil)
         #expect(controller.isShareButtonEnabled == false)
 
@@ -565,7 +565,7 @@ struct ClipViewerViewControllerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func cacheHitPlaybackFailureDuringPreparationRepullsAndCleansLateArtifact() async throws {
-        let cacheURL = URL(filePath: "/tmp/dancam-missing-cache-\(UUID().uuidString).mp4")
+        let cacheURL = try await temporaryPlayableVideoFile()
         let sourceURL = try temporaryFile(extension: "ts", contents: Data([0x01]))
         let pullCalls = CallLog<Int>()
         let preparationStarted = AsyncSignal()
@@ -574,6 +574,7 @@ struct ClipViewerViewControllerTests {
             .appending(path: "dancam-late-share-\(UUID().uuidString)", directoryHint: .isDirectory)
         let artifactURL = artifactDirectory.appending(path: "late.mp4")
         defer {
+            try? FileManager.default.removeItem(at: cacheURL)
             try? FileManager.default.removeItem(at: sourceURL)
             try? FileManager.default.removeItem(at: artifactDirectory)
         }
@@ -832,14 +833,17 @@ struct ClipViewerViewControllerTests {
         try await makeTemporaryPlayableVideoFile()
     }
 
-    private func waitUntil(_ condition: @escaping () -> Bool) async throws {
+    private func waitUntil(
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: @escaping () -> Bool
+    ) async throws {
         for _ in 0..<100 {
             if condition() {
                 return
             }
             try await Task.sleep(for: .milliseconds(10))
         }
-        Issue.record("Timed out waiting for condition.")
+        Issue.record("Timed out waiting for condition.", sourceLocation: sourceLocation)
     }
 }
 
