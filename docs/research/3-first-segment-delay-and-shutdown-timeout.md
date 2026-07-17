@@ -539,12 +539,43 @@ failure, and sequence-ceiling failure. The final suite passed 215 unit tests and
 integration tests; formatting and Clippy with warnings denied also passed. The PyAV
 self-test, provisioning lint, mdBook build, and link checker passed.
 
+### Abrupt power cut: uncommitted state
+
+The first PO6 cut froze both the Rust service and camera owner immediately after
+segment 269 appeared as a zero-byte uncommitted artifact, then removed power for at
+least 10 seconds. The durable witness had already reserved 269. After power was
+restored, the board booted, mounted the root and recording filesystems, started the
+service, and initialized the camera. The recording transaction itself recovered as
+designed: the uncommitted artifact and every hidden transaction path were absent,
+the witness remained 269, and a later recording allocated 270, finalized, listed,
+and decoded without error.
+
+The whole-device restore did not pass. On that first post-cut boot the kernel wrote
+the Wi-Fi firmware into the BCM43430 over SDIO, read it back, and found a mismatch at
+offset 415,744. `brcmfmac` then reported `dongle image file download failed`, and
+the SDIO host reported that `mmc1` never released its inhibit bits. No `wlan0` device
+was created; NetworkManager completed startup with loopback only, so Avahi had no LAN
+interface on which to advertise `dancam.local`. The service and camera continued
+locally, but the Pi remained unreachable until a second power cycle.
+
+The second boot loaded the same firmware successfully, created `wlan0`, and regained
+its prior `192.168.1.160` lease. The installed `firmware-brcm80211` package verified
+without a changed file, and the exact firmware image remained readable. The failed
+boot logged no undervoltage, recording-card I/O, or ext4 error; the next boot reported
+`get_throttled=0x0`. This was the only firmware-RAM verification failure in the 16
+retained boots. The evidence therefore identifies a transient Wi-Fi-chip/SDIO
+firmware-transfer failure, not persistent firmware-file or recording-filesystem
+corruption, but it does not identify whether power sequencing, the SDIO controller,
+or the radio caused that one transfer to fail.
+
 ### Acceptance still requiring physical setup
 
 This campaign does not claim the following obligations:
 
-- PO6 still needs controlled hard power cuts in uncommitted, committed-open, and
-  finalized states on the real card, followed by byte and recovery verification.
+- PO6 remains failed and incomplete. The first uncommitted cut passed recording
+  cleanup and sequence recovery but required a second power cycle to restore Wi-Fi.
+  That boot failure needs a durable disposition before repeating the uncommitted cut
+  and testing committed-open and finalized states.
 - PO7 still needs matched 60-minute room-temperature and 60-minute
   warm-equilibrium runs for both the former FFmpeg stack and this PyAV stack in the
   same enclosure and ambient conditions.
