@@ -574,10 +574,11 @@ or the radio caused that one transfer to fail.
 ### Controlled power-cut campaign
 
 The repeated campaign added a temporary boot-local observer on the persistent
-partition. It captured the target artifact and witness before the service listened,
-the first successful status and clip responses, the transition to recording ready,
-mount state, and kernel Wi-Fi signals. Evidence therefore did not depend on mDNS or
-remote access. Each cut removed power for at least 10 seconds.
+partition. For the committed-open and uncommitted cuts it captured the target
+artifact and witness before the service listened, the first successful status and
+clip responses, the transition to recording ready, mount state, and kernel Wi-Fi
+signals. Evidence for those recovery-ordering claims therefore did not depend on
+mDNS or remote access. Each cut removed power for at least 10 seconds.
 
 The three distinct on-disk states passed:
 
@@ -600,10 +601,12 @@ The three distinct on-disk states passed:
 - **Finalized:** Segment 276 was durably stopped and listed before the cut. Its
   4,368,932 bytes had SHA-256
   `a9d5cf1ca09ffcca843b5ea33a821e9b7d005401f9ec2e2716d91b9cb182184d`
-  and decoded in full. The first boot saw that same finalized artifact before HTTP,
-  in the first clip listing while recording was not ready, and again at readiness.
-  Its size and full hash remained exact and it decoded after restore. A later
-  recording allocated playable segment 277 and left segment 276 byte-identical.
+  and decoded in full. The temporary observer unexpectedly left no artifact for this
+  cut, so this state has no pre-HTTP ordering evidence. Direct verification on the
+  first restored boot found segment 276 listed with exactly the same size and full
+  hash, and it decoded after restore. A later recording allocated playable segment
+  277 and left segment 276 byte-identical. Finalized footage needs survival evidence,
+  not the committed-open recovery-before-readiness ordering proved by segment 273.
 
 All three first boots mounted root, `/persist`, and `/data` normally, preserved the
 sequence witness, returned recording readiness, initialized Wi-Fi normally, and left
@@ -611,13 +614,70 @@ no hidden transaction artifact. The earlier Wi-Fi firmware-transfer anomaly did 
 recur. This campaign discharges PO6 for uncommitted, committed-open including a
 previously published current segment, and finalized artifact states.
 
-### Acceptance still requiring physical setup
+### Bench resource soaks
+
+Two committed-stack runs recorded continuously for 30 minutes each with resource
+samples no more than 10 seconds apart. The unloaded run had no external HTTP
+consumers. The supported-load run kept one Mac MJPEG client open while completing
+5,088 clip listings and 5,088 validator-bound 256 KiB ranged reads without an error.
+Both runs kept the same camera-owner and service PIDs, stayed in recording phase,
+reported `get_throttled=0x0` throughout, stopped cleanly, and left no hidden
+transaction artifact. The service journal had no OOM, filesystem, recording I/O,
+panic, or segmentation-fault signal.
+
+| Measure | Unloaded | Supported load |
+| --- | ---: | ---: |
+| Samples | 294 | 291 |
+| Segments | 61 | 61 |
+| First 10 min median combined RSS | 41,888 KiB | 45,956 KiB |
+| Last 10 min median combined RSS | 43,694 KiB | 58,440 KiB |
+| Median RSS growth | 1,806 KiB (4.31%) | 12,484 KiB (27.17%) |
+| Peak camera-owner RSS | 47,700 KiB | 37,028 KiB |
+| Peak service RSS | 5,540 KiB | 24,024 KiB |
+| Minimum available memory | 192 MiB | 176 MiB |
+| First / last 10 min median swap | 32 / 32 MiB | 32 / 32 MiB |
+| Peak swap | 32 MiB | 48 MiB |
+| Mean normalized total CPU | 55.97% | 76.29% |
+| Maximum normalized total CPU | 253% | 175% |
+| Maximum SoC / sensor reading | 51 / 50 C | 53 / 49 C |
+
+The loaded service RSS rise was visible rather than described as flat, but its
+12.19 MiB first-to-last median delta remained below the 16 MiB absolute drift gate.
+Available memory never approached the 128 MiB floor, and swap had no median growth.
+The much lower camera RSS in the long samples than the earlier short smoke is
+consistent with resident-page reclamation: after a later service restart it began
+near 98 MiB again and fell under pressure without an owner restart.
+
+Segments 284-344 and 345-405 were contiguous. In each run, all 60 full segments had
+exactly 900 packets, zero-based equal PTS/DTS, and exact 3000-tick deltas; the last
+partial segments had 100 and 197 packets respectively. The beginning, middle, and
+end segments from each run decoded in full.
+
+Over 30 minutes the loaded Mac preview received 18,104 frames at 10.003 fps. Median
+and p95 intervals were 99.953 and 114.012 ms. Its 302.411 ms maximum exceeded 2x the
+configured interval but remained below 4x, triggering a focused simultaneous
+loopback and Wi-Fi diagnostic rather than being discarded. During that 10-minute
+recording workload:
+
+- loopback delivered 6,102 frames at 10.005 fps with 105.172 ms p95, 141.240 ms
+  maximum, and zero intervals above 200 ms;
+- Wi-Fi delivered 6,103 frames at 10.005 fps with 112.868 ms p95, 187.582 ms maximum,
+  and zero intervals above 200 ms while 1,717 more listing and ranged-read pairs all
+  succeeded.
+
+The original outlier did not reproduce at either observer and therefore does not
+identify persistent mux, service, or link contention. The campaign accepts PO7's
+bench resource and operational gates while preserving the outlier in the evidence.
+It makes no enclosure or hot-ambient thermal claim.
+
+### Acceptance still requiring dedicated campaigns
 
 This campaign does not claim the following obligations:
 
-- PO7 still needs matched 60-minute room-temperature and 60-minute
-  warm-equilibrium runs for both the former FFmpeg stack and this PyAV stack in the
-  same enclosure and ambient conditions.
 - PO8 still needs two provisioning converges on a fresh image. The committed local
   provisioning, runtime import, regression, and documentation checks have passed,
   but the existing development image is not fresh-image evidence.
+
+Enclosure and hot-ambient thermal qualification is deliberately unclaimed until an
+enclosure exists; Icebox swoop `kiln` preserves the matched former-FFmpeg and PyAV
+campaign.

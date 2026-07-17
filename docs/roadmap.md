@@ -337,8 +337,7 @@ mock first.
       automatic Photos export.
 - [ ] **Swoop `vine` -- Power-loss hardening for real.** Power-good GPIO + clean
       shutdown; supercap go/no-go; validate crash recovery in the actual car.
-- [ ] **Later / follow-on passes.** Thermal-behavior policy (what recording does at
-      the sensor's 50 C limit); replace the Python Picamera2 camera owner with an
+- [ ] **Later / follow-on passes.** Replace the Python Picamera2 camera owner with an
       all-Rust camera binary before or during the read-only car-image pass; HDR tuning;
       auth hardening (token, then pinned-cert TLS); GPS
       time source; parked / sentry
@@ -352,6 +351,14 @@ changes. Distinct from the follow-on passes above (further work on swoops we _wi
 build) -- these may or may not ever happen. They keep their codenames so a parked
 swoop can drop into the list above unchanged. Unordered.
 
+- [ ] **Swoop `kiln` -- Enclosure thermal qualification.** Once the intended
+      enclosure and a repeatable ambient setup exist, run matched 60-minute
+      room-temperature and warm-equilibrium soaks for the retained FFmpeg baseline
+      and committed PyAV stack at identical recording, preview, workload, enclosure,
+      ambient, and sampling conditions. First establish a trustworthy interpretation
+      of the IMX708 temperature telemetry, then set and enforce the camera's thermal
+      operating policy. This is enclosure/product qualification, not an early bench
+      implementation gate.
 - [ ] **Swoop `pike` -- CarPlay voice incident-mark.** App Intents "save that clip,"
       hands-free, creating the same phone-local record and riding `nova`'s reconciler.
       No Pi lock call or queue-and-flush mutation is needed. No entitlement is needed,
