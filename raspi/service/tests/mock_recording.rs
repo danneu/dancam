@@ -68,14 +68,8 @@ async fn writer_mock_surfaces_open_segment_rollover_and_stop() {
         .iter()
         .find(|clip| clip["id"].as_u64() == Some(first_segment as u64))
         .unwrap_or_else(|| panic!("finished clips were {clips_json}"));
-    // The mock now writes real TS, so the rolled clip carries a non-null duration.
-    assert!(
-        first_clip["dur_ms"]
-            .as_u64()
-            .is_some_and(|dur_ms| dur_ms > 0),
-        "rolled clip dur_ms was {}",
-        first_clip["dur_ms"]
-    );
+    // The mock owns the durable bytes but does not scan media during finalization.
+    assert_eq!(first_clip["dur_ms"], Value::Null);
     assert!(
         first_clip["start_ms"].as_u64().is_some(),
         "rolled clip start_ms was {}",

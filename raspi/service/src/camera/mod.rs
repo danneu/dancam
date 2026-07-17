@@ -19,7 +19,7 @@ use tokio_stream::{wrappers::WatchStream, StreamExt};
 
 use crate::{
     backend::{Backend, BackendError, FrameStream},
-    clips::{finalize_clip_meta, ClipMeta},
+    clips::{clip_meta_from_candidate, finalize_clip_meta, ClipMeta},
     cpu::Cpu,
     event_hub::{EventConnection, EventHub},
     events::Event,
@@ -1555,25 +1555,29 @@ async fn apply_child_event(
                 return None;
             }
             let check_storage = storage.clone();
-            let durable =
-                tokio::task::spawn_blocking(move || check_storage.validate_finalized(session, id))
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
-                    .unwrap_or(false);
-            if !durable {
+            let metadata_time_store = time_store.clone();
+            let Some((finalized, durable_dur_ms)) = tokio::task::spawn_blocking(move || {
+                let Some(candidate) = check_storage.validate_finalized(session, id)? else {
+                    return Ok(None);
+                };
+                let durable_dur_ms = candidate.facts.as_ref().and_then(|facts| facts.dur_ms);
+                let finalized = clip_meta_from_candidate(
+                    candidate,
+                    durable_dur_ms,
+                    metadata_time_store.as_ref(),
+                );
+                Ok::<_, std::io::Error>(Some((finalized, durable_dur_ms)))
+            })
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten() else {
                 hub.drive_now(Input::Fail {
                     detail: format!("segment {id} was not durably finalized"),
                 });
                 return None;
-            }
-            let Some(finalized) = finalized_clip_meta(storage, id, time_store).await else {
-                hub.drive_now(Input::Fail {
-                    detail: format!("failed to stat finalized segment {id}"),
-                });
-                return None;
             };
-            if finalized.dur_ms != Some(dur_ms) {
+            if durable_dur_ms != Some(dur_ms) {
                 hub.drive_now(Input::Fail {
                     detail: format!("segment {id} duration disagreed with durable media"),
                 });
@@ -1724,8 +1728,10 @@ mod tests {
     use crate::{
         backend::{Backend, BackendError},
         event_hub::EventHub,
+        events::Event,
         recorder::{
-            recording_artifact_filename, RecorderPhase, RecordingArtifactState, SegmentFacts,
+            recording_artifact_filename, stamped_segment_filename, RecorderPhase,
+            RecordingArtifactState, SegmentFacts,
         },
         storage::StorageCoordinator,
         time_sync::TimeStore,
@@ -1871,6 +1877,183 @@ mod tests {
         }
         assert_eq!(hub.phase(), RecorderPhase::Recording);
         assert_eq!(hub.current_segment(), Some(5));
+
+        let _ = fs::remove_dir_all(rec_dir);
+    }
+
+    #[tokio::test]
+    async fn accepted_finalization_publishes_validated_facts_once_before_ack() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let rec_dir = std::env::temp_dir().join(format!("dancam-finalized-facts-{nonce}"));
+        fs::create_dir_all(&rec_dir).unwrap();
+        let storage = Arc::new(StorageCoordinator::new(rec_dir.clone()));
+        let hub = Arc::new(EventHub::new(CameraState::Running));
+        hub.drive_now(Input::StartCommand { start_segment: 5 });
+        let open_facts = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: 6,
+            mono_ms: 1,
+            dur_ms: None,
+        };
+        let open_path = rec_dir.join(recording_artifact_filename(
+            RecordingArtifactState::CommittedOpen,
+            5,
+            &open_facts,
+        ));
+        fs::write(&open_path, b"durable").unwrap();
+        let mut ready = true;
+        let mut event_state = ChildEventState::default();
+        let time_store = Arc::new(TimeStore::in_memory());
+        let opened = apply_child_event(
+            ChildEvent::SegmentOpened {
+                session: 6,
+                id: 5,
+                durable_bytes: 7,
+            },
+            &mut ready,
+            &mut event_state,
+            &hub,
+            storage.clone(),
+            time_store.clone(),
+        )
+        .await;
+        assert!(matches!(
+            opened,
+            Some(ChildCommand::AckSegment {
+                kind: super::SegmentAckKind::Opened,
+                session_id: 6,
+                id: 5,
+            })
+        ));
+
+        let finalized_facts = SegmentFacts {
+            dur_ms: Some(300),
+            ..open_facts
+        };
+        fs::rename(
+            open_path,
+            rec_dir.join(stamped_segment_filename(5, &finalized_facts)),
+        )
+        .unwrap();
+        let mut events = hub.connect();
+
+        let finalized_ack = apply_child_event(
+            ChildEvent::SegmentFinalized {
+                session: 6,
+                id: 5,
+                dur_ms: 300,
+            },
+            &mut ready,
+            &mut event_state,
+            &hub,
+            storage.clone(),
+            time_store.clone(),
+        )
+        .await;
+
+        assert!(matches!(
+            finalized_ack,
+            Some(ChildCommand::AckSegment {
+                kind: super::SegmentAckKind::Finalized,
+                session_id: 6,
+                id: 5,
+            })
+        ));
+        let published = events.rx.try_recv().unwrap();
+        let Event::ClipFinalized(meta) = published.event else {
+            panic!("expected clip_finalized, got {:?}", published.event);
+        };
+        assert_eq!(meta.id, 5);
+        assert_eq!(meta.session, Some(6));
+        assert_eq!(meta.bytes, 7);
+        assert_eq!(meta.dur_ms, Some(300));
+        assert_eq!(meta.etag, "5-7");
+        assert_eq!(meta.start_ms, None);
+        assert!(meta.time_approximate);
+
+        let duplicate_ack = apply_child_event(
+            ChildEvent::SegmentFinalized {
+                session: 6,
+                id: 5,
+                dur_ms: 300,
+            },
+            &mut ready,
+            &mut event_state,
+            &hub,
+            storage,
+            time_store,
+        )
+        .await;
+        assert!(matches!(
+            duplicate_ack,
+            Some(ChildCommand::AckSegment {
+                kind: super::SegmentAckKind::Finalized,
+                session_id: 6,
+                id: 5,
+            })
+        ));
+        assert!(events.rx.try_recv().is_err());
+
+        let _ = fs::remove_dir_all(rec_dir);
+    }
+
+    #[tokio::test]
+    async fn child_duration_mismatch_fails_without_publication_or_ack() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let rec_dir = std::env::temp_dir().join(format!("dancam-duration-mismatch-{nonce}"));
+        fs::create_dir_all(&rec_dir).unwrap();
+        let facts = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: 6,
+            mono_ms: 1,
+            dur_ms: Some(300),
+        };
+        fs::write(
+            rec_dir.join(stamped_segment_filename(5, &facts)),
+            b"durable",
+        )
+        .unwrap();
+        let storage = Arc::new(StorageCoordinator::new(rec_dir.clone()));
+        let hub = Arc::new(EventHub::new(CameraState::Running));
+        hub.drive_now(Input::StartCommand { start_segment: 5 });
+        hub.drive_now(Input::Recorder(
+            crate::recorder::RecorderEvent::SegmentOpened { session: 6, id: 5 },
+        ));
+        let mut event_state = ChildEventState {
+            last_opened: Some((6, 5)),
+            ..ChildEventState::default()
+        };
+        let mut ready = true;
+        let mut events = hub.connect();
+
+        let response = apply_child_event(
+            ChildEvent::SegmentFinalized {
+                session: 6,
+                id: 5,
+                dur_ms: 301,
+            },
+            &mut ready,
+            &mut event_state,
+            &hub,
+            storage,
+            Arc::new(TimeStore::in_memory()),
+        )
+        .await;
+
+        assert!(response.is_none());
+        assert_eq!(hub.phase(), RecorderPhase::Error);
+        assert!(events
+            .rx
+            .try_recv()
+            .is_ok_and(|event| matches!(event.event, Event::RecorderFailed { .. })));
+        assert!(events.rx.try_recv().is_err());
+        assert_eq!(event_state.last_finalized, None);
 
         let _ = fs::remove_dir_all(rec_dir);
     }

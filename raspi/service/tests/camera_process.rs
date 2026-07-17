@@ -1300,8 +1300,7 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
     wait_for_camera_state(&backend, CameraState::Running).await;
 
     // Subscribe before recording so the rollover-finalized start segment's
-    // clip_finalized is captured: it is the only witness of the camera finalize path's
-    // dur_ms (/v1/clips computes duration independently of the event).
+    // clip_finalized is captured from the artifact accepted by durable validation.
     let mut connection = backend.connect();
 
     let start = app
@@ -1350,8 +1349,7 @@ async fn supervisor_tracks_rollover_and_finalizes_last_segment_on_stop() {
         "clips were {clips_json}"
     );
 
-    // /v1/clips recomputes the same segment's duration from its file, so it agrees with
-    // the finalize event exactly.
+    // /v1/clips reads the same finalized filename facts, so it agrees with the event.
     let listed_dur_ms = clips_json["clips"]
         .as_array()
         .unwrap()

@@ -14,7 +14,9 @@ use std::{
 };
 
 use crate::{
-    clips::{max_clip_seq, resolve_segment, segment_paths_for_id, zero_byte_repair},
+    clips::{
+        max_clip_seq, resolve_segment, segment_paths_for_id, zero_byte_repair, SegmentCandidate,
+    },
     recorder::{
         parse_recording_artifact_filename, stamped_segment_filename, RecordingArtifactState,
         SegmentFacts, SegmentId,
@@ -122,19 +124,28 @@ impl StorageCoordinator {
         Ok(matched)
     }
 
-    pub fn validate_finalized(&self, session: u64, id: SegmentId) -> io::Result<bool> {
+    pub(crate) fn validate_finalized(
+        &self,
+        session: u64,
+        id: SegmentId,
+    ) -> io::Result<Option<SegmentCandidate>> {
         let _guard = self
             .mutation
             .lock()
             .expect("storage coordinator mutex poisoned");
         self.ensure_rec_mounted()?;
         let Some(candidate) = resolve_segment(self.rec_dir.as_ref(), id)? else {
-            return Ok(false);
+            return Ok(None);
         };
-        Ok(candidate.bytes > 0
-            && candidate
+        if candidate.bytes == 0
+            || !candidate
                 .facts
-                .is_some_and(|facts| facts.session == session && facts.dur_ms.is_some()))
+                .as_ref()
+                .is_some_and(|facts| facts.session == session && facts.dur_ms.is_some())
+        {
+            return Ok(None);
+        }
+        Ok(Some(candidate))
     }
 
     /// Reconcile the recording directory after its owning Python process is gone.
@@ -643,6 +654,51 @@ mod tests {
         assert!(!coordinator.validate_committed_open(9, 8, 8).unwrap());
         assert!(!coordinator.validate_committed_open(10, 8, 7).unwrap());
         assert!(!coordinator.validate_committed_open(9, 7, 7).unwrap());
+    }
+
+    #[test]
+    fn finalized_validation_returns_the_accepted_artifact_facts() {
+        let rec_dir = TempRecDir::new();
+        let facts = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: 9,
+            mono_ms: 100,
+            dur_ms: Some(300),
+        };
+        let path = rec_dir.path.join(stamped_segment_filename(8, &facts));
+        fs::write(&path, b"durable").unwrap();
+        let coordinator = StorageCoordinator::new(rec_dir.path.clone());
+
+        let accepted = coordinator.validate_finalized(9, 8).unwrap().unwrap();
+
+        assert_eq!(accepted.seq, 8);
+        assert_eq!(accepted.bytes, 7);
+        assert_eq!(accepted.path, path);
+        assert_eq!(accepted.facts, Some(facts));
+        assert!(coordinator.validate_finalized(10, 8).unwrap().is_none());
+        assert!(coordinator.validate_finalized(9, 7).unwrap().is_none());
+
+        let durationless = SegmentFacts {
+            boot_tag: "abc123def456".to_string(),
+            session: 9,
+            mono_ms: 200,
+            dur_ms: None,
+        };
+        fs::write(
+            rec_dir
+                .path
+                .join(stamped_segment_filename(9, &durationless)),
+            b"durable",
+        )
+        .unwrap();
+        assert!(coordinator.validate_finalized(9, 9).unwrap().is_none());
+
+        let empty = SegmentFacts {
+            dur_ms: Some(300),
+            ..durationless
+        };
+        fs::write(rec_dir.path.join(stamped_segment_filename(10, &empty)), b"").unwrap();
+        assert!(coordinator.validate_finalized(9, 10).unwrap().is_none());
     }
 
     #[test]

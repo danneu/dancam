@@ -162,13 +162,10 @@ async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
     let finalized = wait_for_type(&mut reader, "clip_finalized", Duration::from_secs(3)).await;
     let finalized_id = finalized.json["id"].as_u64().unwrap();
 
-    // The finalize event carries a real, file-derived duration, not a fabricated one.
+    // The mock publishes only the durable facts it owns; it does not scan media to
+    // fabricate duration during finalization.
     let event_dur_ms = finalized.json["dur_ms"].as_u64();
-    assert!(
-        event_dur_ms.is_some_and(|dur_ms| dur_ms > 0),
-        "clip_finalized dur_ms was {}",
-        finalized.json["dur_ms"]
-    );
+    assert_eq!(finalized.json["dur_ms"], Value::Null);
     assert!(
         finalized.json["start_ms"].as_u64().is_some(),
         "clip_finalized start_ms was {}; files were {:?}; time files were {:?}; time was {}",
@@ -203,17 +200,18 @@ async fn rollover_clip_is_pullable_when_clip_finalized_is_observed() {
             .unwrap(),
     )
     .await;
-    let listed_dur_ms = listed["clips"]
+    let listed_clip = listed["clips"]
         .as_array()
         .unwrap()
         .iter()
         .find(|clip| clip["id"].as_u64() == Some(finalized_id))
-        .unwrap_or_else(|| panic!("finalized clip {finalized_id} missing from {listed}"))["dur_ms"]
-        .as_u64();
-    assert_eq!(
-        listed_dur_ms, event_dur_ms,
-        "event and /v1/clips dur_ms disagree for segment {finalized_id}"
-    );
+        .unwrap_or_else(|| panic!("finalized clip {finalized_id} missing from {listed}"));
+    for field in ["boot_tag", "session", "start_ms", "dur_ms", "bytes", "etag"] {
+        assert_eq!(
+            listed_clip[field], finalized.json[field],
+            "event and /v1/clips {field} disagree for segment {finalized_id}"
+        );
+    }
 
     let pulled = app
         .oneshot(clip_request(&format!("/v1/clips/{finalized_id}")))

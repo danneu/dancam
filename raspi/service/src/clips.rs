@@ -553,23 +553,39 @@ fn max_segment_seq(candidates: &[SegmentCandidate]) -> Option<u32> {
     candidates.iter().map(|candidate| candidate.seq).max()
 }
 
-fn clip_meta_from_candidate(
+pub(crate) fn clip_meta_from_candidate(
     candidate: SegmentCandidate,
     dur_ms: Option<u64>,
     time_store: &TimeStore,
 ) -> ClipMeta {
-    let start_ms = derive_start_ms(candidate.facts.as_ref(), time_store);
-    let boot_tag = candidate.facts.as_ref().map(|facts| facts.boot_tag.clone());
-    let session = candidate.facts.as_ref().map(|facts| facts.session);
+    clip_meta_from_artifact(
+        candidate.seq,
+        candidate.bytes,
+        candidate.facts,
+        dur_ms,
+        time_store,
+    )
+}
+
+pub(crate) fn clip_meta_from_artifact(
+    id: SegmentId,
+    bytes: u64,
+    facts: Option<SegmentFacts>,
+    dur_ms: Option<u64>,
+    time_store: &TimeStore,
+) -> ClipMeta {
+    let start_ms = derive_start_ms(facts.as_ref(), time_store);
+    let boot_tag = facts.as_ref().map(|facts| facts.boot_tag.clone());
+    let session = facts.as_ref().map(|facts| facts.session);
     ClipMeta {
-        id: candidate.seq,
+        id,
         boot_tag,
         session,
         start_ms,
         dur_ms,
-        bytes: candidate.bytes,
+        bytes,
         locked: false,
-        etag: format!("{}-{}", candidate.seq, candidate.bytes),
+        etag: format!("{id}-{bytes}"),
         time_approximate: start_ms.is_none(),
     }
 }

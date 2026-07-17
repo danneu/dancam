@@ -22,7 +22,7 @@ use tokio::{
 use tokio_stream::{wrappers::WatchStream, Stream, StreamExt};
 
 use crate::{
-    clips::{finalize_clip_meta, ClipMeta},
+    clips::clip_meta_from_artifact,
     clock,
     cpu::Cpu,
     event_hub::{EventConnection, EventHub, SeqEvent},
@@ -585,22 +585,23 @@ async fn run_mock_recording_writer(
     } = context;
     let rec_dir = storage.rec_dir();
     let mut seq = start_segment;
-    let mut file = match open_mock_segment(rec_dir.as_ref(), seq, session, boot_tag.as_ref()).await
-    {
-        Ok(file) => file,
-        Err(error) => {
-            tracing::error!(%error, seq, "failed to open mock recording segment");
-            hub.drive_now(Input::Fail {
-                detail: format!("failed to open mock recording segment {seq}: {error}"),
-            });
-            return;
-        }
-    };
+    let (mut file, mut segment_facts) =
+        match open_mock_segment(rec_dir.as_ref(), seq, session, boot_tag.as_ref()).await {
+            Ok(segment) => segment,
+            Err(error) => {
+                tracing::error!(%error, seq, "failed to open mock recording segment");
+                hub.drive_now(Input::Fail {
+                    detail: format!("failed to open mock recording segment {seq}: {error}"),
+                });
+                return;
+            }
+        };
     // Monotonic across the whole writer lifetime, so every packet's PTS strictly
     // increases regardless of tick scheduling: any segment with >= 2 packets has a
     // positive span by construction (a wall-clock PTS would collapse burst-fired ticks
     // onto one value). The open-time packet is each segment's first.
     let mut packet_index: u64 = 0;
+    let mut segment_bytes = 0_u64;
     if let Err(error) = write_mock_preamble(&mut file).await {
         tracing::error!(%error, seq, "failed to write mock recording segment preamble");
         hub.drive_now(Input::Fail {
@@ -608,6 +609,7 @@ async fn run_mock_recording_writer(
         });
         return;
     }
+    segment_bytes += MOCK_MUX_PREAMBLE.len() as u64;
     if let Err(error) = write_mock_packet(&mut file, &mut packet_index).await {
         tracing::error!(%error, seq, "failed to write mock recording segment");
         hub.drive_now(Input::Fail {
@@ -615,6 +617,7 @@ async fn run_mock_recording_writer(
         });
         return;
     }
+    segment_bytes += 188;
     if let Err(error) = flush_and_sync_mock_segment(&mut file).await {
         tracing::error!(%error, seq, "failed to publish mock recording segment");
         hub.drive_now(Input::Fail {
@@ -641,20 +644,18 @@ async fn run_mock_recording_writer(
                     });
                     return;
                 }
-                let finalized =
-                    finalized_clip_meta(storage.clone(), seq, time_store.clone())
-                        .await;
-                if let Some(finalized) = finalized {
-                    hub.drive_now(Input::SegmentFinalized { session, finalized });
-                    hub.drive_now(Input::RecordingStopped {
-                        session,
-                        finalized: None,
-                    });
-                } else {
-                    hub.drive_now(Input::Fail {
-                        detail: format!("failed to stat final mock recording segment {seq}"),
-                    });
-                }
+                let finalized = clip_meta_from_artifact(
+                    seq,
+                    segment_bytes,
+                    segment_facts,
+                    None,
+                    time_store.as_ref(),
+                );
+                hub.drive_now(Input::SegmentFinalized { session, finalized });
+                hub.drive_now(Input::RecordingStopped {
+                    session,
+                    finalized: None,
+                });
                 return;
             }
             _ = interval.tick() => {
@@ -666,22 +667,13 @@ async fn run_mock_recording_writer(
                         });
                         return;
                     }
-                    let finalized = match finalized_clip_meta(
-                        storage.clone(),
+                    let finalized = clip_meta_from_artifact(
                         seq,
-                        time_store.clone(),
-                    )
-                    .await
-                    {
-                        Some(meta) => meta,
-                        None => {
-                            tracing::error!(seq, "failed to stat finalized mock recording segment");
-                            hub.drive_now(Input::Fail {
-                                detail: format!("failed to stat finalized mock recording segment {seq}"),
-                            });
-                            return;
-                        }
-                    };
+                        segment_bytes,
+                        segment_facts,
+                        None,
+                        time_store.as_ref(),
+                    );
                     hub.drive_now(Input::SegmentFinalized { session, finalized });
                     // Fail closed at the seq ceiling rather than reissuing `u32::MAX`
                     // (a fresh `mono_ms` would mint a same-seq stamped twin inside one
@@ -698,10 +690,11 @@ async fn run_mock_recording_writer(
                             return;
                         }
                     };
-                    file = match open_mock_segment(rec_dir.as_ref(), seq, session, boot_tag.as_ref())
-                        .await
-                    {
-                        Ok(file) => file,
+                    (file, segment_facts) =
+                        match open_mock_segment(rec_dir.as_ref(), seq, session, boot_tag.as_ref())
+                            .await
+                        {
+                        Ok(segment) => segment,
                         Err(error) => {
                             tracing::error!(%error, seq, "failed to roll mock recording segment");
                             hub.drive_now(Input::Fail {
@@ -710,6 +703,7 @@ async fn run_mock_recording_writer(
                             return;
                         }
                     };
+                    segment_bytes = 0;
                     if let Err(error) = write_mock_preamble(&mut file).await {
                         tracing::error!(%error, seq, "failed to write mock recording segment preamble");
                         hub.drive_now(Input::Fail {
@@ -717,6 +711,7 @@ async fn run_mock_recording_writer(
                         });
                         return;
                     }
+                    segment_bytes += MOCK_MUX_PREAMBLE.len() as u64;
                     if let Err(error) = write_mock_packet(&mut file, &mut packet_index).await {
                         tracing::error!(%error, seq, "failed to write mock recording segment");
                         hub.drive_now(Input::Fail {
@@ -724,6 +719,7 @@ async fn run_mock_recording_writer(
                         });
                         return;
                     }
+                    segment_bytes += 188;
                     if let Err(error) = flush_and_sync_mock_segment(&mut file).await {
                         tracing::error!(%error, seq, "failed to publish mock recording segment");
                         hub.drive_now(Input::Fail {
@@ -747,6 +743,7 @@ async fn run_mock_recording_writer(
                     });
                     return;
                 }
+                segment_bytes += 188;
                 if sync_cadence.due(tokio::time::Instant::now()) {
                     if let Err(error) = periodic_sync.sync(&mut file).await {
                         tracing::warn!(%error, seq, "failed to sync in-flight mock recording segment");
@@ -778,56 +775,33 @@ async fn flush_and_sync_mock_segment(file: &mut tokio::fs::File) -> std::io::Res
     file.sync_data().await
 }
 
-async fn finalized_clip_meta(
-    storage: Arc<StorageCoordinator>,
-    seq: SegmentId,
-    time_store: Arc<TimeStore>,
-) -> Option<ClipMeta> {
-    match tokio::task::spawn_blocking(move || {
-        finalize_clip_meta(storage.as_ref(), seq, time_store.as_ref())
-    })
-    .await
-    {
-        Ok(Ok(meta)) => meta,
-        Ok(Err(error)) => {
-            tracing::error!(%error, seq, "failed to stat finalized mock recording segment");
-            None
-        }
-        Err(error) => {
-            tracing::error!(%error, seq, "mock clip metadata task failed");
-            None
-        }
-    }
-}
-
 async fn open_mock_segment(
     rec_dir: &Path,
     seq: u32,
     session: u64,
     boot_tag: &StdMutex<Option<String>>,
-) -> std::io::Result<tokio::fs::File> {
-    let filename = boot_tag
+) -> std::io::Result<(tokio::fs::File, Option<SegmentFacts>)> {
+    let facts = boot_tag
         .lock()
         .expect("mock boot_tag mutex poisoned")
         .clone()
-        .map(|boot_tag| {
-            stamped_segment_filename(
-                seq,
-                &SegmentFacts {
-                    boot_tag,
-                    session,
-                    mono_ms: clock::boottime_ms(),
-                    dur_ms: None,
-                },
-            )
-        })
+        .map(|boot_tag| SegmentFacts {
+            boot_tag,
+            session,
+            mono_ms: clock::boottime_ms(),
+            dur_ms: None,
+        });
+    let filename = facts
+        .as_ref()
+        .map(|facts| stamped_segment_filename(seq, facts))
         .unwrap_or_else(|| segment_filename(seq));
 
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(rec_dir.join(filename))
-        .await
+        .await?;
+    Ok((file, facts))
 }
 
 fn spawn_mock_frames(

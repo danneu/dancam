@@ -125,8 +125,11 @@ filename grammar.
 At rollover and stop, Python closes the container, flushes and syncs the file,
 renames committed-open state to the ordinary finalized filename carrying duration,
 syncs the directory, and emits `segment_finalized`. Rust validates the finalized
-artifact and the event's agreement with its durable duration fact, publishes
-`clip_finalized`, and acknowledges.
+artifact and the event's agreement with its durable duration fact. That validation
+returns the accepted artifact view; Rust publishes `clip_finalized` from its id,
+session, bytes, duration, and ETag without another catalog lookup, then acknowledges.
+Clock-derived `start_ms` is nullable enrichment: an unavailable or unusable offset
+leaves it null and `time_approximate` true without blocking finalization.
 Only then may Python ask Rust to reserve the next sequence and open its transaction.
 `recording_stopped` follows finalization and only clears the recorder after the last
 finalization was accepted.
@@ -281,9 +284,11 @@ an omitted field is a protocol violation. The fake driver emits a deterministic
 is cleared whenever the child is not running.
 
 The Rust mock backend and Python `--fake` driver exercise the same recorder taxonomy.
-Both write small valid, PTS-bearing MPEG-TS segments so finalization, duration, list,
-and pull paths run against media-shaped bytes rather than empty placeholders. The
-Python fake also exposes bounded segment cadence and crash hooks for supervisor tests.
+Both write small valid, PTS-bearing MPEG-TS segments so finalization, list, and pull
+paths run against media-shaped bytes rather than empty placeholders. After a mock
+writer flush and sync succeeds, the Rust mock publishes `clip_finalized` from the
+facts it owns; duration remains null rather than triggering a media scan. The Python
+fake also exposes bounded segment cadence and crash hooks for supervisor tests.
 
 ## Power-loss defense
 
@@ -645,3 +650,21 @@ because packets may arrive before Rust handles the event. Clearing the floor on 
 error was rejected because it would expose committed-open footage before durable
 reconciliation. Clearing it before recovered publication was rejected because clients
 could race the recovery result.
+
+### 2026-07-17 -- Publish finalization from one accepted artifact view
+
+Rust previously validated a real-camera finalized artifact, discarded the resolved
+candidate, and performed another directory lookup to build `clip_finalized`. That
+second fallible read could fail the recorder after the first read had already proved
+the durable identity, size, duration, and session facts needed for publication.
+
+The decision made validation return the accepted artifact view and made publication
+a pure projection of that view plus optional clock enrichment. The child duration
+report must still match the durable filename fact before publication, and the event
+still precedes recorder advancement and acknowledgement. The Rust mock similarly
+publishes its known durable facts after flush and sync while leaving duration null.
+
+Retrying the catalog lookup was rejected because it creates two competing artifact
+views inside one finalization. Making missing clock data fatal was rejected because
+wall time is enrichment rather than recording truth. Scanning mock media at close was
+rejected because the mock does not need to invent a durable duration fact.
