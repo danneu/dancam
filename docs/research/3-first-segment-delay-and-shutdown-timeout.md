@@ -571,15 +571,50 @@ firmware-transfer failure, not persistent firmware-file or recording-filesystem
 corruption, but it does not identify whether power sequencing, the SDIO controller,
 or the radio caused that one transfer to fail.
 
+### Controlled power-cut campaign
+
+The repeated campaign added a temporary boot-local observer on the persistent
+partition. It captured the target artifact and witness before the service listened,
+the first successful status and clip responses, the transition to recording ready,
+mount state, and kernel Wi-Fi signals. Evidence therefore did not depend on mDNS or
+remote access. Each cut removed power for at least 10 seconds.
+
+The three distinct on-disk states passed:
+
+- **Committed-open:** Segment 273 had completed start publication and both processes
+  were frozen with a 6,768-byte `.open.ts` artifact. Its independently decodable
+  synced prefix had SHA-256
+  `9e4c7d7b0b7733591389412c2d3c7781878ff4e4e7b11186c8bd928c1f49d95c`.
+  On the first boot the observer saw committed-open before HTTP. The first clip
+  response then listed finalized segment 273 while status was still
+  `camera_starting` and recording not ready; readiness followed 8.42 seconds later.
+  The recovered clip was exactly the same 6,768 bytes, matched the prefix hash,
+  decoded all three packets, retained the exact 3000-tick timeline, and left no
+  hidden artifact.
+- **Uncommitted:** Segment 274 was durably reserved, both processes were frozen with
+  one zero-byte `.pending` artifact, and no committed-open or finalized form existed.
+  On the first boot the observer saw pending before HTTP, then saw it absent at the
+  first status response and at readiness. It never appeared in either clip listing;
+  the witness remained 274. A recovery recording allocated segment 275 rather than
+  reusing 274, finalized, listed, and decoded without error.
+- **Finalized:** Segment 276 was durably stopped and listed before the cut. Its
+  4,368,932 bytes had SHA-256
+  `a9d5cf1ca09ffcca843b5ea33a821e9b7d005401f9ec2e2716d91b9cb182184d`
+  and decoded in full. The first boot saw that same finalized artifact before HTTP,
+  in the first clip listing while recording was not ready, and again at readiness.
+  Its size and full hash remained exact and it decoded after restore. A later
+  recording allocated playable segment 277 and left segment 276 byte-identical.
+
+All three first boots mounted root, `/persist`, and `/data` normally, preserved the
+sequence witness, returned recording readiness, initialized Wi-Fi normally, and left
+no hidden transaction artifact. The earlier Wi-Fi firmware-transfer anomaly did not
+recur. This campaign discharges PO6 for uncommitted, committed-open including a
+previously published current segment, and finalized artifact states.
+
 ### Acceptance still requiring physical setup
 
 This campaign does not claim the following obligations:
 
-- PO6 remains unproven. The first uncommitted cut preserved the witness and later
-  recovered above it, but a transient Wi-Fi initialization failure prevented
-  first-boot observation and made the trial inconclusive. Repeat it with boot-local
-  evidence capture before testing committed-open and finalized states; track the
-  Wi-Fi incident separately unless it recurs with the cuts.
 - PO7 still needs matched 60-minute room-temperature and 60-minute
   warm-equilibrium runs for both the former FFmpeg stack and this PyAV stack in the
   same enclosure and ambient conditions.
