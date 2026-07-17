@@ -430,3 +430,124 @@ the throwaway processes were absent, and `/v1/status.recording_readiness.ready`
 returned true. The qualifying result selects direct per-segment PyAV for the
 successor implementation; only that committed implementation can provide the later
 end-to-end latency and durability-campaign evidence.
+
+## 11. Committed transactional PyAV acceptance -- 2026-07-16
+
+The implementation campaign replaced the FFmpeg input and segment muxers with the
+transactional PyAV owner selected above. The final deployed revision was `203569f`;
+its history includes transactional recording (`61ff5ca`), callback-isolated muxing
+(`2dcb164`), synced-prefix attestation (`f34cd75`), recovered-clip floor release
+(`a422a5d`), and dormant lifecycle fault injection (`6092ac1`). The Pi still ran
+Python 3.13.5, PyAV 14.2.0, Picamera2 0.3.36, and FFmpeg 7.1.5.
+
+### Binding publication latency
+
+An external Mac client measured each complete start POST. The service returns 200
+only after accepting `segment_opened`, so the HTTP duration includes request transit,
+the durable publication transaction, Rust validation and publication, and response
+transit. Cold trials restarted the owner and waited for recording readiness. Warm
+trials stopped the first session and started a second session in the same owner.
+
+| Trial | Unloaded cold (ms) | Unloaded warm (ms) | Loaded cold (ms) | Loaded warm (ms) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 324.104 | 186.143 | 353.189 | 198.078 |
+| 2 | 223.850 | 181.245 | 311.365 | 202.484 |
+| 3 | 185.940 | 162.365 | 210.931 | 198.718 |
+| 4 | 299.608 | 142.518 | 207.344 | 199.415 |
+| 5 | 178.281 | 182.504 | 200.441 | 191.629 |
+
+The four medians were 223.850, 181.245, 210.931, and 198.718 ms respectively.
+Every trial remained below the binding 1 second gate. The loaded profile kept an
+MJPEG preview client, periodic `/v1/clips` listings, and validator-bound ranged clip
+reads active. At each of the 20 publication points, the harness copied exactly the
+reported 12,784-13,348 durable bytes and independently decoded a complete frame from
+that prefix.
+
+### Loaded media and operational smoke
+
+A separate 35-second loaded session returned start success in 233.037 ms and stop
+success in 228.311 ms. Its first segment contained exactly 900 packets and reported
+30.000 seconds. A second session left the first segment's SHA-256 digest
+`4e48b8f6cc32a652ebd8097c2037b30b915def8ad6d3b6f8b74d315a185b070a`
+unchanged. All 23 segments created by the final latency and loaded-media campaign
+decoded without error. Every segment began at PTS/DTS zero, kept `PTS == DTS`,
+increased DTS strictly, and used an exact 3000-tick packet delta.
+
+Over 35.94 seconds, preview delivered 361 frames at 10.016 fps. Median, p95, and
+maximum inter-frame intervals were 100.145, 114.923, and 147.302 ms. The 35 resource
+samples observed:
+
+- camera-owner RSS at most 108,404 KiB and service RSS at most 8,300 KiB;
+- sensor temperature at most 39.0 C and SoC temperature at most 42.0 C;
+- zero swap use and at least 184,549,376 available bytes;
+- mean normalized total CPU 139.49 percent and maximum 164 percent.
+
+This is a short loaded regression check, not the matched room and warm-equilibrium
+soak required by PO7.
+
+Stopping the systemd unit during recording with live SSE and MJPEG clients plus one
+unread MJPEG response completed in 2.125 seconds. The unread socket later drained
+525,357 buffered bytes and reached EOF. The unit reported `success`, exit status 0,
+and inactive/dead; no camera owner remained. The last clip decoded, no hidden
+transaction artifact remained, and restart returned recording readiness.
+
+Sixteen concurrent start requests and sixteen concurrent stop requests all returned
+200 while applying one lifecycle. Ten more stops were sent only after status exposed
+`starting`; every start and stop returned 200 and every trial ended idle with no
+current segment.
+
+### Transaction and recovery faults
+
+The deterministic fault selector ran against committed revision `6092ac1`. Initial
+open, write, mux, and publication-sync faults returned start 500, left no phantom
+clip, and replaced the owner. A second-sync fault after publication recovered and
+listed segment 214 with its exact 14,100-byte synced prefix preserved and decodable.
+Final-stop close and finalize faults returned stop 500 and recovered segments 215 and
+216 with exact 14,288-byte prefixes. Rollover close and finalize faults recovered
+segments 217 and 218 after each had reached 900 packets. Every survivor retained its
+captured prefix byte-for-byte, decoded, became listable after reconciliation, and
+left no hidden artifact. The selector was then removed from the service environment
+and the ordinary unit restarted recording-ready.
+
+Separate process-death and storage-failure cases exercised recovery without the
+selector:
+
+- killing an owner while segment 200 was uncommitted removed the pending artifact;
+  the replacement became ready and allocated segment 201 rather than reusing 200;
+- killing an owner with published segment 202 preserved and decoded its exact
+  16,168-byte prefix, finalized and listed it, and allowed a replacement owner;
+- killing the Rust service during segment 204 preserved and decoded its exact
+  15,416-byte prefix; startup reconciled and listed it before readiness;
+- making the recording directory unwritable with pending segment 206 blocked
+  cleanup and readiness; restoring permissions let the same service reconcile,
+  become ready, and allocate segment 207;
+- making finalization fail for segment 209 returned stop 500 and blocked readiness;
+  restoring permissions immediately reconciled and listed the segment with its exact
+  14,664-byte prefix preserved and decodable.
+
+The finalization-failure case found one implementation bug: child error correctly
+cleared public current state while preserving the pull floor, but successful
+reconciliation did not release that floor, so the recovered clip remained hidden.
+Revision `a422a5d` added an explicit post-publication reconciliation transition that
+releases the dead owner's exclusions. The real-Pi case then passed without a service
+restart.
+
+The local protocol suite additionally proves lost acknowledgement retry,
+wrong-session and wrong-sequence rejection, duplicate accepted-event acknowledgement,
+deadline retirement, failed-start queued-stop resolution, corrupt reservation
+failure, and sequence-ceiling failure. The final suite passed 215 unit tests and 106
+integration tests; formatting and Clippy with warnings denied also passed. The PyAV
+self-test, provisioning lint, mdBook build, and link checker passed.
+
+### Acceptance still requiring physical setup
+
+This campaign does not claim the following obligations:
+
+- PO6 still needs controlled hard power cuts in uncommitted, committed-open, and
+  finalized states on the real card, followed by byte and recovery verification.
+- PO7 still needs matched 60-minute room-temperature and 60-minute
+  warm-equilibrium runs for both the former FFmpeg stack and this PyAV stack in the
+  same enclosure and ambient conditions.
+- PO8 still needs two provisioning converges on a fresh image. The committed local
+  provisioning, runtime import, regression, and documentation checks have passed,
+  but the existing development image is not fresh-image evidence.

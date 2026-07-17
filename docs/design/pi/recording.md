@@ -114,8 +114,11 @@ session from it. The child receives both `session_id` and `start_segment_index`,
 and creates that sequence only in a hidden uncommitted artifact. After muxing a
 complete first SPS/PPS/IDR access unit, Python flushes PyAV, syncs the file,
 atomically renames it to committed-open state, syncs the directory, and emits
-`segment_opened`. Rust validates the exact session, id, and committed-open artifact
-before acknowledging or publishing recording state. The
+`segment_opened` with the positive byte count covered by that sync. Rust validates
+the exact session and id, requires the matching committed-open artifact to contain at
+least that many bytes, and only then acknowledges or publishes recording state. The
+reported count identifies the exact crash-surviving prefix even when later packets
+grow the file before Rust observes it. The
 [storage page](storage.md#segment-and-recording-identity) owns the witness and
 filename grammar.
 
@@ -174,6 +177,12 @@ Accepted inputs produce ordered domain transitions:
   has already been accepted; missing finalization keeps the recorder in error;
 - child error, exit, spawn failure, or camera loss moves the live transition to
   recoverable error, clears `current_segment`, and preserves the protective floor.
+
+Successful owner reconciliation publishes every recovered committed-open clip and
+then clears the dead owner's current segment and protective floor in one recorder
+transition. A failed reconciliation retains the exclusions and blocks replacement,
+so neither stale state nor a transient error can hide recovered footage or expose an
+unfinished artifact.
 
 Failure is deliberately a session-less control input. Spawn failure, child exit, and
 camera-offline observations have no trustworthy child session to echo, so they apply
@@ -616,3 +625,23 @@ An HTTP fault endpoint was rejected because it would expose destructive validati
 behavior on the product surface. Throwaway owner patches were rejected because they
 cannot prove the committed service/owner boundary. The production unit omits the
 selector, so normal recording does not take an alternate muxer or lifecycle path.
+
+### 2026-07-16 -- Attest publication bytes and release recovery exclusions
+
+The initial transaction protocol validated the committed-open name but did not carry
+the exact byte boundary covered by publication sync. It also preserved the pull floor
+when an owner failed, which was correct until reconciliation finalized and published
+that owner's current clip; leaving the floor afterward kept the recovered clip hidden.
+
+The decision added a positive `durable_bytes` attestation to `segment_opened`. Rust
+requires the matching artifact to contain the full attested prefix before accepting
+the open, while allowing ordinary file growth after emission. Successful owner
+reconciliation now publishes recovered clips before one explicit recorder transition
+clears all exclusions belonging to the dead owner. Reconciliation failure retains
+those exclusions and blocks readiness.
+
+Treating the artifact's later total length as the publication boundary was rejected
+because packets may arrive before Rust handles the event. Clearing the floor on child
+error was rejected because it would expose committed-open footage before durable
+reconciliation. Clearing it before recovered publication was rejected because clients
+could race the recovery result.

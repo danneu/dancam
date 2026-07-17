@@ -161,6 +161,11 @@ cadence plus encoder buffering instead of allowing a whole open segment to remai
 only in page cache. Every write, mux, sync, close, or rename failure is fatal; the
 owner never logs and continues after losing the recording path.
 
+Publication reports the positive byte count covered by its sync. Before acknowledging
+the open, the coordinator requires the exact session and sequence in committed-open
+state and a file length at least as large as that count. This validates the reported
+durable prefix without rejecting packets appended between emission and validation.
+
 After an owner is reaped and before the camera owner becomes ready, the storage
 coordinator scans hidden transaction artifacts. It removes every uncommitted path,
 raises the sequence witness first, and renames every committed-open path to its
@@ -573,3 +578,18 @@ A database, sidecar journal, and acknowledgement log were rejected because the
 recording directory already supplies an atomic, rebuildable ledger. Inferring state
 from file size or a watcher was rejected because neither proves which durability
 transition the producer completed.
+
+### 2026-07-16: Bind publication to an attested synced prefix
+
+A committed-open name proves that the producer completed the rename transaction, but
+its later file length does not identify which bytes were covered by the publication
+sync. The owner can append another access unit before Rust handles the event.
+
+The decision made `segment_opened` carry the positive byte count observed after the
+publication sync. Storage validation requires the matching committed-open artifact to
+contain at least that many bytes. This gives acceptance and power-cut checks one exact
+prefix to preserve and decode while leaving continued append lock-free.
+
+Requiring equality with the later file length was rejected because healthy growth can
+race event handling. Trusting the count without checking the artifact was rejected
+because an acknowledgement must remain grounded in the on-disk transaction ledger.
