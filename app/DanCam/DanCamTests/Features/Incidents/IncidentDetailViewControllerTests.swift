@@ -6,6 +6,34 @@ import UIKit
 
 @MainActor
 struct IncidentDetailViewControllerTests {
+    @Test
+    func tableHeaderWaitsForHostedLayoutAndTracksWidthChanges() throws {
+        let fixture = try makeFixture(kind: .ts)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let controller = makeController(fixture: fixture, preparer: .unavailable)
+        controller.loadViewIfNeeded()
+
+        #expect(controller.tableHeaderFrameForTesting == nil)
+
+        let hosted = try host(controller)
+        defer { hosted.window.isHidden = true }
+        hosted.window.layoutIfNeeded()
+
+        let initialFrame = try #require(controller.tableHeaderFrameForTesting)
+        #expect(abs(initialFrame.width - controller.tableWidthForTesting) <= 0.5)
+        #expect(initialFrame.height > 240)
+
+        hosted.window.frame = CGRect(x: 0, y: 0, width: 320, height: 844)
+        hosted.window.setNeedsLayout()
+        controller.view.setNeedsLayout()
+        hosted.window.layoutIfNeeded()
+
+        let resizedFrame = try #require(controller.tableHeaderFrameForTesting)
+        #expect(abs(resizedFrame.width - controller.tableWidthForTesting) <= 0.5)
+        #expect(abs(resizedFrame.width - initialFrame.width) > 0.5)
+        #expect(resizedFrame.height > 240)
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func unifiedTimelineGrowsWithoutReplacingStablePlayerInstancesOrEvidenceOnlyItems() async throws {
         let fixture = try await makePlaybackFixture(playableSeqs: [42, 43], frameCount: 180)

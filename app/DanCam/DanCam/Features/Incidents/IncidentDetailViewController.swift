@@ -111,7 +111,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        sizeTableHeader()
+        installOrSizeHeaderIfPossible()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -197,8 +197,6 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
             chromeStack.topAnchor.constraint(equalTo: playerContainer.bottomAnchor),
             chromeStack.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
         ])
-        tableView.tableHeaderView = headerView
-
         view.addSubview(tableView)
         NSLayoutConstraint.activate([
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -228,17 +226,29 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         playerViewController.didMove(toParent: self)
     }
 
-    private func sizeTableHeader() {
-        let width = tableView.bounds.width
-        guard width > 0 else { return }
-        headerView.frame.size.width = width
-        let height = headerView.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+    private func installOrSizeHeaderIfPossible() {
+        let fittingWidth = tableView.bounds.width
+        guard fittingWidth > 0, tableView.window != nil else { return }
+
+        let currentFrame = headerView.frame
+        headerView.frame.size.width = fittingWidth
+        let fittingSize = headerView.systemLayoutSizeFitting(
+            CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
-        ).height
-        guard abs(headerView.frame.height - height) > 0.5 else { return }
-        headerView.frame.size.height = height
+        )
+        guard fittingSize.height > 0 else { return }
+
+        let isHeaderInstalled = tableView.tableHeaderView === headerView
+        let shouldInstallOrUpdate = isHeaderInstalled == false
+            || abs(currentFrame.width - fittingWidth) > 0.5
+            || abs(currentFrame.height - fittingSize.height) > 0.5
+        guard shouldInstallOrUpdate else { return }
+
+        headerView.frame = CGRect(
+            origin: currentFrame.origin,
+            size: CGSize(width: fittingWidth, height: fittingSize.height)
+        )
         tableView.tableHeaderView = headerView
     }
 
@@ -275,7 +285,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         reconcileSelection()
         renderPendingProgress(record: record)
         tableView.reloadData()
-        sizeTableHeader()
+        installOrSizeHeaderIfPossible()
         startTimelineBuild(record: record, forceReplacement: false)
     }
 
@@ -358,7 +368,7 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
         }
         renderTimelineChrome(result: result, record: record)
         tableView.reloadData()
-        sizeTableHeader()
+        installOrSizeHeaderIfPossible()
 
         let oldIdentity = timeline?.identity ?? []
         let newIdentity = result.identity
@@ -638,6 +648,10 @@ final class IncidentDetailViewController: UIViewController, UITableViewDataSourc
     var gapTextForTesting: String? { gapLabel.text }
     var isJumpToPressEnabledForTesting: Bool { jumpToPressButton.isEnabled }
     var isPresentingFullScreenForTesting: Bool { isPresentingFullScreen }
+    var tableWidthForTesting: CGFloat { tableView.bounds.width }
+    var tableHeaderFrameForTesting: CGRect? {
+        tableView.tableHeaderView === headerView ? headerView.frame : nil
+    }
 
     func selectRowForTesting(at index: Int) {
         tableView(tableView, didSelectRowAt: IndexPath(row: index, section: 0))
