@@ -1,5 +1,38 @@
 # Raspberry Pi setup
 
+## Production card: one command
+
+Released production cards do not use Raspberry Pi Imager, home Wi-Fi, SSH, apt,
+Ansible, manual partitioning, deploy, or a hardening pass. On the Apple Silicon Mac,
+enter the development shell and run:
+
+```sh
+just raspi-flash
+```
+
+The command authenticates the newest released image under `dist/` (or accepts an
+explicit manifest path), lists eligible removable whole disks, and does not mutate a
+disk until the image is authenticated and the displayed identifier is typed exactly.
+It writes and verifies the complete image, creates the per-unit setup QR and recovery
+record in the current directory, verifies personalization, and ejects the card.
+
+Move the ejected card to the Zero 2 W and power it with upstream networking absent.
+In the app, open Settings -> Add Camera and scan the generated QR. Setup status moves
+from Preparing to Ready from canonical Pi state. A failure shows a stable recovery
+reason; the activity LED blinks slowly while preparing, stays mostly lit when
+complete, and blinks rapidly on failure. Do not reinsert or edit a successfully
+commissioned card to retry setup; whole-card reflash is the recovery operation and
+destroys Pi-local footage and identity.
+
+The remaining sections are the writable development-card workflow.
+
+Release publishers run `just raspi-image` on the controlled aarch64 Linux builder with
+`DANCAM_IMAGE_SIGNING_KEY` naming the protected minisign secret key. The build refuses
+uncommitted tracked source, verifies the pinned OS digest, installs the pinned runtime
+package versions, and emits the compressed image, signed manifest, and installed-package
+inventory under `dist/`. Flash operators receive only those release artifacts and trust
+the public key tracked at `raspi/image/release.pub`.
+
 Hands-on runbook for bringing up the dancam camera unit -- from flashing the microSD
 through serving canonical operational status. These are the concrete steps we ran for the
 `pine` swoop. For the design rationale behind each choice, see

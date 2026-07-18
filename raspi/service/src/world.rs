@@ -6,6 +6,29 @@ use crate::{
     sysfacts::{DiskUsage, MemInfo},
 };
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct Commissioning {
+    pub state: CommissioningState,
+    pub reason: Option<String>,
+}
+
+impl Commissioning {
+    pub fn complete() -> Self {
+        Self {
+            state: CommissioningState::Complete,
+            reason: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommissioningState {
+    Preparing,
+    Complete,
+    Failed,
+}
+
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CameraState {
@@ -24,6 +47,7 @@ pub struct RecordingReadiness {
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordingReadinessReason {
+    CommissioningIncomplete,
     CameraStarting,
     CameraRestarting,
     CameraOffline,
@@ -87,6 +111,7 @@ pub struct World {
     mem: Option<MemInfo>,
     cpu: Cpu,
     time_synced: bool,
+    commissioning: Commissioning,
 }
 
 impl World {
@@ -100,6 +125,7 @@ impl World {
             mem: None,
             cpu: Cpu::empty(),
             time_synced: false,
+            commissioning: Commissioning::complete(),
         }
     }
 
@@ -119,6 +145,7 @@ impl World {
             time: TimeStatus {
                 synced: self.time_synced,
             },
+            commissioning: self.commissioning.clone(),
         }
     }
 
@@ -201,6 +228,17 @@ impl World {
                 } else {
                     self.time_synced = true;
                     vec![Event::TimeSynced { at_ms: now_ms }]
+                }
+            }
+            Input::Commissioning(commissioning) => {
+                if self.commissioning == commissioning {
+                    Vec::new()
+                } else {
+                    self.commissioning = commissioning.clone();
+                    vec![Event::CommissioningChanged {
+                        commissioning,
+                        recording_readiness: self.recording_readiness(),
+                    }]
                 }
             }
             Input::Tick => vec![Event::Heartbeat { t_ms: now_ms }],
@@ -350,14 +388,17 @@ impl World {
     }
 
     fn recording_readiness(&self) -> RecordingReadiness {
-        let reason = match self.camera_state {
-            CameraState::Starting => Some(RecordingReadinessReason::CameraStarting),
-            CameraState::Restarting => Some(RecordingReadinessReason::CameraRestarting),
-            CameraState::Offline => Some(RecordingReadinessReason::CameraOffline),
-            CameraState::Running if self.storage_generation.is_none() => {
+        let reason = match (&self.commissioning.state, self.camera_state) {
+            (state, _) if *state != CommissioningState::Complete => {
+                Some(RecordingReadinessReason::CommissioningIncomplete)
+            }
+            (_, CameraState::Starting) => Some(RecordingReadinessReason::CameraStarting),
+            (_, CameraState::Restarting) => Some(RecordingReadinessReason::CameraRestarting),
+            (_, CameraState::Offline) => Some(RecordingReadinessReason::CameraOffline),
+            (_, CameraState::Running) if self.storage_generation.is_none() => {
                 Some(RecordingReadinessReason::RecordingStorageUnavailable)
             }
-            CameraState::Running => None,
+            (_, CameraState::Running) => None,
         };
         RecordingReadiness {
             ready: reason.is_none(),
@@ -428,6 +469,7 @@ pub enum Input {
         celsius: Option<f32>,
     },
     TimeSynced,
+    Commissioning(Commissioning),
     Tick,
 }
 
@@ -493,6 +535,41 @@ mod tests {
         );
         assert_eq!(world.phase(), RecorderPhase::Stopping);
         assert!(world.apply(Input::StopCommand, 7000).is_empty());
+    }
+
+    #[test]
+    fn commissioning_replaces_state_and_blocks_readiness_atomically() {
+        let mut world = World::new(CameraState::Running);
+        world.apply(
+            Input::Storage {
+                storage: Some(DiskUsage {
+                    used: 1,
+                    total: STORAGE_QUANTUM,
+                    recording_capacity_bytes: 1,
+                }),
+                storage_generation: Some("00000000-0000-4000-8000-000000000001".to_string()),
+            },
+            1,
+        );
+        let commissioning = super::Commissioning {
+            state: super::CommissioningState::Preparing,
+            reason: None,
+        };
+
+        assert_eq!(
+            world.apply(Input::Commissioning(commissioning.clone()), 2),
+            vec![Event::CommissioningChanged {
+                commissioning,
+                recording_readiness: super::RecordingReadiness {
+                    ready: false,
+                    reason: Some(super::RecordingReadinessReason::CommissioningIncomplete),
+                },
+            }]
+        );
+        assert_eq!(
+            world.snapshot("boot", 1).commissioning.state,
+            super::CommissioningState::Preparing
+        );
     }
 
     #[test]

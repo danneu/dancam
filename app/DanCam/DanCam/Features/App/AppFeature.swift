@@ -751,6 +751,8 @@ private extension CameraEvent {
             "cpuChanged"
         case .timeSynced:
             "timeSynced"
+        case .commissioningChanged:
+            "commissioningChanged"
         case .heartbeat:
             "heartbeat"
         case .unknown(let type):

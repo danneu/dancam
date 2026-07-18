@@ -18,7 +18,8 @@ enum CameraSamples {
         cpu: CPU = CPU(),
         uptimeS: UInt64 = 1,
         bootTag: String? = nil,
-        time: TimeStatus? = TimeStatus(synced: true)
+        time: TimeStatus? = TimeStatus(synced: true),
+        commissioning: Commissioning = .complete
     ) -> World {
         World(
             recorder: RecorderSnapshot(
@@ -37,7 +38,8 @@ enum CameraSamples {
             tempC: tempC,
             mem: mem,
             cpu: cpu,
-            time: time
+            time: time,
+            commissioning: commissioning
         )
     }
 

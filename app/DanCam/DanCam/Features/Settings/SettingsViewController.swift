@@ -45,14 +45,34 @@ nonisolated struct RecordingStorageProjection: Equatable {
     }
 }
 
-final class SettingsViewController: UIViewController, UITableViewDataSource {
+nonisolated struct CameraSetupProjection: Equatable {
+    var status: String
+
+    static func project(_ state: AppFeature.State) -> Self {
+        guard let world = state.link.onlineWorld else { return Self(status: "Not connected") }
+        switch world.commissioning.state {
+        case .preparing:
+            return Self(status: "Preparing camera...")
+        case .complete:
+            return Self(status: "Ready")
+        case .failed:
+            let reason = world.commissioning.reason ?? "commissioning_failed"
+            return Self(status: "Setup failed: \(reason.replacingOccurrences(of: "_", with: " "))")
+        }
+    }
+}
+
+final class SettingsViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private let store: AppStore
+    private let onboarding: OnboardingClient
     private var observation: StoreObservation?
+    private var setupObservation: StoreObservation?
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private(set) var renderedProjection: RecordingStorageProjection?
 
     init(dependencies: AppDependencies, store: AppStore) {
         self.store = store
+        onboarding = dependencies.onboarding
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -67,6 +87,7 @@ final class SettingsViewController: UIViewController, UITableViewDataSource {
         view.backgroundColor = .systemGroupedBackground
 
         tableView.dataSource = self
+        tableView.delegate = self
         tableView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tableView)
         NSLayoutConstraint.activate([
@@ -80,30 +101,53 @@ final class SettingsViewController: UIViewController, UITableViewDataSource {
             self?.renderedProjection = projection
             self?.tableView.reloadData()
         }
+        setupObservation = store.observe(select: CameraSetupProjection.project) { [weak self] _ in
+            self?.tableView.reloadData()
+        }
     }
 
-    func numberOfSections(in tableView: UITableView) -> Int { 1 }
+    func numberOfSections(in tableView: UITableView) -> Int { 2 }
 
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { 2 }
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        section == 0 ? 2 : 2
+    }
 
     func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        "Recording storage"
+        section == 0 ? "Camera setup" : "Recording storage"
     }
 
     func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        "Estimated at the current recording quality. When storage fills, DanCam replaces the oldest footage automatically."
+        guard section == 1 else { return "Scan the QR generated when this camera card was flashed." }
+        return "Estimated at the current recording quality. When storage fills, DanCam replaces the oldest footage automatically."
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "recording-storage")
-            ?? UITableViewCell(style: .value1, reuseIdentifier: "recording-storage")
+        let cell = tableView.dequeueReusableCell(withIdentifier: "settings-row")
+            ?? UITableViewCell(style: .value1, reuseIdentifier: "settings-row")
         let projection = renderedProjection ?? RecordingStorageProjection.project(store.state)
+        cell.accessibilityLabel = nil
+        cell.accessibilityValue = nil
+        cell.accessibilityHint = nil
+        cell.accessoryType = .none
+        cell.selectionStyle = .none
         var content = cell.defaultContentConfiguration()
-        if indexPath.row == 0 {
+        if indexPath.section == 0, indexPath.row == 0 {
+            content.text = "Add Camera"
+            content.image = UIImage(systemName: "qrcode.viewfinder")
+            cell.accessoryType = .disclosureIndicator
+            cell.selectionStyle = .default
+            cell.accessibilityHint = "Opens the setup QR scanner"
+        } else if indexPath.section == 0 {
+            content.text = "Setup status"
+            content.secondaryText = CameraSetupProjection.project(store.state).status
+            cell.selectionStyle = .none
+            cell.accessoryType = .none
+        } else if indexPath.row == 0 {
             content.text = "Space for footage"
             content.secondaryText = projection.capacity
             cell.accessibilityLabel = "Space for footage"
             cell.accessibilityValue = projection.capacityAccessibilityValue
+            cell.accessoryType = .none
         } else {
             content.text = "Estimated footage"
             content.secondaryText = projection.estimate
@@ -113,7 +157,15 @@ final class SettingsViewController: UIViewController, UITableViewDataSource {
         content.textProperties.adjustsFontForContentSizeCategory = true
         content.secondaryTextProperties.adjustsFontForContentSizeCategory = true
         cell.contentConfiguration = content
-        cell.selectionStyle = .none
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard indexPath == IndexPath(row: 0, section: 0) else { return }
+        navigationController?.pushViewController(
+            AddCameraViewController(onboarding: onboarding),
+            animated: true
+        )
     }
 }

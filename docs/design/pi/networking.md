@@ -34,9 +34,9 @@ connection.autoconnect                       no
 
 The cipher pins make this WPA2-AES only: no WPA1 and no TKIP. Ansible
 provisions every field except the PSK. The development password is entered once
-on the Pi so the secret never enters the repository or playbook. Per-unit random
-credentials and QR-based phone onboarding remain future production provisioning;
-the shared `dancam-dev` identity is a development profile.
+on the Pi so the secret never enters the repository or playbook. The shared
+`dancam-dev` identity is strictly a development profile; production commissioning
+uses the per-unit random identity and QR onboarding described below.
 
 NetworkManager shared mode owns connection lifecycle, IPv4 forwarding, DHCP,
 and DNS through its private dnsmasq instance. The fixed `10.42.0.1/24` address
@@ -75,9 +75,11 @@ least-congested choice among 1, 6, and 11. A deployment in a different regulator
 domain or RF environment must revalidate that choice rather than treating the
 desk scan as universal.
 
-The car path uses the same persisted `dancam-ap` profile, but car-image AP
-autoconnect policy has not yet been selected. The present `autoconnect no` value
-is part of the safe development loop, not the final onboarding story.
+The production path creates a distinct persisted `dancam-ap` profile during one-time
+commissioning. Its SSID is `dancam-<unit-id>`, its WPA2-AES PSK has at least 128 bits
+of cryptographic entropy, and it autoconnects because the car has no upstream network.
+The generic image contains no production SSID, PSK, or home-Wi-Fi profile. The
+development profile remains `dancam-dev`, secret-manual, and non-autoconnecting.
 
 ## Local naming
 
@@ -196,3 +198,11 @@ The early proof used `/v1/health`, which was later retired when operational stat
 converged on the canonical `/v1/status` snapshot. AP reachability verification now
 uses `/v1/status`; this changes only the smoke-test route, not the Wi-Fi topology or
 profile.
+
+### 2026-07-17 -- Personalize an autoconnecting production AP
+
+Whole-card flashing now creates an independent random identity and WPA2-AES secret
+for every card. Commissioning persists that profile and production autoconnects it;
+development deliberately keeps the shared, manual, non-autoconnect profile. A shared
+production PSK and manual password entry were rejected because either would leave the
+one-command card and QR onboarding story incomplete.

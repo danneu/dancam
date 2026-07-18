@@ -18,6 +18,30 @@ struct SettingsViewControllerTests {
         #expect(RecordingStorageProjection.project(state).estimate == "About 23 hours")
     }
 
+    @Test func setupProjectionUsesCanonicalCommissioningState() {
+        var state = AppFeature.State()
+        #expect(CameraSetupProjection.project(state).status == "Not connected")
+
+        state.link = .online(CameraSamples.world(
+            commissioning: Commissioning(state: .preparing, reason: nil)
+        ))
+        #expect(CameraSetupProjection.project(state).status == "Preparing camera...")
+
+        state.link = .online(CameraSamples.world(
+            commissioning: Commissioning(
+                state: .failed,
+                reason: "data_partition_growth_failed"
+            )
+        ))
+        #expect(CameraSetupProjection.project(state).status == "Setup failed: data partition growth failed")
+
+        state.link = .online(CameraSamples.world(commissioning: .complete))
+        #expect(CameraSetupProjection.project(state).status == "Ready")
+
+        state.link = .offline(last: CameraSamples.world(commissioning: .complete))
+        #expect(CameraSetupProjection.project(state).status == "Not connected")
+    }
+
     @Test func controllerObservesLiveStoreUpdates() {
         var state = AppFeature.State()
         state.link = .online(CameraSamples.world(storage: storage))

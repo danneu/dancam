@@ -9,7 +9,7 @@ use crate::{
     cpu::Cpu,
     events::{Event, Snapshot},
     recorder::{RecorderPhase, SegmentId, SessionId},
-    world::{CameraState, Input, LiveStatus, World},
+    world::{CameraState, Commissioning, Input, LiveStatus, World},
 };
 
 pub const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -183,6 +183,10 @@ impl EventHub {
 
     pub fn tick(&self) {
         self.drive_now(Input::Tick);
+    }
+
+    pub fn update_commissioning(&self, commissioning: Commissioning) {
+        self.drive_now(Input::Commissioning(commissioning));
     }
 
     pub fn now_ms(&self) -> u64 {

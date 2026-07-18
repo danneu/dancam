@@ -20,6 +20,7 @@ nonisolated enum CameraEvent: Decodable, Equatable, Sendable {
     case memChanged(total: UInt64, available: UInt64, swapTotal: UInt64, swapUsed: UInt64)
     case cpuChanged(CPU)
     case timeSynced(atMs: UInt64)
+    case commissioningChanged(commissioning: Commissioning, recordingReadiness: RecordingReadiness)
     case heartbeat(tMs: UInt64)
     case unknown(type: String)
 }
@@ -85,6 +86,11 @@ extension CameraEvent {
         var atMs: UInt64
     }
 
+    nonisolated private struct CommissioningChangedPayload: Decodable {
+        var commissioning: Commissioning
+        var recordingReadiness: RecordingReadiness
+    }
+
     nonisolated init(from decoder: Decoder) throws {
         let type = try TypeEnvelope(from: decoder).type
 
@@ -141,6 +147,12 @@ extension CameraEvent {
             self = .cpuChanged(try CPU(from: decoder))
         case "time_synced":
             self = .timeSynced(atMs: try TimeSyncedPayload(from: decoder).atMs)
+        case "commissioning_changed":
+            let payload = try CommissioningChangedPayload(from: decoder)
+            self = .commissioningChanged(
+                commissioning: payload.commissioning,
+                recordingReadiness: payload.recordingReadiness
+            )
         case "heartbeat":
             self = .heartbeat(tMs: try HeartbeatPayload(from: decoder).tMs)
         default:
@@ -162,6 +174,7 @@ nonisolated struct World: Codable, Equatable, Sendable {
     var mem: Mem?
     var cpu: CPU
     var time: TimeStatus? = nil
+    var commissioning: Commissioning = .complete
 }
 
 extension World {
@@ -215,6 +228,9 @@ extension World {
             next.cpu = cpu
         case .timeSynced:
             next.time = TimeStatus(synced: true)
+        case .commissioningChanged(let commissioning, let recordingReadiness):
+            next.commissioning = commissioning
+            next.recordingReadiness = recordingReadiness
         case .heartbeat(let tMs):
             next.uptimeS = tMs / 1_000
         case .unknown:
@@ -233,10 +249,24 @@ nonisolated struct RecordingReadiness: Codable, Equatable, Sendable {
 }
 
 nonisolated enum RecordingReadinessReason: String, Codable, Equatable, Sendable {
-    case cameraStarting
-    case cameraRestarting
-    case cameraOffline
-    case recordingStorageUnavailable
+    case commissioningIncomplete = "commissioning_incomplete"
+    case cameraStarting = "camera_starting"
+    case cameraRestarting = "camera_restarting"
+    case cameraOffline = "camera_offline"
+    case recordingStorageUnavailable = "recording_storage_unavailable"
+}
+
+nonisolated struct Commissioning: Codable, Equatable, Sendable {
+    var state: CommissioningState
+    var reason: String?
+
+    static let complete = Commissioning(state: .complete, reason: nil)
+}
+
+nonisolated enum CommissioningState: String, Codable, Equatable, Sendable {
+    case preparing
+    case complete
+    case failed
 }
 
 nonisolated struct RecorderSnapshot: Codable, Equatable, Sendable {

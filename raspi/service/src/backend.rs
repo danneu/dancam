@@ -35,7 +35,7 @@ use crate::{
     sysfacts::{DiskUsage, MemInfo},
     time_sync::TimeStore,
     ts_duration::ts_pts_packet,
-    world::{CameraState, Input},
+    world::{CameraState, Commissioning, Input},
 };
 
 pub type FrameStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
@@ -102,6 +102,8 @@ pub trait Backend: Send + Sync + 'static {
 
     fn update_storage(&self, _storage: Option<DiskUsage>, _storage_generation: Option<String>) {}
 
+    fn update_commissioning(&self, _commissioning: Commissioning) {}
+
     async fn shutdown(&self) -> Result<(), String> {
         Ok(())
     }
@@ -119,6 +121,7 @@ pub enum BackendError {
     RecorderFailed(String),
     CameraCommandTimeout,
     CameraCommandChannel(String),
+    CommissioningIncomplete,
     RecordingStorageUnavailable,
 }
 
@@ -131,6 +134,7 @@ impl BackendError {
             Self::RecorderFailed(_) => "recorder_failed",
             Self::CameraCommandTimeout => "camera_command_timeout",
             Self::CameraCommandChannel(_) => "camera_command_channel",
+            Self::CommissioningIncomplete => "commissioning_incomplete",
             Self::RecordingStorageUnavailable => "recording_storage_unavailable",
         }
     }
@@ -143,6 +147,7 @@ impl BackendError {
             Self::RecorderFailed(detail) => detail,
             Self::CameraCommandTimeout => "camera command timed out",
             Self::CameraCommandChannel(detail) => detail,
+            Self::CommissioningIncomplete => "camera commissioning incomplete",
             Self::RecordingStorageUnavailable => "recording storage unavailable",
         }
     }
@@ -153,6 +158,7 @@ impl BackendError {
             | Self::CameraRestarting
             | Self::CameraOffline
             | Self::RecorderFailed(_)
+            | Self::CommissioningIncomplete
             | Self::RecordingStorageUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::CameraCommandTimeout => StatusCode::GATEWAY_TIMEOUT,
             Self::CameraCommandChannel(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -220,6 +226,10 @@ impl MockBackend {
 
     pub fn tick(&self) {
         self.hub.tick();
+    }
+
+    pub fn update_commissioning(&self, commissioning: Commissioning) {
+        self.hub.update_commissioning(commissioning);
     }
 
     fn with_recorder(recorder: Option<(Arc<StorageCoordinator>, Duration)>) -> Self {
@@ -301,6 +311,9 @@ impl Backend for MockBackend {
     }
 
     async fn start_recording(&self) -> Result<(), BackendError> {
+        if self.hub.snapshot().commissioning.state != crate::world::CommissioningState::Complete {
+            return Err(BackendError::CommissioningIncomplete);
+        }
         if let Some(recorder) = &self.recorder {
             recorder.start().await
         } else {
@@ -368,6 +381,10 @@ impl Backend for MockBackend {
 
     fn update_storage(&self, storage: Option<DiskUsage>, storage_generation: Option<String>) {
         self.hub.update_storage(storage, storage_generation);
+    }
+
+    fn update_commissioning(&self, commissioning: Commissioning) {
+        self.hub.update_commissioning(commissioning);
     }
 
     async fn shutdown(&self) -> Result<(), String> {

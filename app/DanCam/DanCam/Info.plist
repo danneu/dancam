@@ -9,6 +9,8 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>DanCam connects to the local camera unit while testing on this network.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan the setup QR for your DanCam camera.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Save dashcam clips to your photo library.</string>
 	<key>UIApplicationSceneManifest</key>

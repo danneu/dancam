@@ -48,6 +48,10 @@ struct CameraEventCorpusTests {
             from: Data(contentsOf: corpusURL("temp_changed.json"))
         )
         let cpuChanged = try decoder.decode(CameraEvent.self, from: Data(contentsOf: corpusURL("cpu_changed.json")))
+        let commissioningChanged = try decoder.decode(
+            CameraEvent.self,
+            from: Data(contentsOf: corpusURL("commissioning_changed.json"))
+        )
 
         #expect(snapshot == .snapshot(World(
             recorder: RecorderSnapshot(
@@ -76,7 +80,8 @@ struct CameraEventCorpusTests {
                 CPUCore(id: 0, currentPct: 98, oneMinutePct: 74, fiveMinutePct: 52, fifteenMinutePct: 40),
                 CPUCore(id: 2, currentPct: 12, oneMinutePct: 20, fiveMinutePct: 30, fifteenMinutePct: 35),
             ]),
-            time: TimeStatus(synced: true)
+            time: TimeStatus(synced: true),
+            commissioning: .complete
         )))
         #expect(opened == .segmentOpened(session: 7, id: 43, atMs: 5_400))
         #expect(finalized == .clipFinalized(Clip(
@@ -101,6 +106,16 @@ struct CameraEventCorpusTests {
             CPUCore(id: 0, currentPct: 98, oneMinutePct: 74, fiveMinutePct: 52, fifteenMinutePct: 40),
             CPUCore(id: 2, currentPct: nil, oneMinutePct: nil, fiveMinutePct: nil, fifteenMinutePct: nil),
         ])))
+        #expect(commissioningChanged == .commissioningChanged(
+            commissioning: Commissioning(
+                state: .failed,
+                reason: "data_partition_growth_failed"
+            ),
+            recordingReadiness: RecordingReadiness(
+                ready: false,
+                reason: .commissioningIncomplete
+            )
+        ))
 
         let cameraChanged = try decoder.decode(
             CameraEvent.self,

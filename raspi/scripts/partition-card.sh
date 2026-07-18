@@ -4,14 +4,19 @@
 # mounts, directories, and ownership belong to the Ansible playbook.
 set -euo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+LAYOUT="$SCRIPT_DIR/../system/card-layout.env"
+[ -f "$LAYOUT" ] || LAYOUT="$SCRIPT_DIR/card-layout.env"
+source "$LAYOUT"
+
 DEVICE="/dev/mmcblk0"
-ALIGN_SECTORS=8192
-MIN_TOTAL_SECTORS=60000000
-ROOT_SIZE_SECTORS=$((8 * 1024 * 1024 * 1024 / 512))
-PERSIST_SIZE_SECTORS=$((1024 * 1024 * 1024 / 512))
+ALIGN_SECTORS=$DANCAM_ALIGN_SECTORS
+MIN_TOTAL_SECTORS=$DANCAM_MIN_TOTAL_SECTORS
+ROOT_SIZE_SECTORS=$DANCAM_ROOT_SIZE_SECTORS
+PERSIST_SIZE_SECTORS=$DANCAM_PERSIST_SIZE_SECTORS
 DEFAULT_P2_START=1056768
-PERSIST_LABEL="dancam-persist"
-DATA_LABEL="dancam-data"
+PERSIST_LABEL=$DANCAM_PERSIST_LABEL
+DATA_LABEL=$DANCAM_DATA_LABEL
 
 DRY_RUN=0
 TOTAL_SECTORS=""
@@ -104,7 +109,7 @@ compute_layout() {
   P3_SIZE="$PERSIST_SIZE_SECTORS"
   p3_end=$((P3_START + P3_SIZE))
   P4_START="$(align_up "$p3_end")"
-  p4_limit="$(align_down "$((total - total / 20))")"
+  p4_limit="$(align_down "$((total * DANCAM_DATA_PERCENT / 100))")"
   P4_SIZE=$((p4_limit - P4_START))
   TAIL_SECTORS=$((total - p4_limit))
 

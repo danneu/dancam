@@ -51,7 +51,10 @@ compatibility.
 raspi/
   ansible/            <- declarative onboard system state
   camera/             <- Picamera2 camera-owner subprocess
+  flash/              <- native Mac production-card writer and personalization
+  image/              <- production image assembly and first-boot commissioning
   service/            <- Rust crate and committed media fixtures
+  system/             <- system facts shared by development and production tools
   scripts/            <- partitioning and hardware-free regressions
   dancam.service      <- deployed systemd unit
   deploy.sh           <- cross-build and deployment path
@@ -62,6 +65,7 @@ raspi/
 Prefer root Justfile recipes over raw Cargo, Ansible, or deploy commands:
 
 - `just raspi-build`, `just raspi-test`, `just raspi-check` -- local build and gates.
+- `just raspi-image`, `just raspi-flash` -- production release build and Mac card flow.
 - `just raspi-mock`, `just raspi-mock-gc`, `just raspi-mock-lan` -- mock service loops.
 - `just raspi-deploy`, `just raspi-deploy-test` -- cross-build/deploy and its regression.
 - `just raspi-provision`, `just raspi-provision-check`,

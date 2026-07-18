@@ -98,6 +98,21 @@ async fn run(shutdown: CancellationToken) -> Result<(), String> {
     let state = state
         .with_service_port(local_addr.port())
         .with_shutdown(shutdown.clone());
+    let commissioning_path = env::var_os("DANCAM_COMMISSIONING_STATE_PATH").map(PathBuf::from);
+    if let Some(path) = commissioning_path.as_deref() {
+        let commissioning = dancam::commissioning::load(path).unwrap_or_else(|error| {
+            tracing::warn!(%error, "commissioning state starts failed closed");
+            dancam::world::Commissioning {
+                state: dancam::world::CommissioningState::Failed,
+                reason: Some("commissioning_state_unavailable".to_string()),
+            }
+        });
+        state.backend.update_commissioning(commissioning);
+    } else if let Ok(value) = env::var("DANCAM_MOCK_COMMISSIONING") {
+        let commissioning = dancam::commissioning::parse_mock_override(&value)
+            .map_err(|error| format!("invalid DANCAM_MOCK_COMMISSIONING: {error}"))?;
+        state.backend.update_commissioning(commissioning);
+    }
     if shutdown.is_cancelled() {
         return finish_startup_cancellation(state.backend.clone(), supervisor).await;
     }
@@ -128,6 +143,14 @@ async fn run(shutdown: CancellationToken) -> Result<(), String> {
         Duration::from_secs(2),
         shutdown.clone(),
     );
+    let commissioning = commissioning_path.map(|path| {
+        dancam::commissioning::spawn_watcher(
+            state.backend.clone(),
+            path,
+            Duration::from_millis(250),
+            shutdown.clone(),
+        )
+    });
     let gc_task = if gc.floor_bytes > 0 {
         tracing::info!(floor_bytes = gc.floor_bytes, "segment gc enabled");
         Some(dancam::gc::spawn_gc(
@@ -142,6 +165,9 @@ async fn run(shutdown: CancellationToken) -> Result<(), String> {
     let mut workers: JoinSet<WorkerOutcome> = JoinSet::new();
     track_worker(&mut workers, "heartbeat", heartbeat);
     track_worker(&mut workers, "telemetry", telemetry);
+    if let Some(commissioning) = commissioning {
+        track_worker(&mut workers, "commissioning", commissioning);
+    }
     if let Some(gc_task) = gc_task {
         track_worker(&mut workers, "ring GC", gc_task);
     }

@@ -14,7 +14,7 @@ use crate::{
     event_hub::EventConnection,
     recorder::{CurrentSegment, RecorderSnapshot},
     sysfacts::{DiskUsage, MemInfo},
-    world::{CameraState, RecordingReadiness, TempC, TempReading},
+    world::{CameraState, Commissioning, RecordingReadiness, TempC, TempReading},
     AppState,
 };
 
@@ -77,6 +77,10 @@ pub enum Event {
     TimeSynced {
         at_ms: u64,
     },
+    CommissioningChanged {
+        commissioning: Commissioning,
+        recording_readiness: RecordingReadiness,
+    },
     Heartbeat {
         t_ms: u64,
     },
@@ -96,6 +100,7 @@ pub struct Snapshot {
     pub mem: Option<MemInfo>,
     pub cpu: Cpu,
     pub time: TimeStatus,
+    pub commissioning: Commissioning,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -325,6 +330,7 @@ mod tests {
                     ready: true,
                     reason: None,
                 },
+                commissioning: crate::world::Commissioning::complete(),
                 boot_id: "7f3a91c2-b0d4-4e15-b196-20e0416af749".to_string(),
                 boot_tag: Some("7f3a91c2b0d4".to_string()),
                 uptime_s: 120,
@@ -463,6 +469,16 @@ mod tests {
                 ],
             },
             Event::TimeSynced { at_ms: 7000 },
+            Event::CommissioningChanged {
+                commissioning: crate::world::Commissioning {
+                    state: crate::world::CommissioningState::Failed,
+                    reason: Some("data_partition_growth_failed".to_string()),
+                },
+                recording_readiness: crate::world::RecordingReadiness {
+                    ready: false,
+                    reason: Some(crate::world::RecordingReadinessReason::CommissioningIncomplete),
+                },
+            },
             Event::Heartbeat { t_ms: 12000 },
         ]
     }
@@ -484,6 +500,7 @@ mod tests {
             Event::MemChanged { .. } => "mem_changed",
             Event::CpuChanged { .. } => "cpu_changed",
             Event::TimeSynced { .. } => "time_synced",
+            Event::CommissioningChanged { .. } => "commissioning_changed",
             Event::Heartbeat { .. } => "heartbeat",
         }
     }

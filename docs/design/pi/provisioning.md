@@ -150,6 +150,20 @@ If the NetworkManager module eventually churns despite the absent PSK and list
 shape, the recorded fallback is a templated `.nmconnection` keyfile. It is not
 used while the simpler module remains idempotent.
 
+## Development and production split
+
+Ansible remains the convergence authority for writable development cards and keeps
+the home-Wi-Fi provision, partition, deploy, AP-toggle, and `changed=0` loop. The
+production image builder is a separate offline assembly path: it consumes the same
+tracked service unit, camera owner, commissioning scripts, and
+`raspi/system/card-layout.env` geometry/label contract, but it neither runs apt nor
+Ansible on the deployed Pi. A production boot
+has no SSH, home network, package repository, or workstation dependency.
+
+The release publisher supplies the minisign secret key only to the controlled image
+build. The key is never stored in the image or repository. Flash consumers trust the
+tracked release public key and never need publisher authority.
+
 ## Decision log
 
 ### 2026-06-26 -- Converge the Pi system layer with Ansible
@@ -270,3 +284,11 @@ pip-installed binding would make camera readiness depend on image history. The
 playbook now installs distro `python3-av` beside Picamera2 and runs both imports
 through the deployed `python3` interpreter on every converge. Keeping ffmpeg as an
 operator media validator does not put it back on the recording path.
+
+### 2026-07-17 -- Separate release image assembly from development convergence
+
+The production topology has no upstream network, so deployed Ansible and apt cannot
+be part of commissioning. Image assembly now resolves and pins those inputs in a
+controlled Linux environment, while the Mac flash path consumes an authenticated
+artifact. Development cards retain Ansible because its writable convergence and
+`changed=0` proof remain the faster inner loop.

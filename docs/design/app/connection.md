@@ -244,6 +244,19 @@ Incident reducer tests prove queued pulls pause outside the foreground while an 
 pull keeps its existing background-task grace and can finish without launching the
 next queued pull.
 
+## Add Camera and commissioning presentation
+
+Settings owns Add Camera. It scans a standard WPA Wi-Fi QR, accepts only an SSID of
+the form `dancam-<unit-id>`, derives that unit identity rather than trusting a second
+field, and asks `NEHotspotConfiguration` to persist the network (`joinOnce = false`).
+The app retains the matching onboarding record under protected Application Support
+storage while the Pi boots and uses the existing fixed gateway connection.
+
+Setup presentation reads only canonical Pi state. Preparing remains in progress,
+complete presents Ready, and failed presents the Pi's stable reason. Reconnect starts
+with a fresh snapshot, so leaving or relaunching the app cannot strand a local setup
+timer or disagree with the mock.
+
 ## Decision log
 
 ### 2026-06-26: Try one scene-scoped status monitor and ambient indicator
@@ -425,3 +438,11 @@ was rejected because frozen recorder and telemetry facts remain useful. Cancelli
 active incident pull at the lifecycle edge was rejected because UIKit already provides
 a short bounded completion window and abandoning partial progress would make recovery
 less reliable.
+
+### 2026-07-17 -- Onboard per-unit Wi-Fi from the setup QR
+
+Add Camera accepts the standard Wi-Fi QR emitted by the flasher, derives identity from
+its constrained SSID, persists the iOS hotspot configuration, and retains the matching
+record while canonical commissioning converges. Manual password entry and a shared
+production profile were rejected because both weaken per-unit isolation and make card
+creation incomplete.

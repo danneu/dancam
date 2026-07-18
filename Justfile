@@ -1,5 +1,30 @@
 set dotenv-load := true
 
+# Build and sign a complete production image inside the controlled aarch64 Linux
+# builder. DANCAM_IMAGE_SIGNING_KEY names the publisher's minisign secret key.
+raspi-image:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo zigbuild --release --target aarch64-unknown-linux-musl --manifest-path raspi/service/Cargo.toml
+    sudo env PATH="$PATH" \
+      DANCAM_SERVICE_BINARY="$PWD/raspi/service/target/aarch64-unknown-linux-musl/release/dancam" \
+      DANCAM_IMAGE_SIGNING_KEY="${DANCAM_IMAGE_SIGNING_KEY:?set DANCAM_IMAGE_SIGNING_KEY}" \
+      bash raspi/image/build.sh
+
+# Authenticate, personalize, verify, and eject a removable production card.
+# With no argument, flash the newest released manifest under dist/.
+raspi-flash manifest='':
+    nix develop -c bash raspi/flash/flash.sh {{quote(manifest)}}
+
+# Hardware-free target eligibility and exact-confirmation regression.
+raspi-flash-test:
+    bash raspi/flash/flash-policy-test.sh
+    bash raspi/flash/personalization-test.sh
+
+# Hardware-free geometry and replay regression for first-boot commissioning.
+raspi-commission-test:
+    bash raspi/image/commission-test.sh
+
 # Build the Raspberry Pi Rust service for the local host.
 raspi-build:
     cargo build --manifest-path raspi/service/Cargo.toml
@@ -97,6 +122,7 @@ raspi-partition:
     SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
     scp -i "$SSH_KEY" raspi/scripts/partition-card.sh "$HOST:/tmp/dancam-partition-card.sh"
+    scp -i "$SSH_KEY" raspi/system/card-layout.env "$HOST:/tmp/card-layout.env"
     ssh -t -i "$SSH_KEY" "$HOST" "sudo bash /tmp/dancam-partition-card.sh"
 
 # Toggle IMX708 on-sensor HDR while the camera is closed, then restart dancam and
@@ -233,6 +259,10 @@ app-logs:
 # Run the mock Pi service on 127.0.0.1:8080 for local dev.
 raspi-mock:
     cd raspi/service && DANCAM_REC_DIR=.mock-rec DANCAM_MOCK_SEGMENT_SECS=5 cargo run
+
+# Run mock commissioning presentation: preparing, complete, or failed:<reason>.
+raspi-mock-commissioning state="preparing":
+    cd raspi/service && DANCAM_REC_DIR=.mock-rec DANCAM_MOCK_COMMISSIONING={{quote(state)}} cargo run
 
 # Watch ring GC evict live against the mock recorder: an intentionally huge
 # floor keeps the Mac's "avail" below it, so while recording every FINISHED 5s

@@ -47,6 +47,12 @@
             pkgs.rsync
             pkgs.mdbook
             pkgs.mdbook-linkcheck2
+            pkgs.jq
+            pkgs.minisign
+            pkgs.zstd
+            pkgs.curl
+            pkgs.xz
+            pkgs.git
             (pkgs.python3.withPackages (python: [ python.av ]))
             # Pi system-layer provisioning, version-managed like the Rust toolchain.
             # nixpkgs `ansible` is the batteries-included build that bundles
@@ -55,6 +61,13 @@
             # raspi-provision-lint` gate.
             pkgs.ansible
             pkgs.ansible-lint
+          ]
+          ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.util-linux
+            pkgs.e2fsprogs
+            pkgs.dosfstools
+            pkgs.parted
+            pkgs.systemd
           ];
 
           env.DANCAM_TARGET = target;

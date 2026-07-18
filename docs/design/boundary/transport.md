@@ -326,6 +326,19 @@ If concurrent preview harms recording or thermals, `preview.concurrent` must rep
 false and the app limits preview to stopped/parked use. Recording quality and survival
 win over preview availability.
 
+## Commissioning state
+
+The required snapshot field `commissioning` is the product truth for first boot.
+`commissioning_changed` carries the complete replacement plus recording readiness.
+Clients never infer progress from uptime, AP reachability, storage telemetry, or a
+locally elapsed timer. The values are `preparing`, `complete`, and `failed`; a failed
+value includes a stable reason suitable for direct recovery presentation.
+
+The Wi-Fi QR is a standard `WIFI:` payload and is not an HTTP credential. After iOS
+stores the per-unit network configuration, API traffic continues to use the existing
+fixed `http://10.42.0.1:8080` endpoint, snapshot-first SSE convergence, and Wi-Fi
+interface pinning.
+
 ## Decision log
 
 ### 2026-06-22: Use a versioned local HTTP boundary with specialized planes
@@ -604,3 +617,10 @@ The app treats any validator change during a ranged pull as a stale representati
 instead of silently restarting under the original demand. Machine identity and boot
 identity were rejected as namespace identity because the card can move independently
 and the namespace survives reboot.
+
+### 2026-07-17 -- Carry commissioning through snapshot-first events
+
+The existing status/SSE plane now exposes complete preparing, complete, and failed
+commissioning state. This preserves one reconnect model and lets the mock exercise the
+same app presentation. A commissioning-only polling endpoint and client-side elapsed
+progress were rejected because they would create competing state and stale reconnects.

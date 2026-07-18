@@ -6,6 +6,7 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
+use dancam::world::{Commissioning, CommissioningState};
 use dancam::{backend::MockBackend, AppState};
 
 const BOOT_ID: &str = "3f1c0e7a-8f3b-4e15-b196-20e0416af749";
@@ -95,6 +96,46 @@ async fn recording_start_and_stop_update_status_recorder_phase() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/status")
+                .header("Host", "10.42.0.1:8080")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["recorder"]["phase"], "idle");
+}
+
+#[tokio::test]
+async fn commissioning_blocks_recording_before_any_recorder_transition() {
+    let backend = MockBackend::new();
+    backend.update_commissioning(Commissioning {
+        state: CommissioningState::Preparing,
+        reason: None,
+    });
+    let app = dancam::app(AppState::new(BOOT_ID.to_string(), backend));
+
+    let response = app
+        .clone()
+        .oneshot(
+            recording_request("/v1/recording/start")
+                .header("Content-Type", "application/json")
+                .header("Idempotency-Key", "start-before-commissioning")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "commissioning_incomplete");
 
     let response = app
         .oneshot(

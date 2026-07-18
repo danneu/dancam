@@ -1,0 +1,11 @@
+{
+  "type": "commissioning_changed",
+  "commissioning": {
+    "state": "failed",
+    "reason": "data_partition_growth_failed"
+  },
+  "recording_readiness": {
+    "ready": false,
+    "reason": "commissioning_incomplete"
+  }
+}

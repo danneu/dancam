@@ -138,6 +138,16 @@ Capacity does not change when recording quality changes. The app estimates durat
 from the capacity and the observed byte rate of fresh finalized clips, keeping codec
 configuration and product sampling policy out of the Pi's storage authority.
 
+## Commissioning readiness
+
+Every snapshot contains a complete commissioning value whose state is `preparing`,
+`complete`, or `failed`; only failure carries a stable actionable reason. A
+`commissioning_changed` event replaces that value and recording readiness together.
+`commissioning_incomplete` has precedence over camera and storage reasons, so no
+recording command is admitted before the terminal durable commit. Status, events,
+preview, camera supervision, and telemetry remain reachable while commissioning is
+preparing or failed.
+
 ## Decision log
 
 ### 2026-07-14 -- Report recorder-writable capacity
@@ -224,3 +234,11 @@ Publishing generation through an independent request was rejected because client
 could combine it with storage and readiness from another observation. Retaining the
 last generation on probe failure was rejected because it would authorize media work
 against unverified storage.
+
+### 2026-07-17 -- Fold commissioning into canonical readiness
+
+Commissioning became a required snapshot value and atomic delta rather than a second
+health endpoint. Recording readiness remains false until the durable complete commit,
+while API reads and camera supervision remain available for diagnosis. Inferring setup
+from storage or AP reachability was rejected because both can become available before
+the destructive transaction is durably retired.

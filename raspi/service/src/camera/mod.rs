@@ -29,7 +29,7 @@ use crate::{
     storage::StorageCoordinator,
     sysfacts::{DiskUsage, MemInfo},
     time_sync::TimeStore,
-    world::{CameraState, Input},
+    world::{CameraState, Commissioning, CommissioningState, Input},
 };
 
 const COMMAND_CAPACITY: usize = 8;
@@ -216,6 +216,9 @@ impl Backend for CameraBackend {
     }
 
     async fn start_recording(&self) -> Result<(), BackendError> {
+        if self.hub.snapshot().commissioning.state != CommissioningState::Complete {
+            return Err(BackendError::CommissioningIncomplete);
+        }
         self.ensure_camera_running()?;
         if self.hub.phase() == RecorderPhase::Recording {
             return Ok(());
@@ -303,6 +306,10 @@ impl Backend for CameraBackend {
 
     fn update_storage(&self, storage: Option<DiskUsage>, storage_generation: Option<String>) {
         self.hub.update_storage(storage, storage_generation);
+    }
+
+    fn update_commissioning(&self, commissioning: Commissioning) {
+        self.hub.update_commissioning(commissioning);
     }
 }
 

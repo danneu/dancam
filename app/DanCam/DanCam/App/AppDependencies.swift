@@ -17,6 +17,7 @@ struct AppDependencies {
     var time: TimeClient
     var logExporter: LogExporter
     var shareArtifactPreparer: ShareArtifactPreparer
+    var onboarding: OnboardingClient
     var sleep: @Sendable (Duration) async -> Void
     var heartbeatTimeout: @Sendable () async throws -> Void
     var continuousNow: @Sendable () -> ContinuousClock.Instant
@@ -40,6 +41,7 @@ struct AppDependencies {
         time: TimeClient = .noop,
         logExporter: LogExporter = .noop,
         shareArtifactPreparer: ShareArtifactPreparer = .unavailable,
+        onboarding: OnboardingClient = .noop,
         sleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
@@ -74,6 +76,7 @@ struct AppDependencies {
         self.time = time
         self.logExporter = logExporter
         self.shareArtifactPreparer = shareArtifactPreparer
+        self.onboarding = onboarding
         self.sleep = sleep
         self.heartbeatTimeout = heartbeatTimeout
         self.continuousNow = continuousNow
@@ -175,6 +178,11 @@ struct AppDependencies {
         )
         logExporter = .live
         shareArtifactPreparer = .live()
+        onboarding = .live(
+            recordsDirectory: FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appending(path: "Cameras", directoryHint: .isDirectory)
+        )
         sleep = { duration in
             try? await Task.sleep(for: duration)
         }

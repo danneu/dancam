@@ -144,11 +144,9 @@ mock first.
   - [x] **App:** resumable pulls across drops -- a `Range`/`If-Range` clip pull that
             resumes from the last byte rather than restarting. _Shared with `lime`'s
             ranged-pull step; land it in whichever swoop reaches it first._
-      - Note: app-driven AP join (`NEHotspotConfiguration`, `joinOnce = false`) is *not* an
-        opal item -- a manually-saved `dancam-dev` already auto-rejoins at the OS level.
-        The programmatic provisioning that drops the manual Settings join (per-unit
-        SSID/PSK from the QR sticker) is owned by `wren`, gated on a production image plus
-        the Hotspot Configuration entitlement.
+      - Note: app-driven AP join (`NEHotspotConfiguration`, `joinOnce = false`) landed in
+        `seed`; opal continues to own reconnect behavior after iOS has the persistent
+        per-unit configuration.
 - [x] **Swoop `pulse` -- Event-folded recorder state.** Replace the poll-era status
       and clips loops with the realized `/v1/events` plane: the Pi owns recorder phase,
       session, current segment, and clips exclusion; the app folds snapshot-first SSE
@@ -235,12 +233,12 @@ mock first.
       active/below-floor violations, write-ahead-raises `state/state.json`
       `high_water_seq` before unlinking every path for the id, and emits `clip_removed`
       after durable success so every connected client reconciles. This is clip-level
-      footage removal, not `kelp`'s card-level format/SD-management work.
+      footage removal, not `seed`'s whole-card production path.
 - [x] **Swoop `dune` -- SD card layout migration.** Move the Pi onto the final
-      crash-safe card layout before `kelp`: four MBR partitions, a plain read-only root
+      crash-safe card layout before `seed`: four MBR partitions, a plain read-only root
       for the car image, `/persist` for OS state, `/data` for the recording ring, and
       no overlayfs or consumer-card PLP assumptions. _This is the storage foundation
-      that makes later card formatting safe instead of a directory cleanup._
+      that makes whole-card production and one-time growth safe._
   - [x] Service durability + mount witness: fsync closed segments before events,
             fdatasync the in-flight segment every ~2 s and scrub unrecoverable
             zero-byte leftovers at boot witness-first (see
@@ -265,12 +263,14 @@ mock first.
       pinning; phone-owned `nova` does not use it. See
       [storage](design/pi/storage.md#ring-garbage-collection) and
       [phone-owned incidents](design/app/incidents.md).
-- [ ] **Swoop `kelp` -- SD card management.** Pi detects `/data` issues and surfaces
-      them to the app (missing / unformatted / wrong filesystem); auto-format on first
-      insert; format-from-app with a double-confirm (`POST /v1/storage/format`). After
-      `dune`, "format the SD" means mkfs of `/data` only -- never the OS or `/persist`.
-      The app-facing storage/card-health UI belongs here; `dune` only provides the
-      lower-level layout and fail-closed mount witness.
+- [x] **Swoop `seed` -- One-command production card and offline commissioning.** A
+      signed generic image contains the complete four-partition car system;
+      `just raspi-flash` authenticates it before selecting media, requires exact
+      whole-disk erase confirmation, personalizes a unique AP identity and setup QR,
+      verifies readback, and ejects. First boot grows only the initialized p4 filesystem,
+      durably mints storage identity, and exposes canonical preparing/complete/failed
+      commissioning state. The app scans the Wi-Fi QR and persists the iOS configuration.
+      Development Ansible, partition, deploy, and AP-toggle workflows remain available.
   - [x] Pi reports exact
             [recorder-writable capacity](design/pi/telemetry.md#recorder-writable-capacity)
             after root-reserved blocks and the GC floor; snapshot and delta
@@ -374,20 +374,6 @@ swoop can drop into the list above unchanged. Unordered.
       must push location to it over the link) vs. on the phone (drawn at playback/preview
       only, easy but not in the saved file); what fields to show; and how to fold in the
       `moss` time provenance and a future GPS time source. Flesh out at implementation time.
-- [ ] **Swoop `wren` -- Per-unit AP security provisioning.** Replace the single
-      hand-typed dev PSK with a per-unit random SSID/PSK generated at provisioning
-      time, delivered to the phone via QR-based onboarding
-      (`NEHotspotConfiguration`), so every unit ships with a unique strong secret
-      instead of a shared dev password. This -- not WPA2-vs-WPA3 -- is the real
-      security win for the link (the [transport boundary](design/boundary/transport.md)
-      defines the v1 trust boundary; the [Pi networking design](design/pi/networking.md)
-      already flags this as a later hardening pass). It is also where app-driven
-      auto-rejoin lands: `joinOnce = false` persists the config so the phone
-      re-associates without a manual Settings join -- a manually-saved AP already
-      auto-rejoins today, so the win is dropping the manual step, not the behavior.
-      Parked until there is a
-      production/car image to provision; the dev AP's WPA2-AES + manual PSK is
-      sufficient for the dev loop.
 - [ ] **Swoop `moor` -- Persistent camera connections.** Reuse one kept-alive
       HTTP/1.1 connection per plane instead of sending `Connection: close` on every
       request, removing per-request SYN exposure on the congested link. Open questions:

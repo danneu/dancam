@@ -49,15 +49,25 @@ SSE framing.
   in both `camera_state_changed` and `storage_changed`. Camera lifecycle reasons
   take precedence over `recording_storage_unavailable`, so clients never fold a
   changed camera or storage fact beside stale readiness.
+- `commissioning` is a complete required value. `commissioning_changed` replaces it
+  together with recording readiness, so preparing and terminal failures cannot be
+  mistaken for a storage-only fault.
 - Clients must ignore unknown event `type` values.
 
 ## Recording Readiness
 
 The top-level `recording_readiness` capability says whether a recording command
 can be attempted now. Ready is exactly `{ "ready": true, "reason": null }`.
-Not-ready reasons are `camera_starting`, `camera_restarting`, `camera_offline`,
-and `recording_storage_unavailable`. Recorder lifecycle error is retryable and is
+Not-ready reasons are `commissioning_incomplete`, `camera_starting`,
+`camera_restarting`, `camera_offline`, and `recording_storage_unavailable`.
+Recorder lifecycle error is retryable and is
 therefore not itself a readiness reason.
+
+## Commissioning
+
+Commissioning is `preparing`, `complete`, or `failed`. Only `failed` carries a
+stable non-empty reason. Recording remains unavailable until the durable value is
+`complete`; the service and mock expose the same state through snapshots and deltas.
 
 ## Storage Telemetry
 

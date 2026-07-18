@@ -4,8 +4,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PARTITION_SCRIPT="${SCRIPT_DIR}/partition-card.sh"
-ALIGN_SECTORS=8192
+source "$SCRIPT_DIR/../system/card-layout.env"
+ALIGN_SECTORS=$DANCAM_ALIGN_SECTORS
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+cp "$SCRIPT_DIR/partition-card.sh" "$TMP/dancam-partition-card.sh"
+cp "$SCRIPT_DIR/../system/card-layout.env" "$TMP/card-layout.env"
+PARTITION_SCRIPT="$TMP/dancam-partition-card.sh"
 
 fail() {
   echo "partition-card-test: $*" >&2
@@ -96,11 +101,11 @@ assert_minimum_size_guard() {
   local status
 
   set +e
-  output="$(bash "$PARTITION_SCRIPT" --dry-run --total-sectors 59999999 2>&1)"
+  output="$(bash "$PARTITION_SCRIPT" --dry-run --total-sectors "$((DANCAM_MIN_TOTAL_SECTORS - 1))" 2>&1)"
   status="$?"
   set -e
 
-  [ "$status" -ne 0 ] || fail "expected cards under 60000000 sectors to be refused"
+  [ "$status" -ne 0 ] || fail "expected sub-32 GB cards to be refused"
   assert_contains "$output" "requires a 32 GB or larger high-endurance microSD"
 }
 

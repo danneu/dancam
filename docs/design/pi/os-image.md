@@ -78,8 +78,9 @@ cannot be shrunk in place and must be reflashed.
 
 ## Mounts and writable state
 
-The Ansible playbook, not the partitioning script, owns fstab, mounts, application
-directories, and the car-image read-only switch. Its effective mount facts are:
+The Ansible development/car-image path, not the partitioning script, owns fstab,
+mounts, application directories, and the read-only switch. Its effective mount facts
+are:
 
 ```text
 LABEL=dancam-persist /persist ext4 noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s 0 2
@@ -94,6 +95,13 @@ every recording-directory mutation and time-sync write proves the mount is prese
 through the service's mountpoint witness and fails closed when it is not. The witness
 stats the mountpoint and its parent: it accepts a different `st_dev`, or the same
 inode when the tested path is `/`, rather than parsing `/proc/mounts`.
+
+The production image has the same final `/data` options but uses a tracked
+`data.mount` unit instead of an unconditional fstab entry. Its condition is a durable
+storage-admission marker created only after commissioning commits `complete`; the
+commissioner then starts the unit explicitly. This keeps p4 private from normal
+service and GC work throughout first-boot growth while preserving the same mount on
+every completed boot.
 
 `/data` is the only hot recording partition. The deployed service records under
 `/data/rec` with `DANCAM_REQUIRE_REC_MOUNT=/data`. The app's format-card operation
@@ -168,6 +176,36 @@ app-level `WatchdogSec`/`sd_notify` process watchdog or kernel lockup-to-panic p
 is added only if evidence identifies one of those uncovered classes. The original
 2026-06-30 incident left no evidence, so it is not known whether PID 1 stopped
 scheduling and the host watchdog would have caught it.
+
+## Production image and commissioning
+
+`just raspi-image` runs in the controlled aarch64 Linux builder. It verifies the
+pinned Raspberry Pi OS Lite input, assembles the complete fixed p1 through p3 plus
+initialized small p4 layout, installs the camera runtime and service, removes the
+stock root-expansion trigger, and emits a versioned zstd image with a JSON manifest.
+The image builder, first-boot commissioner, Mac eligibility policy, and writable
+development partitioner all consume `raspi/system/card-layout.env`, so geometry,
+labels, minimum capacity, and the reserved-tail boundary have one definition.
+The publisher signs that manifest with the DanCam minisign key. The manifest records
+both compressed and raw digests, raw size, OS release and digest, repository revision,
+image identity, and the digest of a complete installed-package inventory. Runtime
+packages not already present in the pinned OS image are installed at the exact versions
+in `raspi/image/inputs.env`; the builder does not run a floating full-upgrade.
+
+`just raspi-flash` is the native Mac consumer. It authenticates the manifest and
+compressed image before media discovery, admits only writable removable whole disks
+of at least 32 GB outside system storage, and binds typed confirmation to the I/O
+Registry media identity. It verifies the raw image before personalization, writes a
+versioned envelope to the FAT boot partition, verifies that envelope after remount,
+and reports success only after eject.
+
+The generic p4 filesystem has no recording witness. First boot validates the
+authenticated image marker and matching envelope, brings up the per-unit AP, extends
+only p4 to the aligned 95% card boundary, grows its existing ext4 filesystem, and
+mints the storage generation while p4 is mounted privately. It commits commissioning
+`complete` durably before exposing `/data` to the normal service. A completed state
+permanently fences replay; interruption before that point reruns idempotent growth or
+reports a stable failure. Root and boot are read-only in the resulting car posture.
 
 ## Decision log
 
@@ -265,3 +303,15 @@ and move with a deliberately preserved recording namespace, while format and res
 operations naturally create a new identity. Keeping it in OS state was rejected
 because replacing or cloning recording media would detach identity from the footage it
 names.
+
+### 2026-07-17 -- Build complete signed cards and commission once
+
+Production card creation moved from a development bring-up sequence to a complete
+signed image plus a separately safe Mac flasher. A small initialized p4 lets first
+boot grow an existing known filesystem without treating missing signatures as format
+authority. The Mac owns per-unit secret creation because the same operation can emit
+the QR recovery record without exposing a generic shared secret.
+
+Runtime blank-media formatting and an app format route were rejected because damaged
+post-commission footage is not distinguishable from disposable media. Building during
+every flash was rejected because release inputs and results would vary between users.

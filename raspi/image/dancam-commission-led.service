@@ -1,0 +1,12 @@
+[Unit]
+Description=Mirror DanCam commissioning state on the activity LED
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/dancam/commission-led.sh
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

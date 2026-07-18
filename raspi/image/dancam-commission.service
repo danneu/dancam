@@ -1,0 +1,13 @@
+[Unit]
+Description=Commission a freshly personalized DanCam card
+After=local-fs.target NetworkManager.service
+Wants=NetworkManager.service
+ConditionPathExists=/boot/firmware/dancam/commissioning.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/dancam/commission.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
