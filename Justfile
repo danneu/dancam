@@ -1,8 +1,18 @@
 set dotenv-load := true
 
-# Build and sign a complete production image inside the controlled aarch64 Linux
-# builder. DANCAM_IMAGE_SIGNING_KEY names the publisher's minisign secret key.
+# Build and sign a complete production image. On macOS this creates or reuses the
+# dedicated OrbStack ARM64 Linux builder; Linux executes the native build directly.
 raspi-image:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) exec bash raspi/image/build-orbstack.sh ;;
+      Linux) exec just _raspi-image-native ;;
+      *) echo "raspi-image: unsupported host OS: $(uname -s)" >&2; exit 1 ;;
+    esac
+
+# Linux-only implementation invoked directly by the OrbStack wrapper.
+_raspi-image-native:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo zigbuild --release --target aarch64-unknown-linux-musl --manifest-path raspi/service/Cargo.toml
@@ -10,6 +20,10 @@ raspi-image:
       DANCAM_SERVICE_BINARY="$PWD/raspi/service/target/aarch64-unknown-linux-musl/release/dancam" \
       DANCAM_IMAGE_SIGNING_KEY="${DANCAM_IMAGE_SIGNING_KEY:?set DANCAM_IMAGE_SIGNING_KEY}" \
       bash raspi/image/build.sh
+
+# Hardware-free regression for OrbStack machine creation, reuse, and build dispatch.
+raspi-image-builder-test:
+    bash raspi/image/build-orbstack-test.sh
 
 # Authenticate, personalize, verify, and eject a removable production card.
 # With no argument, flash the newest released manifest under dist/.

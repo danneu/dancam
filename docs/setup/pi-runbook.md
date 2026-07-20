@@ -26,12 +26,16 @@ destroys Pi-local footage and identity.
 
 The remaining sections are the writable development-card workflow.
 
-Release publishers run `just raspi-image` on the controlled aarch64 Linux builder with
-`DANCAM_IMAGE_SIGNING_KEY` naming the protected minisign secret key. The build refuses
+Release publishers run `just raspi-image` on the Apple Silicon Mac with the protected
+minisign secret key at `secrets/image-release.key`, or override that checkout-local path
+with `DANCAM_IMAGE_SIGNING_KEY`. The task creates or reuses a dedicated 64 GB ARM64
+NixOS OrbStack machine named `dancam-builder`, runs the controlled Linux build there,
+and writes the release artifacts back to the Mac checkout under `dist/`. Override the
+machine name with `DANCAM_IMAGE_BUILDER_MACHINE` when needed. The build refuses
 uncommitted tracked source, verifies the pinned OS digest, installs the pinned runtime
 package versions, and emits the compressed image, signed manifest, and installed-package
-inventory under `dist/`. Flash operators receive only those release artifacts and trust
-the public key tracked at `raspi/image/release.pub`.
+inventory. Flash operators receive only those release artifacts and trust the public
+key tracked at `raspi/image/release.pub`.
 
 Hands-on runbook for bringing up the dancam camera unit -- from flashing the microSD
 through serving canonical operational status. These are the concrete steps we ran for the

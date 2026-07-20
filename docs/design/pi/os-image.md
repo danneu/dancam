@@ -179,9 +179,12 @@ scheduling and the host watchdog would have caught it.
 
 ## Production image and commissioning
 
-`just raspi-image` runs in the controlled aarch64 Linux builder. It verifies the
-pinned Raspberry Pi OS Lite input, assembles the complete fixed p1 through p3 plus
-initialized small p4 layout, installs the camera runtime and service, removes the
+`just raspi-image` creates or reuses the dedicated ARM64 NixOS OrbStack builder when
+launched from the Apple Silicon Mac, then runs the controlled Linux-native image
+recipe there. OrbStack shares the checkout, so authenticated release outputs land
+back under `dist/` without copying the signing key into a second source tree. The
+builder verifies the pinned Raspberry Pi OS Lite input and assembles fixed p1 through
+p3 plus initialized small p4 layout, installs the camera runtime and service, removes the
 stock root-expansion trigger, and emits a versioned zstd image with a JSON manifest.
 The image builder, first-boot commissioner, Mac eligibility policy, and writable
 development partitioner all consume `raspi/system/card-layout.env`, so geometry,
@@ -315,3 +318,12 @@ the QR recovery record without exposing a generic shared secret.
 Runtime blank-media formatting and an app format route were rejected because damaged
 post-commission footage is not distinguishable from disposable media. Building during
 every flash was rejected because release inputs and results would vary between users.
+
+### 2026-07-20 -- Make the controlled Linux builder a one-command Mac operation
+
+Requiring the publisher to provision and enter an aarch64 Linux environment made the
+documented image task incomplete on the development Mac. The Mac-facing task now owns
+a reusable, pinned NixOS OrbStack machine and dispatches the unchanged privileged
+Linux build inside it. A repository-shared working directory keeps the committed
+source and resulting `dist/` artifacts identical on both sides while the ignored
+signing key remains in its checkout-local protected location.
