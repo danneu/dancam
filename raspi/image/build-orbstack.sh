@@ -47,4 +47,5 @@ orbctl run --machine "$MACHINE" sh -c \
 echo "==> building signed image in OrbStack; artifacts will appear under dist/"
 orbctl run --machine "$MACHINE" --path --workdir "$ROOT" \
   env "DANCAM_IMAGE_SIGNING_KEY=$KEY_RELATIVE" \
-  nix develop -c just _raspi-image-native
+  nix --extra-experimental-features 'nix-command flakes' \
+  develop -c just _raspi-image-native
