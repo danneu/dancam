@@ -27,7 +27,7 @@ esac
 
 if ! orbctl info "$MACHINE" >/dev/null 2>&1; then
   echo "==> creating OrbStack builder $MACHINE ($DISTRO, arm64)"
-  orbctl create --arch arm64 --cpus 4 --memory 4G --disk 64G "$DISTRO" "$MACHINE"
+  orbctl create --arch arm64 --cpus 4 --memory 8G --disk 64G "$DISTRO" "$MACHINE"
 else
   echo "==> reusing OrbStack builder $MACHINE"
 fi

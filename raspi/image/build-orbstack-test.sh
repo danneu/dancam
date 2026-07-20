@@ -51,7 +51,7 @@ export ORB_TEST_EXISTS="$TMP/machine-exists"
 export DANCAM_IMAGE_SIGNING_KEY="$TMP/checkout/secrets/release.key"
 
 bash "$TMP/checkout/raspi/image/build-orbstack.sh"
-grep -q '^create --arch arm64 --cpus 4 --memory 4G --disk 64G nixos:25.11 dancam-builder ' "$ORB_TEST_LOG"
+grep -q '^create --arch arm64 --cpus 4 --memory 8G --disk 64G nixos:25.11 dancam-builder ' "$ORB_TEST_LOG"
 grep -q 'DANCAM_IMAGE_SIGNING_KEY=secrets/release.key' "$ORB_TEST_LOG"
 grep -Fq 'nix --extra-experimental-features nix-command\ flakes develop -c just _raspi-image-native' \
   "$ORB_TEST_LOG"
