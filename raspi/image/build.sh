@@ -115,18 +115,20 @@ jq -n --arg schema dancam-image-marker-v1 --arg image_id "$IMAGE_ID" \
   '{schema:$schema,image_id:$image_id}' > "$WORK/root/boot/firmware/dancam/image.json"
 
 cp /etc/resolv.conf "$WORK/root/etc/resolv.conf"
-export DANCAM_PYTHON3_PICAMERA2_VERSION DANCAM_PYTHON3_AV_VERSION DANCAM_FFMPEG_VERSION DANCAM_JQ_VERSION
+export DANCAM_AVAHI_VERSION DANCAM_PYTHON3_PICAMERA2_VERSION DANCAM_PYTHON3_AV_VERSION DANCAM_FFMPEG_VERSION DANCAM_JQ_VERSION
 chroot "$WORK/root" /bin/bash -eux <<'CHROOT'
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
+  "avahi-daemon=$DANCAM_AVAHI_VERSION" \
   "python3-picamera2=$DANCAM_PYTHON3_PICAMERA2_VERSION" \
   "python3-av=$DANCAM_PYTHON3_AV_VERSION" \
   "ffmpeg=$DANCAM_FFMPEG_VERSION" \
   "jq=$DANCAM_JQ_VERSION"
 useradd --system --no-create-home --groups video dancam || true
-systemctl enable dancam.service dancam-commission.service dancam-commission-led.service fstrim.timer
+systemctl enable avahi-daemon.service dancam.service dancam-commission.service dancam-commission-led.service fstrim.timer
+systemctl is-enabled --quiet avahi-daemon.service
 systemctl mask apt-daily.timer apt-daily-upgrade.timer man-db.timer dpkg-db-backup.timer unattended-upgrades.service
 systemctl mask cloud-init.target cloud-init-local.service cloud-init-network.service cloud-config.service cloud-final.service cloud-init-hotplugd.socket
 rm -rf /var/lib/apt/lists/*
@@ -155,6 +157,9 @@ vm.dirty_background_bytes=16777216
 vm.dirty_bytes=67108864
 EOF
 sed -i 's/^#\?allow-interfaces=.*/allow-interfaces=wlan0/' "$WORK/root/etc/avahi/avahi-daemon.conf"
+grep -qxF 'allow-interfaces=wlan0' "$WORK/root/etc/avahi/avahi-daemon.conf" || \
+  die "Avahi is not scoped to wlan0"
+configure_hostname "$WORK/root" dancam
 
 sed -i 's/^camera_auto_detect=.*/camera_auto_detect=0/' "$WORK/root/boot/firmware/config.txt"
 grep -qxF 'dtoverlay=imx708' "$WORK/root/boot/firmware/config.txt" || echo 'dtoverlay=imx708' >> "$WORK/root/boot/firmware/config.txt"

@@ -83,7 +83,8 @@ development profile remains `dancam-dev`, secret-manual, and non-autoconnecting.
 
 ## Local naming
 
-Avahi is scoped to `wlan0` with `allow-interfaces=wlan0` in
+The production image owns the hostname `dancam`, installs and enables Avahi, and
+scopes it to `wlan0` with `allow-interfaces=wlan0` in
 `/etc/avahi/avahi-daemon.conf`. The Pi has only one client-facing interface.
 Advertising on loopback during early boot allowed Avahi to see its own stale
 `dancam.local` publication as a conflict after Wi-Fi appeared, rename the host to
@@ -91,8 +92,9 @@ Advertising on loopback during early boot allowed Avahi to see its own stale
 `wlan0` keeps `dancam.local` tied to a reachable address in both home-client and
 AP mode.
 
-Development access uses `http://dancam.local:8080` on home Wi-Fi. The AP path
-uses the fixed `http://10.42.0.1:8080` endpoint; it does not depend on mDNS.
+The app uses `http://dancam.local:8080` on both home Wi-Fi and the AP. The fixed
+`http://10.42.0.1:8080` endpoint remains available for operator diagnostics and
+rescue access, but it is not the app's configured product endpoint.
 
 ## Safe development toggle
 
@@ -120,7 +122,7 @@ With the service deployed, the current reachability smoke is an iPhone joined to
 `dancam-dev` receiving `200` and the canonical snapshot from:
 
 ```text
-http://10.42.0.1:8080/v1/status
+http://dancam.local:8080/v1/status
 ```
 
 ## Decision log
@@ -206,3 +208,12 @@ for every card. Commissioning persists that profile and production autoconnects 
 development deliberately keeps the shared, manual, non-autoconnect profile. A shared
 production PSK and manual password entry were rejected because either would leave the
 one-command card and QR onboarding story incomplete.
+
+### 2026-07-20 -- Make the production image own its mDNS identity
+
+The first production-card bring-up exposed that the image edited Avahi's interface
+scope without setting the promised `dancam` hostname or explicitly enabling the
+daemon. Neither `dancam.local` nor the inherited `raspberrypi.local` name resolved
+from the attached iPhone, even though the fixed gateway served the API. The image
+now owns the hostname, enabled daemon, and `wlan0` scope together. The app continues
+to use `dancam.local`; the fixed gateway remains a diagnostic and rescue address.

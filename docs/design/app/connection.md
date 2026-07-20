@@ -250,7 +250,7 @@ Settings owns Add Camera. It scans a standard WPA Wi-Fi QR, accepts only an SSID
 the form `dancam-<unit-id>`, derives that unit identity rather than trusting a second
 field, and asks `NEHotspotConfiguration` to persist the network (`joinOnce = false`).
 The app retains the matching onboarding record under protected Application Support
-storage while the Pi boots and uses the existing fixed gateway connection.
+storage while the Pi boots and connects through `http://dancam.local:8080`.
 
 Setup presentation reads only canonical Pi state. Preparing remains in progress,
 complete presents Ready, and failed presents the Pi's stable reason. Reconnect starts

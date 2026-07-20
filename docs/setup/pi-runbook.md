@@ -599,16 +599,19 @@ With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, joi
 `dancam-dev` from the iPhone, and fetch:
 
 ```text
-http://10.42.0.1:8080/v1/status
+http://dancam.local:8080/v1/status
 ```
 
-The expected response is the same canonical status snapshot as the home-LAN
-`dancam.local` URL. The iPhone app targets `http://10.42.0.1:8080`.
+The expected response is the canonical status snapshot. The iPhone app targets
+`http://dancam.local:8080` on both development and production APs. The fixed
+`http://10.42.0.1:8080` gateway remains available for operator diagnostics; on a
+production card, requiring it because `dancam.local` does not resolve is an image
+defect.
 
 For app testing from Xcode, install/run the app on the iPhone while the phone is still
 on the home Wi-Fi network, then switch only the iPhone to `dancam-dev`. Leave the
 shared scheme without a `DANCAM_PIN_WIFI` override for the real AP path: the default
-`http://10.42.0.1:8080` base URL derives to Wi-Fi pinning for events and preview.
+`http://dancam.local:8080` base URL derives to Wi-Fi pinning for events and preview.
 Use `DANCAM_PIN_WIFI=0` only for an explicit unpinned diagnostic pass.
 
 The app target also carries `NSAppTransportSecurity` / `NSAllowsLocalNetworking` so

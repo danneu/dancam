@@ -103,12 +103,12 @@ The production association model is a persistent `NEHotspotConfiguration`
 come from the unit's QR label. The app declares `NSLocalNetworkUsageDescription` and
 `NSBonjourServices`, and onboarding must handle Local Network permission denial.
 
-Once associated, discovery uses `NWBrowser` for `_dancam._tcp` with the fixed
-`10.42.0.1` gateway as the prompt fallback while mDNS settles. The current bring-up
-client also supports an explicit `DANCAM_CAMERA_API_BASE_URL`, then the
-`DANCAMCameraAPIBaseURL` Info.plist value, before falling back to
-`http://10.42.0.1:8080`; those development seams sit behind the same networking
-dependency.
+Once associated, the app connects to `http://dancam.local:8080`. The fixed
+`10.42.0.1` gateway remains an operator diagnostic and rescue address, not a second
+product connection path. The client supports an explicit
+`DANCAM_CAMERA_API_BASE_URL`, then the `DANCAMCameraAPIBaseURL` Info.plist value,
+before falling back to the mDNS hostname; those development seams sit behind the
+same networking dependency.
 
 The event and preview streams each own a long-lived connection. Current control and
 clip operations open bounded request-scoped connections and send `Connection: close`;

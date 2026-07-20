@@ -51,7 +51,7 @@ The Xcode project is `app/DanCam/DanCam.xcodeproj`, scheme `DanCam`.
 - `just app-build` -- build for the iOS simulator.
 - `just app-test` -- run Swift Testing unit suites; UI tests remain excluded.
 - Open the project in Xcode and Cmd-R into an iOS 26.5 simulator for interactive use.
-  The app defaults to `http://10.42.0.1:8080`; set
+  The app defaults to `http://dancam.local:8080`; set
   `DANCAM_CAMERA_API_BASE_URL=http://127.0.0.1:8080` for `just raspi-mock`.
 - CarPlay work uses Xcode > I/O > External Displays > CarPlay. Device testing also
   requires Apple's CarPlay entitlement.
