@@ -30,6 +30,11 @@ raspi-image-builder-test:
 raspi-flash manifest='':
     nix develop -c env -u DEVELOPER_DIR -u SDKROOT bash raspi/flash/flash.sh {{quote(manifest)}}
 
+# Resume a card whose image write completed but whose readback or personalization
+# was interrupted. Verification must match before the card is changed further.
+raspi-flash-resume manifest='':
+    DANCAM_FLASH_RESUME=1 nix develop -c env -u DEVELOPER_DIR -u SDKROOT bash raspi/flash/flash.sh {{quote(manifest)}}
+
 # Hardware-free target eligibility and exact-confirmation regression.
 raspi-flash-test:
     bash raspi/flash/flash-policy-test.sh

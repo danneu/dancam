@@ -14,7 +14,10 @@ The command authenticates the newest released image under `dist/` (or accepts an
 explicit manifest path), lists eligible removable whole disks, and does not mutate a
 disk until the image is authenticated and the displayed identifier is typed exactly.
 It writes and verifies the complete image, creates the per-unit setup QR and recovery
-record in the current directory, verifies personalization, and ejects the card.
+record in the current directory, verifies personalization, and ejects the card. If a
+run is interrupted after the complete image write, `just raspi-flash-resume` performs
+the authenticated full-device readback and refuses to personalize unless it exactly
+matches the released image.
 
 Move the ejected card to the Zero 2 W and power it with upstream networking absent.
 In the app, open Settings -> Add Camera and scan the generated QR. Setup status moves

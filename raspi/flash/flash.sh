@@ -10,6 +10,12 @@ die() { echo "raspi-flash: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "missing required tool: $1"; }
 for tool in diskutil minisign zstd shasum openssl swift swiftc; do need "$tool"; done
 
+RESUME=${DANCAM_FLASH_RESUME:-0}
+case "$RESUME" in
+  0|1) ;;
+  *) die "DANCAM_FLASH_RESUME must be 0 or 1" ;;
+esac
+
 MANIFEST=${1:-}
 if [ -z "$MANIFEST" ] && [ -d "$ROOT/dist" ]; then
   MANIFEST=$(find "$ROOT/dist" -name 'dancam-*.img.zst.manifest.json' -type f -print | sort | tail -1)
@@ -32,7 +38,11 @@ IMAGE_ID=$(/usr/bin/plutil -extract image_id raw -o - "$MANIFEST")
 [ "$(shasum -a 256 "$ARTIFACT" | awk '{print $1}')" = "$EXPECTED_ARTIFACT_SHA" ] || die "image digest mismatch"
 
 diskutil list external physical
-read -r -p "Whole removable disk to erase (for example disk4): " DISK
+if [ "$RESUME" = 1 ]; then
+  read -r -p "Whole removable disk to verify (for example disk4): " DISK
+else
+  read -r -p "Whole removable disk to erase (for example disk4): " DISK
+fi
 [[ "$DISK" =~ ^disk[0-9]+$ ]] || die "enter a whole disk identifier such as disk4"
 SYSTEM_DISK=$(diskutil info -plist / | /usr/bin/plutil -extract ParentWholeDisk raw -o - -)
 INFO=$(mktemp)
@@ -45,8 +55,13 @@ validate_flash_target "$INFO" "$DISK" "$SYSTEM_DISK" || exit 1
 IDENTITY=$(swift "$ROOT/raspi/flash/media-identity.swift" "$DISK")
 [[ "$IDENTITY" == *:1:1 ]] || die "I/O Registry does not classify $DISK as whole and writable"
 
-echo "ERASE /dev/$DISK ($(plist_value "$INFO" MediaName), $(plist_value "$INFO" TotalSize) bytes)"
-read -r -p "Type $DISK to approve this erase: " CONFIRM
+if [ "$RESUME" = 1 ]; then
+  echo "VERIFY AND COMPLETE /dev/$DISK ($(plist_value "$INFO" MediaName), $(plist_value "$INFO" TotalSize) bytes)"
+  read -r -p "Type $DISK to approve readback and personalization: " CONFIRM
+else
+  echo "ERASE /dev/$DISK ($(plist_value "$INFO" MediaName), $(plist_value "$INFO" TotalSize) bytes)"
+  read -r -p "Type $DISK to approve this erase: " CONFIRM
+fi
 confirmed_disk "$CONFIRM" "$DISK" || exit 1
 
 same_media() {
@@ -56,9 +71,13 @@ same_media
 echo "Unmounting /dev/$DISK..."
 diskutil unmountDisk "/dev/$DISK" >/dev/null
 same_media
-echo "Writing authenticated image to /dev/$DISK..."
-zstd -dc "$ARTIFACT" | sudo "$TRANSFER" write "$DISK" "$IDENTITY" "$RAW_SIZE"
-same_media
+if [ "$RESUME" = 1 ]; then
+  echo "Resuming after a completed write; no image bytes will be written before verification."
+else
+  echo "Writing authenticated image to /dev/$DISK..."
+  zstd -dc "$ARTIFACT" | sudo "$TRANSFER" write "$DISK" "$IDENTITY" "$RAW_SIZE"
+  same_media
+fi
 
 [ "$((RAW_SIZE % 4194304))" -eq 0 ] || die "manifest raw size is not 4 MiB aligned"
 echo "Verifying full-device readback..."

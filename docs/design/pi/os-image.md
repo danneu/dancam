@@ -200,7 +200,9 @@ compressed image before media discovery, admits only writable removable whole di
 of at least 32 GB outside system storage, and binds typed confirmation to the I/O
 Registry media identity. It verifies the raw image before personalization, writes a
 versioned envelope to the FAT boot partition, verifies that envelope after remount,
-and reports success only after eject.
+and reports success only after eject. An explicitly requested interrupted-write
+resume skips the destructive rewrite, performs the same complete authenticated
+readback, and refuses personalization unless every raw image byte matches.
 
 The generic p4 filesystem has no recording witness. First boot validates the
 authenticated image marker and matching envelope, brings up the per-unit AP, extends
@@ -327,3 +329,10 @@ a reusable, pinned NixOS OrbStack machine and dispatches the unchanged privilege
 Linux build inside it. A repository-shared working directory keeps the committed
 source and resulting `dist/` artifacts identical on both sides while the ignored
 signing key remains in its checkout-local protected location.
+
+### 2026-07-20 -- Resume only after complete image verification
+
+A flash interrupted after its complete image write can resume at full-device
+readback instead of repeating the slow destructive write. Resume is explicit,
+retains removable-media identity and typed confirmation, and cannot personalize a
+partial or mismatched card because the released raw digest must match first.
