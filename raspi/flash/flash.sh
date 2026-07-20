@@ -53,16 +53,20 @@ same_media() {
   [ "$(swift "$ROOT/raspi/flash/media-identity.swift" "$DISK")" = "$IDENTITY" ] || die "approved media disappeared or was replaced"
 }
 same_media
+echo "Unmounting /dev/$DISK..."
 diskutil unmountDisk "/dev/$DISK" >/dev/null
 same_media
+echo "Writing authenticated image to /dev/$DISK..."
 zstd -dc "$ARTIFACT" | sudo "$TRANSFER" write "$DISK" "$IDENTITY" "$RAW_SIZE"
 same_media
 
 [ "$((RAW_SIZE % 4194304))" -eq 0 ] || die "manifest raw size is not 4 MiB aligned"
+echo "Verifying full-device readback..."
 READBACK=$(sudo "$TRANSFER" read "$DISK" "$IDENTITY" "$RAW_SIZE" | shasum -a 256 | awk '{print $1}')
 [ "$READBACK" = "$EXPECTED_RAW_SHA" ] || die "raw image readback verification failed"
 same_media
 
+echo "Personalizing card..."
 diskutil mountDisk "/dev/$DISK" >/dev/null
 same_media
 BOOT_MOUNT=$(diskutil info -plist "/dev/${DISK}s1" | /usr/bin/plutil -extract MountPoint raw -o - -)
@@ -76,5 +80,6 @@ diskutil mountDisk "/dev/$DISK" >/dev/null
 BOOT_MOUNT=$(diskutil info -plist "/dev/${DISK}s1" | /usr/bin/plutil -extract MountPoint raw -o - -)
 [ "$(shasum -a 256 "$BOOT_MOUNT/dancam/commissioning.json" | awk '{print $1}')" = "$ENVELOPE_SHA" ] || die "personalization readback verification failed"
 same_media
+echo "Personalization verified; ejecting /dev/$DISK..."
 diskutil eject "/dev/$DISK" >/dev/null
 echo "DanCam card $UNIT_ID verified and ejected. Setup QR and recovery record: $RECOVERY_DIR"

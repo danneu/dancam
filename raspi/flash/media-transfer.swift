@@ -8,6 +8,10 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
+func status(_ message: String) {
+    FileHandle.standardError.write(Data("\(message)\n".utf8))
+}
+
 guard CommandLine.arguments.count == 5 else { exit(64) }
 let operation = CommandLine.arguments[1]
 let disk = CommandLine.arguments[2]
@@ -43,6 +47,14 @@ guard identity == expectedIdentity else { fail("opened media does not match appr
 let chunkSize = 4 * 1024 * 1024
 var buffer = [UInt8](repeating: 0, count: chunkSize)
 var remaining = byteCount
+var transferred: UInt64 = 0
+let reportStep = max(byteCount / 100, UInt64(64 * 1024 * 1024))
+var nextReport = reportStep
+let started = Date()
+let label = operation == "write" ? "Writing" : "Verifying"
+let totalMiB = Double(byteCount) / 1_048_576
+status(String(format: "%@: 0%% (0 / %.0f MiB)", label, totalMiB))
+
 while remaining > 0 {
     let requested = min(chunkSize, Int(remaining))
     let source = operation == "write" ? STDIN_FILENO : descriptor
@@ -65,9 +77,29 @@ while remaining > 0 {
         }
         offset += written
     }
-    remaining -= UInt64(count)
+    let copied = UInt64(count)
+    remaining -= copied
+    transferred += copied
+
+    if transferred >= nextReport || remaining == 0 {
+        let elapsed = max(Date().timeIntervalSince(started), 0.001)
+        let transferredMiB = Double(transferred) / 1_048_576
+        let percent = Double(transferred) * 100 / Double(byteCount)
+        let rate = transferredMiB / elapsed
+        status(String(
+            format: "%@: %.0f%% (%.0f / %.0f MiB, %.1f MiB/s)",
+            label,
+            percent,
+            transferredMiB,
+            totalMiB,
+            rate
+        ))
+        nextReport = byteCount - transferred <= reportStep ? byteCount : transferred + reportStep
+    }
 }
 
 if operation == "write" {
+    status("Writing: syncing buffered data")
     guard fsync(descriptor) == 0 else { fail("fsync failed: \(String(cString: strerror(errno)))") }
 }
+status("\(label): complete")
