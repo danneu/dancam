@@ -51,7 +51,8 @@ the IMX708 driver in the kernel.
 The Arducam B0311 is not an official Raspberry Pi module, so it is not
 auto-detected. It uses the kernel's in-tree overlay with
 `camera_auto_detect=0` and `dtoverlay=imx708` in
-`/boot/firmware/config.txt`. The playbook at `raspi/ansible/site.yml` applies
+`/boot/firmware/config.txt`. The `system_common` role reached through
+`raspi/ansible/development.yml` applies
 the overlay and reboots. This path needs no install script or separate tuning
 file and survives kernel upgrades.
 

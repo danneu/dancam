@@ -1,0 +1,106 @@
+---
+- name: Check for the dancam data partition label
+  # Old expanded-root cards cannot be migrated in place because ext4 cannot
+  # shrink. Fail before touching apt or config state so reflash + partition is
+  # the explicit repair.
+  ansible.builtin.stat:
+    path: /dev/disk/by-label/dancam-data
+  register: dev_runtime_data_partition_label
+
+- name: Require the dancam SD card layout before provisioning
+  ansible.builtin.fail:
+    msg: "Missing /dev/disk/by-label/dancam-data; reflash and run `just raspi-partition` before provisioning."
+  when: not dev_runtime_data_partition_label.stat.exists
+
+- name: Upgrade all development packages to current
+  # Development intentionally follows the writable distro rather than release
+  # pins. Any package change reboots after the rest of convergence completes.
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: full
+  notify: Reboot host
+
+- name: Install the declared development packages
+  # Picamera2 + PyAV are camera runtime dependencies; ffmpeg validates media,
+  # and v4l2-ctl backs the HDR development tool.
+  ansible.builtin.apt:
+    name: [python3-picamera2, python3-av, ffmpeg, v4l-utils]
+    state: present
+    install_recommends: false
+
+- name: Verify the deployed camera Python imports
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - import av; from picamera2 import Picamera2; av.Packet(b'')
+  changed_when: false
+
+- name: Provision the development access point profile without its secret
+  # The secret remains operator-owned and untracked. List-typed cipher properties
+  # are load-bearing for nmcli module idempotency.
+  community.general.nmcli:
+    conn_name: dancam-ap
+    type: wifi
+    ifname: wlan0
+    ssid: dancam-dev
+    autoconnect: false
+    wifi:
+      mode: ap
+      band: bg
+      channel: 1
+    wifi_sec:
+      key-mgmt: wpa-psk
+      proto: [rsn]
+      pairwise: [ccmp]
+      group: [ccmp]
+    method4: shared
+    ip4: 10.42.0.1/24
+    method6: ignore
+    state: present
+
+- name: Mount the persistent OS-state partition
+  ansible.posix.mount:
+    path: /persist
+    src: LABEL=dancam-persist
+    fstype: ext4
+    opts: noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s
+    dump: '0'
+    passno: '2'
+    state: mounted
+
+- name: Mount the recording data partition
+  ansible.posix.mount:
+    path: /data
+    src: LABEL=dancam-data
+    fstype: ext4
+    opts: noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s
+    dump: '0'
+    passno: '2'
+    state: mounted
+
+- name: Create the persistent journal source directory
+  ansible.builtin.file:
+    path: /persist/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: '2755'
+  notify:
+    - Restart systemd-journald
+    - Flush journald
+    - Sync journald
+
+- name: Bind the persistent journal onto the live log path
+  ansible.posix.mount:
+    path: /var/log/journal
+    src: /persist/journal
+    fstype: none
+    opts: bind,nofail
+    dump: '0'
+    passno: '0'
+    state: mounted
+  notify:
+    - Restart systemd-journald
+    - Flush journald
+    - Sync journald

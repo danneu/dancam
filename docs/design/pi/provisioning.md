@@ -16,11 +16,13 @@ policy; [networking](networking.md) owns the AP and mDNS behavior; and
 
 The repository has four distinct configuration owners:
 
-- `raspi/ansible/site.yml` owns onboard system state. It is one flat playbook,
-  with no roles, run against Raspberry Pi OS over SSH.
-- `raspi/deploy.sh` and `raspi/dancam.service` own the cross-built service
-  binary, systemd unit, deploy paths, service environment, and fast restart
-  loop. Provisioning does not render or deploy the unit.
+- `raspi/ansible/development.yml` converges writable cards over SSH. The
+  `system_common` role owns shared machine identity, configuration, service unit,
+  camera process, and filesystem namespace; `dev_runtime` owns live development
+  packages, mounts, checks, handlers, and reboot behavior.
+- `raspi/deploy.sh` owns the cross-built service binary, camera-process refresh,
+  and fast restart loop. The tracked systemd unit is Ansible-owned, so unit changes
+  require provisioning before deploy.
 - `raspi/scripts/partition-card.sh` owns SD-card geometry and filesystem
   creation. The playbook owns the resulting mounts and directory ownership.
 - The [Pi setup runbook](../../setup/pi-runbook.md) owns human and runtime
@@ -67,19 +69,12 @@ not only for a kernel or firmware upgrade. The unconditional-on-change rule is
 simpler and safer than trying to interpret `/run/reboot-required`; a converged
 run neither changes packages nor reboots.
 
-The final car-image pass is explicit:
-
-```sh
-just raspi-provision-car
-```
-
-It sets the playbook's `car_image` variable and applies the read-only-root
-posture only after the shared development layout is proven. The runbook owns
-the preconditions and maintenance sequence.
+There is no live conversion from a writable card to production posture.
+Production cards come only from the authenticated image build and flash path.
 
 ## Managed system state
 
-The development and car images share a base convergence layer. It includes:
+Writable development convergence includes:
 
 - the required card-layout gate, apt full-upgrade, Picamera2/PyAV/ffmpeg/v4l2
   packages, a deployed-interpreter import check, and the IMX708 device-tree
@@ -88,25 +83,21 @@ The development and car images share a base convergence layer. It includes:
   NetworkManager profile except its PSK;
 - the fixed `dancam` system user and its `video` supplementary group;
 - `/persist` and `/data` mounts, the `/persist/journal` bind, and
-  playbook-owned `/data/rec` ownership;
+  playbook-owned `/data/rec` and `/data/rec/state` directory ownership;
 - persistent bounded journald, the hardware watchdog, recording-oriented dirty
-  writeback limits, and weekly filesystem trimming.
+  writeback limits, weekly filesystem trimming, and the tracked service artifacts.
 
-The `car_image` layer persists NetworkManager and systemd-timesync state under
-`/persist`, adds the required bind and tmpfs mounts, makes root and
-`/boot/firmware` read-only on the next boot, disables unattended package
-maintenance, rejects file-backed or write-backed zram swap, and installs the
-boot storage-health witness. The [OS image design](os-image.md) is authoritative
-for why those states exist; the playbook is authoritative for how they are
-installed.
+Development performs a full upgrade and then installs its declared packages. The
+production image builder continues to install its pinned catalog until production
+convergence moves under Ansible.
 
 ## Connection and service identities
 
 A person flashing a Pi chooses the SSH login user. The camera daemon does not
 inherit that identity. Ansible creates a project-owned, non-login `dancam`
 system user and grants it `video` access for the camera and DMA devices. The
-static unit declares `User=dancam`, and the playbook creates `/data/rec` owned by
-that user. Provisioning therefore precedes the first deploy on a fresh card.
+static unit declares `User=dancam`, and the playbook creates the recording namespace
+owned by that user. Provisioning therefore precedes the first deploy on a fresh card.
 
 Only per-machine connection settings are configurable. Copy `.env.example` to
 the gitignored `.env` and set:
@@ -136,9 +127,8 @@ development cards are reflashed onto the current partition and ownership model.
 The AP PSK never enters the repository, `.env`, or Ansible. The playbook manages
 every non-secret field of `dancam-ap`; the operator enters the PSK once on the Pi.
 Leaving the secret field unmanaged both protects it and avoids NetworkManager
-module churn around `psk` and `psk-flags`. The car-image layer seeds and bind
-mounts NetworkManager state under `/persist` so the hand-entered secret survives
-the read-only root.
+module churn around `psk` and `psk-flags`. Production AP identity is instead
+installed from the authenticated per-card personalization envelope.
 
 The WPA2-AES values `proto`, `pairwise`, and `group` are expressed as
 single-element YAML lists (`[rsn]`, `[ccmp]`, `[ccmp]`). The
@@ -292,3 +282,24 @@ be part of commissioning. Image assembly now resolves and pins those inputs in a
 controlled Linux environment, while the Mac flash path consumes an authenticated
 artifact. Development cards retain Ansible because its writable convergence and
 `changed=0` proof remain the faster inner loop.
+
+### 2026-07-20 -- Make Ansible the single system declaration
+
+The separately maintained production builder reproduced development provisioning in
+shell. Production images consequently shipped with a stale hostname and later with
+an incorrectly owned recording namespace even though the development playbook held
+the intended state. Those failures disproved the assumption that a small duplicated
+shell path could stay synchronized with Ansible through review alone.
+
+Ansible therefore becomes the authority for shared development and production
+system facts. The flat playbook is split into shared, writable-development, and
+offline-production roles; the image builder retains disk and release mechanics but
+invokes the production role for target state. Live handlers and hardware checks stay
+out of the offline profile. The tracked service unit also moves under provisioning,
+while deploy keeps the fast binary/camera refresh and restart loop.
+
+Keeping the shell builder as a second declaration was rejected because that is the
+failed boundary this decision removes. Spreading a `car_image` conditional through
+the writable play was rejected because it makes offline safety an emergent property
+of individual task guards. Live conversion was removed entirely: development cards
+stay writable, and production cards come only from authenticated signed images.

@@ -1,0 +1,8 @@
+---
+- name: Start common development services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - avahi-daemon.service
+    - fstrim.timer

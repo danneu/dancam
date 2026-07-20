@@ -185,10 +185,11 @@ process dependencies (`python3-picamera2`, `python3-av`, plus `ffmpeg` as a medi
 validator), mDNS scoping, the
 `en_US.UTF-8` locale, the `dancam-ap` access-point profile (without its password),
 the `dancam` service user's `video`-group membership, `/persist` and `/data` mounts,
-persistent journald backed by `/persist/journal`, `/data/rec` ownership, kernel
+persistent journald backed by `/persist/journal`, recording-namespace ownership,
+the tracked service unit and camera process, kernel
 writeback clamps, weekly `fstrim.timer`, and the on-board hardware watchdog -- is
-provisioned declaratively with Ansible. The playbook
-(`raspi/ansible/site.yml`) is the source of truth for that state; the *why* behind each
+provisioned declaratively with Ansible. The development entry playbook and its roles
+(`raspi/ansible/development.yml`) are the source of truth for that state; the *why* behind each
 choice lives in its task comments (see also the
 [provisioning design](../design/pi/provisioning.md)). Run it from the
 repo root **over home Wi-Fi** -- it needs internet for apt, and the Pi's AP has no
@@ -196,7 +197,6 @@ upstream:
 
 ```sh
 just raspi-provision          # converge the Pi; reboots itself if a task needs it
-just raspi-provision-car      # final car-image pass; see section 10 before running
 ```
 
 It prompts once for your sudo password. When mDNS is flaky, target a raw LAN IP:
@@ -356,9 +356,10 @@ just raspi-deploy   # wraps ./raspi/deploy.sh
 Provision first: the unit runs as `User=dancam`, and `just raspi-provision`
 creates that system user before deploy starts the service.
 
-This ships a static aarch64 binary, the camera process
-(`/usr/local/lib/dancam/camera.py`), and the systemd unit (`dancam.service`),
-enables/restarts the service, then waits in two phases over `/v1/status`. Phase 1
+This ships a static aarch64 binary and the camera process
+(`/usr/local/lib/dancam/camera.py`), restarts the Ansible-installed
+`dancam.service`, then waits in two phases over `/v1/status`. Unit changes require a
+provisioning run. Phase 1
 waits up to `DANCAM_STATUS_TIMEOUT` (default 60 seconds) for a valid JSON boolean at
 `recording_readiness.ready`. Phase 2 immediately evaluates that same response, then
 polls until the boolean is true, bounded by `DANCAM_RECORDING_READINESS_TIMEOUT`
@@ -624,42 +625,9 @@ that the camera feed is moving. Stop then Start should resume the stream.
 In the 2026-06-25 `fox` spike, this worked over `dancam-dev` with cellular left on; no
 captive sheet was observed.
 
-## 10. Harden the car image
+## 10. Build a production card
 
-Run this only when the card is ready to become the deployed car image. The regular
-desk image should stop at `just raspi-provision`; it stays writable so iteration and
-debugging are cheap. Before hardening, set the AP PSK in section 7 at least once if
-you want to prove the hand-set secret survives the move into `/persist`.
-
-From the repo root, over home Wi-Fi:
-
-```sh
-just raspi-provision-car
-```
-
-The car pass keeps `/persist` and `/data` writable, but flips `/` and
-`/boot/firmware` read-only on the notified reboot; moves NetworkManager and
-systemd-timesync state into `/persist`; mounts `/tmp` and `/var/log` as bounded
-tmpfs; masks unattended package-maintenance timers; removes file-backed swap; and
-enables `dancam-storage-health.service`. That health unit runs before
-`dancam.service` and fails visibly in `systemctl --failed` if `/persist` or `/data`
-is not mounted read-write ext4. It does not replace the service's mount witness:
-recording and time-sync mutations still fail closed if `/data` goes missing.
-
-After the reboot, verify:
-
-```sh
-ssh dancam.local 'findmnt -no TARGET,OPTIONS / && findmnt -no TARGET,OPTIONS /boot/firmware'
-ssh dancam.local 'findmnt /tmp /var/log /etc/NetworkManager/system-connections /var/lib/NetworkManager /var/lib/systemd/timesync'
-ssh dancam.local 'systemctl is-enabled dancam-storage-health.service'
-ssh dancam.local 'systemctl is-active dancam-storage-health.service'    # active
-ssh dancam.local 'systemctl list-unit-files apt-daily.timer apt-daily-upgrade.timer man-db.timer dpkg-db-backup.timer' # masked
-ssh dancam.local 'swapon --show'
-```
-
-Then run the normal deploy and smoke tests. Confirm recording still lands under
-`/data/rec`, the AP PSK survives a reboot, and `journalctl -b -1` can read the
-previous boot from `/persist/journal`. Before trusting the card in the car, do the
-destructive negative test on the bench: break the `/data` fstab entry, reboot, confirm
-`dancam-storage-health.service` is failed and recording returns the mount-witness
-error instead of bricking the Pi, then restore `/data` and reboot.
+Do not convert a writable development card into production posture. Production cards
+come only from `just raspi-image` followed by the authenticated `just raspi-flash`
+flow in section 1. The signed image owns read-only root and boot, persistent state,
+offline commissioning, and the production AP; development cards remain writable.

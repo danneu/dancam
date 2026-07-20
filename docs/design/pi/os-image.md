@@ -53,8 +53,8 @@ p4  rest-5%  ext4   /data           rw         recording ring
 ```
 
 The development image uses the same layout but leaves `/` and `/boot/firmware`
-writable. The car image switches both read-only behind the explicit `car_image`
-Ansible variable. Plain read-only ext4 is deliberate: it consumes no tmpfs upper on
+writable. The signed car image bakes both read-only. Plain read-only ext4 is
+deliberate: it consumes no tmpfs upper on
 the 512 MB board, failed writes return `EROFS`, and bench recovery can remount the
 root read-write explicitly. The image never uses `raspi-config` overlayfs.
 

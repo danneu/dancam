@@ -1,0 +1,25 @@
+---
+- name: Restart avahi-daemon
+  ansible.builtin.service:
+    name: avahi-daemon
+    state: restarted
+
+- name: Restart systemd-journald
+  ansible.builtin.service:
+    name: systemd-journald
+    state: restarted
+
+- name: Flush journald
+  ansible.builtin.command: journalctl --flush
+  changed_when: false
+
+- name: Sync journald
+  ansible.builtin.command: journalctl --sync
+  changed_when: false
+
+- name: Reload sysctl settings
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/60-dancam-writeback.conf
+  changed_when: false
+
+- name: Reboot host
+  ansible.builtin.reboot:

@@ -3,7 +3,8 @@
 # Build the dancam Pi service and deploy it to the camera unit.
 #
 # Cross-compiles a static aarch64 musl binary in the Nix flake dev shell, ships it
-# plus the systemd unit to the Pi, installs both, and (re)starts the service.
+# plus the camera owner to the Pi, installs both, and restarts the provisioned
+# service unit.
 # Idempotent -- safe to re-run on every code change.
 #
 # Defaults target the dev image (Pi on home Wi-Fi as `dancam.local`). Override via
@@ -53,7 +54,6 @@ notify_done() {
 }
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="raspi/service/target/$TARGET/release/dancam"
-UNIT="raspi/dancam.service"
 CAMERA="raspi/camera/camera.py"
 
 run_bounded_operation() {
@@ -173,9 +173,8 @@ build_and_install() {
   nix develop -c cargo zigbuild --release --target "$TARGET" \
     --manifest-path raspi/service/Cargo.toml
 
-  echo "==> shipping binary + unit + camera process to $HOST"
+  echo "==> shipping binary + camera process to $HOST"
   rsync -avz -e "ssh -i $SSH_KEY" "$BIN" "$HOST:/tmp/dancam.new"
-  rsync -avz -e "ssh -i $SSH_KEY" "$UNIT" "$HOST:/tmp/dancam.service"
   rsync -avz -e "ssh -i $SSH_KEY" "$CAMERA" "$HOST:/tmp/dancam-camera.py"
 
   echo "==> installing + restarting on $HOST (sudo may prompt)"
@@ -199,11 +198,8 @@ build_and_install() {
   sudo install -m 0755 /tmp/dancam.new /usr/local/bin/dancam
   sudo install -d /usr/local/lib/dancam
   sudo install -m 0755 /tmp/dancam-camera.py /usr/local/lib/dancam/camera.py
-  sudo install -m 0644 /tmp/dancam.service /etc/systemd/system/dancam.service
-  sudo systemctl daemon-reload
-  sudo systemctl enable dancam
   sudo systemctl restart dancam
-  rm -f /tmp/dancam.new /tmp/dancam.service /tmp/dancam-camera.py
+  rm -f /tmp/dancam.new /tmp/dancam-camera.py
 '
 }
 

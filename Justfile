@@ -175,17 +175,7 @@ raspi-provision host='dancam.local':
     HOST="${DANCAM_HOST:-pi@dancam.local}"
     SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
-
-# Provision the car-image hardening layer after the dev-shared storage layout has
-# converged. This flips the next boot to read-only root and persistent bind mounts.
-raspi-provision-car host='dancam.local':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    HOST="${DANCAM_HOST:-pi@dancam.local}"
-    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
-    SSH_KEY="${SSH_KEY/#\~/$HOME}"
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e car_image=true -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
 
 # Dry-run the provision: show what is out of sync on the Pi without changing anything.
 raspi-provision-check host='dancam.local':
@@ -194,11 +184,11 @@ raspi-provision-check host='dancam.local':
     HOST="${DANCAM_HOST:-pi@dancam.local}"
     SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass --check --diff' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass --check --diff' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
 
 # Hardware-free gate: syntax + ansible-lint the playbook on the Mac, no Pi connection.
 raspi-provision-lint:
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook site.yml --syntax-check && ansible-lint site.yml'
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml --syntax-check && ansible-lint development.yml'
 
 # Run from the Mac while the Pi is on home Wi-Fi; join dancam-dev from the iPhone,
 # not this Mac. Overrides: DANCAM_HOST, DANCAM_SSH_KEY, DANCAM_HOME_WIFI.

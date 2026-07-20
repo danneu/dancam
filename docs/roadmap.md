@@ -108,7 +108,7 @@ mock first.
       The "it works" moment is a re-run printing `changed=0`._
   - [x] Ansible ships in the Nix shell (`nix develop -c ansible --version`) and
             the `raspi-provision` / `-check` / `-lint` Just recipes exist.
-  - [x] Flat playbook (`raspi/ansible/site.yml`, 8 tasks + 2 handlers) passes the
+  - [x] Role-based development play (`raspi/ansible/development.yml`) passes the
             Mac-only gate: `just raspi-provision-lint` green (syntax-check + ansible-lint).
   - [x] One `just raspi-provision` converges a fresh Pi (apt, camera overlay, mDNS
             scope, locale, AP profile, `video` group) + one reboot; a re-run prints
@@ -250,9 +250,9 @@ mock first.
   - [x] Dev-shared adoption: Ansible mounts `/persist`, `/data`, and the journald
             bind; deploys `/data/rec` with `DANCAM_REQUIRE_REC_MOUNT=/data`; enables
             fstrim and dirty-page clamps; reflashes the current dev card.
-  - [x] Car-image hardening: `car_image`-gated read-only root/boot, tmpfs and
-            `/persist` binds for writable OS state, read-only-root-aware deploy, and
-            bench power-cut validation.
+  - [x] Car-image hardening: signed-image read-only root/boot, tmpfs and `/persist`
+            binds for writable OS state, read-only-root-aware deploy, and bench
+            power-cut validation.
 - [x] **Swoop `silt` -- Ring-buffer GC (drip eviction).** Pi deletes oldest
       finished segments when `/data` available bytes fall below
       `DANCAM_GC_FLOOR_BYTES` (default 2 GiB), via the existing coordinator

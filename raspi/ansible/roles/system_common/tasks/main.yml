@@ -1,0 +1,258 @@
+---
+# Facts shared by every DanCam Pi profile. Package selection and live-only
+# convergence belong to the profile roles; common machine identity, configuration,
+# service artifacts, and filesystem ownership stay here.
+
+- name: Set the dancam hostname
+  ansible.builtin.copy:
+    dest: /etc/hostname
+    content: "dancam\n"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reboot host
+
+- name: Map the dancam hostname on the local interface
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s+'
+    line: "127.0.1.1\tdancam"
+    insertafter: '^127\.0\.0\.1\s+'
+    mode: '0644'
+
+- name: Disable camera auto-detect in config.txt
+  # Arducam IMX708 is not an official module, so it is not auto-detected.
+  ansible.builtin.lineinfile:
+    path: /boot/firmware/config.txt
+    regexp: '^camera_auto_detect='
+    line: 'camera_auto_detect=0'
+  notify: Reboot host
+
+- name: Load the IMX708 device-tree overlay in config.txt
+  # In-kernel overlay survives apt upgrade, unlike Arducam's prebuilt-driver
+  # script. The anchored regexp won't touch a commented #dtoverlay; insertafter
+  # keeps it in [all] scope even if a later section is appended.
+  ansible.builtin.lineinfile:
+    path: /boot/firmware/config.txt
+    regexp: '^dtoverlay=imx708$'
+    line: 'dtoverlay=imx708'
+    insertafter: '^\[all\]'
+  notify: Reboot host
+
+- name: Scope mDNS (Avahi) to the wlan0 interface
+  # Two DISTINCT failure modes motivate this task; do not conflate them.
+  # (a) Directive ABSENT: Avahi falls back to all interfaces incl. loopback, can
+  # self-conflict on a stale loopback publication, and renames the host to
+  # dancam-2.local -- a boot race, so it flakes (some boots come up fine). This
+  # is why the directive must exist AND land under [server]: ini_file guarantees
+  # the section placement regardless of prior content, where lineinfile would
+  # EOF-append it out of section if the key were ever absent, silently breaking
+  # the scoping.
+  # (b) Directive PRESENT but SPACED: no_extra_spaces is REQUIRED, not cosmetic.
+  # ini_file defaults to "allow-interfaces = wlan0" (sep " = "), but Avahi's ini
+  # parser strips only leading whitespace, so the space before = stays glued to
+  # the key ("allow-interfaces "). That is then an UNKNOWN key, and Avahi treats
+  # unknown keys as FATAL: load_config_file returns -1 and avahi-daemon refuses
+  # to start (deterministic on every boot -- status "failed", journal "Invalid
+  # configuration key"), NOT a silent ignore. no_extra_spaces emits
+  # "allow-interfaces=wlan0", the exact form the README sed proved working.
+  # backup preserves the README's .conf backup caution. mode '0644' is
+  # avahi-daemon.conf's canonical perm and clears ansible-lint's default
+  # risky-file-permissions rule, which ini_file would otherwise trip (it defaults
+  # to create: true with no mode).
+  community.general.ini_file:
+    path: /etc/avahi/avahi-daemon.conf
+    section: server
+    option: allow-interfaces
+    value: wlan0
+    no_extra_spaces: true
+    backup: true
+    mode: '0644'
+  notify: Restart avahi-daemon
+
+- name: Generate the en_US.UTF-8 locale
+  # Silences the "cannot change locale (UTF-8)" SSH login warning on fresh Lite.
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+
+- name: Ensure the dancam service user exists and is in the video group
+  # jet's Picamera2 camera owner (DANCAM_BACKEND=camera, set on the deployed
+  # unit) opens the camera under systemd as the fixed dancam service user, which
+  # needs video-group membership to reach /dev/video11 (bcm2835-codec, used by
+  # the hardware MJPEGEncoder) and /dev/dma_heap/* (libcamera buffers). A fresh
+  # system user has no supplementary groups by default, so this is now
+  # load-bearing system state rather than a re-guarantee of the Imager login
+  # user's defaults. The playbook owns it rather than SupplementaryGroups on the
+  # unit.
+  ansible.builtin.user:
+    name: dancam
+    system: true
+    create_home: false
+    groups: video
+    append: true
+
+- name: Create the dancam runtime helper directory
+  ansible.builtin.file:
+    path: /usr/local/lib/dancam
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the camera owner process
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../camera/camera.py"
+    dest: /usr/local/lib/dancam/camera.py
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the dancam service unit
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../dancam.service"
+    dest: /etc/systemd/system/dancam.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable the dancam service unit
+  ansible.builtin.systemd_service:
+    name: dancam.service
+    enabled: true
+    daemon_reload: true
+
+- name: Enable Avahi at boot
+  ansible.builtin.systemd_service:
+    name: avahi-daemon.service
+    enabled: true
+
+- name: Create the recording namespace on the data partition
+  # Namespace ownership is playbook-owned because partitioning knows only
+  # geometry/filesystems, not the service user or recording layout. The state
+  # directory is baked empty; commissioning later mints its generation marker.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: dancam
+    group: dancam
+    mode: '0755'
+  loop:
+    - /data/rec
+    - /data/rec/state
+
+# Persistent, size-capped journald so the abrupt reboots this unit takes (power
+# loss, watchdog resets, freezes) leave a post-mortem trail: previous-boot logs
+# survive in /persist/journal via the /var/log/journal bind, readable via
+# `journalctl -b -1`. Before this the dir existed but stayed volatile (Storage
+# defaulted to auto with logs only in /run), so the 2026-06-30 freeze and the ADR
+# 06 AP failure were unprovable. One
+# ini_file task per option, all writing the [Journal] drop-in; each notifies the
+# restart+flush+sync handlers so this boot's logs are captured durably on converge,
+# not left to shutdown-time flush timing (the bind now exists, so an explicit
+# restart+flush is what actually persists this boot). ini_file self-creates the
+# parent dir in normal mode and, under --check, reports would-change without
+# creating it or erroring on a
+# fresh Pi, so no separate `file: state=directory` task is needed (ansible.builtin.
+# copy to a file dest would fail_json on the missing parent under --check, aborting
+# the dry run). no_extra_spaces writes canonical Key=Value; mode 0644 is the
+# drop-in perm and clears ansible-lint risky-file-permissions. The 60- filename
+# prefix sorts our values above the vendor 10-/20-/50- range so a later-sorting
+# drop-in cannot silently override them (last assignment wins across merged
+# drop-ins). See `docs/design/pi/os-image.md#Freeze recovery and persistent logs`.
+- name: Set journald Storage to persistent
+  community.general.ini_file:
+    path: /etc/systemd/journald.conf.d/60-dancam-persistent.conf
+    section: Journal
+    option: Storage
+    value: persistent
+    no_extra_spaces: true
+    mode: '0644'
+  notify:
+    - Restart systemd-journald
+    - Flush journald
+    - Sync journald
+
+- name: Cap the persistent journal size
+  # SystemMaxUse=200M -- logs never crowd out recordings on the SD card.
+  community.general.ini_file:
+    path: /etc/systemd/journald.conf.d/60-dancam-persistent.conf
+    section: Journal
+    option: SystemMaxUse
+    value: 200M
+    no_extra_spaces: true
+    mode: '0644'
+  notify:
+    - Restart systemd-journald
+    - Flush journald
+    - Sync journald
+
+- name: Shorten the journald fsync interval
+  # SyncIntervalSec=60s -- journald flushes immediately only for CRIT+, and a
+  # freeze gets no final flush, so a shorter cadence than the 5min default bounds
+  # the lost log tail to ~60s: the deliberate wear-vs-diagnosability balance.
+  community.general.ini_file:
+    path: /etc/systemd/journald.conf.d/60-dancam-persistent.conf
+    section: Journal
+    option: SyncIntervalSec
+    value: 60s
+    no_extra_spaces: true
+    mode: '0644'
+  notify:
+    - Restart systemd-journald
+    - Flush journald
+    - Sync journald
+
+# Arm the on-board BCM2835 hardware watchdog (/dev/watchdog0, bcm2835_wdt loaded
+# by default -- no config.txt change) via PID 1. systemd pings it every
+# RuntimeWatchdogSec/2 (30s); if PID 1 stops pinging -- a userspace hang, or a
+# kernel hard-freeze that also stalls the kernel ping worker (power present but
+# wedged, distinct from abrupt power loss) -- the board resets and the dancam
+# service comes back on boot (host recovery; the recorder boots Idle, so recording
+# resumes when the app re-issues /v1/recording/start -- auto-record-on-boot does
+# not yet exist). Timeout model: the BCM2835 heartbeat maxes at ~16s but the driver
+# exposes it as max_hw_heartbeat_ms (not a hard max_timeout), so the Linux watchdog
+# core accepts 60s as a logical timeout and re-pings the hardware while PID 1 lives
+# -- 60s is NOT capped/rejected to ~16s. A kernel hard-freeze stalls that worker
+# too, so the hardware then bites at ~16s regardless; 60s therefore governs only
+# the PID-1-stall case, chosen over an aggressive sub-16s deadline to avoid false
+# resets when PID 1 is merely slow under transient IO/thermal load (a false reset
+# interrupts recording). RebootWatchdogSec is deliberately left at its 10min
+# default: it governs only the shutdown/reboot phase (already armed by default),
+# and tightening it risks a hardware reset mid-unmount on the writable dev root
+# during a legitimately slow shutdown -- the recording design's corruption class
+# -- for no gain
+# on an unattended unit. Do NOT re-add it. Reuse the Reboot host handler:
+# RuntimeWatchdogSec is manager config a live PID 1 won't apply on daemon-reload
+# (needs daemon-reexec or a boot), so arming it authoritatively means rebooting on
+# change. See `docs/design/pi/os-image.md#Freeze recovery and persistent logs`.
+- name: Arm the on-board hardware watchdog via systemd
+  community.general.ini_file:
+    path: /etc/systemd/system.conf.d/60-dancam-watchdog.conf
+    section: Manager
+    option: RuntimeWatchdogSec
+    value: 60s
+    no_extra_spaces: true
+    mode: '0644'
+  notify: Reboot host
+
+- name: Clamp kernel dirty writeback for recording segments
+  # The Pi has 512 MB RAM; ratio defaults can let too much segment data sit dirty,
+  # widening the power-cut loss window and making segment-close fsync spikes
+  # larger. These 16/64 MiB byte clamps are tunable after bench evidence.
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/60-dancam-writeback.conf
+    mode: '0644'
+    content: |
+      # Bound dirty segment data on a 512 MB Pi.
+      # Tunable after bench data: lower reduces power-cut exposure; higher reduces IO churn.
+      vm.dirty_background_bytes=16777216
+      vm.dirty_bytes=67108864
+  notify: Reload sysctl settings
+
+- name: Enable weekly filesystem trimming
+  # fstrim.timer reclaims deleted ring-buffer space for the SD controller without
+  # paying discard latency on every unlink/write.
+  ansible.builtin.systemd_service:
+    name: fstrim.timer
+    enabled: true

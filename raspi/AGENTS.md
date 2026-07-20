@@ -42,8 +42,9 @@ compatibility.
   reaches the service through the direct AP. See [networking](../docs/design/pi/networking.md).
 - **Service:** the statically cross-built Rust binary owns control, media, status,
   events, and camera supervision. See [service runtime](../docs/design/pi/service.md).
-- **Provisioning:** Ansible owns onboard system state; deploy artifacts own the
-  service binary, unit, and paths. See [provisioning](../docs/design/pi/provisioning.md).
+- **Provisioning:** Ansible owns onboard system state, the camera process, service
+  unit, and filesystem paths; deploy owns the fast binary/camera refresh and service
+  restart loop. See [provisioning](../docs/design/pi/provisioning.md).
 
 ## Structure
 
@@ -56,7 +57,7 @@ raspi/
   service/            <- Rust crate and committed media fixtures
   system/             <- system facts shared by development and production tools
   scripts/            <- partitioning and hardware-free regressions
-  dancam.service      <- deployed systemd unit
+  dancam.service      <- Ansible-installed systemd unit
   deploy.sh           <- cross-build and deployment path
 ```
 

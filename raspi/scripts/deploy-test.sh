@@ -11,9 +11,11 @@ fail() { echo "deploy-test: $*" >&2; exit 1; }
 
 make_mocks() {
   mkdir -p "$CASE_DIR/bin"
-  for command in nix rsync; do
-    printf '#!/usr/bin/env bash\nexit 0\n' >"$CASE_DIR/bin/$command"
-  done
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$CASE_DIR/bin/nix"
+  cat >"$CASE_DIR/bin/rsync" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$DEPLOY_TEST_LOG.rsync"
+EOF
   cat >"$CASE_DIR/bin/osascript" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$DEPLOY_TEST_LOG.notifications"
@@ -65,7 +67,10 @@ case "$*" in
     echo journal >>"$log.diagnostics"
     echo reached >"$log.late_sentinel"
     ;;
-  *) exit 0 ;;
+  *)
+    printf '%s\n' "$*" >>"$log.install"
+    exit 0
+    ;;
 esac
 EOF
   chmod +x "$CASE_DIR/bin/"*
@@ -103,6 +108,12 @@ run_case immediate true 0 0
 [ "$(cat "$CASE_DIR/log.polls")" -eq 1 ] || fail "immediate ready fetched status twice"
 [ "$(grep -c recording-ready "$CASE_DIR/log.notifications")" -eq 1 ] || fail "immediate ready did not notify exactly once"
 case "$OUTPUT" in *"phase 1/2"*"phase 2/2"*"recording-ready"*) ;; *) fail "success omitted phase or readiness copy" ;; esac
+[ "$(wc -l <"$CASE_DIR/log.rsync" | tr -d ' ')" -eq 2 ] || fail "deploy did not ship exactly the binary and camera process"
+grep -Fq '/tmp/dancam.new' "$CASE_DIR/log.rsync" || fail "deploy omitted the service binary"
+grep -Fq '/tmp/dancam-camera.py' "$CASE_DIR/log.rsync" || fail "deploy omitted the camera process"
+if grep -Fq 'dancam.service' "$CASE_DIR/log.rsync" || grep -Eq 'daemon-reload|systemctl enable|dancam\.service' "$CASE_DIR/log.install"; then
+  fail "deploy changed the Ansible-owned service unit"
+fi
 
 run_case eventual 'false_a|false_b|true' 2 2
 [ "$STATUS" -eq 0 ] || fail "eventual readiness failed: $OUTPUT"

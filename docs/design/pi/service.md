@@ -76,13 +76,13 @@ image.
 `just raspi-deploy` cross-builds the release binary, then ships and installs:
 
 - the Rust binary at `/usr/local/bin/dancam`;
-- the camera child at `/usr/local/lib/dancam/camera.py`; and
-- the systemd unit at `/etc/systemd/system/dancam.service`.
+- the camera child at `/usr/local/lib/dancam/camera.py`.
 
-The deploy script restarts the unit and waits for canonical status and recording
-readiness. It owns those service artifacts and the fast code-change loop;
-provisioning deliberately does not absorb them. The writable development image and
-read-only car image use the same service artifact set.
+The deploy script restarts the already-provisioned unit and waits for canonical
+status and recording readiness. Ansible installs the tracked unit, so unit changes
+require a provisioning run; deploy remains the fast binary/camera code-change loop.
+The writable development image and read-only car image use the same service artifact
+set.
 
 ## Request tracing
 
