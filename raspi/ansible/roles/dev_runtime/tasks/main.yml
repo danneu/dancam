@@ -24,7 +24,7 @@
   # Picamera2 + PyAV are camera runtime dependencies; ffmpeg validates media,
   # and v4l2-ctl backs the HDR development tool.
   ansible.builtin.apt:
-    name: [python3-picamera2, python3-av, ffmpeg, v4l-utils]
+    name: "{{ system_common_package_catalog | selectattr('development') | map(attribute='name') | list }}"
     state: present
     install_recommends: false
 

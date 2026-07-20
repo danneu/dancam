@@ -169,7 +169,7 @@ temporary helpers are removed.
 ## Commit progress
 
 - [x] 1. Establish role-based development provisioning and Ansible-owned service units
-- [ ] 2. Converge production images with Ansible and enforce offline release gates
+- [x] 2. Converge production images with Ansible and enforce offline release gates
 - [ ] 3. Narrow commissioning ownership and finish system documentation
 
 ## Implementation notes
@@ -178,3 +178,6 @@ temporary helpers are removed.
   writable roles. Keeping the recipe after removing its `car_image` tasks would
   silently leave a writable card instead of hardening it; signed images remain the
   production authority until the production Ansible role lands in slice 2.
+- The shared package catalog is JSON, which is also valid as an Ansible vars file.
+  This lets the independent shell verifier read the exact production pins with
+  `jq` instead of duplicating them or adding a second YAML parser to the builder.

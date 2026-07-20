@@ -1,0 +1,7 @@
+---
+# Production leaves these empty because staged images cannot perform live actions.
+# The writable development play supplies the corresponding handler names.
+system_common_reboot_handlers: []
+system_common_avahi_handlers: []
+system_common_journald_handlers: []
+system_common_sysctl_handlers: []

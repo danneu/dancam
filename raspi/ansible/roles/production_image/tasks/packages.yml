@@ -1,0 +1,17 @@
+---
+- name: Refresh the production package catalog
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install exact production package pins
+  ansible.builtin.apt:
+    name: "{{ item.name }}={{ item.production_pin }}"
+    state: present
+    install_recommends: false
+    allow_downgrade: true
+    policy_rc_d: 101
+  loop: "{{ system_common_package_catalog }}"
+  loop_control:
+    label: "{{ item.name }}={{ item.production_pin }}"
+  when: item.production_pin is not none

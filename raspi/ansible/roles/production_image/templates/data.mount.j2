@@ -4,7 +4,7 @@ After=persist.mount
 ConditionPathExists=/persist/dancam/storage-admitted
 
 [Mount]
-What=/dev/disk/by-label/@DANCAM_DATA_LABEL@
+What=/dev/disk/by-label/{{ dancam_data_label }}
 Where=/data
 Type=ext4
 Options=noatime,errors=remount-ro

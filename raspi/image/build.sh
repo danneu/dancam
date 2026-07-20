@@ -6,7 +6,9 @@ umask 077
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 source "$ROOT/raspi/image/inputs.env"
 source "$ROOT/raspi/image/build-policy.sh"
+source "$ROOT/raspi/image/build-convergence.sh"
 source "$ROOT/raspi/system/card-layout.env"
+export DANCAM_REPOSITORY_ROOT="$ROOT"
 
 die() { echo "raspi-image: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "missing required tool: $1"; }
@@ -16,7 +18,7 @@ need() { command -v "$1" >/dev/null || die "missing required tool: $1"; }
 [ "${EUID}" -eq 0 ] || die "run image assembly as root inside the disposable builder"
 [[ "$DANCAM_WIFI_COUNTRY" =~ ^[A-Z]{2}$ ]] || die "DANCAM_WIFI_COUNTRY must be a two-letter uppercase country code"
 
-for tool in curl sha256sum xz losetup sfdisk partprobe e2fsck resize2fs mkfs.ext4 mount umount chroot zstd minisign jq; do need "$tool"; done
+for tool in ansible-playbook curl sha256sum xz losetup sfdisk partprobe e2fsck resize2fs mkfs.ext4 mount umount chroot zstd minisign jq; do need "$tool"; done
 
 REV=$(git -C "$ROOT" rev-parse HEAD)
 git -C "$ROOT" diff --quiet || die "tracked source changes must be committed before an image build"
@@ -34,7 +36,8 @@ WORK=$(mktemp -d)
 LOOP=
 cleanup() {
   set +e
-  mountpoint -q "$WORK/persist" && umount "$WORK/persist"
+  mountpoint -q "$WORK/root/data" && umount "$WORK/root/data"
+  mountpoint -q "$WORK/root/persist" && umount "$WORK/root/persist"
   mountpoint -q "$WORK/root/dev" && umount -R "$WORK/root/dev"
   mountpoint -q "$WORK/root/sys" && umount -R "$WORK/root/sys"
   mountpoint -q "$WORK/root/proc" && umount "$WORK/root/proc"
@@ -85,7 +88,12 @@ mkfs.ext4 -F -L "$DANCAM_DATA_LABEL" -E lazy_itable_init=0,lazy_journal_init=0 "
 mkdir -p "$WORK/root"
 mount "${LOOP}p2" "$WORK/root"
 mkdir -p "$WORK/root/boot/firmware"
-mount "${LOOP}p1" "$WORK/root/boot/firmware"
+# FAT does not persist Unix modes. Present stable 0755 modes during convergence
+# instead of inheriting this script's restrictive release-artifact umask.
+mount -o umask=0022 "${LOOP}p1" "$WORK/root/boot/firmware"
+mkdir -p "$WORK/root/persist" "$WORK/root/data"
+mount "${LOOP}p3" "$WORK/root/persist"
+mount "${LOOP}p4" "$WORK/root/data"
 mkdir -p "$WORK/root/proc" "$WORK/root/sys" "$WORK/root/dev"
 mount -t proc proc "$WORK/root/proc"
 mount --rbind /sys "$WORK/root/sys"
@@ -93,118 +101,29 @@ mount --make-rslave "$WORK/root/sys"
 mount --rbind /dev "$WORK/root/dev"
 mount --make-rslave "$WORK/root/dev"
 
-install -Dm755 "$SERVICE_BINARY" "$WORK/root/usr/local/bin/dancam"
-install -Dm755 "$ROOT/raspi/camera/camera.py" "$WORK/root/usr/local/lib/dancam/camera.py"
-install -Dm755 "$ROOT/raspi/image/commission.sh" "$WORK/root/usr/local/lib/dancam/commission.sh"
-install -Dm755 "$ROOT/raspi/image/commission-policy.sh" "$WORK/root/usr/local/lib/dancam/commission-policy.sh"
-install -Dm644 "$ROOT/raspi/system/card-layout.env" "$WORK/root/usr/local/lib/dancam/card-layout.env"
-install -Dm755 "$ROOT/raspi/image/commission-led.sh" "$WORK/root/usr/local/lib/dancam/commission-led.sh"
-install -Dm644 "$ROOT/raspi/dancam.service" "$WORK/root/etc/systemd/system/dancam.service"
-install -Dm644 "$ROOT/raspi/image/dancam-commission.service" "$WORK/root/etc/systemd/system/dancam-commission.service"
-install -Dm644 "$ROOT/raspi/image/dancam-commission-led.service" "$WORK/root/etc/systemd/system/dancam-commission-led.service"
-sed "s/@DANCAM_DATA_LABEL@/$DANCAM_DATA_LABEL/" "$ROOT/raspi/image/data.mount.in" \
-  > "$WORK/root/etc/systemd/system/data.mount"
-chmod 644 "$WORK/root/etc/systemd/system/data.mount"
-mkdir -p "$WORK/root/etc/systemd/system/dancam.service.d"
-cat > "$WORK/root/etc/systemd/system/dancam.service.d/production.conf" <<'EOF'
-[Service]
-Environment=DANCAM_COMMISSIONING_STATE_PATH=/persist/dancam/commissioning.json
-EOF
-mkdir -p "$WORK/root/boot/firmware/dancam"
-jq -n --arg schema dancam-image-marker-v1 --arg image_id "$IMAGE_ID" \
-  '{schema:$schema,image_id:$image_id}' > "$WORK/root/boot/firmware/dancam/image.json"
-
+# Package convergence needs the builder's DNS only while the chroot is active.
+# Restore the base image's resolver artifact before release inspection.
+cp -a "$WORK/root/etc/resolv.conf" "$WORK/base-resolv.conf"
+rm -f "$WORK/root/etc/resolv.conf"
 cp /etc/resolv.conf "$WORK/root/etc/resolv.conf"
-export DANCAM_AVAHI_VERSION DANCAM_PYTHON3_PICAMERA2_VERSION DANCAM_PYTHON3_AV_VERSION DANCAM_FFMPEG_VERSION DANCAM_JQ_VERSION
-chroot "$WORK/root" /bin/bash -eux <<'CHROOT'
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y --no-install-recommends \
-  "avahi-daemon=$DANCAM_AVAHI_VERSION" \
-  "python3-picamera2=$DANCAM_PYTHON3_PICAMERA2_VERSION" \
-  "python3-av=$DANCAM_PYTHON3_AV_VERSION" \
-  "ffmpeg=$DANCAM_FFMPEG_VERSION" \
-  "jq=$DANCAM_JQ_VERSION"
-useradd --system --no-create-home --groups video dancam || true
-systemctl enable avahi-daemon.service dancam.service dancam-commission.service dancam-commission-led.service fstrim.timer
-systemctl is-enabled --quiet avahi-daemon.service
-systemctl mask apt-daily.timer apt-daily-upgrade.timer man-db.timer dpkg-db-backup.timer unattended-upgrades.service
-systemctl mask cloud-init.target cloud-init-local.service cloud-init-network.service cloud-config.service cloud-final.service cloud-init-hotplugd.socket
-rm -rf /var/lib/apt/lists/*
-CHROOT
 
-mkdir -p \
-  "$WORK/root/etc/NetworkManager/system-connections" \
-  "$WORK/root/var/lib/NetworkManager" \
-  "$WORK/root/var/lib/systemd/timesync" \
-  "$WORK/root/var/log/journal" \
-  "$WORK/root/etc/systemd/journald.conf.d" \
-  "$WORK/root/etc/systemd/system.conf.d" \
-  "$WORK/root/etc/sysctl.d"
-cat > "$WORK/root/etc/systemd/journald.conf.d/60-dancam-persistent.conf" <<'EOF'
-[Journal]
-Storage=persistent
-SystemMaxUse=200M
-SyncIntervalSec=60s
-EOF
-cat > "$WORK/root/etc/systemd/system.conf.d/60-dancam-watchdog.conf" <<'EOF'
-[Manager]
-RuntimeWatchdogSec=60s
-EOF
-cat > "$WORK/root/etc/sysctl.d/60-dancam-writeback.conf" <<'EOF'
-vm.dirty_background_bytes=16777216
-vm.dirty_bytes=67108864
-EOF
-sed -i 's/^#\?allow-interfaces=.*/allow-interfaces=wlan0/' "$WORK/root/etc/avahi/avahi-daemon.conf"
-grep -qxF 'allow-interfaces=wlan0' "$WORK/root/etc/avahi/avahi-daemon.conf" || \
-  die "Avahi is not scoped to wlan0"
-configure_hostname "$WORK/root" dancam
+run_production_convergence \
+  "$WORK/root" "$SERVICE_BINARY" "$IMAGE_ID" "$ROOT_PARTUUID" \
+  "$DANCAM_WIFI_COUNTRY" "$DANCAM_PERSIST_LABEL" "$DANCAM_DATA_LABEL"
 
-sed -i 's/^camera_auto_detect=.*/camera_auto_detect=0/' "$WORK/root/boot/firmware/config.txt"
-grep -qxF 'dtoverlay=imx708' "$WORK/root/boot/firmware/config.txt" || echo 'dtoverlay=imx708' >> "$WORK/root/boot/firmware/config.txt"
-sed -i -E 's/(^| )resize( |$)/ /g; s/  +/ /g; s/^ //; s/ $//' "$WORK/root/boot/firmware/cmdline.txt"
-sed -i 's/$/ cloud-init=disabled/' "$WORK/root/boot/firmware/cmdline.txt"
-grep -qw "root=PARTUUID=$ROOT_PARTUUID" "$WORK/root/boot/firmware/cmdline.txt" || \
-  die "boot root PARTUUID does not match the preserved DOS label id"
-grep -qw "cfg80211.ieee80211_regdom=$DANCAM_WIFI_COUNTRY" "$WORK/root/boot/firmware/cmdline.txt" || \
-  sed -i "s/$/ cfg80211.ieee80211_regdom=$DANCAM_WIFI_COUNTRY/" "$WORK/root/boot/firmware/cmdline.txt"
-: > "$WORK/root/etc/machine-id"
-cat > "$WORK/root/etc/fstab" <<EOF
-proc /proc proc defaults 0 0
-LABEL=bootfs /boot/firmware vfat ro,noatime 0 2
-LABEL=rootfs / ext4 ro,noatime,errors=remount-ro 0 1
-LABEL=$DANCAM_PERSIST_LABEL /persist ext4 noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s 0 2
-/persist/nm/system-connections /etc/NetworkManager/system-connections none bind,nofail 0 0
-/persist/nm/var-lib /var/lib/NetworkManager none bind,nofail 0 0
-/persist/timesync /var/lib/systemd/timesync none bind,nofail 0 0
-/persist/journal /var/log/journal none bind,nofail 0 0
-/persist/machine-id /etc/machine-id none bind,nofail 0 0
-tmpfs /tmp tmpfs rw,nosuid,nodev,noatime,mode=1777,size=64M 0 0
-tmpfs /var/log tmpfs rw,nosuid,nodev,noatime,mode=0755,size=32M 0 0
-EOF
-mkdir -p "$WORK/root/persist" "$WORK/root/data" "$WORK/root/etc/systemd/system/multi-user.target.wants"
-ln -sf /etc/systemd/system/dancam-commission.service "$WORK/root/etc/systemd/system/multi-user.target.wants/dancam-commission.service"
-mkdir -p "$WORK/root/etc/systemd/system/local-fs.target.wants"
-ln -sf /etc/systemd/system/data.mount "$WORK/root/etc/systemd/system/local-fs.target.wants/data.mount"
+rm -f "$WORK/root/etc/resolv.conf"
+cp -a "$WORK/base-resolv.conf" "$WORK/root/etc/resolv.conf"
 
-mkdir -p "$WORK/persist"
-mount "${LOOP}p3" "$WORK/persist"
-install -d -m 755 "$WORK/persist/dancam" "$WORK/persist/nm" "$WORK/persist/nm/var-lib" "$WORK/persist/timesync" "$WORK/persist/journal"
-install -d -m 700 "$WORK/persist/nm/system-connections"
-printf '%s\n' '{"state":"preparing","reason":null}' > "$WORK/persist/dancam/commissioning.json"
-chmod 644 "$WORK/persist/dancam/commissioning.json"
-timesync_uid=$(awk -F: '$1 == "systemd-timesync" { print $3 }' "$WORK/root/etc/passwd")
-timesync_gid=$(awk -F: '$1 == "systemd-timesync" { print $4 }' "$WORK/root/etc/passwd")
-chown "$timesync_uid:$timesync_gid" "$WORK/persist/timesync"
-sync -f "$WORK/persist/dancam/commissioning.json"
-sync -f "$WORK/persist/dancam"
-umount "$WORK/persist"
+bash "$ROOT/raspi/image/verify-image.sh" \
+  "$WORK/root" "$IMAGE_ID" "$ROOT_PARTUUID" "$DANCAM_WIFI_COUNTRY" \
+  "$DANCAM_PERSIST_LABEL" "$DANCAM_DATA_LABEL"
 
 PACKAGE_INVENTORY="$OUT/dancam-${VERSION}.packages.txt"
 chroot "$WORK/root" /usr/bin/dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$PACKAGE_INVENTORY"
 PACKAGE_INVENTORY_SHA=$(sha256sum "$PACKAGE_INVENTORY" | cut -d' ' -f1)
 sync
+umount "$WORK/root/data"
+umount "$WORK/root/persist"
 umount -R "$WORK/root/dev"
 umount -R "$WORK/root/sys"
 umount "$WORK/root/proc"

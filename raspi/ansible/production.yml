@@ -1,0 +1,22 @@
+---
+- name: Converge the staged dancam production image
+  hosts: production_image
+  gather_facts: false
+  vars_files:
+    - roles/system_common/vars/packages.json
+  vars:
+    system_common_unit_enable_mode: offline
+
+  pre_tasks:
+    - name: Install exact production packages without starting services
+      ansible.builtin.include_role:
+        name: production_image
+        tasks_from: packages
+
+  roles:
+    - role: system_common
+
+  post_tasks:
+    - name: Apply production-only image posture
+      ansible.builtin.include_role:
+        name: production_image

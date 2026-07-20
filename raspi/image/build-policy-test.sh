@@ -17,24 +17,4 @@ if dos_partition_uuid 0x041bba91 0 >/dev/null 2>&1; then
   exit 1
 fi
 
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/etc"
-printf '127.0.0.1\tlocalhost\n127.0.1.1\traspberrypi\n' > "$TMP/etc/hosts"
-configure_hostname "$TMP" dancam
-[ "$(cat "$TMP/etc/hostname")" = dancam ]
-[ "$(grep '^127\.0\.1\.1' "$TMP/etc/hosts")" = $'127.0.1.1\tdancam' ]
-[ "$(grep -c '^127\.0\.1\.1' "$TMP/etc/hosts")" -eq 1 ]
-
-printf '127.0.0.1\tlocalhost\n' > "$TMP/etc/hosts"
-configure_hostname "$TMP" dancam
-[ "$(tail -n 1 "$TMP/etc/hosts")" = $'127.0.1.1\tdancam' ]
-
-for bad in DANCAM dancam.local -dancam dancam-; do
-  if configure_hostname "$TMP" "$bad" >/dev/null 2>&1; then
-    echo "invalid hostname was accepted: $bad" >&2
-    exit 1
-  fi
-done
-
 echo "image build policy tests passed"

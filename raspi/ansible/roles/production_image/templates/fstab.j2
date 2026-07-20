@@ -1,0 +1,11 @@
+proc /proc proc defaults 0 0
+LABEL=bootfs /boot/firmware vfat ro,noatime 0 2
+LABEL=rootfs / ext4 ro,noatime,errors=remount-ro 0 1
+LABEL={{ dancam_persist_label }} /persist ext4 noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s 0 2
+/persist/nm/system-connections /etc/NetworkManager/system-connections none bind,nofail 0 0
+/persist/nm/var-lib /var/lib/NetworkManager none bind,nofail 0 0
+/persist/timesync /var/lib/systemd/timesync none bind,nofail 0 0
+/persist/journal /var/log/journal none bind,nofail 0 0
+/persist/machine-id /etc/machine-id none bind,nofail 0 0
+tmpfs /tmp tmpfs rw,nosuid,nodev,noatime,mode=1777,size=64M 0 0
+tmpfs /var/log tmpfs rw,nosuid,nodev,noatime,mode=0755,size=32M 0 0

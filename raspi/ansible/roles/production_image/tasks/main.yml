@@ -1,0 +1,234 @@
+---
+- name: Require generated production image facts
+  ansible.builtin.assert:
+    that:
+      - dancam_service_binary | length > 0
+      - dancam_image_id | length > 0
+      - dancam_root_partuuid is match('^[a-f0-9]{8}-02$')
+      - dancam_wifi_country is match('^[A-Z]{2}$')
+      - dancam_persist_label | length > 0
+      - dancam_data_label | length > 0
+    quiet: true
+
+- name: Install the production service binary
+  ansible.builtin.copy:
+    src: "{{ dancam_service_binary }}"
+    dest: /usr/local/bin/dancam
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install commissioning executables
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/lib/dancam/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - src: "{{ playbook_dir }}/../image/commission.sh"
+      dest: commission.sh
+    - src: "{{ playbook_dir }}/../image/commission-policy.sh"
+      dest: commission-policy.sh
+    - src: "{{ playbook_dir }}/../image/commission-led.sh"
+      dest: commission-led.sh
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Install the card layout contract
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../system/card-layout.env"
+    dest: /usr/local/lib/dancam/card-layout.env
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install production-only service units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - "{{ playbook_dir }}/../image/dancam-commission.service"
+    - "{{ playbook_dir }}/../image/dancam-commission-led.service"
+
+- name: Install the conditional recording-data mount unit
+  ansible.builtin.template:
+    src: data.mount.j2
+    dest: /etc/systemd/system/data.mount
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create the production service drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/dancam.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the production service environment
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/dancam.service.d/production.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Service]
+      Environment=DANCAM_COMMISSIONING_STATE_PATH=/persist/dancam/commissioning.json
+
+- name: Create the generic image marker directory
+  ansible.builtin.file:
+    path: /boot/firmware/dancam
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the generic image marker
+  ansible.builtin.copy:
+    dest: /boot/firmware/dancam/image.json
+    owner: root
+    group: root
+    # The boot filesystem is FAT and presents every file as 0755 under the
+    # builder's explicit mount mask; requesting 0644 would never converge.
+    mode: '0755'
+    content: "{{ {'schema': 'dancam-image-marker-v1', 'image_id': dancam_image_id} | to_nice_json }}\n"
+
+- name: Read the base boot command line
+  ansible.builtin.slurp:
+    src: /boot/firmware/cmdline.txt
+  register: production_image_cmdline
+
+- name: Preserve the authenticated base root partition identity
+  ansible.builtin.assert:
+    that:
+      - "'root=PARTUUID=' + dancam_root_partuuid in (production_image_cmdline.content | b64decode).split()"
+    fail_msg: The boot root PARTUUID does not match the preserved DOS label id.
+    quiet: true
+
+- name: Derive the production boot command line
+  ansible.builtin.set_fact:
+    production_image_cmdline_base: >-
+      {{ production_image_cmdline.content | b64decode | trim
+         | regex_replace('(^|\\s)resize(?=\\s|$)', ' ')
+         | regex_replace('(^|\\s)cloud-init=disabled(?=\\s|$)', ' ')
+         | regex_replace('(^|\\s)cfg80211\\.ieee80211_regdom=[A-Z]{2}(?=\\s|$)', ' ')
+         | regex_replace('\\s+', ' ') | trim }}
+
+- name: Apply the production boot command line
+  ansible.builtin.copy:
+    dest: /boot/firmware/cmdline.txt
+    owner: root
+    group: root
+    mode: '0755'
+    content: >-
+      {{ production_image_cmdline_base }} cloud-init=disabled
+      cfg80211.ieee80211_regdom={{ dancam_wifi_country }}{{ '\n' }}
+
+- name: Leave the generic root machine identity empty
+  ansible.builtin.copy:
+    dest: /etc/machine-id
+    owner: root
+    group: root
+    mode: '0444'
+    content: ''
+
+- name: Install the production filesystem table
+  ansible.builtin.template:
+    src: fstab.j2
+    dest: /etc/fstab
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create production target and persistent paths
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: /persist/dancam
+      mode: '0755'
+    - path: /persist/nm
+      mode: '0755'
+    - path: /persist/nm/system-connections
+      mode: '0700'
+    - path: /persist/nm/var-lib
+      mode: '0755'
+    - path: /persist/timesync
+      owner: systemd-timesync
+      group: systemd-timesync
+      mode: '0755'
+    - path: /persist/journal
+      group: systemd-journal
+      mode: '2755'
+    - path: /etc/NetworkManager/system-connections
+      mode: '0700'
+    - path: /var/lib/NetworkManager
+      mode: '0755'
+    - path: /var/lib/systemd/timesync
+      mode: '0755'
+    - path: /var/log/journal
+      mode: '0755'
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Initialize commissioning as incomplete
+  ansible.builtin.copy:
+    dest: /persist/dancam/commissioning.json
+    owner: root
+    group: root
+    mode: '0644'
+    content: "{{ {'state': 'preparing', 'reason': none} | to_json }}\n"
+
+- name: Create production unit enablement directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - multi-user.target.wants
+    - local-fs.target.wants
+
+- name: Enable production-only units offline
+  ansible.builtin.file:
+    src: "/etc/systemd/system/{{ item.unit }}"
+    dest: "/etc/systemd/system/{{ item.target }}/{{ item.unit }}"
+    state: link
+    force: true
+  loop:
+    - unit: dancam-commission.service
+      target: multi-user.target.wants
+    - unit: dancam-commission-led.service
+      target: multi-user.target.wants
+    - unit: data.mount
+      target: local-fs.target.wants
+  loop_control:
+    label: "{{ item.unit }}"
+
+- name: Mask unattended maintenance and cloud-init offline
+  ansible.builtin.file:
+    src: /dev/null
+    dest: "/etc/systemd/system/{{ item }}"
+    state: link
+    force: true
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+    - man-db.timer
+    - dpkg-db-backup.timer
+    - unattended-upgrades.service
+    - cloud-init.target
+    - cloud-init-local.service
+    - cloud-init-network.service
+    - cloud-config.service
+    - cloud-final.service
+    - cloud-init-hotplugd.socket

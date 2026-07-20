@@ -1,7 +1,7 @@
 # systemd unit for the dancam camera-unit service.
 #
-# Installed to /etc/systemd/system/dancam.service by raspi/deploy.sh. Auto-starts
-# the service and camera owner on boot and restarts on crash. Recording still starts
+# Installed and enabled by both Ansible provisioning profiles. Auto-starts the
+# service and camera owner on boot and restarts on crash. Recording still starts
 # through /v1/recording/start. Logs go to journald: `journalctl -u dancam -f`.
 #
 # Footage lives on /data/rec. Do not add RequiresMountsFor=/data here: with the

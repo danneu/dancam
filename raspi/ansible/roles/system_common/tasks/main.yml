@@ -3,6 +3,12 @@
 # convergence belong to the profile roles; common machine identity, configuration,
 # service artifacts, and filesystem ownership stay here.
 
+- name: Require an explicit common unit enablement mode
+  ansible.builtin.assert:
+    that:
+      - system_common_unit_enable_mode | default('') in ['live', 'offline']
+    quiet: true
+
 - name: Set the dancam hostname
   ansible.builtin.copy:
     dest: /etc/hostname
@@ -10,7 +16,7 @@
     owner: root
     group: root
     mode: '0644'
-  notify: Reboot host
+  notify: "{{ system_common_reboot_handlers }}"
 
 - name: Map the dancam hostname on the local interface
   ansible.builtin.lineinfile:
@@ -26,7 +32,7 @@
     path: /boot/firmware/config.txt
     regexp: '^camera_auto_detect='
     line: 'camera_auto_detect=0'
-  notify: Reboot host
+  notify: "{{ system_common_reboot_handlers }}"
 
 - name: Load the IMX708 device-tree overlay in config.txt
   # In-kernel overlay survives apt upgrade, unlike Arducam's prebuilt-driver
@@ -37,7 +43,7 @@
     regexp: '^dtoverlay=imx708$'
     line: 'dtoverlay=imx708'
     insertafter: '^\[all\]'
-  notify: Reboot host
+  notify: "{{ system_common_reboot_handlers }}"
 
 - name: Scope mDNS (Avahi) to the wlan0 interface
   # Two DISTINCT failure modes motivate this task; do not conflate them.
@@ -68,7 +74,7 @@
     no_extra_spaces: true
     backup: true
     mode: '0644'
-  notify: Restart avahi-daemon
+  notify: "{{ system_common_avahi_handlers }}"
 
 - name: Generate the en_US.UTF-8 locale
   # Silences the "cannot change locale (UTF-8)" SSH login warning on fresh Lite.
@@ -116,16 +122,46 @@
     group: root
     mode: '0644'
 
+- name: Create common offline unit enablement directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - multi-user.target.wants
+    - timers.target.wants
+  when: system_common_unit_enable_mode == 'offline'
+
 - name: Enable the dancam service unit
   ansible.builtin.systemd_service:
     name: dancam.service
     enabled: true
     daemon_reload: true
+  when: system_common_unit_enable_mode == 'live'
+
+- name: Enable the dancam service unit offline
+  ansible.builtin.file:
+    src: /etc/systemd/system/dancam.service
+    dest: /etc/systemd/system/multi-user.target.wants/dancam.service
+    state: link
+    force: true
+  when: system_common_unit_enable_mode == 'offline'
 
 - name: Enable Avahi at boot
   ansible.builtin.systemd_service:
     name: avahi-daemon.service
     enabled: true
+  when: system_common_unit_enable_mode == 'live'
+
+- name: Enable Avahi at boot offline
+  ansible.builtin.file:
+    src: /usr/lib/systemd/system/avahi-daemon.service
+    dest: /etc/systemd/system/multi-user.target.wants/avahi-daemon.service
+    state: link
+    force: true
+  when: system_common_unit_enable_mode == 'offline'
 
 - name: Create the recording namespace on the data partition
   # Namespace ownership is playbook-owned because partitioning knows only
@@ -168,10 +204,7 @@
     value: persistent
     no_extra_spaces: true
     mode: '0644'
-  notify:
-    - Restart systemd-journald
-    - Flush journald
-    - Sync journald
+  notify: "{{ system_common_journald_handlers }}"
 
 - name: Cap the persistent journal size
   # SystemMaxUse=200M -- logs never crowd out recordings on the SD card.
@@ -182,10 +215,7 @@
     value: 200M
     no_extra_spaces: true
     mode: '0644'
-  notify:
-    - Restart systemd-journald
-    - Flush journald
-    - Sync journald
+  notify: "{{ system_common_journald_handlers }}"
 
 - name: Shorten the journald fsync interval
   # SyncIntervalSec=60s -- journald flushes immediately only for CRIT+, and a
@@ -198,10 +228,7 @@
     value: 60s
     no_extra_spaces: true
     mode: '0644'
-  notify:
-    - Restart systemd-journald
-    - Flush journald
-    - Sync journald
+  notify: "{{ system_common_journald_handlers }}"
 
 # Arm the on-board BCM2835 hardware watchdog (/dev/watchdog0, bcm2835_wdt loaded
 # by default -- no config.txt change) via PID 1. systemd pings it every
@@ -234,7 +261,7 @@
     value: 60s
     no_extra_spaces: true
     mode: '0644'
-  notify: Reboot host
+  notify: "{{ system_common_reboot_handlers }}"
 
 - name: Clamp kernel dirty writeback for recording segments
   # The Pi has 512 MB RAM; ratio defaults can let too much segment data sit dirty,
@@ -248,7 +275,7 @@
       # Tunable after bench data: lower reduces power-cut exposure; higher reduces IO churn.
       vm.dirty_background_bytes=16777216
       vm.dirty_bytes=67108864
-  notify: Reload sysctl settings
+  notify: "{{ system_common_sysctl_handlers }}"
 
 - name: Enable weekly filesystem trimming
   # fstrim.timer reclaims deleted ring-buffer space for the SD controller without
@@ -256,3 +283,12 @@
   ansible.builtin.systemd_service:
     name: fstrim.timer
     enabled: true
+  when: system_common_unit_enable_mode == 'live'
+
+- name: Enable weekly filesystem trimming offline
+  ansible.builtin.file:
+    src: /usr/lib/systemd/system/fstrim.timer
+    dest: /etc/systemd/system/timers.target.wants/fstrim.timer
+    state: link
+    force: true
+  when: system_common_unit_enable_mode == 'offline'

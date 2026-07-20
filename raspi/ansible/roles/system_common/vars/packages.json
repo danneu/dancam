@@ -1,0 +1,34 @@
+{
+  "system_common_package_catalog": [
+    {
+      "name": "avahi-daemon",
+      "development": true,
+      "production_pin": "0.8-16"
+    },
+    {
+      "name": "python3-picamera2",
+      "development": true,
+      "production_pin": "0.3.36-1"
+    },
+    {
+      "name": "python3-av",
+      "development": true,
+      "production_pin": "14.2.0-1"
+    },
+    {
+      "name": "ffmpeg",
+      "development": true,
+      "production_pin": "8:7.1.5-0+deb13u1+rpt1"
+    },
+    {
+      "name": "jq",
+      "development": false,
+      "production_pin": "1.7.1-6+deb13u2"
+    },
+    {
+      "name": "v4l-utils",
+      "development": true,
+      "production_pin": null
+    }
+  ]
+}

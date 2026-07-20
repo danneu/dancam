@@ -2,6 +2,17 @@
 - name: Converge the writable dancam development Pi
   hosts: dancam
   become: true
+  vars_files:
+    - roles/system_common/vars/packages.json
+  vars:
+    system_common_reboot_handlers: [Reboot host]
+    system_common_avahi_handlers: [Restart avahi-daemon]
+    system_common_journald_handlers:
+      - Restart systemd-journald
+      - Flush journald
+      - Sync journald
+    system_common_sysctl_handlers: [Reload sysctl settings]
+    system_common_unit_enable_mode: live
 
   pre_tasks:
     - name: Converge development prerequisites and mounts
