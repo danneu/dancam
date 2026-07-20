@@ -33,6 +33,9 @@ LOOP=
 cleanup() {
   set +e
   mountpoint -q "$WORK/persist" && umount "$WORK/persist"
+  mountpoint -q "$WORK/root/dev" && umount -R "$WORK/root/dev"
+  mountpoint -q "$WORK/root/sys" && umount -R "$WORK/root/sys"
+  mountpoint -q "$WORK/root/proc" && umount "$WORK/root/proc"
   mountpoint -q "$WORK/root/boot/firmware" && umount "$WORK/root/boot/firmware"
   mountpoint -q "$WORK/root" && umount "$WORK/root"
   [ -z "$LOOP" ] || losetup -d "$LOOP"
@@ -78,6 +81,12 @@ mkdir -p "$WORK/root"
 mount "${LOOP}p2" "$WORK/root"
 mkdir -p "$WORK/root/boot/firmware"
 mount "${LOOP}p1" "$WORK/root/boot/firmware"
+mkdir -p "$WORK/root/proc" "$WORK/root/sys" "$WORK/root/dev"
+mount -t proc proc "$WORK/root/proc"
+mount --rbind /sys "$WORK/root/sys"
+mount --make-rslave "$WORK/root/sys"
+mount --rbind /dev "$WORK/root/dev"
+mount --make-rslave "$WORK/root/dev"
 
 install -Dm755 "$SERVICE_BINARY" "$WORK/root/usr/local/bin/dancam"
 install -Dm755 "$ROOT/raspi/camera/camera.py" "$WORK/root/usr/local/lib/dancam/camera.py"
@@ -179,9 +188,12 @@ sync -f "$WORK/persist/dancam"
 umount "$WORK/persist"
 
 PACKAGE_INVENTORY="$OUT/dancam-${VERSION}.packages.txt"
-chroot "$WORK/root" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$PACKAGE_INVENTORY"
+chroot "$WORK/root" /usr/bin/dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$PACKAGE_INVENTORY"
 PACKAGE_INVENTORY_SHA=$(sha256sum "$PACKAGE_INVENTORY" | cut -d' ' -f1)
 sync
+umount -R "$WORK/root/dev"
+umount -R "$WORK/root/sys"
+umount "$WORK/root/proc"
 umount "$WORK/root/boot/firmware"
 umount "$WORK/root"
 losetup -d "$LOOP"
