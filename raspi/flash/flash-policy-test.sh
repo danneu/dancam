@@ -8,7 +8,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 fixture() {
   cat > "$1" <<EOF
-{"DeviceIdentifier":"${2:-disk4}","Whole":${3:-true},"Internal":${4:-false},"RemovableMedia":${5:-true},"Writable":${6:-true},"TotalSize":${7:-64000000000}}
+{"DeviceIdentifier":"${2:-disk4}","WholeDisk":${3:-true},"Internal":${4:-false},"RemovableMedia":${5:-true},"Writable":${6:-true},"TotalSize":${7:-64000000000}}
 EOF
 }
 eligible="$TMP/eligible.json"

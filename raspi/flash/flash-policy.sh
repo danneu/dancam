@@ -10,7 +10,7 @@ validate_flash_target() {
   local plist=$1 expected=$2 system_disk=$3
   local identifier whole internal removable writable size
   identifier=$(plist_value "$plist" DeviceIdentifier) || return 1
-  whole=$(plist_value "$plist" Whole) || return 1
+  whole=$(plist_value "$plist" WholeDisk) || whole=$(plist_value "$plist" Whole) || return 1
   internal=$(plist_value "$plist" Internal) || return 1
   removable=$(plist_value "$plist" RemovableMedia) || return 1
   writable=$(plist_value "$plist" Writable) || return 1

@@ -28,7 +28,7 @@ raspi-image-builder-test:
 # Authenticate, personalize, verify, and eject a removable production card.
 # With no argument, flash the newest released manifest under dist/.
 raspi-flash manifest='':
-    nix develop -c bash raspi/flash/flash.sh {{quote(manifest)}}
+    nix develop -c env -u DEVELOPER_DIR -u SDKROOT bash raspi/flash/flash.sh {{quote(manifest)}}
 
 # Hardware-free target eligibility and exact-confirmation regression.
 raspi-flash-test:
