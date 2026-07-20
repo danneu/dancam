@@ -361,3 +361,13 @@ image's root `PARTUUID`. Firmware then loads the kernel, but Linux waits forever
 a nonexistent root device. Image assembly now preserves the authenticated base id,
 asserts the resulting root reference, and pins the US regulatory domain needed by
 the production access point.
+
+### 2026-07-20 -- Own the complete recording namespace during commissioning
+
+The first production card mounted and initialized `/data`, but commissioning applied
+the `dancam` service ownership only to `/data/rec/state`. The implicitly created
+`/data/rec` parent remained owned by root, so preview worked while the camera owner
+failed recording with `/data/rec is not writable`. Commissioning now applies the
+service identity and mode explicitly to both directories before publishing the
+storage generation. A regression begins with a non-writable parent and requires the
+whole namespace to become writable.

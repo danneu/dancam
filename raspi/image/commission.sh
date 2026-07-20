@@ -125,7 +125,7 @@ resize2fs "$DATA_PART" || fail data_filesystem_growth_failed
 
 install -d -m 755 /run/dancam-data
 mount -o noatime,errors=remount-ro "$DATA_PART" /run/dancam-data || fail data_mount_failed
-install -d -o dancam -g dancam -m 755 /run/dancam-data/rec/state
+prepare_recording_namespace /run/dancam-data dancam dancam
 generation=$(cat /proc/sys/kernel/random/uuid)
 printf '{"high_water_seq":0,"storage_generation":"%s"}\n' "$generation" \
   > /run/dancam-data/rec/state/state.json

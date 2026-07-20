@@ -28,3 +28,9 @@ validate_commissioning_envelope() {
   [ "${#psk}" -ge 22 ] || return 1
   [ "${#nonce}" -ge 22 ] || return 1
 }
+
+prepare_recording_namespace() {
+  local data_root=$1 owner=$2 group=$3
+  install -d -o "$owner" -g "$group" -m 755 "$data_root/rec"
+  install -d -o "$owner" -g "$group" -m 755 "$data_root/rec/state"
+}

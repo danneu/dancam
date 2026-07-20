@@ -41,4 +41,13 @@ if validate_commissioning_envelope "$marker" "$envelope"; then
   echo "mismatched envelope was accepted" >&2
   exit 1
 fi
+
+namespace="$TMP/data"
+mkdir -p "$namespace/rec"
+chmod 555 "$namespace/rec"
+prepare_recording_namespace "$namespace" "$(id -u)" "$(id -g)"
+[ -w "$namespace/rec" ]
+[ -w "$namespace/rec/state" ]
+find "$namespace/rec" -prune -type d -perm 755 | grep -q .
+find "$namespace/rec/state" -prune -type d -perm 755 | grep -q .
 echo "commissioning geometry and replay tests passed"
