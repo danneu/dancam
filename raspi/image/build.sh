@@ -103,6 +103,7 @@ jq -n --arg schema dancam-image-marker-v1 --arg image_id "$IMAGE_ID" \
 cp /etc/resolv.conf "$WORK/root/etc/resolv.conf"
 export DANCAM_PYTHON3_PICAMERA2_VERSION DANCAM_PYTHON3_AV_VERSION DANCAM_FFMPEG_VERSION DANCAM_JQ_VERSION
 chroot "$WORK/root" /bin/bash -eux <<'CHROOT'
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
