@@ -200,9 +200,11 @@ compressed image before media discovery, admits only writable removable whole di
 of at least 32 GB outside system storage, and binds typed confirmation to the I/O
 Registry media identity. It verifies the raw image before personalization, writes a
 versioned envelope to the FAT boot partition, verifies that envelope after remount,
-and reports success only after eject. An explicitly requested interrupted-write
-resume skips the destructive rewrite, performs the same complete authenticated
-readback, and refuses personalization unless every raw image byte matches.
+and reports success only after eject. The Mac transfer holds an exclusive Disk
+Arbitration claim across writing and readback so the OS cannot auto-mount and mutate
+the FAT boot volume between those phases. An explicitly requested interrupted-write
+resume compares every authenticated image chunk, retains up to 64 MiB of differing
+chunks in memory, repairs and rereads only those chunks, and refuses broader repair.
 
 The generic p4 filesystem has no recording witness. First boot validates the
 authenticated image marker and matching envelope, brings up the per-unit AP, extends
@@ -332,7 +334,16 @@ signing key remains in its checkout-local protected location.
 
 ### 2026-07-20 -- Resume only after complete image verification
 
-A flash interrupted after its complete image write can resume at full-device
-readback instead of repeating the slow destructive write. Resume is explicit,
-retains removable-media identity and typed confirmation, and cannot personalize a
-partial or mismatched card because the released raw digest must match first.
+A flash interrupted after its complete image write can compare every card chunk with
+the authenticated input instead of repeating the slow destructive write. Resume is
+explicit, retains removable-media identity and typed confirmation, and only repairs
+up to 64 MiB of differences held in memory. It rereads repaired chunks before
+personalization and refuses a partial or broadly mismatched card.
+
+### 2026-07-20 -- Claim media across write and verification
+
+Rewriting a partition table causes macOS Disk Arbitration to discover and auto-mount
+the FAT boot volume. An unmount before transfer does not prevent that later discovery,
+and the mount changes FAT metadata before raw readback. The transfer helper therefore
+claims the whole disk for exclusive use across both phases; releasing the claim only
+after verification removes the mutation window rather than weakening verification.

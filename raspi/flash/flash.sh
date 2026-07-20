@@ -39,7 +39,7 @@ IMAGE_ID=$(/usr/bin/plutil -extract image_id raw -o - "$MANIFEST")
 
 diskutil list external physical
 if [ "$RESUME" = 1 ]; then
-  read -r -p "Whole removable disk to verify (for example disk4): " DISK
+  read -r -p "Whole removable disk to verify and repair (for example disk4): " DISK
 else
   read -r -p "Whole removable disk to erase (for example disk4): " DISK
 fi
@@ -56,8 +56,8 @@ IDENTITY=$(swift "$ROOT/raspi/flash/media-identity.swift" "$DISK")
 [[ "$IDENTITY" == *:1:1 ]] || die "I/O Registry does not classify $DISK as whole and writable"
 
 if [ "$RESUME" = 1 ]; then
-  echo "VERIFY AND COMPLETE /dev/$DISK ($(plist_value "$INFO" MediaName), $(plist_value "$INFO" TotalSize) bytes)"
-  read -r -p "Type $DISK to approve readback and personalization: " CONFIRM
+  echo "VERIFY, REPAIR, AND COMPLETE /dev/$DISK ($(plist_value "$INFO" MediaName), $(plist_value "$INFO" TotalSize) bytes)"
+  read -r -p "Type $DISK to approve comparison, bounded repair, and personalization: " CONFIRM
 else
   echo "ERASE /dev/$DISK ($(plist_value "$INFO" MediaName), $(plist_value "$INFO" TotalSize) bytes)"
   read -r -p "Type $DISK to approve this erase: " CONFIRM
@@ -72,17 +72,12 @@ echo "Unmounting /dev/$DISK..."
 diskutil unmountDisk "/dev/$DISK" >/dev/null
 same_media
 if [ "$RESUME" = 1 ]; then
-  echo "Resuming after a completed write; no image bytes will be written before verification."
+  echo "Comparing with the authenticated image; at most 64 MiB of differing chunks may be repaired."
+  zstd -dc "$ARTIFACT" | sudo "$TRANSFER" repair-verify "$DISK" "$IDENTITY" "$RAW_SIZE" "$EXPECTED_RAW_SHA"
 else
   echo "Writing authenticated image to /dev/$DISK..."
-  zstd -dc "$ARTIFACT" | sudo "$TRANSFER" write "$DISK" "$IDENTITY" "$RAW_SIZE"
-  same_media
+  zstd -dc "$ARTIFACT" | sudo "$TRANSFER" write-verify "$DISK" "$IDENTITY" "$RAW_SIZE" "$EXPECTED_RAW_SHA"
 fi
-
-[ "$((RAW_SIZE % 4194304))" -eq 0 ] || die "manifest raw size is not 4 MiB aligned"
-echo "Verifying full-device readback..."
-READBACK=$(sudo "$TRANSFER" read "$DISK" "$IDENTITY" "$RAW_SIZE" | shasum -a 256 | awk '{print $1}')
-[ "$READBACK" = "$EXPECTED_RAW_SHA" ] || die "raw image readback verification failed"
 same_media
 
 echo "Personalizing card..."
