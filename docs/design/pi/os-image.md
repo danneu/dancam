@@ -206,6 +206,11 @@ the FAT boot volume between those phases. An explicitly requested interrupted-wr
 resume compares every authenticated image chunk, retains up to 64 MiB of differing
 chunks in memory, repairs and rereads only those chunks, and refuses broader repair.
 
+Image assembly preserves the base Raspberry Pi OS DOS disk identifier when it
+rewrites the partition geometry and asserts that the kernel's root `PARTUUID`
+resolves to partition 2. The production boot line also pins the selected `US` Wi-Fi
+regulatory domain.
+
 The generic p4 filesystem has no recording witness. First boot validates the
 authenticated image marker and matching envelope, brings up the per-unit AP, extends
 only p4 to the aligned 95% card boundary, grows its existing ext4 filesystem, and
@@ -347,3 +352,12 @@ the FAT boot volume. An unmount before transfer does not prevent that later disc
 and the mount changes FAT metadata before raw readback. The transfer helper therefore
 claims the whole disk for exclusive use across both phases; releasing the claim only
 after verification removes the mutation window rather than weakening verification.
+
+### 2026-07-20 -- Preserve the boot root partition identity
+
+Rewriting a DOS partition table without an explicit label id lets `sfdisk` generate
+a new disk identifier while the inherited kernel command line still names the base
+image's root `PARTUUID`. Firmware then loads the kernel, but Linux waits forever for
+a nonexistent root device. Image assembly now preserves the authenticated base id,
+asserts the resulting root reference, and pins the US regulatory domain needed by
+the production access point.

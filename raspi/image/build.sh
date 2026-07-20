@@ -5,6 +5,7 @@ umask 077
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 source "$ROOT/raspi/image/inputs.env"
+source "$ROOT/raspi/image/build-policy.sh"
 source "$ROOT/raspi/system/card-layout.env"
 
 die() { echo "raspi-image: $*" >&2; exit 1; }
@@ -13,6 +14,7 @@ need() { command -v "$1" >/dev/null || die "missing required tool: $1"; }
 [ "$(uname -s)" = Linux ] || die "image assembly requires controlled Linux; flashing is the macOS path"
 [ "$(uname -m)" = aarch64 ] || die "image assembly requires aarch64 Linux so target packages execute natively"
 [ "${EUID}" -eq 0 ] || die "run image assembly as root inside the disposable builder"
+[[ "$DANCAM_WIFI_COUNTRY" =~ ^[A-Z]{2}$ ]] || die "DANCAM_WIFI_COUNTRY must be a two-letter uppercase country code"
 
 for tool in curl sha256sum xz losetup sfdisk partprobe e2fsck resize2fs mkfs.ext4 mount umount chroot zstd minisign jq; do need "$tool"; done
 
@@ -52,6 +54,8 @@ xz --decompress --stdout "$BASE" > "$RAW"
 truncate -s 10737418240 "$RAW"
 LOOP=$(losetup --find --show --partscan "$RAW")
 
+DISK_ID=$(sfdisk --json "$LOOP" | jq -er '.partitiontable.id')
+ROOT_PARTUUID=$(dos_partition_uuid "$DISK_ID" 2) || die "base image has an invalid DOS label id"
 P1_START=$(sfdisk --json "$LOOP" | jq -r '.partitiontable.partitions[0].start')
 P1_SIZE=$(sfdisk --json "$LOOP" | jq -r '.partitiontable.partitions[0].size')
 P2_START=$(sfdisk --json "$LOOP" | jq -r '.partitiontable.partitions[1].start')
@@ -63,6 +67,7 @@ P4_SIZE=$DANCAM_INITIAL_DATA_SIZE_SECTORS
 
 cat <<EOF | sfdisk --no-reread --force "$LOOP"
 label: dos
+label-id: $DISK_ID
 unit: sectors
 
 start=$P1_START, size=$P1_SIZE, type=c, bootable
@@ -155,6 +160,10 @@ sed -i 's/^camera_auto_detect=.*/camera_auto_detect=0/' "$WORK/root/boot/firmwar
 grep -qxF 'dtoverlay=imx708' "$WORK/root/boot/firmware/config.txt" || echo 'dtoverlay=imx708' >> "$WORK/root/boot/firmware/config.txt"
 sed -i -E 's/(^| )resize( |$)/ /g; s/  +/ /g; s/^ //; s/ $//' "$WORK/root/boot/firmware/cmdline.txt"
 sed -i 's/$/ cloud-init=disabled/' "$WORK/root/boot/firmware/cmdline.txt"
+grep -qw "root=PARTUUID=$ROOT_PARTUUID" "$WORK/root/boot/firmware/cmdline.txt" || \
+  die "boot root PARTUUID does not match the preserved DOS label id"
+grep -qw "cfg80211.ieee80211_regdom=$DANCAM_WIFI_COUNTRY" "$WORK/root/boot/firmware/cmdline.txt" || \
+  sed -i "s/$/ cfg80211.ieee80211_regdom=$DANCAM_WIFI_COUNTRY/" "$WORK/root/boot/firmware/cmdline.txt"
 : > "$WORK/root/etc/machine-id"
 cat > "$WORK/root/etc/fstab" <<EOF
 proc /proc proc defaults 0 0

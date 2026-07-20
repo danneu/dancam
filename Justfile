@@ -24,6 +24,7 @@ _raspi-image-native:
 # Hardware-free regression for OrbStack machine creation, reuse, and build dispatch.
 raspi-image-builder-test:
     bash raspi/image/build-orbstack-test.sh
+    bash raspi/image/build-policy-test.sh
 
 # Authenticate, personalize, verify, and eject a removable production card.
 # With no argument, flash the newest released manifest under dist/.

@@ -29,6 +29,10 @@ complete, and blinks rapidly on failure. Do not reinsert or edit a successfully
 commissioned card to retry setup; whole-card reflash is the recovery operation and
 destroys Pi-local footage and identity.
 
+The production image preserves the base DOS disk identifier so the kernel root
+`PARTUUID` continues to resolve after partition-table assembly, and it boots with the
+`US` Wi-Fi regulatory domain used by the channel-1 production access point.
+
 The remaining sections are the writable development-card workflow.
 
 Release publishers run `just raspi-image` on the Apple Silicon Mac with the protected
