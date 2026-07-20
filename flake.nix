@@ -44,6 +44,7 @@
             rustToolchain
             pkgs.zig
             pkgs.cargo-zigbuild
+            pkgs.just
             pkgs.rsync
             pkgs.mdbook
             pkgs.mdbook-linkcheck2
