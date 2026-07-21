@@ -41,19 +41,26 @@ treated as a cable or source fault first.
 
 The Zero 2 W uses one MBR-partitioned microSD card with exactly four primary
 partitions. The legacy boot path reads MBR. Every partition begins on a 4 MiB
-boundary, the minimum supported card is 32 GB, p1 through p3 have fixed sizes, and
-only p4 grows with card capacity.
+boundary, the minimum supported card is 32 GB, and only p4 grows with card capacity.
+Development and production use different fixed geometry so the signed release does
+not authenticate and flash unused development headroom.
 
 ```text
-p1  512 MiB  FAT32  /boot/firmware  ro in car  firmware and kernels
-p2  8 GiB    ext4   /               ro in car  plain read-only root
-p3  1 GiB    ext4   /persist        rw         OS state island
-p4  rest-5%  ext4   /data           rw         recording ring
-    5% unpartitioned tail, never written       flash overprovisioning
+             development                 production release
+p1 boot      512 MiB                     512 MiB
+p2 root      8 GiB                       4 GiB
+p3 persist   1 GiB                       512 MiB
+p4 data      rest to aligned 95% limit   128 MiB initially
+tail         5% unpartitioned            omitted from raw artifact
 ```
 
-The development image uses the same layout but leaves `/` and `/boot/firmware`
-writable. The signed car image bakes both read-only. Plain read-only ext4 is
+The development partitioner retains its writable 8 GiB root, 1 GiB persist, and
+capacity-sized data partition with a 5% unwritten card tail. The production raw
+artifact ends exactly at its initial p4 boundary; with the pinned base image that is
+5,511,315,456 bytes (5,256 MiB). First-boot commissioning grows only p4 to the same
+aligned 95% card boundary used by development, leaving the physical 5% tail.
+
+The signed car image bakes `/` and `/boot/firmware` read-only. Plain read-only ext4 is
 deliberate: it consumes no tmpfs upper on
 the 512 MB board, failed writes return `EROFS`, and bench recovery can remount the
 root read-write explicitly. The image never uses `raspi-config` overlayfs.
@@ -183,8 +190,9 @@ scheduling and the host watchdog would have caught it.
 launched from the Apple Silicon Mac, then runs the controlled Linux-native image
 recipe there. OrbStack shares the checkout, so authenticated release outputs land
 back under `dist/` without copying the signing key into a second source tree. The
-builder verifies the pinned Raspberry Pi OS Lite input and assembles fixed p1 through
-p3 plus an initialized small p4 layout. It mounts every target filesystem and runs
+builder verifies the pinned Raspberry Pi OS Lite input and assembles the compact
+production geometry through the exact end of initialized p4. It mounts every target
+filesystem and runs
 `raspi/ansible/production.yml` through the chroot connection; Ansible installs the
 exact runtime packages, service artifacts, commissioning files, and complete target
 posture. The builder then emits a versioned zstd image with a JSON manifest.
@@ -394,3 +402,16 @@ Commissioning now verifies those baked directories before minting storage identi
 and fails closed when they are absent or unusable; it no longer creates or repairs
 them. The earlier repair remains recorded as the incident response that exposed this
 ownership boundary.
+
+### 2026-07-20 -- Give production compact profile-specific geometry
+
+Development cards keep an 8 GiB writable root, 1 GiB persist partition, and
+capacity-sized data partition because upgrade and debugging headroom are useful
+there. The signed production artifact instead uses a 4 GiB read-only root, 512 MiB
+persist partition, and 128 MiB initial data filesystem, then ends at p4. First boot
+still grows only p4 to the aligned 95% card boundary. This cuts authenticated raw
+write and readback from 10 GiB to 5,256 MiB without changing whole-image verification
+or the physical card reserve.
+
+Extent-only flashing was rejected because skipped target ranges would retain
+unauthenticated bytes and require a new privacy, verification, and resume model.

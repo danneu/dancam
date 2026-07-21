@@ -8,7 +8,7 @@ ALIGN=$DANCAM_ALIGN_SECTORS
 
 for bytes in 32000000000 64000000000 128000000000 256000000000; do
   total=$((bytes / 512))
-  start=18874368
+  start=10502144
   read -r size end < <(commission_layout "$total" "$start" "$ALIGN")
   tail=$((total - end))
   [ "$((start % ALIGN))" -eq 0 ]
@@ -17,7 +17,7 @@ for bytes in 32000000000 64000000000 128000000000 256000000000; do
   [ "$tail" -ge "$((total * (100 - DANCAM_DATA_PERCENT) / 100))" ]
 done
 
-if commission_layout "$((DANCAM_MIN_TOTAL_SECTORS - 1))" 18874368 "$ALIGN" >/dev/null; then
+if commission_layout "$((DANCAM_MIN_TOTAL_SECTORS - 1))" 10502144 "$ALIGN" >/dev/null; then
   echo "sub-32 GB card was accepted" >&2
   exit 1
 fi

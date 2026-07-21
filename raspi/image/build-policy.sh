@@ -26,3 +26,20 @@ wait_for_paths() {
   done
   return 1
 }
+
+calculate_partition_geometry() {
+  local p2_start=$1 root_size=$2 persist_size=$3 data_size=$4 align=$5
+  local value p2_end p3_start p3_end p4_start p4_end
+
+  for value in "$p2_start" "$root_size" "$persist_size" "$data_size" "$align"; do
+    [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
+  done
+  [ $((p2_start % align)) -eq 0 ] || return 1
+
+  p2_end=$((p2_start + root_size - 1))
+  p3_start=$(( ((p2_end + 1 + align - 1) / align) * align ))
+  p3_end=$((p3_start + persist_size - 1))
+  p4_start=$(( ((p3_end + 1 + align - 1) / align) * align ))
+  p4_end=$((p4_start + data_size))
+  printf '%s %s %s %s %s\n' "$p2_end" "$p3_start" "$p3_end" "$p4_start" "$p4_end"
+}

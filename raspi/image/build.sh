@@ -54,19 +54,25 @@ echo "$DANCAM_OS_IMAGE_SHA256  $BASE" | sha256sum --check --status || die "Raspb
 
 RAW="$WORK/dancam-${VERSION}.img"
 xz --decompress --stdout "$BASE" > "$RAW"
-truncate -s 10737418240 "$RAW"
-LOOP=$(losetup --find --show --partscan "$RAW")
-
-DISK_ID=$(sfdisk --json "$LOOP" | jq -er '.partitiontable.id')
+BASE_PARTITIONS=$(sfdisk --json "$RAW")
+DISK_ID=$(jq -er '.partitiontable.id' <<<"$BASE_PARTITIONS")
 ROOT_PARTUUID=$(dos_partition_uuid "$DISK_ID" 2) || die "base image has an invalid DOS label id"
-P1_START=$(sfdisk --json "$LOOP" | jq -r '.partitiontable.partitions[0].start')
-P1_SIZE=$(sfdisk --json "$LOOP" | jq -r '.partitiontable.partitions[0].size')
-P2_START=$(sfdisk --json "$LOOP" | jq -r '.partitiontable.partitions[1].start')
-P2_END=$((P2_START + DANCAM_ROOT_SIZE_SECTORS - 1))
-P3_START=$(( ((P2_END + 1 + DANCAM_ALIGN_SECTORS - 1) / DANCAM_ALIGN_SECTORS) * DANCAM_ALIGN_SECTORS ))
-P3_END=$((P3_START + DANCAM_PERSIST_SIZE_SECTORS - 1))
-P4_START=$(( ((P3_END + 1 + DANCAM_ALIGN_SECTORS - 1) / DANCAM_ALIGN_SECTORS) * DANCAM_ALIGN_SECTORS ))
-P4_SIZE=$DANCAM_INITIAL_DATA_SIZE_SECTORS
+P1_START=$(jq -er '.partitiontable.partitions[0].start' <<<"$BASE_PARTITIONS")
+P1_SIZE=$(jq -er '.partitiontable.partitions[0].size' <<<"$BASE_PARTITIONS")
+P2_START=$(jq -er '.partitiontable.partitions[1].start' <<<"$BASE_PARTITIONS")
+[ "$P1_SIZE" -eq "$DANCAM_BOOT_SIZE_SECTORS" ] || die "base image boot partition is not 512 MiB"
+[ $((P1_START % DANCAM_ALIGN_SECTORS)) -eq 0 ] || die "base image boot partition is not 4 MiB-aligned"
+read -r P2_END P3_START P3_END P4_START RAW_END_SECTOR < <(
+  calculate_partition_geometry \
+    "$P2_START" \
+    "$DANCAM_PRODUCTION_ROOT_SIZE_SECTORS" \
+    "$DANCAM_PRODUCTION_PERSIST_SIZE_SECTORS" \
+    "$DANCAM_PRODUCTION_INITIAL_DATA_SIZE_SECTORS" \
+    "$DANCAM_ALIGN_SECTORS"
+) || die "base image root partition is not valid production geometry"
+P4_SIZE=$DANCAM_PRODUCTION_INITIAL_DATA_SIZE_SECTORS
+truncate -s "$((RAW_END_SECTOR * 512))" "$RAW"
+LOOP=$(losetup --find --show --partscan "$RAW")
 
 cat <<EOF | sfdisk --no-reread --force "$LOOP"
 label: dos

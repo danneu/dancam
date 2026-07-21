@@ -31,7 +31,11 @@ destroys Pi-local footage and identity.
 
 The production image preserves the base DOS disk identifier so the kernel root
 `PARTUUID` continues to resolve after partition-table assembly, and it boots with the
-`US` Wi-Fi regulatory domain used by the channel-1 production access point.
+`US` Wi-Fi regulatory domain used by the channel-1 production access point. Its raw
+artifact is 5,511,315,456 bytes (5,256 MiB) for the current pinned base: 512 MiB boot,
+4 GiB root, 512 MiB persist, and 128 MiB initial data. Flashing writes and reads back
+all 5,256 authenticated MiB. On first boot, commissioning grows only data to the
+aligned 95% card boundary; root and persist retain their release sizes.
 
 The remaining sections are the writable development-card workflow.
 
