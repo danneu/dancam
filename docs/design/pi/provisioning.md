@@ -1,9 +1,10 @@
 # Pi provisioning
 
-The camera unit stays on Raspberry Pi OS and is converged from the Mac with
-Ansible. Provisioning makes onboard system state declarative, repeatable, and
-reviewable without pulling the fast binary-deploy loop into configuration
-management.
+The camera unit stays on Raspberry Pi OS and is converged with Ansible. Writable
+development cards run Ansible over SSH from the Mac; production images run it
+against mounted filesystems through the chroot connection. Provisioning makes
+onboard system state declarative, repeatable, and reviewable without pulling the
+fast binary-deploy loop into configuration management.
 
 This page owns the provisioning tool, its execution and idempotency model, the
 boundary between system state and deployed artifacts, and the split between
@@ -14,12 +15,20 @@ policy; [networking](networking.md) owns the AP and mDNS behavior; and
 
 ## Ownership boundary
 
-The repository has four distinct configuration owners:
+The repository has six distinct configuration owners:
 
 - `raspi/ansible/development.yml` converges writable cards over SSH. The
   `system_common` role owns shared machine identity, configuration, service unit,
   camera process, and filesystem namespace; `dev_runtime` owns live development
   packages, mounts, checks, handlers, and reboot behavior.
+- `raspi/ansible/production.yml` converges a mounted image root through Ansible's
+  chroot connection. It reuses `system_common`; `production_image` owns exact package
+  pins, persistent binds, read-only mount posture, commissioning artifacts, and
+  offline unit enablement and masks.
+- `raspi/image/build.sh` owns authenticated base-image input, disk assembly,
+  temporary target mounts, generated release facts, independent inspection,
+  inventory, compression, manifest creation, and signing. It does not declare target
+  packages, accounts, services, configuration, or ownership.
 - `raspi/deploy.sh` owns the cross-built service binary, camera-process refresh,
   and fast restart loop. The tracked systemd unit is Ansible-owned, so unit changes
   require provisioning before deploy.
@@ -27,8 +36,8 @@ The repository has four distinct configuration owners:
   creation. The playbook owns the resulting mounts and directory ownership.
 - The [Pi setup runbook](../../setup/pi-runbook.md) owns human and runtime
   operations that cannot be expressed as converged system state: flashing,
-  first boot, smoke tests, the manual AP secret, safe AP toggling, and
-  car-image sequencing.
+  first boot, smoke tests, the manual development AP secret, safe AP toggling,
+  release publication, and production-card flashing.
 
 A command belongs in the artifact that executes it. The hard-won reason for an
 Ansible action belongs in the adjacent task comment, while a concise task or
@@ -50,8 +59,8 @@ just raspi-provision-lint
 `raspi-provision` converges the writable development image.
 `raspi-provision-check` uses `--check --diff` as a non-mutating drift detector,
 and `raspi-provision-lint` runs the hardware-free syntax and lint gate on the
-Mac. A converged Pi must re-run with `changed=0`; idempotency is an observed
-acceptance condition, not an assumption.
+Mac for both entry playbooks. A converged development Pi must re-run with
+`changed=0`; idempotency is an observed acceptance condition, not an assumption.
 
 Provisioning always runs while the Pi is a client on home Wi-Fi. The apt step
 needs upstream internet, and the single-radio design does not run AP and
@@ -71,25 +80,29 @@ run neither changes packages nor reboots.
 
 There is no live conversion from a writable card to production posture.
 Production cards come only from the authenticated image build and flash path.
+During `just raspi-image`, the builder mounts boot, root, `/persist`, and `/data`,
+then runs the production play twice. The second pass must report `changed=0`. The
+production roles use no service start/restart, reboot, live target mount, swap, or
+hardware-inspection action; a separate shell verifier inspects the completed image
+before inventory, compression, or signing can begin.
 
 ## Managed system state
 
-Writable development convergence includes:
+The shared `system_common` role declares:
 
-- the required card-layout gate, apt full-upgrade, Picamera2/PyAV/ffmpeg/v4l2
-  packages, a deployed-interpreter import check, and the IMX708 device-tree
-  configuration; PyAV is the recording runtime and ffmpeg is an operator validator;
-- Avahi scoping, the `en_US.UTF-8` locale, and the full `dancam-ap`
-  NetworkManager profile except its PSK;
+- the IMX708 device-tree configuration, Avahi scoping, and the `en_US.UTF-8` locale;
 - the fixed `dancam` system user and its `video` supplementary group;
-- `/persist` and `/data` mounts, the `/persist/journal` bind, and
-  playbook-owned `/data/rec` and `/data/rec/state` directory ownership;
+- playbook-owned `/data/rec` and `/data/rec/state` directory ownership;
 - persistent bounded journald, the hardware watchdog, recording-oriented dirty
   writeback limits, weekly filesystem trimming, and the tracked service artifacts.
 
-Development performs a full upgrade and then installs its declared packages. The
-production image builder continues to install its pinned catalog until production
-convergence moves under Ansible.
+One package catalog records profile membership and every exact production pin.
+Development first enforces the card-layout preflight and live mounts, performs a full
+upgrade, installs its declared Picamera2/PyAV/ffmpeg/v4l2 packages, validates the
+deployed interpreter, and manages the non-autoconnect `dancam-dev` profile. Production
+installs its exact package set without a floating upgrade, then declares the
+persistent binds, conditional `/data` mount, read-only root/boot posture, generic
+image marker, commissioning state, service environment, and maintenance masks.
 
 ## Connection and service identities
 
@@ -124,8 +137,8 @@ development cards are reflashed onto the current partition and ownership model.
 
 ## AP secret and idempotency
 
-The AP PSK never enters the repository, `.env`, or Ansible. The playbook manages
-every non-secret field of `dancam-ap`; the operator enters the PSK once on the Pi.
+The development AP PSK never enters the repository, `.env`, or Ansible. `dev_runtime`
+manages every non-secret field of `dancam-ap`; the operator enters the PSK once on the Pi.
 Leaving the secret field unmanaged both protects it and avoids NetworkManager
 module churn around `psk` and `psk-flags`. Production AP identity is instead
 installed from the authenticated per-card personalization envelope.
@@ -142,13 +155,12 @@ used while the simpler module remains idempotent.
 
 ## Development and production split
 
-Ansible remains the convergence authority for writable development cards and keeps
-the home-Wi-Fi provision, partition, deploy, AP-toggle, and `changed=0` loop. The
-production image builder is a separate offline assembly path: it consumes the same
-tracked service unit, camera owner, commissioning scripts, and
-`raspi/system/card-layout.env` geometry/label contract, but it neither runs apt nor
-Ansible on the deployed Pi. A production boot
-has no SSH, home network, package repository, or workstation dependency.
+Ansible is the convergence authority for both profiles. Development runs it live over
+SSH and keeps the home-Wi-Fi provision, partition, deploy, AP-toggle, and `changed=0`
+loop. Production runs it offline inside the image builder, with target service
+actions forbidden and exact packages installed before the remaining system state.
+The deployed production Pi contains neither Ansible nor an apt dependency: it boots
+complete without SSH, a home network, a package repository, or a workstation.
 
 The release publisher supplies the minisign secret key only to the controlled image
 build. The key is never stored in the image or repository. Flash consumers trust the

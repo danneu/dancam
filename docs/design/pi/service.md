@@ -82,7 +82,9 @@ The deploy script restarts the already-provisioned unit and waits for canonical
 status and recording readiness. Ansible installs the tracked unit, so unit changes
 require a provisioning run; deploy remains the fast binary/camera code-change loop.
 The writable development image and read-only car image use the same service artifact
-set.
+set. Development provisioning installs the camera child and unit before the first
+deploy. Production image convergence installs those artifacts plus the cross-built
+binary, so a flashed card is complete without deploy, SSH, or a target-side build.
 
 ## Request tracing
 

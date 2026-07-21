@@ -32,11 +32,11 @@ ipv6.method                                  ignore
 connection.autoconnect                       no
 ```
 
-The cipher pins make this WPA2-AES only: no WPA1 and no TKIP. Ansible
-provisions every field except the PSK. The development password is entered once
-on the Pi so the secret never enters the repository or playbook. The shared
-`dancam-dev` identity is strictly a development profile; production commissioning
-uses the per-unit random identity and QR onboarding described below.
+The cipher pins make this WPA2-AES only: no WPA1 and no TKIP. The Ansible
+`dev_runtime` role provisions every field except the PSK. The development password is
+entered once on the Pi so the secret never enters the repository or playbook. The
+shared `dancam-dev` identity is strictly a development profile; production
+commissioning uses the per-unit random identity and QR onboarding described below.
 
 NetworkManager shared mode owns connection lifecycle, IPv4 forwarding, DHCP,
 and DNS through its private dnsmasq instance. The fixed `10.42.0.1/24` address
@@ -75,16 +75,18 @@ least-congested choice among 1, 6, and 11. A deployment in a different regulator
 domain or RF environment must revalidate that choice rather than treating the
 desk scan as universal.
 
-The production path creates a distinct persisted `dancam-ap` profile during one-time
-commissioning. Its SSID is `dancam-<unit-id>`, its WPA2-AES PSK has at least 128 bits
-of cryptographic entropy, and it autoconnects because the car has no upstream network.
-The generic image contains no production SSID, PSK, or home-Wi-Fi profile. The
-development profile remains `dancam-dev`, secret-manual, and non-autoconnecting.
+The Ansible production profile prepares persistent NetworkManager state but contains
+no AP credential. One-time commissioning creates the distinct persisted `dancam-ap`
+profile from the authenticated personalization envelope. Its SSID is
+`dancam-<unit-id>`, its WPA2-AES PSK has at least 128 bits of cryptographic entropy,
+and it autoconnects because the car has no upstream network. The generic image
+contains no production SSID, PSK, or home-Wi-Fi profile. The development profile
+remains `dancam-dev`, secret-manual, and non-autoconnecting.
 
 ## Local naming
 
-The production image owns the hostname `dancam`, installs and enables Avahi, and
-scopes it to `wlan0` with `allow-interfaces=wlan0` in
+The shared Ansible role owns the hostname `dancam`, installs and enables Avahi in both
+profiles, and scopes it to `wlan0` with `allow-interfaces=wlan0` in
 `/etc/avahi/avahi-daemon.conf`. The Pi has only one client-facing interface.
 Advertising on loopback during early boot allowed Avahi to see its own stale
 `dancam.local` publication as a conflict after Wi-Fi appeared, rename the host to

@@ -29,8 +29,11 @@ validate_commissioning_envelope() {
   [ "${#nonce}" -ge 22 ] || return 1
 }
 
-prepare_recording_namespace() {
+validate_recording_namespace() {
   local data_root=$1 owner=$2 group=$3
-  install -d -o "$owner" -g "$group" -m 755 "$data_root/rec"
-  install -d -o "$owner" -g "$group" -m 755 "$data_root/rec/state"
+  local path
+  for path in "$data_root/rec" "$data_root/rec/state"; do
+    [ "$(find "$path" -prune -type d -user "$owner" -group "$group" -perm 755 -print 2>/dev/null)" = "$path" ] \
+      || return 1
+  done
 }

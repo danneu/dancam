@@ -100,12 +100,11 @@ mock first.
             remain one-shot reads.
 - [x] **Swoop `loam` -- Declarative Pi provisioning.** Replace the manual README
       bring-up runbook (the apt / config.txt / avahi / locale / nmcli steps `pine`
-      established by hand) with one idempotent Ansible playbook, run from the Nix
-      shell over SSH. `just raspi-provision` converges a freshly-flashed Pi to the
-      full system state; `deploy.sh` keeps owning the fast app loop; the README drops
+      established by hand) with one Ansible system declaration. The writable profile
+      runs from the Nix shell over SSH; the offline profile converges mounted
+      production images. `deploy.sh` keeps owning the fast code loop; the README drops
       to a thin bootstrap/verify/ops runbook. _Deepens `pine`: its hand-built
-      foundation becomes declarative, re-runnable, and diffable (`--check --diff`).
-      The "it works" moment is a re-run printing `changed=0`._
+      foundation becomes declarative, re-runnable, and diffable (`--check --diff`)._
   - [x] Ansible ships in the Nix shell (`nix develop -c ansible --version`) and
             the `raspi-provision` / `-check` / `-lint` Just recipes exist.
   - [x] Role-based development play (`raspi/ansible/development.yml`) passes the
@@ -121,6 +120,8 @@ mock first.
             [provisioning design](design/pi/provisioning.md) records the rationale,
             the README became the pinned runbook, and `raspi/AGENTS.md` flipped to
             "playbook is the source of truth."
+  - [x] Production images reuse the shared role through an offline chroot play;
+            a second `changed=0` pass and independent inspection gate signing.
 - [x] **Swoop `opal` -- Connection robustness.** Keep the app usable across a flaky
       2.4 GHz link: detect drops fast, ride them out in place, and recover without a
       manual rejoin. _App-side ambient UX and resumable pulls have landed; measured
@@ -267,10 +268,11 @@ mock first.
       signed generic image contains the complete four-partition car system;
       `just raspi-flash` authenticates it before selecting media, requires exact
       whole-disk erase confirmation, personalizes a unique AP identity and setup QR,
-      verifies readback, and ejects. First boot grows only the initialized p4 filesystem,
-      durably mints storage identity, and exposes canonical preparing/complete/failed
-      commissioning state. The app scans the Wi-Fi QR and persists the iOS configuration.
-      Development Ansible, partition, deploy, and AP-toggle workflows remain available.
+      verifies readback, and ejects. First boot validates the Ansible-baked recording
+      namespace, grows only the initialized p4 filesystem, durably mints storage
+      identity, and exposes canonical preparing/complete/failed commissioning state.
+      The app scans the Wi-Fi QR and persists the iOS configuration. Development
+      partition, provision, deploy, and AP-toggle workflows remain available.
   - [x] Pi reports exact
             [recorder-writable capacity](design/pi/telemetry.md#recorder-writable-capacity)
             after root-reserved blocks and the GC floor; snapshot and delta

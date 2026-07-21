@@ -42,9 +42,10 @@ compatibility.
   reaches the service through the direct AP. See [networking](../docs/design/pi/networking.md).
 - **Service:** the statically cross-built Rust binary owns control, media, status,
   events, and camera supervision. See [service runtime](../docs/design/pi/service.md).
-- **Provisioning:** Ansible owns onboard system state, the camera process, service
-  unit, and filesystem paths; deploy owns the fast binary/camera refresh and service
-  restart loop. See [provisioning](../docs/design/pi/provisioning.md).
+- **Provisioning:** Ansible owns onboard system state through writable-development
+  and offline-production profiles, including the camera process, service unit, and
+  filesystem paths. Deploy owns the fast binary/camera refresh and service restart
+  loop. See [provisioning](../docs/design/pi/provisioning.md).
 
 ## Structure
 
@@ -67,6 +68,8 @@ Prefer root Justfile recipes over raw Cargo, Ansible, or deploy commands:
 
 - `just raspi-build`, `just raspi-test`, `just raspi-check` -- local build and gates.
 - `just raspi-image`, `just raspi-flash` -- production release build and Mac card flow.
+- `just raspi-image-builder-test`, `just raspi-commission-test` -- hardware-free
+  production image and first-boot policy regressions.
 - `just raspi-mock`, `just raspi-mock-gc`, `just raspi-mock-lan` -- mock service loops.
 - `just raspi-deploy`, `just raspi-deploy-test` -- cross-build/deploy and its regression.
 - `just raspi-provision`, `just raspi-provision-check`,
@@ -75,15 +78,15 @@ Prefer root Justfile recipes over raw Cargo, Ansible, or deploy commands:
   hardware-free regressions for their destructive or device-facing tools.
 
 The [Pi setup runbook](../docs/setup/pi-runbook.md) owns flash, SSH, provisioning,
-smoke tests, AP switching, deployment, and car-image hardening procedures.
+smoke tests, AP switching, deployment, and production-card procedures.
 
 ## Dev image vs. car image
 
 The dev image uses writable root and a manual AP toggle but keeps the same `/data`
-and `/persist` partition model as the car image. The car image packages that same
-durable software with plain read-only root, writable data and OS-state islands, and
-the persisted AP. This forced run-mode difference is not permission to build a weak
-dev-only feature and harden it later. AP autoconnect remains a separate decision.
+and `/persist` partition model as the car image. Both reuse the shared Ansible role;
+the production profile adds plain read-only root, writable data and OS-state islands,
+and first-boot commissioning for the persisted AP. This forced run-mode difference is
+not permission to build a weak dev-only feature and harden it later.
 
 ## Environment and logs
 

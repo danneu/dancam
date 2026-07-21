@@ -2,9 +2,9 @@
 
 ## Production card: one command
 
-Released production cards do not use Raspberry Pi Imager, home Wi-Fi, SSH, apt,
-Ansible, manual partitioning, deploy, or a hardening pass. On the Apple Silicon Mac,
-enter the development shell and run:
+Released production cards do not require Raspberry Pi Imager, home Wi-Fi, SSH,
+target-side apt or Ansible, manual partitioning, deploy, or a hardening pass. On the
+Apple Silicon Mac, enter the development shell and run:
 
 ```sh
 just raspi-flash
@@ -41,10 +41,11 @@ with `DANCAM_IMAGE_SIGNING_KEY`. The task creates or reuses a dedicated 64 GB AR
 NixOS OrbStack machine named `dancam-builder`, runs the controlled Linux build there,
 and writes the release artifacts back to the Mac checkout under `dist/`. Override the
 machine name with `DANCAM_IMAGE_BUILDER_MACHINE` when needed. The build refuses
-uncommitted tracked source, verifies the pinned OS digest, installs the pinned runtime
-package versions, and emits the compressed image, signed manifest, and installed-package
-inventory. Flash operators receive only those release artifacts and trust the public
-key tracked at `raspi/image/release.pub`.
+uncommitted tracked source, verifies the pinned OS digest, converges the mounted image
+through the offline Ansible profile twice, requires `changed=0` on the second pass,
+and independently inspects the result before emitting the compressed image, signed
+manifest, and installed-package inventory. Flash operators receive only those release
+artifacts and trust the public key tracked at `raspi/image/release.pub`.
 
 Hands-on runbook for bringing up the dancam camera unit -- from flashing the microSD
 through serving canonical operational status. These are the concrete steps we ran for the
@@ -631,3 +632,6 @@ Do not convert a writable development card into production posture. Production c
 come only from `just raspi-image` followed by the authenticated `just raspi-flash`
 flow in section 1. The signed image owns read-only root and boot, persistent state,
 offline commissioning, and the production AP; development cards remain writable.
+The image already contains the `dancam`-owned recording namespace. Commissioning
+validates it, grows p4, mints the storage generation and per-card identity, and admits
+`/data`; it does not repair packages, accounts, service configuration, or ownership.

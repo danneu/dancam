@@ -78,9 +78,9 @@ cannot be shrunk in place and must be reflashed.
 
 ## Mounts and writable state
 
-The Ansible development/car-image path, not the partitioning script, owns fstab,
-mounts, application directories, and the read-only switch. Its effective mount facts
-are:
+The Ansible development and production profiles, not the partitioning or image-builder
+shell, own fstab, mounts, application directories, and the read-only switch. Their
+effective mount facts are:
 
 ```text
 LABEL=dancam-persist /persist ext4 noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s 0 2
@@ -184,16 +184,26 @@ launched from the Apple Silicon Mac, then runs the controlled Linux-native image
 recipe there. OrbStack shares the checkout, so authenticated release outputs land
 back under `dist/` without copying the signing key into a second source tree. The
 builder verifies the pinned Raspberry Pi OS Lite input and assembles fixed p1 through
-p3 plus initialized small p4 layout, installs the camera runtime and service, removes the
-stock root-expansion trigger, and emits a versioned zstd image with a JSON manifest.
+p3 plus an initialized small p4 layout. It mounts every target filesystem and runs
+`raspi/ansible/production.yml` through the chroot connection; Ansible installs the
+exact runtime packages, service artifacts, commissioning files, and complete target
+posture. The builder then emits a versioned zstd image with a JSON manifest.
 The image builder, first-boot commissioner, Mac eligibility policy, and writable
 development partitioner all consume `raspi/system/card-layout.env`, so geometry,
 labels, minimum capacity, and the reserved-tail boundary have one definition.
 The publisher signs that manifest with the DanCam minisign key. The manifest records
 both compressed and raw digests, raw size, OS release and digest, repository revision,
-image identity, and the digest of a complete installed-package inventory. Runtime
-packages not already present in the pinned OS image are installed at the exact versions
-in `raspi/image/inputs.env`; the builder does not run a floating full-upgrade.
+image identity, and the digest of a complete installed-package inventory. The shared
+Ansible package catalog records every exact production version; production does not
+run a floating full-upgrade.
+
+The production play runs twice against the mounted filesystems and release fails
+unless the second pass reports `changed=0`. Target service actions, reboots, live
+mount activation, swap manipulation, and hardware inspection are forbidden in the
+offline roles. After convergence, an independent shell verifier inspects the
+effective hostname, packages, units, camera and regulatory configuration, write and
+mount posture, recording namespace, and absence of secrets or admission state.
+Inventory, compression, manifest creation, and signing occur only after those gates.
 
 `just raspi-flash` is the native Mac consumer. It authenticates the manifest and
 compressed image before media discovery, admits only writable removable whole disks
@@ -211,11 +221,14 @@ rewrites the partition geometry and asserts that the kernel's root `PARTUUID`
 resolves to partition 2. The production boot line also pins the selected `US` Wi-Fi
 regulatory domain.
 
-The generic p4 filesystem has no recording witness. First boot validates the
-authenticated image marker and matching envelope, brings up the per-unit AP, extends
-only p4 to the aligned 95% card boundary, grows its existing ext4 filesystem, and
-mints the storage generation while p4 is mounted privately. It commits commissioning
-`complete` durably before exposing `/data` to the normal service. A completed state
+The generic p4 filesystem contains empty `/data/rec` and `/data/rec/state`
+directories, owned by `dancam` with mode `0755`, but no recording witness or storage
+admission marker. First boot validates the authenticated image marker and matching
+envelope, brings up the per-unit AP, extends only p4 to the aligned 95% card boundary,
+grows its existing ext4 filesystem, and verifies the baked namespace while p4 is
+mounted privately. Commissioning fails closed instead of repairing missing or
+unusable system state. It mints only the storage generation, commits commissioning
+`complete` durably, and then exposes `/data` to the normal service. A completed state
 permanently fences replay; interruption before that point reruns idempotent growth or
 reports a stable failure. Root and boot are read-only in the resulting car posture.
 
@@ -371,3 +384,13 @@ failed recording with `/data/rec is not writable`. Commissioning now applies the
 service identity and mode explicitly to both directories before publishing the
 storage generation. A regression begins with a non-writable parent and requires the
 whole namespace to become writable.
+
+### 2026-07-20 -- Bake the recording namespace and validate it at commissioning
+
+The ownership repair above fixed the first card, but it left commissioning as a
+second authority for system state. Once production convergence moved under Ansible,
+the generic p4 could carry the same empty, service-owned namespace as development.
+Commissioning now verifies those baked directories before minting storage identity
+and fails closed when they are absent or unusable; it no longer creates or repairs
+them. The earlier repair remains recorded as the incident response that exposed this
+ownership boundary.

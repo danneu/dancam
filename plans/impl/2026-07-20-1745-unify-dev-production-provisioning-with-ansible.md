@@ -170,7 +170,7 @@ temporary helpers are removed.
 
 - [x] 1. Establish role-based development provisioning and Ansible-owned service units
 - [x] 2. Converge production images with Ansible and enforce offline release gates
-- [ ] 3. Narrow commissioning ownership and finish system documentation
+- [x] 3. Narrow commissioning ownership and finish system documentation
 
 ## Implementation notes
 
@@ -185,3 +185,7 @@ temporary helpers are removed.
   `just raspi-image` build. The second production play reported `changed=0`,
   independent image inspection passed, and the signed manifest and its artifact
   and package-inventory hashes verified against `raspi/image/release.pub`.
+- Commissioning validates the baked recording directories by exact directory type,
+  owner, group, and mode. A write probe would be misleading because commissioning
+  runs as root; strict metadata proves the `dancam` service will own a writable
+  namespace without letting first boot repair Ansible-owned state.
