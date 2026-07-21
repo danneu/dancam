@@ -105,7 +105,7 @@ mount --make-rslave "$WORK/root/dev"
 # Restore the base image's resolver artifact before release inspection.
 cp -a "$WORK/root/etc/resolv.conf" "$WORK/base-resolv.conf"
 rm -f "$WORK/root/etc/resolv.conf"
-cp /etc/resolv.conf "$WORK/root/etc/resolv.conf"
+install_temporary_resolver /etc/resolv.conf "$WORK/root/etc/resolv.conf"
 
 run_production_convergence \
   "$WORK/root" "$SERVICE_BINARY" "$IMAGE_ID" "$ROOT_PARTUUID" \

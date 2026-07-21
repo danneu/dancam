@@ -6,3 +6,8 @@ dos_partition_uuid() {
   [[ "$partition" =~ ^[1-9][0-9]*$ ]] || return 1
   printf '%s-%02d\n' "${id,,}" "$partition"
 }
+
+install_temporary_resolver() {
+  local source=$1 target=$2
+  install -m 0644 "$source" "$target"
+}

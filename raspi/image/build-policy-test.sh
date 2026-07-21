@@ -17,4 +17,12 @@ if dos_partition_uuid 0x041bba91 0 >/dev/null 2>&1; then
   exit 1
 fi
 
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+printf 'nameserver 192.0.2.1\n' > "$TMP/source-resolv.conf"
+umask 077
+install_temporary_resolver "$TMP/source-resolv.conf" "$TMP/target-resolv.conf"
+cmp "$TMP/source-resolv.conf" "$TMP/target-resolv.conf"
+[ "$(find "$TMP/target-resolv.conf" -perm 0644 -print)" = "$TMP/target-resolv.conf" ]
+
 echo "image build policy tests passed"
