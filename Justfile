@@ -179,14 +179,15 @@ raspi-hdr-test:
 
 # Provision the Pi's system layer with Ansible over home Wi-Fi (apt, camera overlay,
 # mDNS, locale, AP profile, video group). Override the address with host=192.168.1.50
-# when mDNS is flaky. Prompts once for your sudo password.
+# when mDNS is flaky. Generated cards use passwordless sudo; legacy cards can set
+# DANCAM_ASK_BECOME_PASS=1 to retain the interactive become prompt.
 raspi-provision host='dancam.local':
     #!/usr/bin/env bash
     set -euo pipefail
     HOST="${DANCAM_HOST:-pi@dancam.local}"
     SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
+    nix develop -c bash -c 'cd raspi/ansible; become=(); [ "${DANCAM_ASK_BECOME_PASS:-0}" != 1 ] || become=(--ask-become-pass); ansible-playbook development.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" "${become[@]}"' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
 
 # Dry-run the provision: show what is out of sync on the Pi without changing anything.
 raspi-provision-check host='dancam.local':
@@ -195,14 +196,15 @@ raspi-provision-check host='dancam.local':
     HOST="${DANCAM_HOST:-pi@dancam.local}"
     SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass --check --diff' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
+    nix develop -c bash -c 'cd raspi/ansible; become=(); [ "${DANCAM_ASK_BECOME_PASS:-0}" != 1 ] || become=(--ask-become-pass); ansible-playbook development.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" "${become[@]}" --check --diff' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
 
 # Hardware-free gate: syntax + ansible-lint all entry playbooks, no Pi connection.
 raspi-provision-lint:
     nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml --syntax-check && ansible-playbook -i production-inventory.ini development-image.yml --syntax-check && ansible-playbook -i production-inventory.ini production.yml --syntax-check && ansible-playbook -i production-inventory.ini release-cleanup.yml --syntax-check && ansible-lint development.yml development-image.yml production.yml release-cleanup.yml'
 
 # Run from the Mac while the Pi is on home Wi-Fi; join dancam-dev from the iPhone,
-# not this Mac. Overrides: DANCAM_HOST, DANCAM_SSH_KEY, DANCAM_HOME_WIFI.
+# not this Mac. Generated cards return to dancam-home; legacy cards can override
+# that connection name with DANCAM_HOME_WIFI.
 # Flip the Pi to AP mode (dancam-dev) with auto-revert to home Wi-Fi after `minutes`, then count down to the revert.
 raspi-ap minutes="5":
     #!/usr/bin/env bash
@@ -210,7 +212,7 @@ raspi-ap minutes="5":
     HOST="${DANCAM_HOST:-pi@dancam.local}"
     SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
-    HOME_WIFI="${DANCAM_HOME_WIFI:-preconfigured}"
+    HOME_WIFI="${DANCAM_HOME_WIFI:-dancam-home}"
     SECS=$(( {{minutes}} * 60 ))
 
     echo "==> arming +{{minutes}}min revert to $HOME_WIFI, then flipping Pi to AP (dancam-dev)"

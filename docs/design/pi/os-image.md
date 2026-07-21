@@ -109,6 +109,13 @@ commissioner then starts the unit explicitly. This keeps p4 private from normal
 service and GC work throughout first-boot growth while preserving the same mount on
 every completed boot.
 
+Development keeps its unconditional writable fstab entry for live Ansible
+compatibility. On the first boot, commissioning readiness prevents the running
+service from mutating storage; the commissioner unmounts `/data`, grows and checks p4
+privately, writes a unique storage generation, commits durable admission, and
+remounts it. Status, events, preview, camera supervision, and telemetry remain
+available from the normally started service while recording stays failed closed.
+
 `/data` is the only hot recording partition. The deployed service records under
 `/data/rec` with `DANCAM_REQUIRE_REC_MOUNT=/data`. The app's format-card operation
 reformats `/data` only. The recording namespace's generation and sequence witness
@@ -183,7 +190,7 @@ is added only if evidence identifies one of those uncovered classes. The origina
 2026-06-30 incident left no evidence, so it is not known whether PID 1 stopped
 scheduling and the host watchdog would have caught it.
 
-## Production image and commissioning
+## Image assembly and commissioning
 
 `just raspi-image` creates or reuses the dedicated ARM64 NixOS OrbStack builder when
 launched from the Apple Silicon Mac, then runs the controlled Linux-native image
@@ -243,6 +250,16 @@ unusable system state. It mints only the storage generation, commits commissioni
 `complete` durably, and then exposes `/data` to the normal service. A completed state
 permanently fences replay; interruption before that point reruns idempotent growth or
 reports a stable failure. Root and boot are read-only in the resulting car posture.
+
+The development image uses a separate image-bound envelope containing the selected
+login user, authorized public key, home Wi-Fi credentials, and development AP PSK.
+First boot validates every field before mutation, creates a locked key-only account
+with passwordless sudo, generates fresh SSH host keys, installs `dancam-home` and
+`dancam-ap`, commits the machine identity, and then follows the shared p4 growth and
+storage-admission path. Completion or a stable reason code is written atomically
+under `/persist`; successful
+development commissioning removes the consumed FAT envelope. A completed state
+fences replay while still re-admitting the mount after a later boot.
 
 ## Decision log
 
@@ -443,3 +460,19 @@ Embedding a preconfigured developer account or Wi-Fi profile in the reusable ima
 was rejected because it would turn a workstation secret into a build artifact. The
 generic image instead has empty machine identity and commissioning state that blocks
 recording mutations until later per-card personalization succeeds.
+
+### 2026-07-21 -- Commission development cards on first boot
+
+Development personalization now occurs after the generic image is written. A typed
+envelope binds the developer account, authorized key, and both Wi-Fi secrets to that
+image identity; first boot rejects malformed or mismatched input before applying it.
+The shared commissioner then creates unique machine and storage identities, grows
+p4 to the same aligned 95% boundary as production, and publishes completion only
+after the recording namespace passes admission.
+
+Pre-baking a workstation account was rejected because one cached artifact would
+carry reusable access to every card. Requiring a live SSH bootstrap was rejected
+because it makes network access depend on the very account and home profile being
+created. The small FAT envelope is accepted as transient trusted-card state and is
+removed after successful development commissioning; its deletion is not secure
+erasure.

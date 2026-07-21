@@ -112,5 +112,11 @@ names are fixed as `dancam-home` and `dancam-ap`.
 ## Commit progress
 
 - [x] 1. Build and verify generic writable development images
-- [ ] 2. Personalize and commission development cards on first boot
+- [x] 2. Personalize and commission development cards on first boot
 - [ ] 3. Unify profile-explicit flashing and retire manual card creation
+
+## Implementation notes
+
+- Development commissioning generates fresh SSH host keys after the generic image
+  verifier requires them to be absent, so cached development artifacts cannot give
+  multiple cards the same SSH server identity.

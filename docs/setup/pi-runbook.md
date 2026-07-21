@@ -214,7 +214,9 @@ upstream:
 just raspi-provision          # converge the Pi; reboots itself if a task needs it
 ```
 
-It prompts once for your sudo password. When mDNS is flaky, target a raw LAN IP:
+Cards created by the development image commissioner use passwordless sudo and do not
+prompt. For a legacy manually created card that still requires a become password,
+set `DANCAM_ASK_BECOME_PASS=1`. When mDNS is flaky, target a raw LAN IP:
 `just raspi-provision host=192.168.1.50`.
 
 Preview what would change without touching the Pi (the drift detector), or lint the
@@ -333,7 +335,7 @@ timer. Replace the home profile name if `nmcli connection show` reports a
 different one:
 
 ```sh
-HOME_WIFI_CONNECTION="${DANCAM_HOME_WIFI:-<your-home-wifi>}"
+HOME_WIFI_CONNECTION="${DANCAM_HOME_WIFI:-dancam-home}"
 sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up "$HOME_WIFI_CONNECTION"
 sudo nmcli connection up dancam-ap
 ```
@@ -344,8 +346,9 @@ revert. It differs from the manual block above in one way: it schedules the AP-u
 detached transient `dancam-go-ap` unit firing ~2s out, so the SSH session returns
 cleanly before Wi-Fi drops instead of dying mid-command. The countdown runs on the Mac
 (which can no longer see the Pi once the AP is up), so it is a local estimate of the
-armed duration, not a probe of the Pi. Override the target/key/home-profile with
-`DANCAM_HOST`, `DANCAM_SSH_KEY`, `DANCAM_HOME_WIFI`.
+armed duration, not a probe of the Pi. Generated cards use the fixed `dancam-home`
+return profile. Override the target/key with `DANCAM_HOST` and `DANCAM_SSH_KEY`;
+legacy cards with another home profile can also set `DANCAM_HOME_WIFI`.
 
 When the timer fires, inspect it with:
 

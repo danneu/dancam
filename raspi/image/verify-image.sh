@@ -88,6 +88,22 @@ verify_absent_release_state() {
   fi
 }
 
+verify_absent_development_access() {
+  local image_root=$1 authorized_key sudo_grant
+  authorized_key=$(find "$image_root/root" "$image_root/home" \
+    -type f -name authorized_keys -size +0c -print -quit 2>/dev/null || true)
+  if [ -n "$authorized_key" ]; then
+    verify_die 'generic development image contains an authorized SSH key'
+    return 1
+  fi
+  sudo_grant=$(grep -RIl 'NOPASSWD:' "$image_root/etc/sudoers" "$image_root/etc/sudoers.d" \
+    2>/dev/null || true)
+  if [ -n "$sudo_grant" ]; then
+    verify_die 'generic development image contains a passwordless sudo grant'
+    return 1
+  fi
+}
+
 verify_release_cleanup() {
   local image_root=$1 apt_payload available_blocks block_size available_bytes
 
@@ -162,7 +178,6 @@ verify_production_image() {
     /etc/systemd/system/dancam-commission.service
   verify_symlink "$image_root/etc/systemd/system/multi-user.target.wants/dancam-commission-led.service" \
     /etc/systemd/system/dancam-commission-led.service
-
   verify_line "$image_root/boot/firmware/config.txt" 'camera_auto_detect=0'
   verify_line "$image_root/boot/firmware/config.txt" 'dtoverlay=imx708'
   verify_boot_command_line "$image_root/boot/firmware/cmdline.txt" "$root_partuuid" "$wifi_country"
@@ -247,6 +262,34 @@ verify_development_image() {
     /usr/lib/systemd/system/fstrim.timer
   verify_line "$image_root/etc/systemd/system/dancam.service.d/development.conf" \
     'Environment=DANCAM_COMMISSIONING_STATE_PATH=/persist/dancam/commissioning.json'
+  cmp -s "$image_root/usr/local/lib/dancam/commission.sh" \
+    "$SCRIPT_ROOT/raspi/image/commission.sh" || \
+    verify_die 'development commissioner does not match the tracked worktree source'
+  cmp -s "$image_root/usr/local/lib/dancam/commission-policy.sh" \
+    "$SCRIPT_ROOT/raspi/image/commission-policy.sh" || \
+    verify_die 'development commissioning policy does not match the tracked worktree source'
+  cmp -s "$image_root/usr/local/lib/dancam/commission-led.sh" \
+    "$SCRIPT_ROOT/raspi/image/commission-led.sh" || \
+    verify_die 'development commissioning LED helper does not match the tracked worktree source'
+  cmp -s "$image_root/usr/local/lib/dancam/card-layout.env" \
+    "$SCRIPT_ROOT/raspi/system/card-layout.env" || \
+    verify_die 'development commissioning geometry does not match the shared contract'
+  cmp -s "$image_root/etc/systemd/system/dancam-commission.service" \
+    "$SCRIPT_ROOT/raspi/image/dancam-commission.service" || \
+    verify_die 'development commissioning unit does not match the tracked worktree source'
+  cmp -s "$image_root/etc/systemd/system/dancam-commission-led.service" \
+    "$SCRIPT_ROOT/raspi/image/dancam-commission-led.service" || \
+    verify_die 'development commissioning LED unit does not match the tracked worktree source'
+  verify_symlink "$image_root/etc/systemd/system/multi-user.target.wants/dancam-commission.service" \
+    /etc/systemd/system/dancam-commission.service
+  verify_symlink "$image_root/etc/systemd/system/multi-user.target.wants/dancam-commission-led.service" \
+    /etc/systemd/system/dancam-commission-led.service
+  verify_symlink "$image_root/etc/systemd/system/multi-user.target.wants/ssh.service" \
+    /usr/lib/systemd/system/ssh.service
+  if find "$image_root/etc/ssh" -maxdepth 1 -type f -name 'ssh_host_*' -print -quit \
+    | grep -q .; then
+    verify_die 'generic development image contains an SSH host identity'
+  fi
 
   verify_line "$image_root/boot/firmware/config.txt" 'camera_auto_detect=0'
   verify_line "$image_root/boot/firmware/config.txt" 'dtoverlay=imx708'
@@ -274,6 +317,7 @@ verify_development_image() {
     verify_die 'image marker profile is not development'
   [ "$(jq -r .state "$image_root/persist/dancam/commissioning.json")" = preparing ] || \
     verify_die 'development commissioning state is not preparing'
+  verify_absent_development_access "$image_root"
   verify_absent_release_state "$image_root"
 }
 

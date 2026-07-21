@@ -18,6 +18,42 @@
     group: root
     mode: '0755'
 
+- name: Install development commissioning executables
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/lib/dancam/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - src: "{{ playbook_dir }}/../image/commission.sh"
+      dest: commission.sh
+    - src: "{{ playbook_dir }}/../image/commission-policy.sh"
+      dest: commission-policy.sh
+    - src: "{{ playbook_dir }}/../image/commission-led.sh"
+      dest: commission-led.sh
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Install the card layout contract for development commissioning
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../system/card-layout.env"
+    dest: /usr/local/lib/dancam/card-layout.env
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install development commissioning units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - "{{ playbook_dir }}/../image/dancam-commission.service"
+    - "{{ playbook_dir }}/../image/dancam-commission-led.service"
+
 - name: Create development image paths
   ansible.builtin.file:
     path: "{{ item.path }}"
@@ -90,6 +126,23 @@
     mode: '0644'
     content: ''
 
+- name: Remove generic development SSH host identities
+  ansible.builtin.file:
+    path: "/etc/ssh/{{ item }}"
+    state: absent
+  loop:
+    - ssh_host_ecdsa_key
+    - ssh_host_ecdsa_key.pub
+    - ssh_host_ed25519_key
+    - ssh_host_ed25519_key.pub
+    - ssh_host_rsa_key
+    - ssh_host_rsa_key.pub
+
+- name: Remove the base image's legacy passwordless Pi grant
+  ansible.builtin.file:
+    path: /etc/sudoers.d/010_pi-nopasswd
+    state: absent
+
 - name: Install the generic development image marker
   ansible.builtin.copy:
     dest: /boot/firmware/dancam/image.json
@@ -115,6 +168,23 @@
     content: |
       [Service]
       Environment=DANCAM_COMMISSIONING_STATE_PATH=/persist/dancam/commissioning.json
+
+- name: Enable development commissioning units offline
+  ansible.builtin.file:
+    src: "/etc/systemd/system/{{ item }}"
+    dest: "/etc/systemd/system/multi-user.target.wants/{{ item }}"
+    state: link
+    force: true
+  loop:
+    - dancam-commission.service
+    - dancam-commission-led.service
+
+- name: Enable SSH for the commissioned development login
+  ansible.builtin.file:
+    src: /usr/lib/systemd/system/ssh.service
+    dest: /etc/systemd/system/multi-user.target.wants/ssh.service
+    state: link
+    force: true
 
 - name: Mask cloud-init in the development image
   ansible.builtin.file:

@@ -17,12 +17,14 @@ mkdir -p \
 DEV="$TMP/development"
 mkdir -p \
   "$DEV/etc/NetworkManager/system-connections" \
+  "$DEV/etc/sudoers.d" \
   "$DEV/etc/systemd/system/multi-user.target.wants" \
   "$DEV/etc/systemd/system/timers.target.wants" \
   "$DEV/etc/systemd/system/dancam.service.d" \
   "$DEV/etc/systemd/journald.conf.d" \
   "$DEV/etc/systemd/system.conf.d" \
   "$DEV/etc/sysctl.d" \
+  "$DEV/etc/ssh" \
   "$DEV/etc/avahi" \
   "$DEV/persist/nm/system-connections" \
   "$DEV/persist/dancam" \
@@ -51,12 +53,24 @@ printf '[Service]\nEnvironment=DANCAM_COMMISSIONING_STATE_PATH=/persist/dancam/c
   > "$DEV/etc/systemd/system/dancam.service.d/development.conf"
 cp "$ROOT/raspi/camera/camera.py" "$DEV/usr/local/lib/dancam/camera.py"
 cp "$ROOT/raspi/dancam.service" "$DEV/etc/systemd/system/dancam.service"
+cp "$ROOT/raspi/image/commission.sh" "$DEV/usr/local/lib/dancam/commission.sh"
+cp "$ROOT/raspi/image/commission-policy.sh" "$DEV/usr/local/lib/dancam/commission-policy.sh"
+cp "$ROOT/raspi/image/commission-led.sh" "$DEV/usr/local/lib/dancam/commission-led.sh"
+cp "$ROOT/raspi/system/card-layout.env" "$DEV/usr/local/lib/dancam/card-layout.env"
+cp "$ROOT/raspi/image/dancam-commission.service" "$DEV/etc/systemd/system/dancam-commission.service"
+cp "$ROOT/raspi/image/dancam-commission-led.service" "$DEV/etc/systemd/system/dancam-commission-led.service"
 touch "$DEV/usr/local/bin/dancam"
 chmod +x "$DEV/usr/local/bin/dancam"
 ln -s /usr/lib/systemd/system/avahi-daemon.service \
   "$DEV/etc/systemd/system/multi-user.target.wants/avahi-daemon.service"
 ln -s /etc/systemd/system/dancam.service \
   "$DEV/etc/systemd/system/multi-user.target.wants/dancam.service"
+ln -s /etc/systemd/system/dancam-commission.service \
+  "$DEV/etc/systemd/system/multi-user.target.wants/dancam-commission.service"
+ln -s /etc/systemd/system/dancam-commission-led.service \
+  "$DEV/etc/systemd/system/multi-user.target.wants/dancam-commission-led.service"
+ln -s /usr/lib/systemd/system/ssh.service \
+  "$DEV/etc/systemd/system/multi-user.target.wants/ssh.service"
 ln -s /usr/lib/systemd/system/fstrim.timer \
   "$DEV/etc/systemd/system/timers.target.wants/fstrim.timer"
 
@@ -74,6 +88,13 @@ ORIGINAL_PATH=$PATH
 PATH="$TMP/dev-bin:$PATH"
 bash "$ROOT/raspi/image/verify-image.sh" development \
   "$DEV" image-id 041bba91-02 US dancam-persist dancam-data >/dev/null
+touch "$DEV/etc/ssh/ssh_host_ed25519_key"
+if bash "$ROOT/raspi/image/verify-image.sh" development \
+  "$DEV" image-id 041bba91-02 US dancam-persist dancam-data >/dev/null 2>&1; then
+  echo 'development image with a generic SSH host identity passed inspection' >&2
+  exit 1
+fi
+rm "$DEV/etc/ssh/ssh_host_ed25519_key"
 printf '# sentinel drift\n' >> "$DEV/usr/local/lib/dancam/camera.py"
 if bash "$ROOT/raspi/image/verify-image.sh" development \
   "$DEV" image-id 041bba91-02 US dancam-persist dancam-data >/dev/null 2>&1; then
@@ -116,6 +137,20 @@ if verify_absent_release_state "$TMP" >/dev/null 2>&1; then
   exit 1
 fi
 rm "$TMP/etc/NetworkManager/system-connections/dancam-home.nmconnection"
+
+mkdir -p "$TMP/home/developer/.ssh" "$TMP/etc/sudoers.d"
+printf '%s\n' 'ssh-ed25519 sentinel' > "$TMP/home/developer/.ssh/authorized_keys"
+if verify_absent_development_access "$TMP" >/dev/null 2>&1; then
+  echo 'planted authorized key passed generic-image inspection' >&2
+  exit 1
+fi
+rm "$TMP/home/developer/.ssh/authorized_keys"
+printf '%s\n' 'developer ALL=(ALL:ALL) NOPASSWD: ALL' > "$TMP/etc/sudoers.d/developer"
+if verify_absent_development_access "$TMP" >/dev/null 2>&1; then
+  echo 'planted passwordless sudo grant passed generic-image inspection' >&2
+  exit 1
+fi
+rm "$TMP/etc/sudoers.d/developer"
 
 printf 'minisign encrypted secret key\n' > "$TMP/home/release.key"
 if verify_absent_release_state "$TMP" >/dev/null 2>&1; then

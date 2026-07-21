@@ -22,8 +22,18 @@
     },
     {
       "name": "jq",
-      "development": false,
+      "development": true,
       "production_pin": "1.7.1-6+deb13u2"
+    },
+    {
+      "name": "openssh-server",
+      "development": true,
+      "production_pin": null
+    },
+    {
+      "name": "sudo",
+      "development": true,
+      "production_pin": null
     },
     {
       "name": "v4l-utils",

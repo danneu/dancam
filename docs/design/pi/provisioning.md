@@ -25,7 +25,8 @@ The repository has seven distinct configuration owners:
 - `raspi/ansible/development-image.yml` converges a generic writable image through
   the chroot connection. It reuses `system_common`; `development_image` owns current
   development packages, the built service binary, writable mounts, generic identity,
-  and offline unit enablement. It creates no login or Wi-Fi profile.
+  commissioning artifacts, and offline unit enablement. It creates no login or Wi-Fi
+  profile; first boot supplies those per card.
 - `raspi/ansible/production.yml` converges a mounted image root through Ansible's
   chroot connection. It reuses `system_common`; `production_image` owns exact package
   pins, persistent binds, read-only mount posture, commissioning artifacts, and
@@ -43,7 +44,7 @@ The repository has seven distinct configuration owners:
   creation. The playbook owns the resulting mounts and directory ownership.
 - The [Pi setup runbook](../../setup/pi-runbook.md) owns human and runtime
   operations that cannot be expressed as converged system state: flashing,
-  first boot, smoke tests, the manual development AP secret, safe AP toggling,
+  first boot, smoke tests, safe AP toggling,
   release publication, and production-card flashing.
 
 A command belongs in the artifact that executes it. The hard-won reason for an
@@ -111,8 +112,9 @@ The shared `system_common` role declares:
 
 One package catalog records profile membership and every exact production pin.
 The offline development image performs a full upgrade, installs its current
-Picamera2/PyAV/ffmpeg/v4l2 packages and the worktree-built service, and leaves both
-network profiles for per-card commissioning. Live development convergence retains
+Picamera2/PyAV/ffmpeg/v4l2 packages, the worktree-built service, and the shared
+commissioner, and leaves account and network identity for per-card commissioning.
+Live development convergence retains
 the card-layout preflight, mounts, interpreter validation, and drift repair. Production
 installs its exact package set without a floating upgrade, then declares the
 persistent binds, conditional `/data` mount, read-only root/boot posture, generic
@@ -124,19 +126,22 @@ the signed inventory.
 
 ## Connection and service identities
 
-A person flashing a Pi chooses the SSH login user. The camera daemon does not
-inherit that identity. Ansible creates a project-owned, non-login `dancam`
+A person flashing a development Pi chooses the SSH login user. First-boot
+commissioning creates that account with only the supplied authorized key, locks its
+password authentication, and grants passwordless sudo so deploy and live Ansible do
+not need an interactive password. The camera daemon does not inherit that identity.
+Ansible creates a project-owned, non-login `dancam`
 system user and grants it `video` access for the camera and DMA devices. The
 static unit declares `User=dancam`, and the playbook creates the recording namespace
 owned by that user. Provisioning therefore precedes the first deploy on a fresh card.
 
-Only per-machine connection settings are configurable. Copy `.env.example` to
-the gitignored `.env` and set:
+Only per-machine connection settings are configurable. The gitignored `.env`
+supplies:
 
-- `DANCAM_HOST`, including the Raspberry Pi Imager login user and SSH target;
+- `DANCAM_HOST`, including the development login user and SSH target;
 - `DANCAM_SSH_KEY`, the private key used for SSH and Ansible; and
-- `DANCAM_HOME_WIFI`, the NetworkManager home-profile name used by the safe AP
-  return path.
+- `DANCAM_HOME_WIFI_SSID` and `DANCAM_HOME_WIFI_PSK`, used to create `dancam-home`;
+- `DANCAM_DEV_AP_PSK`, used to create `dancam-ap`.
 
 The root Justfile loads `.env` for all recipes. The provisioning recipes split
 the user from `DANCAM_HOST` and pass the user and key to Ansible as extra vars,
@@ -153,13 +158,15 @@ There is no migration path for cards that used a login-user recording directory
 or the earlier `/var/lib/dancam/rec` layout. The project has no shipped units, so
 development cards are reflashed onto the current partition and ownership model.
 
-## AP secret and idempotency
+## Development credentials and idempotency
 
-The development AP PSK never enters the repository, `.env`, or Ansible. `dev_runtime`
-manages every non-secret field of `dancam-ap`; the operator enters the PSK once on the Pi.
-Leaving the secret field unmanaged both protects it and avoids NetworkManager
-module churn around `psk` and `psk-flags`. Production AP identity is instead
-installed from the authenticated per-card personalization envelope.
+Development secrets live only in the gitignored workstation environment, the
+per-card FAT envelope until it is consumed, and NetworkManager's root-only profiles.
+They do not enter the generic artifact, repository, Ansible variables, or logs.
+`dev_runtime` manages every non-secret field of `dancam-ap`; leaving its secret field
+unmanaged preserves the commissioned PSK and avoids NetworkManager module churn
+around `psk` and `psk-flags`. Production AP identity remains installed from its
+separate per-card envelope.
 
 The WPA2-AES values `proto`, `pairwise`, and `group` are expressed as
 single-element YAML lists (`[rsn]`, `[ccmp]`, `[ccmp]`). The
@@ -363,3 +370,18 @@ Reusing the live development play inside chroot was rejected because its hardwar
 checks, NetworkManager activation, service transitions, and reboot handlers are
 meaningful only on a running Pi. Adding credentials to Ansible was also rejected;
 the offline role deliberately creates neither login access nor network profiles.
+
+### 2026-07-21 -- Commission development identity before live convergence
+
+The reusable development image now installs the same first-boot commissioning
+boundary as production but accepts a profile-specific envelope. It validates the
+image binding and credentials before creating an SSH-key-only login, passwordless
+sudo grant, fixed home and AP profiles, machine identity, and storage generation.
+This makes a freshly personalized card ready for deploy and idempotent live Ansible
+without a manual bootstrap session.
+
+Putting workstation credentials into the offline Ansible play was rejected because
+that would contaminate the reusable artifact and its convergence logs. Keeping the
+old password prompt was also rejected: a generated key-only account has no login
+password to supply, so its per-account sudoers grant is the durable automation
+boundary.

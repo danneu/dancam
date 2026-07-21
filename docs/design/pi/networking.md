@@ -32,11 +32,12 @@ ipv6.method                                  ignore
 connection.autoconnect                       no
 ```
 
-The cipher pins make this WPA2-AES only: no WPA1 and no TKIP. The Ansible
-`dev_runtime` role provisions every field except the PSK. The development password is
-entered once on the Pi so the secret never enters the repository or playbook. The
-shared `dancam-dev` identity is strictly a development profile; production
-commissioning uses the per-unit random identity and QR onboarding described below.
+The cipher pins make this WPA2-AES only: no WPA1 and no TKIP. Development-card
+commissioning installs the PSK from the image-bound personalization envelope;
+live `dev_runtime` convergence continues to own every non-secret field without
+rewriting the installed secret. The shared `dancam-dev` identity is strictly a
+development profile; production commissioning uses the per-unit random identity and
+QR onboarding described below.
 
 NetworkManager shared mode owns connection lifecycle, IPv4 forwarding, DHCP,
 and DNS through its private dnsmasq instance. The fixed `10.42.0.1/24` address
@@ -75,13 +76,14 @@ least-congested choice among 1, 6, and 11. A deployment in a different regulator
 domain or RF environment must revalidate that choice rather than treating the
 desk scan as universal.
 
-The Ansible production profile prepares persistent NetworkManager state but contains
-no AP credential. One-time commissioning creates the distinct persisted `dancam-ap`
-profile from the authenticated personalization envelope. Its SSID is
+Both generic image profiles contain no Wi-Fi credential. Development personalization
+creates an autoconnecting home-client profile named `dancam-home` and the
+non-autoconnecting `dancam-ap` profile above. One-time production commissioning
+creates its distinct persisted `dancam-ap` profile from the authenticated
+personalization envelope. Its SSID is
 `dancam-<unit-id>`, its WPA2-AES PSK has at least 128 bits of cryptographic entropy,
 and it autoconnects because the car has no upstream network. The generic image
-contains no production SSID, PSK, or home-Wi-Fi profile. The development profile
-remains `dancam-dev`, secret-manual, and non-autoconnecting.
+contains no production SSID, PSK, or home-Wi-Fi profile.
 
 ## Local naming
 
@@ -100,11 +102,11 @@ rescue access, but it is not the app's configured product endpoint.
 
 ## Safe development toggle
 
-Before activating the AP over SSH, schedule a detached NetworkManager revert
-owned by systemd:
+Before activating the AP over SSH, schedule a detached NetworkManager revert to
+the fixed `dancam-home` profile owned by systemd:
 
 ```sh
-sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up <your-home-wifi>
+sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up dancam-home
 ```
 
 The transient timer survives the SSH session disappearing when `wlan0` leaves
@@ -219,3 +221,16 @@ daemon. Neither `dancam.local` nor the inherited `raspberrypi.local` name resolv
 from the attached iPhone, even though the fixed gateway served the API. The image
 now owns the hostname, enabled daemon, and `wlan0` scope together. The app continues
 to use `dancam.local`; the fixed gateway remains a diagnostic and rescue address.
+
+### 2026-07-21 -- Commission both development network profiles
+
+New writable cards now receive `dancam-home` and `dancam-ap` together from an
+image-bound first-boot envelope. Keeping fixed profile names lets deploy and AP
+switching operate without knowing the home SSID. The home profile is the only
+autoconnect choice, so a rebooted development unit returns to the LAN.
+
+Embedding the home or AP secret in the reusable image was rejected because the
+artifact is shared and locally cached. Passing values through generated shell or
+keyfile syntax was also rejected; the commissioner validates bounded single-line
+values and supplies them to NetworkManager as individual arguments, so punctuation
+cannot become syntax.

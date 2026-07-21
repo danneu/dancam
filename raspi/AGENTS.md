@@ -90,8 +90,10 @@ not permission to build a weak dev-only feature and harden it later.
 
 ## Environment and logs
 
-- Connection overrides are `DANCAM_HOST`, `DANCAM_SSH_KEY`, and
-  `DANCAM_HOME_WIFI`.
+- Connection overrides are `DANCAM_HOST` and `DANCAM_SSH_KEY`. Development-card
+  personalization also requires `DANCAM_HOME_WIFI_SSID`, `DANCAM_HOME_WIFI_PSK`,
+  and `DANCAM_DEV_AP_PSK`; `DANCAM_ASK_BECOME_PASS=1` retains the legacy live
+  Ansible password prompt.
 - Deploy bounds are `DANCAM_STATUS_TIMEOUT` and
   `DANCAM_RECORDING_READINESS_TIMEOUT`.
 - Service configuration is `DANCAM_BIND`, `DANCAM_BACKEND`, `DANCAM_REC_DIR`,
