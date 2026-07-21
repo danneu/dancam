@@ -14,6 +14,74 @@ mkdir -p \
   "$TMP/data/rec/state" \
   "$TMP/root" "$TMP/home" "$TMP/usr/local"
 
+DEV="$TMP/development"
+mkdir -p \
+  "$DEV/etc/NetworkManager/system-connections" \
+  "$DEV/etc/systemd/system/multi-user.target.wants" \
+  "$DEV/etc/systemd/system/timers.target.wants" \
+  "$DEV/etc/systemd/system/dancam.service.d" \
+  "$DEV/etc/systemd/journald.conf.d" \
+  "$DEV/etc/systemd/system.conf.d" \
+  "$DEV/etc/sysctl.d" \
+  "$DEV/etc/avahi" \
+  "$DEV/persist/nm/system-connections" \
+  "$DEV/persist/dancam" \
+  "$DEV/boot/firmware/dancam" \
+  "$DEV/data/rec/state" \
+  "$DEV/root" "$DEV/home" "$DEV/usr/local/bin" "$DEV/usr/local/lib/dancam"
+printf 'dancam\n' > "$DEV/etc/hostname"
+printf '127.0.1.1\tdancam\n' > "$DEV/etc/hosts"
+: > "$DEV/etc/machine-id"
+printf '[server]\nallow-interfaces=wlan0\n' > "$DEV/etc/avahi/avahi-daemon.conf"
+printf 'dancam:x:123:456::/nonexistent:/usr/sbin/nologin\n' > "$DEV/etc/passwd"
+printf '%s\n' \
+  'LABEL=bootfs /boot/firmware vfat defaults,noatime 0 2' \
+  'LABEL=rootfs / ext4 defaults,noatime,errors=remount-ro 0 1' \
+  'LABEL=dancam-persist /persist ext4 noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s 0 2' \
+  'LABEL=dancam-data /data ext4 noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s 0 2' \
+  '/persist/journal /var/log/journal none bind,nofail 0 0' > "$DEV/etc/fstab"
+printf 'camera_auto_detect=0\ndtoverlay=imx708\n' > "$DEV/boot/firmware/config.txt"
+printf '%s\n' \
+  'console=tty1 root=PARTUUID=041bba91-02 cloud-init=disabled cfg80211.ieee80211_regdom=US' \
+  > "$DEV/boot/firmware/cmdline.txt"
+printf '{"schema":"dancam-image-marker-v1","image_id":"image-id","profile":"development"}\n' \
+  > "$DEV/boot/firmware/dancam/image.json"
+printf '{"state":"preparing","reason":null}\n' > "$DEV/persist/dancam/commissioning.json"
+printf '[Service]\nEnvironment=DANCAM_COMMISSIONING_STATE_PATH=/persist/dancam/commissioning.json\n' \
+  > "$DEV/etc/systemd/system/dancam.service.d/development.conf"
+cp "$ROOT/raspi/camera/camera.py" "$DEV/usr/local/lib/dancam/camera.py"
+cp "$ROOT/raspi/dancam.service" "$DEV/etc/systemd/system/dancam.service"
+touch "$DEV/usr/local/bin/dancam"
+chmod +x "$DEV/usr/local/bin/dancam"
+ln -s /usr/lib/systemd/system/avahi-daemon.service \
+  "$DEV/etc/systemd/system/multi-user.target.wants/avahi-daemon.service"
+ln -s /etc/systemd/system/dancam.service \
+  "$DEV/etc/systemd/system/multi-user.target.wants/dancam.service"
+ln -s /usr/lib/systemd/system/fstrim.timer \
+  "$DEV/etc/systemd/system/timers.target.wants/fstrim.timer"
+
+mkdir -p "$TMP/dev-bin"
+cat > "$TMP/dev-bin/chroot" <<'EOF'
+#!/usr/bin/env bash
+printf 'current-version\n'
+EOF
+cat > "$TMP/dev-bin/stat" <<'EOF'
+#!/usr/bin/env bash
+printf '123:456:755\n'
+EOF
+chmod +x "$TMP/dev-bin/chroot" "$TMP/dev-bin/stat"
+ORIGINAL_PATH=$PATH
+PATH="$TMP/dev-bin:$PATH"
+bash "$ROOT/raspi/image/verify-image.sh" development \
+  "$DEV" image-id 041bba91-02 US dancam-persist dancam-data >/dev/null
+printf '# sentinel drift\n' >> "$DEV/usr/local/lib/dancam/camera.py"
+if bash "$ROOT/raspi/image/verify-image.sh" development \
+  "$DEV" image-id 041bba91-02 US dancam-persist dancam-data >/dev/null 2>&1; then
+  echo 'development image with stale tracked source passed inspection' >&2
+  exit 1
+fi
+PATH=$ORIGINAL_PATH
+
 CMDLINE="$TMP/boot/firmware/cmdline.txt"
 printf '%s\n' \
   'console=tty1 root=PARTUUID=041bba91-02 cloud-init=disabled cfg80211.ieee80211_regdom=US' \
@@ -42,6 +110,20 @@ if verify_absent_release_state "$TMP" >/dev/null 2>&1; then
 fi
 
 rm "$TMP/persist/dancam/storage-admitted"
+printf '[wifi]\nssid=sentinel\n' > "$TMP/etc/NetworkManager/system-connections/dancam-home.nmconnection"
+if verify_absent_release_state "$TMP" >/dev/null 2>&1; then
+  echo 'planted development Wi-Fi profile passed generic-image inspection' >&2
+  exit 1
+fi
+rm "$TMP/etc/NetworkManager/system-connections/dancam-home.nmconnection"
+
+printf 'minisign encrypted secret key\n' > "$TMP/home/release.key"
+if verify_absent_release_state "$TMP" >/dev/null 2>&1; then
+  echo 'planted signing key passed generic-image inspection' >&2
+  exit 1
+fi
+rm "$TMP/home/release.key"
+
 mkdir -p "$TMP/var/cache/apt/archives" "$TMP/var/lib/apt/lists"
 
 mkdir -p "$TMP/bin"

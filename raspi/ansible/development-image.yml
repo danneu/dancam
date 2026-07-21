@@ -1,0 +1,26 @@
+---
+- name: Converge the staged dancam development image
+  hosts: production_image
+  gather_facts: false
+  vars_files:
+    - roles/system_common/vars/packages.json
+  vars:
+    system_common_reboot_handlers: []
+    system_common_avahi_handlers: []
+    system_common_journald_handlers: []
+    system_common_sysctl_handlers: []
+    system_common_unit_enable_mode: offline
+
+  pre_tasks:
+    - name: Install current development packages without starting services
+      ansible.builtin.include_role:
+        name: development_image
+        tasks_from: packages
+
+  roles:
+    - role: system_common
+
+  post_tasks:
+    - name: Apply writable development image posture
+      ansible.builtin.include_role:
+        name: development_image

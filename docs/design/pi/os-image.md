@@ -50,15 +50,16 @@ not authenticate and flash unused development headroom.
 p1 boot      512 MiB                     512 MiB
 p2 root      8 GiB                       4 GiB
 p3 persist   1 GiB                       512 MiB
-p4 data      rest to aligned 95% limit   128 MiB initially
-tail         5% unpartitioned            omitted from raw artifact
+p4 data      128 MiB initially           128 MiB initially
+tail         omitted from raw artifact   omitted from raw artifact
 ```
 
-The development partitioner retains its writable 8 GiB root, 1 GiB persist, and
-capacity-sized data partition with a 5% unwritten card tail. The production raw
-artifact ends exactly at its initial p4 boundary; with the pinned base image that is
-5,511,315,456 bytes (5,256 MiB). First-boot commissioning grows only p4 to the same
-aligned 95% card boundary used by development, leaving the physical 5% tail.
+Both generic artifacts end exactly at their initial p4 boundary. Development keeps
+its writable 8 GiB root and 1 GiB persist headroom, while production uses a compact
+4 GiB root and 512 MiB persist. With the pinned base image, the production artifact
+is 5,511,315,456 bytes (5,256 MiB) and the development artifact is 10,343,153,664
+bytes (9,864 MiB). First-boot commissioning grows only p4 to the aligned 95% card
+boundary, leaving the physical 5% tail.
 
 The signed car image bakes `/` and `/boot/firmware` read-only. Plain read-only ext4 is
 deliberate: it consumes no tmpfs upper on
@@ -74,20 +75,18 @@ mkfs.ext4 -L dancam-data    -E lazy_itable_init=0,lazy_journal_init=0 <p4>
 mkfs.ext4 -L dancam-persist -E lazy_itable_init=0,lazy_journal_init=0 <p3>
 ```
 
-The partitioning script owns only geometry and filesystem creation. It runs on the
-Pi after a stock image is flashed with first-boot root auto-expansion disabled,
-because macOS lacks the required ext4 tools. It parses p2's start from
-`sfdisk --dump`, updates p2 with `sfdisk -N 2 --no-reread`, refreshes the kernel
-view with `partx -u`, and grows ext4 online with `resize2fs`. It refuses cards below
-32 GB, non-MBR cards, non-stock two-partition starting layouts, and an already
-expanded root that requires a reflash. The current pre-layout development card
-cannot be shrunk in place and must be reflashed.
+The controlled ARM64 image builder owns initial geometry and filesystem creation for
+both profiles. It authenticates the same Raspberry Pi OS base, preserves its MBR disk
+identifier and root `PARTUUID`, lays out the profile-specific fixed partitions, and
+formats the initial persist and data filesystems. The generic development artifact
+contains no login or Wi-Fi credentials and carries no generated machine or storage
+identity.
 
 ## Mounts and writable state
 
-The Ansible development and production profiles, not the partitioning or image-builder
-shell, own fstab, mounts, application directories, and the read-only switch. Their
-effective mount facts are:
+The Ansible development-image and production profiles, not image-builder shell, own
+fstab, mounts, application directories, and the read-only switch. Their effective
+mount facts are:
 
 ```text
 LABEL=dancam-persist /persist ext4 noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10s 0 2
@@ -430,3 +429,17 @@ discriminator. An atomic claim selects the first free discriminator and remains 
 publication witness, while explicit versions use the same claim and non-overwrite
 rules. This keeps flat release artifacts and lexical newest-selection without adding
 a mutable latest pointer.
+
+### 2026-07-21 -- Build development cards from a generic controlled image
+
+Development card creation now starts from the same authenticated base and controlled
+ARM64 builder as production instead of asking a live Pi to rewrite its own stock
+layout. The development profile keeps the intentionally larger writable root and
+persist partitions, but begins with a small generic data filesystem so first boot can
+grow it to the same aligned 95% boundary. This makes geometry, source capture, and
+offline system convergence independently testable before any card receives secrets.
+
+Embedding a preconfigured developer account or Wi-Fi profile in the reusable image
+was rejected because it would turn a workstation secret into a build artifact. The
+generic image instead has empty machine identity and commissioning state that blocks
+recording mutations until later per-card personalization succeeds.

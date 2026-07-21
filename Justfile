@@ -7,19 +7,27 @@ raspi-image:
     set -euo pipefail
     case "$(uname -s)" in
       Darwin) exec bash raspi/image/build-orbstack.sh ;;
-      Linux) exec just _raspi-image-native ;;
+      Linux) exec just _raspi-image-native production ;;
       *) echo "raspi-image: unsupported host OS: $(uname -s)" >&2; exit 1 ;;
     esac
 
 # Linux-only implementation invoked directly by the OrbStack wrapper.
-_raspi-image-native:
+_raspi-image-native profile='production':
     #!/usr/bin/env bash
     set -euo pipefail
+    profile={{quote(profile)}}
+    case "$profile" in production|development) ;; *) echo "unknown image profile: $profile" >&2; exit 64 ;; esac
     cargo zigbuild --release --target aarch64-unknown-linux-musl --manifest-path raspi/service/Cargo.toml
-    sudo env PATH="$PATH" \
-      DANCAM_SERVICE_BINARY="$PWD/raspi/service/target/aarch64-unknown-linux-musl/release/dancam" \
-      DANCAM_IMAGE_SIGNING_KEY="${DANCAM_IMAGE_SIGNING_KEY:?set DANCAM_IMAGE_SIGNING_KEY}" \
-      bash raspi/image/build.sh
+    if [ "$profile" = production ]; then
+      sudo env PATH="$PATH" \
+        DANCAM_SERVICE_BINARY="$PWD/raspi/service/target/aarch64-unknown-linux-musl/release/dancam" \
+        DANCAM_IMAGE_SIGNING_KEY="${DANCAM_IMAGE_SIGNING_KEY:?set DANCAM_IMAGE_SIGNING_KEY}" \
+        bash raspi/image/build.sh "$profile"
+    else
+      sudo env PATH="$PATH" \
+        DANCAM_SERVICE_BINARY="$PWD/raspi/service/target/aarch64-unknown-linux-musl/release/dancam" \
+        bash raspi/image/build.sh "$profile"
+    fi
 
 # Hardware-free regression for OrbStack machine creation, reuse, and build dispatch.
 raspi-image-builder-test:
@@ -191,7 +199,7 @@ raspi-provision-check host='dancam.local':
 
 # Hardware-free gate: syntax + ansible-lint all entry playbooks, no Pi connection.
 raspi-provision-lint:
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml --syntax-check && ansible-playbook -i production-inventory.ini production.yml --syntax-check && ansible-playbook -i production-inventory.ini release-cleanup.yml --syntax-check && ansible-lint development.yml production.yml release-cleanup.yml'
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml --syntax-check && ansible-playbook -i production-inventory.ini development-image.yml --syntax-check && ansible-playbook -i production-inventory.ini production.yml --syntax-check && ansible-playbook -i production-inventory.ini release-cleanup.yml --syntax-check && ansible-lint development.yml development-image.yml production.yml release-cleanup.yml'
 
 # Run from the Mac while the Pi is on home Wi-Fi; join dancam-dev from the iPhone,
 # not this Mac. Overrides: DANCAM_HOST, DANCAM_SSH_KEY, DANCAM_HOME_WIFI.

@@ -27,6 +27,23 @@ wait_for_paths() {
   return 1
 }
 
+tracked_worktree_fingerprint() {
+  local root=$1 path digest
+  {
+    while IFS= read -r -d '' path; do
+      printf '%s\0' "$path"
+      if [ -f "$root/$path" ]; then
+        digest=$(sha256sum "$root/$path" | cut -d' ' -f1) || return 1
+        printf 'file:%s\0' "$digest"
+      elif [ -L "$root/$path" ]; then
+        printf 'link:%s\0' "$(readlink "$root/$path")"
+      else
+        printf 'deleted\0'
+      fi
+    done < <(git -C "$root" ls-files -z --cached)
+  } | sha256sum | cut -d' ' -f1
+}
+
 calculate_partition_geometry() {
   local p2_start=$1 root_size=$2 persist_size=$3 data_size=$4 align=$5
   local value p2_end p3_start p3_end p4_start p4_end

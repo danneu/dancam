@@ -21,6 +21,20 @@ fi
 [ "$DANCAM_BOOT_SIZE_SECTORS" -eq 1048576 ]
 [ "$DANCAM_DEVELOPMENT_ROOT_SIZE_SECTORS" -eq 16777216 ]
 [ "$DANCAM_DEVELOPMENT_PERSIST_SIZE_SECTORS" -eq 2097152 ]
+read -r dev_p2_end dev_p3_start dev_p3_end dev_p4_start dev_raw_end < <(
+  calculate_partition_geometry \
+    1064960 \
+    "$DANCAM_DEVELOPMENT_ROOT_SIZE_SECTORS" \
+    "$DANCAM_DEVELOPMENT_PERSIST_SIZE_SECTORS" \
+    "$DANCAM_DEVELOPMENT_INITIAL_DATA_SIZE_SECTORS" \
+    "$DANCAM_ALIGN_SECTORS"
+)
+[ "$dev_p2_end" -eq 17842175 ]
+[ "$dev_p3_start" -eq 17842176 ]
+[ "$dev_p3_end" -eq 19939327 ]
+[ "$dev_p4_start" -eq 19939328 ]
+[ "$dev_raw_end" -eq 20201472 ]
+[ "$((dev_raw_end * 512))" -eq 10343153664 ]
 # The pinned 2026-06-18 base starts root at sector 1,064,960.
 read -r p2_end p3_start p3_end p4_start raw_end < <(
   calculate_partition_geometry \
@@ -58,6 +72,24 @@ if wait_for_paths 1 0 "$TMP/missing-partition"; then
   echo "missing partition path was accepted" >&2
   exit 1
 fi
+
+tracked="$TMP/tracked"
+mkdir "$tracked"
+git -C "$tracked" init -q
+printf 'base\n' > "$tracked/source.txt"
+printf 'ignored\n' > "$tracked/untracked.txt"
+git -C "$tracked" add source.txt
+clean_fingerprint=$(tracked_worktree_fingerprint "$tracked")
+printf 'unstaged\n' > "$tracked/source.txt"
+unstaged_fingerprint=$(tracked_worktree_fingerprint "$tracked")
+[ "$clean_fingerprint" != "$unstaged_fingerprint" ]
+git -C "$tracked" add source.txt
+[ "$(tracked_worktree_fingerprint "$tracked")" = "$unstaged_fingerprint" ]
+printf 'different untracked content\n' > "$tracked/untracked.txt"
+[ "$(tracked_worktree_fingerprint "$tracked")" = "$unstaged_fingerprint" ]
+rm "$tracked/source.txt"
+deleted_fingerprint=$(tracked_worktree_fingerprint "$tracked")
+[ "$deleted_fingerprint" != "$unstaged_fingerprint" ]
 
 release_out="$TMP/releases"
 mkdir "$release_out"

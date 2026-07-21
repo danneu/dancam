@@ -3,26 +3,29 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 production_role="$ROOT/raspi/ansible/roles/production_image"
+development_role="$ROOT/raspi/ansible/roles/development_image"
 cleanup_role="$ROOT/raspi/ansible/roles/release_cleanup"
 
-for forbidden in \
-  'ansible.builtin.command:' \
-  'ansible.builtin.raw:' \
-  'ansible.builtin.shell:' \
-  'ansible.builtin.reboot:' \
-  'ansible.builtin.script:' \
-  'ansible.builtin.service:' \
-  'ansible.builtin.service_facts:' \
-  'ansible.builtin.systemd_service:' \
-  'ansible.posix.mount:' \
-  'notify:' \
-  'swapoff' \
-  '/dev/video' \
-  '/proc/device-tree'; do
-  if grep -R -Fq -- "$forbidden" "$production_role"; then
-    echo "production role contains forbidden live action: $forbidden" >&2
-    exit 1
-  fi
+for role in "$production_role" "$development_role"; do
+  for forbidden in \
+    'ansible.builtin.command:' \
+    'ansible.builtin.raw:' \
+    'ansible.builtin.shell:' \
+    'ansible.builtin.reboot:' \
+    'ansible.builtin.script:' \
+    'ansible.builtin.service:' \
+    'ansible.builtin.service_facts:' \
+    'ansible.builtin.systemd_service:' \
+    'ansible.posix.mount:' \
+    'notify:' \
+    'swapoff' \
+    '/dev/video' \
+    '/proc/device-tree'; do
+    if grep -R -Fq -- "$forbidden" "$role"; then
+      echo "offline image role contains forbidden live action: $role: $forbidden" >&2
+      exit 1
+    fi
+  done
 done
 
 for forbidden in ansible.builtin.command: ansible.builtin.raw: ansible.builtin.shell:; do
@@ -35,7 +38,9 @@ grep -Fq '/var/cache/apt/archives' "$cleanup_role/tasks/main.yml"
 grep -Fq '/var/lib/apt/lists' "$cleanup_role/tasks/main.yml"
 
 grep -Fq 'policy_rc_d: 101' "$production_role/tasks/packages.yml"
+grep -Fq 'policy_rc_d: 101' "$development_role/tasks/packages.yml"
 grep -Fq 'system_common_unit_enable_mode: offline' "$ROOT/raspi/ansible/production.yml"
+grep -Fq 'system_common_unit_enable_mode: offline' "$ROOT/raspi/ansible/development-image.yml"
 common_tasks="$ROOT/raspi/ansible/roles/system_common/tasks/main.yml"
 live_modules=$(grep -c 'ansible.builtin.systemd_service:' "$common_tasks")
 live_guards=$(grep -c "when: system_common_unit_enable_mode == 'live'" "$common_tasks")
@@ -66,11 +71,11 @@ if grep -q '^DANCAM_.*_VERSION=' "$ROOT/raspi/image/inputs.env"; then
   exit 1
 fi
 
-converge_line=$(grep -n '^run_production_convergence ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
-cleanup_line=$(grep -n '^run_release_cleanup_convergence ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
+converge_line=$(grep -n '^[[:space:]]*run_production_convergence ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
+cleanup_line=$(grep -n '^[[:space:]]*run_release_cleanup_convergence ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
 verify_line=$(grep -n '^bash .*verify-image.sh' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
 inventory_line=$(grep -n '^PACKAGE_INVENTORY=' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
-sign_line=$(grep -n '^minisign ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
+sign_line=$(grep -n '^[[:space:]]*minisign ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
 [ "$converge_line" -lt "$verify_line" ]
 [ "$converge_line" -lt "$cleanup_line" ]
 [ "$cleanup_line" -lt "$verify_line" ]

@@ -19,6 +19,7 @@ venv/
 
 # Rust / Raspberry Pi service (raspi/)
 /raspi/service/target/
+/.dancam-development-image/
 # Mock recorder scratch dirs (.mock-rec, .mock-rec-clips, ...). The assets/clips
 # rules guard the tracked fixtures dir against a recorder run pointed there.
 /raspi/service/.mock-rec*/

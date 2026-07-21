@@ -53,7 +53,7 @@ export DANCAM_IMAGE_SIGNING_KEY="$TMP/checkout/secrets/release.key"
 bash "$TMP/checkout/raspi/image/build-orbstack.sh"
 grep -q '^create --arch arm64 --cpus 4 --memory 8G --disk 64G nixos:25.11 dancam-builder ' "$ORB_TEST_LOG"
 grep -q 'DANCAM_IMAGE_SIGNING_KEY=secrets/release.key' "$ORB_TEST_LOG"
-grep -Fq 'nix --extra-experimental-features nix-command\ flakes develop -c just _raspi-image-native' \
+grep -Fq 'nix --extra-experimental-features nix-command\ flakes develop -c just _raspi-image-native production' \
   "$ORB_TEST_LOG"
 
 : > "$ORB_TEST_LOG"
@@ -76,3 +76,13 @@ fi
   echo "OrbStack was contacted before the clean-tree preflight" >&2
   exit 1
 }
+
+rm "$TMP/checkout/secrets/release.key"
+: > "$ORB_TEST_LOG"
+bash "$TMP/checkout/raspi/image/build-orbstack.sh" development
+grep -Fq 'nix --extra-experimental-features nix-command\ flakes develop -c just _raspi-image-native development' \
+  "$ORB_TEST_LOG"
+if grep -q 'DANCAM_IMAGE_SIGNING_KEY=' "$ORB_TEST_LOG"; then
+  echo "development build received the production signing key" >&2
+  exit 1
+fi

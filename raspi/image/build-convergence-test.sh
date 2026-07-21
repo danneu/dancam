@@ -38,7 +38,7 @@ done
 [ -n "$playbook" ]
 [ -x "$chroot_wrapper" ]
 "$chroot_wrapper" "$DANCAM_CONVERGENCE_TEST_IMAGE_ROOT" /bin/sh -c true
-if [ "$playbook" = production.yml ]; then
+if [ "$playbook" = production.yml ] || [ "$playbook" = development-image.yml ]; then
   [ -n "$vars_file" ]
   "$DANCAM_CONVERGENCE_TEST_JQ" -e '
     (.dancam_service_binary | length > 0) and
@@ -84,6 +84,26 @@ grep -Fq "ansible_host=$TMP/image-root" "$TMP/dispatch.log"
 grep -Fq "ansible_chroot_exe=$ROOT/raspi/image/chroot-with-target-path.sh" "$TMP/dispatch.log"
 [ "$(sort -u "$TMP/path.log")" = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin ]
 [ "$(grep -cF "$TMP/image-root /bin/sh -c true" "$TMP/chroot.log")" -eq 2 ]
+
+: > "$TMP/dispatch.log"
+: > "$TMP/chroot.log"
+run_development_convergence \
+  "$TMP/image-root" "$TMP/dancam" image-id 01234567-02 US dancam-persist dancam-data \
+  >/dev/null
+[ "$(cat "$TMP/count.development-image.yml")" -eq 2 ]
+[ "$(grep -c 'development-image.yml' "$TMP/dispatch.log")" -eq 2 ]
+[ "$(grep -cF "$TMP/image-root /bin/sh -c true" "$TMP/chroot.log")" -eq 2 ]
+
+: > "$TMP/dispatch.log"
+printf '0\n' > "$TMP/count.development-image.yml"
+export DANCAM_CONVERGENCE_TEST_DIRTY_PHASE=development-image.yml
+if run_development_convergence \
+  "$TMP/image-root" "$TMP/dancam" image-id 01234567-02 US dancam-persist dancam-data \
+  >/dev/null 2>&1; then
+  echo "non-idempotent development convergence was accepted" >&2
+  exit 1
+fi
+[ "$(cat "$TMP/count.development-image.yml")" -eq 2 ]
 
 : > "$TMP/dispatch.log"
 printf '0\n' > "$TMP/count.production.yml"

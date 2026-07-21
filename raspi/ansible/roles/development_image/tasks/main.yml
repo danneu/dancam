@@ -1,0 +1,131 @@
+---
+- name: Require generated development image facts
+  ansible.builtin.assert:
+    that:
+      - dancam_service_binary | length > 0
+      - dancam_image_id | length > 0
+      - dancam_root_partuuid is match('^[a-f0-9]{8}-02$')
+      - dancam_wifi_country is match('^[A-Z]{2}$')
+      - dancam_persist_label | length > 0
+      - dancam_data_label | length > 0
+    quiet: true
+
+- name: Install the development service binary
+  ansible.builtin.copy:
+    src: "{{ dancam_service_binary }}"
+    dest: /usr/local/bin/dancam
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create development image paths
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: /persist/dancam
+      mode: '0755'
+    - path: /persist/journal
+      group: systemd-journal
+      mode: '2755'
+    - path: /persist/nm/system-connections
+      mode: '0700'
+    - path: /etc/NetworkManager/system-connections
+      mode: '0700'
+    - path: /var/log/journal
+      mode: '0755'
+    - path: /boot/firmware/dancam
+      mode: '0755'
+    - path: /etc/systemd/system/dancam.service.d
+      mode: '0755'
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Install the writable development filesystem table
+  ansible.builtin.template:
+    src: fstab.j2
+    dest: /etc/fstab
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Read the base boot command line
+  ansible.builtin.slurp:
+    src: /boot/firmware/cmdline.txt
+  register: development_image_cmdline
+
+- name: Preserve the authenticated base root partition identity
+  ansible.builtin.assert:
+    that:
+      - "'root=PARTUUID=' + dancam_root_partuuid in (development_image_cmdline.content | b64decode).split()"
+    fail_msg: The boot root PARTUUID does not match the preserved DOS label id.
+    quiet: true
+
+- name: Derive the development boot command line
+  ansible.builtin.set_fact:
+    development_image_cmdline_base: >-
+      {{ (development_image_cmdline.content | b64decode).split()
+         | reject('equalto', 'resize')
+         | reject('equalto', 'cloud-init=disabled')
+         | reject('match', '^cfg80211[.]ieee80211_regdom=[A-Z]{2}$')
+         | join(' ') }}
+
+- name: Apply the development boot command line
+  ansible.builtin.copy:
+    dest: /boot/firmware/cmdline.txt
+    owner: root
+    group: root
+    mode: '0755'
+    content: |
+      {{ development_image_cmdline_base }} cloud-init=disabled cfg80211.ieee80211_regdom={{ dancam_wifi_country }}
+
+- name: Leave the generic development machine identity empty
+  ansible.builtin.copy:
+    dest: /etc/machine-id
+    owner: root
+    group: root
+    mode: '0644'
+    content: ''
+
+- name: Install the generic development image marker
+  ansible.builtin.copy:
+    dest: /boot/firmware/dancam/image.json
+    owner: root
+    group: root
+    mode: '0755'
+    content: "{{ {'schema': 'dancam-image-marker-v1', 'image_id': dancam_image_id, 'profile': 'development'} | to_nice_json }}\n"
+
+- name: Initialize development commissioning as incomplete
+  ansible.builtin.copy:
+    dest: /persist/dancam/commissioning.json
+    owner: root
+    group: root
+    mode: '0644'
+    content: "{{ {'state': 'preparing', 'reason': none} | to_json }}\n"
+
+- name: Point the service at durable commissioning state
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/dancam.service.d/development.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Service]
+      Environment=DANCAM_COMMISSIONING_STATE_PATH=/persist/dancam/commissioning.json
+
+- name: Mask cloud-init in the development image
+  ansible.builtin.file:
+    src: /dev/null
+    dest: "/etc/systemd/system/{{ item }}"
+    state: link
+    force: true
+  loop:
+    - cloud-init.target
+    - cloud-init-local.service
+    - cloud-init-network.service
+    - cloud-config.service
+    - cloud-final.service
+    - cloud-init-hotplugd.socket

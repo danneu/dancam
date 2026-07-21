@@ -1,8 +1,9 @@
 # Pi provisioning
 
-The camera unit stays on Raspberry Pi OS and is converged with Ansible. Writable
-development cards run Ansible over SSH from the Mac; production images run it
-against mounted filesystems through the chroot connection. Provisioning makes
+The camera unit stays on Raspberry Pi OS and is converged with Ansible. Generic
+development and production images run Ansible against mounted filesystems through
+the chroot connection; writable development cards can re-run Ansible over SSH for
+drift repair. Provisioning makes
 onboard system state declarative, repeatable, and reviewable without pulling the
 fast binary-deploy loop into configuration management.
 
@@ -15,22 +16,26 @@ policy; [networking](networking.md) owns the AP and mDNS behavior; and
 
 ## Ownership boundary
 
-The repository has six distinct configuration owners:
+The repository has seven distinct configuration owners:
 
 - `raspi/ansible/development.yml` converges writable cards over SSH. The
   `system_common` role owns shared machine identity, configuration, service unit,
   camera process, and filesystem namespace; `dev_runtime` owns live development
   packages, mounts, checks, handlers, and reboot behavior.
+- `raspi/ansible/development-image.yml` converges a generic writable image through
+  the chroot connection. It reuses `system_common`; `development_image` owns current
+  development packages, the built service binary, writable mounts, generic identity,
+  and offline unit enablement. It creates no login or Wi-Fi profile.
 - `raspi/ansible/production.yml` converges a mounted image root through Ansible's
   chroot connection. It reuses `system_common`; `production_image` owns exact package
   pins, persistent binds, read-only mount posture, commissioning artifacts, and
   offline unit enablement and masks. `raspi/ansible/release-cleanup.yml` runs only
   after that system state converges; `release_cleanup` removes downloaded package
   archives and apt repository lists without removing the dpkg database.
-- `raspi/image/build.sh` owns authenticated base-image input, disk assembly,
-  temporary target mounts, generated release facts, independent inspection,
-  inventory, compression, manifest creation, and signing. It does not declare target
-  packages, accounts, services, configuration, or ownership.
+- `raspi/image/build.sh` owns profile-specific disk assembly from the authenticated
+  base, temporary target mounts, generated image facts, independent inspection,
+  inventory, compression, manifest creation, and production signing. It does not
+  declare target packages, accounts, services, configuration, or ownership.
 - `raspi/deploy.sh` owns the cross-built service binary, camera-process refresh,
   and fast restart loop. The tracked systemd unit is Ansible-owned, so unit changes
   require provisioning before deploy.
@@ -82,8 +87,11 @@ run neither changes packages nor reboots.
 
 There is no live conversion from a writable card to production posture.
 Production cards come only from the authenticated image build and flash path.
-During `just raspi-image`, the builder mounts boot, root, `/persist`, and `/data`,
-then runs the production play twice. The second pass must report `changed=0`. It next
+For either image profile, the builder mounts boot, root, `/persist`, and `/data`, then
+runs the matching offline play twice and requires `changed=0` on the second pass.
+Development follows current packages and includes staged and unstaged tracked source;
+untracked files do not enter its source fingerprint. Production rejects any tracked
+tree change before build, then
 runs the release-cleanup play twice and requires `changed=0` on that second pass too.
 The production roles use no service start/restart, reboot, live target mount, swap,
 or hardware-inspection action. After both idempotency gates, a separate shell verifier
@@ -102,9 +110,10 @@ The shared `system_common` role declares:
   writeback limits, weekly filesystem trimming, and the tracked service artifacts.
 
 One package catalog records profile membership and every exact production pin.
-Development first enforces the card-layout preflight and live mounts, performs a full
-upgrade, installs its declared Picamera2/PyAV/ffmpeg/v4l2 packages, validates the
-deployed interpreter, and manages the non-autoconnect `dancam-dev` profile. Production
+The offline development image performs a full upgrade, installs its current
+Picamera2/PyAV/ffmpeg/v4l2 packages and the worktree-built service, and leaves both
+network profiles for per-card commissioning. Live development convergence retains
+the card-layout preflight, mounts, interpreter validation, and drift repair. Production
 installs its exact package set without a floating upgrade, then declares the
 persistent binds, conditional `/data` mount, read-only root/boot posture, generic
 image marker, commissioning state, service environment, and maintenance masks.
@@ -339,3 +348,18 @@ requires at least 1 GiB available to non-root callers. The dpkg database is reta
 because installed-package inspection and the signed package inventory are part of the
 release proof. Cleaning dpkg state for a smaller image was rejected because it would
 trade a modest size reduction for weaker auditability.
+
+### 2026-07-21 -- Converge generic development images offline
+
+New development cards need the same reproducible starting point as production while
+still following current packages and the developer's tracked working-tree content.
+The builder therefore gained a separate offline development play: it reuses the
+shared system role, installs writable-profile state and the freshly built service,
+runs twice to prove idempotency, and passes an independent profile verifier before an
+unsigned development artifact is published to an ignored local build directory. It
+never shares the signed production release namespace under `dist/`.
+
+Reusing the live development play inside chroot was rejected because its hardware
+checks, NetworkManager activation, service transitions, and reboot handlers are
+meaningful only on a running Pi. Adding credentials to Ansible was also rejected;
+the offline role deliberately creates neither login access nor network profiles.

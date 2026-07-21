@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a generic, complete DanCam production image in an aarch64 Linux builder.
+# Build a generic DanCam image in an aarch64 Linux builder.
 set -euo pipefail
 umask 077
 
@@ -9,6 +9,12 @@ source "$ROOT/raspi/image/build-policy.sh"
 source "$ROOT/raspi/image/build-convergence.sh"
 source "$ROOT/raspi/system/card-layout.env"
 export DANCAM_REPOSITORY_ROOT="$ROOT"
+PROFILE=${1:-production}
+[ "$#" -le 1 ] || { echo 'usage: build.sh [production|development]' >&2; exit 64; }
+case "$PROFILE" in
+  production|development) ;;
+  *) echo "raspi-image: unknown image profile: $PROFILE" >&2; exit 64 ;;
+esac
 
 die() { echo "raspi-image: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "missing required tool: $1"; }
@@ -18,25 +24,39 @@ need() { command -v "$1" >/dev/null || die "missing required tool: $1"; }
 [ "${EUID}" -eq 0 ] || die "run image assembly as root inside the disposable builder"
 [[ "$DANCAM_WIFI_COUNTRY" =~ ^[A-Z]{2}$ ]] || die "DANCAM_WIFI_COUNTRY must be a two-letter uppercase country code"
 
-for tool in ansible-playbook curl sha256sum xz losetup sfdisk partprobe e2fsck resize2fs mkfs.ext4 mount umount chroot zstd minisign jq; do need "$tool"; done
+for tool in ansible-playbook curl sha256sum xz losetup sfdisk partprobe e2fsck resize2fs mkfs.ext4 mount umount chroot zstd jq; do need "$tool"; done
+[ "$PROFILE" != production ] || need minisign
 
 REV=$(git -C "$ROOT" rev-parse HEAD)
-git -C "$ROOT" diff --quiet || die "tracked source changes must be committed before an image build"
-git -C "$ROOT" diff --cached --quiet || die "staged source changes must be committed before an image build"
-OUT=${DANCAM_IMAGE_OUT:-"$ROOT/dist"}
+WORKTREE_FINGERPRINT=$(tracked_worktree_fingerprint "$ROOT") || die "could not fingerprint tracked development source"
+if [ "$PROFILE" = production ]; then
+  git -C "$ROOT" diff --quiet || die "tracked source changes must be committed before an image build"
+  git -C "$ROOT" diff --cached --quiet || die "staged source changes must be committed before an image build"
+fi
+if [ "$PROFILE" = production ]; then
+  OUT=${DANCAM_IMAGE_OUT:-"$ROOT/dist"}
+else
+  OUT=${DANCAM_IMAGE_OUT:-"$ROOT/.dancam-development-image"}
+fi
 SIGNING_KEY=${DANCAM_IMAGE_SIGNING_KEY:-}
 SERVICE_BINARY=${DANCAM_SERVICE_BINARY:-}
-[ -n "$SIGNING_KEY" ] || die "DANCAM_IMAGE_SIGNING_KEY must name the minisign secret key"
+[ "$PROFILE" != production ] || [ -n "$SIGNING_KEY" ] || die "DANCAM_IMAGE_SIGNING_KEY must name the minisign secret key"
 [ -x "$SERVICE_BINARY" ] || die "DANCAM_SERVICE_BINARY must name an executable aarch64 dancam binary"
 mkdir -p "$OUT"
 if [ "${DANCAM_IMAGE_VERSION+x}" = x ]; then
   VERSION=$(claim_release_version "$OUT" "$DANCAM_IMAGE_VERSION") || \
     die "image version is invalid or already claimed: $DANCAM_IMAGE_VERSION"
 else
-  VERSION=$(claim_generated_release_version "$OUT" "$REV" "$(date -u +%Y%m%dT%H%M%SZ)") || \
+  version_revision=$REV
+  [ "$PROFILE" = production ] || version_revision=$WORKTREE_FINGERPRINT
+  VERSION=$(claim_generated_release_version "$OUT" "$version_revision" "$(date -u +%Y%m%dT%H%M%SZ)") || \
     die "could not claim an automatic image version"
 fi
-IMAGE_ID=$(printf '%s:%s:%s' "$DANCAM_OS_RELEASE" "$REV" "$VERSION" | sha256sum | cut -c1-32)
+if [ "$PROFILE" = production ]; then
+  IMAGE_ID=$(printf '%s:%s:%s' "$DANCAM_OS_RELEASE" "$REV" "$VERSION" | sha256sum | cut -c1-32)
+else
+  IMAGE_ID=$(printf '%s:%s:%s:%s' "$PROFILE" "$DANCAM_OS_RELEASE" "$WORKTREE_FINGERPRINT" "$VERSION" | sha256sum | cut -c1-32)
+fi
 
 WORK=$(mktemp -d)
 LOOP=
@@ -68,15 +88,24 @@ P1_SIZE=$(jq -er '.partitiontable.partitions[0].size' <<<"$BASE_PARTITIONS")
 P2_START=$(jq -er '.partitiontable.partitions[1].start' <<<"$BASE_PARTITIONS")
 [ "$P1_SIZE" -eq "$DANCAM_BOOT_SIZE_SECTORS" ] || die "base image boot partition is not 512 MiB"
 [ $((P1_START % DANCAM_ALIGN_SECTORS)) -eq 0 ] || die "base image boot partition is not 4 MiB-aligned"
+if [ "$PROFILE" = production ]; then
+  ROOT_SIZE=$DANCAM_PRODUCTION_ROOT_SIZE_SECTORS
+  PERSIST_SIZE=$DANCAM_PRODUCTION_PERSIST_SIZE_SECTORS
+  DATA_SIZE=$DANCAM_PRODUCTION_INITIAL_DATA_SIZE_SECTORS
+else
+  ROOT_SIZE=$DANCAM_DEVELOPMENT_ROOT_SIZE_SECTORS
+  PERSIST_SIZE=$DANCAM_DEVELOPMENT_PERSIST_SIZE_SECTORS
+  DATA_SIZE=$DANCAM_DEVELOPMENT_INITIAL_DATA_SIZE_SECTORS
+fi
 read -r P2_END P3_START P3_END P4_START RAW_END_SECTOR < <(
   calculate_partition_geometry \
     "$P2_START" \
-    "$DANCAM_PRODUCTION_ROOT_SIZE_SECTORS" \
-    "$DANCAM_PRODUCTION_PERSIST_SIZE_SECTORS" \
-    "$DANCAM_PRODUCTION_INITIAL_DATA_SIZE_SECTORS" \
+    "$ROOT_SIZE" \
+    "$PERSIST_SIZE" \
+    "$DATA_SIZE" \
     "$DANCAM_ALIGN_SECTORS"
-) || die "base image root partition is not valid production geometry"
-P4_SIZE=$DANCAM_PRODUCTION_INITIAL_DATA_SIZE_SECTORS
+) || die "base image root partition is not valid $PROFILE geometry"
+P4_SIZE=$DATA_SIZE
 truncate -s "$((RAW_END_SECTOR * 512))" "$RAW"
 LOOP=$(losetup --find --show --partscan "$RAW")
 
@@ -124,17 +153,22 @@ cp -a "$WORK/root/etc/resolv.conf" "$WORK/base-resolv.conf"
 rm -f "$WORK/root/etc/resolv.conf"
 install_temporary_resolver /etc/resolv.conf "$WORK/root/etc/resolv.conf"
 
-run_production_convergence \
-  "$WORK/root" "$SERVICE_BINARY" "$IMAGE_ID" "$ROOT_PARTUUID" \
-  "$DANCAM_WIFI_COUNTRY" "$DANCAM_PERSIST_LABEL" "$DANCAM_DATA_LABEL"
-
-run_release_cleanup_convergence "$WORK/root"
+if [ "$PROFILE" = production ]; then
+  run_production_convergence \
+    "$WORK/root" "$SERVICE_BINARY" "$IMAGE_ID" "$ROOT_PARTUUID" \
+    "$DANCAM_WIFI_COUNTRY" "$DANCAM_PERSIST_LABEL" "$DANCAM_DATA_LABEL"
+  run_release_cleanup_convergence "$WORK/root"
+else
+  run_development_convergence \
+    "$WORK/root" "$SERVICE_BINARY" "$IMAGE_ID" "$ROOT_PARTUUID" \
+    "$DANCAM_WIFI_COUNTRY" "$DANCAM_PERSIST_LABEL" "$DANCAM_DATA_LABEL"
+fi
 
 rm -f "$WORK/root/etc/resolv.conf"
 cp -a "$WORK/base-resolv.conf" "$WORK/root/etc/resolv.conf"
 
 bash "$ROOT/raspi/image/verify-image.sh" \
-  "$WORK/root" "$IMAGE_ID" "$ROOT_PARTUUID" "$DANCAM_WIFI_COUNTRY" \
+  "$PROFILE" "$WORK/root" "$IMAGE_ID" "$ROOT_PARTUUID" "$DANCAM_WIFI_COUNTRY" \
   "$DANCAM_PERSIST_LABEL" "$DANCAM_DATA_LABEL"
 
 PACKAGE_INVENTORY="$OUT/dancam-${VERSION}.packages.txt"
@@ -157,20 +191,40 @@ ARTIFACT="$OUT/dancam-${VERSION}.img.zst"
 zstd -19 --threads=0 "$RAW" -o "$ARTIFACT"
 ARTIFACT_SHA=$(sha256sum "$ARTIFACT" | cut -d' ' -f1)
 
-jq -n \
-  --arg schema "dancam-image-manifest-v1" \
-  --arg version "$VERSION" \
-  --arg image_id "$IMAGE_ID" \
-  --arg artifact "$(basename "$ARTIFACT")" \
-  --arg artifact_sha256 "$ARTIFACT_SHA" \
-  --arg raw_sha256 "$RAW_SHA" \
-  --argjson raw_size "$RAW_SIZE" \
-  --arg os_release "$DANCAM_OS_RELEASE" \
-  --arg os_sha256 "$DANCAM_OS_IMAGE_SHA256" \
-  --arg repository_revision "$REV" \
-  --arg package_inventory "$(basename "$PACKAGE_INVENTORY")" \
-  --arg package_inventory_sha256 "$PACKAGE_INVENTORY_SHA" \
-  '{schema:$schema,version:$version,image_id:$image_id,artifact:$artifact,artifact_sha256:$artifact_sha256,raw_sha256:$raw_sha256,raw_size:$raw_size,os_release:$os_release,os_sha256:$os_sha256,repository_revision:$repository_revision,package_inventory:$package_inventory,package_inventory_sha256:$package_inventory_sha256}' \
-  > "$ARTIFACT.manifest.json"
-minisign -Sm "$ARTIFACT.manifest.json" -s "$SIGNING_KEY"
+if [ "$PROFILE" = production ]; then
+  jq -n \
+    --arg schema "dancam-image-manifest-v1" \
+    --arg version "$VERSION" \
+    --arg image_id "$IMAGE_ID" \
+    --arg artifact "$(basename "$ARTIFACT")" \
+    --arg artifact_sha256 "$ARTIFACT_SHA" \
+    --arg raw_sha256 "$RAW_SHA" \
+    --argjson raw_size "$RAW_SIZE" \
+    --arg os_release "$DANCAM_OS_RELEASE" \
+    --arg os_sha256 "$DANCAM_OS_IMAGE_SHA256" \
+    --arg repository_revision "$REV" \
+    --arg package_inventory "$(basename "$PACKAGE_INVENTORY")" \
+    --arg package_inventory_sha256 "$PACKAGE_INVENTORY_SHA" \
+    '{schema:$schema,version:$version,image_id:$image_id,artifact:$artifact,artifact_sha256:$artifact_sha256,raw_sha256:$raw_sha256,raw_size:$raw_size,os_release:$os_release,os_sha256:$os_sha256,repository_revision:$repository_revision,package_inventory:$package_inventory,package_inventory_sha256:$package_inventory_sha256}' \
+    > "$ARTIFACT.manifest.json"
+  minisign -Sm "$ARTIFACT.manifest.json" -s "$SIGNING_KEY"
+else
+  jq -n \
+    --arg schema "dancam-development-image-manifest-v1" \
+    --arg profile "$PROFILE" \
+    --arg version "$VERSION" \
+    --arg image_id "$IMAGE_ID" \
+    --arg artifact "$(basename "$ARTIFACT")" \
+    --arg artifact_sha256 "$ARTIFACT_SHA" \
+    --arg raw_sha256 "$RAW_SHA" \
+    --argjson raw_size "$RAW_SIZE" \
+    --arg os_release "$DANCAM_OS_RELEASE" \
+    --arg os_sha256 "$DANCAM_OS_IMAGE_SHA256" \
+    --arg repository_revision "$REV" \
+    --arg worktree_fingerprint "$WORKTREE_FINGERPRINT" \
+    --arg package_inventory "$(basename "$PACKAGE_INVENTORY")" \
+    --arg package_inventory_sha256 "$PACKAGE_INVENTORY_SHA" \
+    '{schema:$schema,profile:$profile,version:$version,image_id:$image_id,artifact:$artifact,artifact_sha256:$artifact_sha256,raw_sha256:$raw_sha256,raw_size:$raw_size,os_release:$os_release,os_sha256:$os_sha256,repository_revision:$repository_revision,worktree_fingerprint:$worktree_fingerprint,package_inventory:$package_inventory,package_inventory_sha256:$package_inventory_sha256}' \
+    > "$ARTIFACT.manifest.json"
+fi
 echo "built $ARTIFACT"

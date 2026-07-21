@@ -1,0 +1,13 @@
+---
+- name: Upgrade development packages to current
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: full
+    policy_rc_d: 101
+
+- name: Install declared development packages
+  ansible.builtin.apt:
+    name: "{{ system_common_package_catalog | selectattr('development') | map(attribute='name') | list }}"
+    state: present
+    install_recommends: false
+    policy_rc_d: 101
