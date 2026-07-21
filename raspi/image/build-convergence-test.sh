@@ -9,18 +9,35 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/image-root"
 touch "$TMP/dancam"
 chmod +x "$TMP/dancam"
+TEST_JQ=$(command -v jq)
+
+cat > "$TMP/bin/chroot" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$PATH" >> "$DANCAM_CONVERGENCE_TEST_PATH_LOG"
+printf '%q ' "$@" >> "$DANCAM_CONVERGENCE_TEST_CHROOT_LOG"
+printf '\n' >> "$DANCAM_CONVERGENCE_TEST_CHROOT_LOG"
+EOF
+chmod +x "$TMP/bin/chroot"
 
 cat > "$TMP/bin/ansible-playbook" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+PATH="/nix/store/controller-only/bin:$PATH"
+export PATH
 printf '%q ' "$@" >> "$DANCAM_CONVERGENCE_TEST_LOG"
 printf '\n' >> "$DANCAM_CONVERGENCE_TEST_LOG"
-vars_file=
+vars_file= chroot_wrapper=
 for arg in "$@"; do
-  case "$arg" in @*) vars_file=${arg#@} ;; esac
+  case "$arg" in
+    @*) vars_file=${arg#@} ;;
+    ansible_chroot_exe=*) chroot_wrapper=${arg#*=} ;;
+  esac
 done
 [ -n "$vars_file" ]
-jq -e '
+[ -x "$chroot_wrapper" ]
+"$chroot_wrapper" "$DANCAM_CONVERGENCE_TEST_IMAGE_ROOT" /bin/sh -c true
+"$DANCAM_CONVERGENCE_TEST_JQ" -e '
   (.dancam_service_binary | length > 0) and
   (.dancam_image_id == "image-id") and
   (.dancam_root_partuuid == "01234567-02") and
@@ -45,6 +62,10 @@ export PATH="$TMP/bin:$PATH"
 export DANCAM_REPOSITORY_ROOT="$ROOT"
 export DANCAM_CONVERGENCE_TEST_LOG="$TMP/dispatch.log"
 export DANCAM_CONVERGENCE_TEST_COUNT="$TMP/count"
+export DANCAM_CONVERGENCE_TEST_PATH_LOG="$TMP/path.log"
+export DANCAM_CONVERGENCE_TEST_CHROOT_LOG="$TMP/chroot.log"
+export DANCAM_CONVERGENCE_TEST_IMAGE_ROOT="$TMP/image-root"
+export DANCAM_CONVERGENCE_TEST_JQ="$TEST_JQ"
 
 run_production_convergence \
   "$TMP/image-root" "$TMP/dancam" image-id 01234567-02 US dancam-persist dancam-data \
@@ -52,6 +73,9 @@ run_production_convergence \
 [ "$(cat "$TMP/count")" -eq 2 ]
 [ "$(grep -c 'production.yml' "$TMP/dispatch.log")" -eq 2 ]
 grep -Fq "ansible_host=$TMP/image-root" "$TMP/dispatch.log"
+grep -Fq "ansible_chroot_exe=$ROOT/raspi/image/chroot-with-target-path.sh" "$TMP/dispatch.log"
+[ "$(sort -u "$TMP/path.log")" = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin ]
+[ "$(grep -cF "$TMP/image-root /bin/sh -c true" "$TMP/chroot.log")" -eq 2 ]
 
 : > "$TMP/dispatch.log"
 printf '0\n' > "$TMP/count"

@@ -19,8 +19,12 @@ production_recap_changed() {
 run_production_convergence() {
   local image_root=$1 service_binary=$2 image_id=$3 root_partuuid=$4
   local wifi_country=$5 persist_label=$6 data_label=$7
-  local ansible_dir vars_file first_log second_log changed pass
+  local ansible_dir ansible_playbook chroot_exe chroot_wrapper
+  local vars_file first_log second_log changed pass
   ansible_dir="$DANCAM_REPOSITORY_ROOT/raspi/ansible"
+  ansible_playbook=$(command -v ansible-playbook)
+  chroot_exe=$(command -v chroot)
+  chroot_wrapper="$DANCAM_REPOSITORY_ROOT/raspi/image/chroot-with-target-path.sh"
   vars_file=$(mktemp)
   first_log=$(mktemp)
   second_log=$(mktemp)
@@ -39,10 +43,12 @@ run_production_convergence() {
     local log=$first_log
     [ "$pass" = first ] || log=$second_log
     if ! ANSIBLE_CONFIG="$ansible_dir/ansible.cfg" ANSIBLE_NOCOLOR=1 \
-      ansible-playbook \
+      DANCAM_CHROOT_EXE="$chroot_exe" \
+      "$ansible_playbook" \
         -i "$ansible_dir/production-inventory.ini" \
         "$ansible_dir/production.yml" \
         -e "ansible_host=$image_root" \
+        -e "ansible_chroot_exe=$chroot_wrapper" \
         -e "@$vars_file" > "$log" 2>&1; then
       cat "$log" >&2
       rm -f "$vars_file" "$first_log" "$second_log"
