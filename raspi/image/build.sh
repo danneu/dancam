@@ -80,6 +80,11 @@ start=$P4_START, size=$P4_SIZE, type=83
 EOF
 partprobe "$LOOP"
 udevadm settle
+wait_for_paths 100 0.1 "${LOOP}p1" "${LOOP}p2" "${LOOP}p3" "${LOOP}p4" \
+  || die "partition device nodes did not appear"
+for partition in 1 2 3 4; do
+  [ -b "${LOOP}p${partition}" ] || die "partition device is not a block device: ${LOOP}p${partition}"
+done
 e2fsck -fy "${LOOP}p2"
 resize2fs "${LOOP}p2"
 mkfs.ext4 -F -L "$DANCAM_PERSIST_LABEL" -E lazy_itable_init=0,lazy_journal_init=0 "${LOOP}p3"

@@ -25,4 +25,11 @@ install_temporary_resolver "$TMP/source-resolv.conf" "$TMP/target-resolv.conf"
 cmp "$TMP/source-resolv.conf" "$TMP/target-resolv.conf"
 [ "$(find "$TMP/target-resolv.conf" -perm 0644 -print)" = "$TMP/target-resolv.conf" ]
 
+touch "$TMP/partition-1" "$TMP/partition-2"
+wait_for_paths 1 0 "$TMP/partition-1" "$TMP/partition-2"
+if wait_for_paths 1 0 "$TMP/missing-partition"; then
+  echo "missing partition path was accepted" >&2
+  exit 1
+fi
+
 echo "image build policy tests passed"
