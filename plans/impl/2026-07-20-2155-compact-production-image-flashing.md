@@ -130,5 +130,5 @@ geometry obtains the immediate speedup while preserving exact whole-image semant
 ## Commit progress
 
 - [x] 1. Compact production image geometry
-- [ ] 2. Converge release cleanup and enforce finalized-image gates
+- [x] 2. Converge release cleanup and enforce finalized-image gates
 - [ ] 3. Make release naming collision-safe and complete release proof

@@ -41,4 +41,46 @@ if verify_absent_release_state "$TMP" >/dev/null 2>&1; then
   exit 1
 fi
 
+rm "$TMP/persist/dancam/storage-admitted"
+mkdir -p "$TMP/var/cache/apt/archives" "$TMP/var/lib/apt/lists"
+
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/stat" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${DANCAM_VERIFY_TEST_AVAILABLE_BLOCKS:?} 4096"
+EOF
+chmod +x "$TMP/bin/stat"
+TEST_PATH=$PATH
+PATH="$TMP/bin:$PATH"
+export DANCAM_VERIFY_TEST_AVAILABLE_BLOCKS=262144
+verify_release_cleanup "$TMP"
+
+touch "$TMP/var/cache/apt/archives/package.deb"
+if verify_release_cleanup "$TMP" >/dev/null 2>&1; then
+  echo 'downloaded package archive passed release inspection' >&2
+  exit 1
+fi
+rm "$TMP/var/cache/apt/archives/package.deb"
+
+touch "$TMP/var/lib/apt/lists/repository-list"
+if verify_release_cleanup "$TMP" >/dev/null 2>&1; then
+  echo 'apt repository list passed release inspection' >&2
+  exit 1
+fi
+rm "$TMP/var/lib/apt/lists/repository-list"
+
+rmdir "$TMP/var/lib/apt/lists"
+if verify_release_cleanup "$TMP" >/dev/null 2>&1; then
+  echo 'missing apt cleanup path passed release inspection' >&2
+  exit 1
+fi
+mkdir -p "$TMP/var/lib/apt/lists"
+
+export DANCAM_VERIFY_TEST_AVAILABLE_BLOCKS=262143
+if verify_release_cleanup "$TMP" >/dev/null 2>&1; then
+  echo 'production root below the available-space floor passed release inspection' >&2
+  exit 1
+fi
+PATH=$TEST_PATH
+
 printf '%s\n' 'production image verifier tests passed'

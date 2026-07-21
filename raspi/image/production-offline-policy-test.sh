@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 production_role="$ROOT/raspi/ansible/roles/production_image"
+cleanup_role="$ROOT/raspi/ansible/roles/release_cleanup"
 
 for forbidden in \
   'ansible.builtin.command:' \
@@ -23,6 +24,15 @@ for forbidden in \
     exit 1
   fi
 done
+
+for forbidden in ansible.builtin.command: ansible.builtin.raw: ansible.builtin.shell:; do
+  if grep -R -Fq -- "$forbidden" "$cleanup_role"; then
+    echo "release cleanup contains forbidden shell mutation: $forbidden" >&2
+    exit 1
+  fi
+done
+grep -Fq '/var/cache/apt/archives' "$cleanup_role/tasks/main.yml"
+grep -Fq '/var/lib/apt/lists' "$cleanup_role/tasks/main.yml"
 
 grep -Fq 'policy_rc_d: 101' "$production_role/tasks/packages.yml"
 grep -Fq 'system_common_unit_enable_mode: offline' "$ROOT/raspi/ansible/production.yml"
@@ -57,10 +67,13 @@ if grep -q '^DANCAM_.*_VERSION=' "$ROOT/raspi/image/inputs.env"; then
 fi
 
 converge_line=$(grep -n '^run_production_convergence ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
+cleanup_line=$(grep -n '^run_release_cleanup_convergence ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
 verify_line=$(grep -n '^bash .*verify-image.sh' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
 inventory_line=$(grep -n '^PACKAGE_INVENTORY=' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
 sign_line=$(grep -n '^minisign ' "$ROOT/raspi/image/build.sh" | cut -d: -f1)
 [ "$converge_line" -lt "$verify_line" ]
+[ "$converge_line" -lt "$cleanup_line" ]
+[ "$cleanup_line" -lt "$verify_line" ]
 [ "$verify_line" -lt "$inventory_line" ]
 [ "$inventory_line" -lt "$sign_line" ]
 

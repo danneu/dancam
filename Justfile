@@ -189,9 +189,9 @@ raspi-provision-check host='dancam.local':
     SSH_KEY="${SSH_KEY/#\~/$HOME}"
     nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml -e ansible_host="$1" -e ansible_user="$2" -e ansible_ssh_private_key_file="$3" --ask-become-pass --check --diff' _ "{{host}}" "${HOST%%@*}" "$SSH_KEY"
 
-# Hardware-free gate: syntax + ansible-lint both entry playbooks, no Pi connection.
+# Hardware-free gate: syntax + ansible-lint all entry playbooks, no Pi connection.
 raspi-provision-lint:
-    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml --syntax-check && ansible-playbook -i production-inventory.ini production.yml --syntax-check && ansible-lint development.yml production.yml'
+    nix develop -c bash -c 'cd raspi/ansible && ansible-playbook development.yml --syntax-check && ansible-playbook -i production-inventory.ini production.yml --syntax-check && ansible-playbook -i production-inventory.ini release-cleanup.yml --syntax-check && ansible-lint development.yml production.yml release-cleanup.yml'
 
 # Run from the Mac while the Pi is on home Wi-Fi; join dancam-dev from the iPhone,
 # not this Mac. Overrides: DANCAM_HOST, DANCAM_SSH_KEY, DANCAM_HOME_WIFI.

@@ -24,7 +24,9 @@ The repository has six distinct configuration owners:
 - `raspi/ansible/production.yml` converges a mounted image root through Ansible's
   chroot connection. It reuses `system_common`; `production_image` owns exact package
   pins, persistent binds, read-only mount posture, commissioning artifacts, and
-  offline unit enablement and masks.
+  offline unit enablement and masks. `raspi/ansible/release-cleanup.yml` runs only
+  after that system state converges; `release_cleanup` removes downloaded package
+  archives and apt repository lists without removing the dpkg database.
 - `raspi/image/build.sh` owns authenticated base-image input, disk assembly,
   temporary target mounts, generated release facts, independent inspection,
   inventory, compression, manifest creation, and signing. It does not declare target
@@ -81,10 +83,13 @@ run neither changes packages nor reboots.
 There is no live conversion from a writable card to production posture.
 Production cards come only from the authenticated image build and flash path.
 During `just raspi-image`, the builder mounts boot, root, `/persist`, and `/data`,
-then runs the production play twice. The second pass must report `changed=0`. The
-production roles use no service start/restart, reboot, live target mount, swap, or
-hardware-inspection action; a separate shell verifier inspects the completed image
-before inventory, compression, or signing can begin.
+then runs the production play twice. The second pass must report `changed=0`. It next
+runs the release-cleanup play twice and requires `changed=0` on that second pass too.
+The production roles use no service start/restart, reboot, live target mount, swap,
+or hardware-inspection action. After both idempotency gates, a separate shell verifier
+requires empty apt archive and repository-list areas and at least 1 GiB available on
+root to non-root callers. Package inventory, compression, manifest creation, and
+signing cannot begin until that independent inspection passes.
 
 ## Managed system state
 
@@ -103,6 +108,10 @@ deployed interpreter, and manages the non-autoconnect `dancam-dev` profile. Prod
 installs its exact package set without a floating upgrade, then declares the
 persistent binds, conditional `/data` mount, read-only root/boot posture, generic
 image marker, commissioning state, service environment, and maintenance masks.
+Release cleanup is a distinct Ansible-owned target-state phase after package and
+system convergence. It removes only downloaded apt payload and repository indexes;
+installed package records under `/var/lib/dpkg` remain available for inspection and
+the signed inventory.
 
 ## Connection and service identities
 
@@ -315,3 +324,18 @@ failed boundary this decision removes. Spreading a `car_image` conditional throu
 the writable play was rejected because it makes offline safety an emergent property
 of individual task guards. Live conversion was removed entirely: development cards
 stay writable, and production cards come only from authenticated signed images.
+
+### 2026-07-20 -- Gate releases on converged cleanup and root headroom
+
+The compact production root needs an explicit capacity margin rather than an
+assumption based on one successful build. Image assembly now separates package and
+system convergence from release cleanup, runs each phase twice, and rejects a
+non-idempotent second pass. Cleanup remains Ansible-owned desired state, so downloaded
+package archives and repository lists cannot drift back into releases through an
+unreviewed shell mutation.
+
+An independent inspection after both phases rejects any remaining apt payload and
+requires at least 1 GiB available to non-root callers. The dpkg database is retained
+because installed-package inspection and the signed package inventory are part of the
+release proof. Cleaning dpkg state for a smaller image was rejected because it would
+trade a modest size reduction for weaker auditability.

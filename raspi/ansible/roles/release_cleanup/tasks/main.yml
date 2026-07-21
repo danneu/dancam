@@ -1,0 +1,18 @@
+---
+- name: Find downloaded package archives and repository lists
+  ansible.builtin.find:
+    paths:
+      - /var/cache/apt/archives
+      - /var/lib/apt/lists
+    file_type: any
+    hidden: true
+    recurse: true
+  register: release_cleanup_apt_payload
+
+- name: Remove downloaded package archives and repository lists
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ release_cleanup_apt_payload.files | sort(attribute='path', reverse=true) }}"
+  loop_control:
+    label: "{{ item.path }}"

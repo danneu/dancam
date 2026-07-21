@@ -88,6 +88,36 @@ verify_absent_release_state() {
   fi
 }
 
+verify_release_cleanup() {
+  local image_root=$1 apt_payload available_blocks block_size available_bytes
+
+  if ! apt_payload=$(find \
+    "$image_root/var/cache/apt/archives" \
+    "$image_root/var/lib/apt/lists" \
+    -mindepth 1 -print -quit 2>/dev/null); then
+    verify_die 'could not inspect apt release payload areas'
+    return 1
+  fi
+  if [ -n "$apt_payload" ]; then
+    verify_die "production image contains apt release payload: $apt_payload"
+    return 1
+  fi
+
+  read -r available_blocks block_size < <(stat -f -c '%a %S' "$image_root") || {
+    verify_die 'could not inspect production root available space'
+    return 1
+  }
+  [[ "$available_blocks" =~ ^[0-9]+$ && "$block_size" =~ ^[0-9]+$ ]] || {
+    verify_die 'production root available space is not numeric'
+    return 1
+  }
+  available_bytes=$((available_blocks * block_size))
+  if [ "$available_bytes" -lt $((1024 * 1024 * 1024)) ]; then
+    verify_die "production root has less than 1 GiB available to non-root callers ($available_bytes bytes)"
+    return 1
+  fi
+}
+
 verify_production_image() {
   local image_root=$1 image_id=$2 root_partuuid=$3 wifi_country=$4
   local persist_label=$5 data_label=$6 catalog package pin installed uid gid unit
@@ -182,6 +212,7 @@ verify_production_image() {
   [ "$(jq -r .image_id "$image_root/boot/firmware/dancam/image.json")" = "$image_id" ] || \
     verify_die 'image marker identity is wrong'
   verify_absent_release_state "$image_root"
+  verify_release_cleanup "$image_root"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

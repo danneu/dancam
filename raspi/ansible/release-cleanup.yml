@@ -1,0 +1,7 @@
+---
+- name: Converge finalized dancam release cleanup
+  hosts: production_image
+  gather_facts: false
+
+  roles:
+    - role: release_cleanup

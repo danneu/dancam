@@ -46,9 +46,12 @@ NixOS OrbStack machine named `dancam-builder`, runs the controlled Linux build t
 and writes the release artifacts back to the Mac checkout under `dist/`. Override the
 machine name with `DANCAM_IMAGE_BUILDER_MACHINE` when needed. The build refuses
 uncommitted tracked source, verifies the pinned OS digest, converges the mounted image
-through the offline Ansible profile twice, requires `changed=0` on the second pass,
-and independently inspects the result before emitting the compressed image, signed
-manifest, and installed-package inventory. Flash operators receive only those release
+through the offline Ansible profile twice, then converges Ansible-owned release cleanup
+twice. Each second pass must report `changed=0`. Cleanup removes downloaded package
+archives and apt repository lists but retains installed-package records. Independent
+inspection then requires those payload areas to be empty and at least 1 GiB available
+on root to non-root callers before the build can emit the installed-package inventory,
+compressed image, manifest, or signature. Flash operators receive only those release
 artifacts and trust the public key tracked at `raspi/image/release.pub`.
 
 Hands-on runbook for bringing up the dancam camera unit -- from flashing the microSD

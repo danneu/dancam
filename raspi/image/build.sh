@@ -122,6 +122,8 @@ run_production_convergence \
   "$WORK/root" "$SERVICE_BINARY" "$IMAGE_ID" "$ROOT_PARTUUID" \
   "$DANCAM_WIFI_COUNTRY" "$DANCAM_PERSIST_LABEL" "$DANCAM_DATA_LABEL"
 
+run_release_cleanup_convergence "$WORK/root"
+
 rm -f "$WORK/root/etc/resolv.conf"
 cp -a "$WORK/base-resolv.conf" "$WORK/root/etc/resolv.conf"
 
