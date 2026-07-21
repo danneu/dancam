@@ -195,7 +195,12 @@ production geometry through the exact end of initialized p4. It mounts every tar
 filesystem and runs
 `raspi/ansible/production.yml` through the chroot connection; Ansible installs the
 exact runtime packages, service artifacts, commissioning files, and complete target
-posture. The builder then emits a versioned zstd image with a JSON manifest.
+posture. The builder then emits a versioned zstd image with a JSON manifest. Automatic
+versions use UTC second resolution, the repository revision, and a fixed-width
+collision discriminator. The builder atomically claims that release basename before
+assembly, so concurrent builds from the same revision cannot interleave outputs and
+no build replaces an existing release. The lexical format sorts after the legacy
+same-day format, preserving newest-release selection for `just raspi-flash`.
 The image builder, first-boot commissioner, Mac eligibility policy, and writable
 development partitioner all consume `raspi/system/card-layout.env`, so geometry,
 labels, minimum capacity, and the reserved-tail boundary have one definition.
@@ -415,3 +420,13 @@ or the physical card reserve.
 
 Extent-only flashing was rejected because skipped target ranges would retain
 unauthenticated bytes and require a new privacy, verification, and resume model.
+
+### 2026-07-20 -- Claim monotonic release names before assembly
+
+Date-only release names allowed two builds of one revision to target the same files,
+and a compact release could sort behind a legacy artifact from the same day. Automatic
+versions now include UTC time through seconds, the revision, and a four-digit claim
+discriminator. An atomic claim selects the first free discriminator and remains as a
+publication witness, while explicit versions use the same claim and non-overwrite
+rules. This keeps flat release artifacts and lexical newest-selection without adding
+a mutable latest pointer.

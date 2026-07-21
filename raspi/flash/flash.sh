@@ -18,7 +18,7 @@ esac
 
 MANIFEST=${1:-}
 if [ -z "$MANIFEST" ] && [ -d "$ROOT/dist" ]; then
-  MANIFEST=$(find "$ROOT/dist" -name 'dancam-*.img.zst.manifest.json' -type f -print | sort | tail -1)
+  MANIFEST=$(select_latest_release_manifest "$ROOT/dist")
 fi
 [ -f "$MANIFEST" ] || die "pass a released .manifest.json path or place one in dist/"
 SIGNATURE="$MANIFEST.minisig"
@@ -32,7 +32,7 @@ ARTIFACT_NAME=$(/usr/bin/plutil -extract artifact raw -o - "$MANIFEST")
 ARTIFACT="$(dirname "$MANIFEST")/$ARTIFACT_NAME"
 EXPECTED_ARTIFACT_SHA=$(/usr/bin/plutil -extract artifact_sha256 raw -o - "$MANIFEST")
 EXPECTED_RAW_SHA=$(/usr/bin/plutil -extract raw_sha256 raw -o - "$MANIFEST")
-RAW_SIZE=$(/usr/bin/plutil -extract raw_size raw -o - "$MANIFEST")
+RAW_SIZE=$(manifest_raw_size "$MANIFEST") || die "manifest raw_size is not a positive integer"
 IMAGE_ID=$(/usr/bin/plutil -extract image_id raw -o - "$MANIFEST")
 [ -f "$ARTIFACT" ] || die "missing authenticated image: $ARTIFACT"
 [ "$(shasum -a 256 "$ARTIFACT" | awk '{print $1}')" = "$EXPECTED_ARTIFACT_SHA" ] || die "image digest mismatch"
@@ -73,10 +73,12 @@ diskutil unmountDisk "/dev/$DISK" >/dev/null
 same_media
 if [ "$RESUME" = 1 ]; then
   echo "Comparing with the authenticated image; at most 64 MiB of differing chunks may be repaired."
-  zstd -dc "$ARTIFACT" | sudo "$TRANSFER" repair-verify "$DISK" "$IDENTITY" "$RAW_SIZE" "$EXPECTED_RAW_SHA"
+  transfer_authenticated_image repair-verify \
+    "$ARTIFACT" "$TRANSFER" "$DISK" "$IDENTITY" "$RAW_SIZE" "$EXPECTED_RAW_SHA"
 else
   echo "Writing authenticated image to /dev/$DISK..."
-  zstd -dc "$ARTIFACT" | sudo "$TRANSFER" write-verify "$DISK" "$IDENTITY" "$RAW_SIZE" "$EXPECTED_RAW_SHA"
+  transfer_authenticated_image write-verify \
+    "$ARTIFACT" "$TRANSFER" "$DISK" "$IDENTITY" "$RAW_SIZE" "$EXPECTED_RAW_SHA"
 fi
 same_media
 

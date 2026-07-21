@@ -2,6 +2,28 @@
 
 flash_die() { echo "raspi-flash: $*" >&2; return 1; }
 
+select_latest_release_manifest() {
+  local release_dir=$1
+  find "$release_dir" -name 'dancam-*.img.zst.manifest.json' -type f -print | LC_ALL=C sort | tail -1
+}
+
+manifest_raw_size() {
+  local manifest=$1 raw_size
+  raw_size=$(/usr/bin/plutil -extract raw_size raw -o - "$manifest") || return 1
+  [[ "$raw_size" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$raw_size"
+}
+
+transfer_authenticated_image() {
+  local operation=$1 artifact=$2 transfer=$3 disk=$4 identity=$5 raw_size=$6 raw_sha=$7
+  case "$operation" in
+    write-verify|repair-verify) ;;
+    *) return 1 ;;
+  esac
+  zstd -dc "$artifact" | sudo "$transfer" \
+    "$operation" "$disk" "$identity" "$raw_size" "$raw_sha"
+}
+
 plist_value() {
   /usr/bin/plutil -extract "$2" raw -o - "$1" 2>/dev/null
 }

@@ -23,14 +23,20 @@ for tool in ansible-playbook curl sha256sum xz losetup sfdisk partprobe e2fsck r
 REV=$(git -C "$ROOT" rev-parse HEAD)
 git -C "$ROOT" diff --quiet || die "tracked source changes must be committed before an image build"
 git -C "$ROOT" diff --cached --quiet || die "staged source changes must be committed before an image build"
-VERSION=${DANCAM_IMAGE_VERSION:-"$(date -u +%Y%m%d)-${REV:0:12}"}
-IMAGE_ID=$(printf '%s:%s:%s' "$DANCAM_OS_RELEASE" "$REV" "$VERSION" | sha256sum | cut -c1-32)
 OUT=${DANCAM_IMAGE_OUT:-"$ROOT/dist"}
 SIGNING_KEY=${DANCAM_IMAGE_SIGNING_KEY:-}
 SERVICE_BINARY=${DANCAM_SERVICE_BINARY:-}
 [ -n "$SIGNING_KEY" ] || die "DANCAM_IMAGE_SIGNING_KEY must name the minisign secret key"
 [ -x "$SERVICE_BINARY" ] || die "DANCAM_SERVICE_BINARY must name an executable aarch64 dancam binary"
 mkdir -p "$OUT"
+if [ "${DANCAM_IMAGE_VERSION+x}" = x ]; then
+  VERSION=$(claim_release_version "$OUT" "$DANCAM_IMAGE_VERSION") || \
+    die "image version is invalid or already claimed: $DANCAM_IMAGE_VERSION"
+else
+  VERSION=$(claim_generated_release_version "$OUT" "$REV" "$(date -u +%Y%m%dT%H%M%SZ)") || \
+    die "could not claim an automatic image version"
+fi
+IMAGE_ID=$(printf '%s:%s:%s' "$DANCAM_OS_RELEASE" "$REV" "$VERSION" | sha256sum | cut -c1-32)
 
 WORK=$(mktemp -d)
 LOOP=

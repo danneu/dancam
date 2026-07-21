@@ -10,9 +10,10 @@ Apple Silicon Mac, enter the development shell and run:
 just raspi-flash
 ```
 
-The command authenticates the newest released image under `dist/` (or accepts an
-explicit manifest path), lists eligible removable whole disks, and does not mutate a
-disk until the image is authenticated and the displayed identifier is typed exactly.
+The command authenticates the lexically newest released image under `dist/` (or
+accepts an explicit manifest path), lists eligible removable whole disks, and does not
+mutate a disk until the image is authenticated and the displayed identifier is typed
+exactly.
 It writes and verifies the complete image, creates the per-unit setup QR and recovery
 record in the current directory, verifies personalization, and ejects the card. The
 writer holds an exclusive macOS Disk Arbitration claim from image transfer through
@@ -53,6 +54,12 @@ inspection then requires those payload areas to be empty and at least 1 GiB avai
 on root to non-root callers before the build can emit the installed-package inventory,
 compressed image, manifest, or signature. Flash operators receive only those release
 artifacts and trust the public key tracked at `raspi/image/release.pub`.
+Automatic release versions contain UTC date and time through seconds, the repository
+revision, and a four-digit collision discriminator. Concurrent builds atomically claim
+different ordered basenames, and compact versions sort after legacy same-day releases,
+so the no-argument flash command selects the newest. Publishers may set
+`DANCAM_IMAGE_VERSION` for an explicit version; unsafe names and any version with an
+existing claim or output fail instead of replacing files.
 
 Hands-on runbook for bringing up the dancam camera unit -- from flashing the microSD
 through serving canonical operational status. These are the concrete steps we ran for the

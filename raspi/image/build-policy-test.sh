@@ -59,4 +59,44 @@ if wait_for_paths 1 0 "$TMP/missing-partition"; then
   exit 1
 fi
 
+release_out="$TMP/releases"
+mkdir "$release_out"
+revision=0123456789abcdef0123456789abcdef01234567
+timestamp=20260720T231045Z
+claim_generated_release_version "$release_out" "$revision" "$timestamp" > "$TMP/version-1" &
+claim_1=$!
+claim_generated_release_version "$release_out" "$revision" "$timestamp" > "$TMP/version-2" &
+claim_2=$!
+wait "$claim_1"
+wait "$claim_2"
+[ "$(sort "$TMP/version-1" "$TMP/version-2")" = "$(printf '%s\n%s' \
+  20260720T231045Z-0123456789ab-0000 \
+  20260720T231045Z-0123456789ab-0001)" ]
+
+explicit_version=20260720T231045Z-0123456789ab-release
+[ "$(claim_release_version "$release_out" "$explicit_version")" = "$explicit_version" ]
+if claim_release_version "$release_out" "$explicit_version" >/dev/null 2>&1; then
+  echo "claimed explicit image version was reused" >&2
+  exit 1
+fi
+existing_version=20260720T231045Z-0123456789ab-existing
+touch "$release_out/dancam-${existing_version}.img.zst"
+if claim_release_version "$release_out" "$existing_version" >/dev/null 2>&1; then
+  echo "pre-existing release output was accepted" >&2
+  exit 1
+fi
+
+auto_collision_out="$TMP/auto-collision"
+mkdir "$auto_collision_out"
+auto_collision_version=20260720T231045Z-0123456789ab-0000
+printf 'existing artifact\n' > "$auto_collision_out/dancam-${auto_collision_version}.img.zst"
+[ "$(claim_generated_release_version "$auto_collision_out" "$revision" "$timestamp")" = \
+  20260720T231045Z-0123456789ab-0001 ]
+[ "$(cat "$auto_collision_out/dancam-${auto_collision_version}.img.zst")" = 'existing artifact' ]
+
+if claim_release_version "$release_out" ../outside >/dev/null 2>&1; then
+  echo "unsafe explicit image version was accepted" >&2
+  exit 1
+fi
+
 echo "image build policy tests passed"

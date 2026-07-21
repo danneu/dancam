@@ -43,3 +43,45 @@ calculate_partition_geometry() {
   p4_end=$((p4_start + data_size))
   printf '%s %s %s %s %s\n' "$p2_end" "$p3_start" "$p3_end" "$p4_start" "$p4_end"
 }
+
+release_version_is_valid() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
+claim_release_version() {
+  local out=$1 version=$2 claim path
+  release_version_is_valid "$version" || {
+    echo "raspi-image: invalid image version: $version" >&2
+    return 1
+  }
+
+  claim="$out/.dancam-${version}.claim"
+  mkdir "$claim" 2>/dev/null || return 1
+  for path in \
+    "$out/dancam-${version}.packages.txt" \
+    "$out/dancam-${version}.img.zst" \
+    "$out/dancam-${version}.img.zst.manifest.json" \
+    "$out/dancam-${version}.img.zst.manifest.json.minisig"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      echo "raspi-image: release output already exists: $path" >&2
+      return 1
+    fi
+  done
+  printf '%s\n' "$version"
+}
+
+claim_generated_release_version() {
+  local out=$1 revision=$2 timestamp=$3 discriminator version
+  [[ "$revision" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+  [[ "$timestamp" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || return 1
+
+  for ((discriminator = 0; discriminator <= 9999; discriminator++)); do
+    printf -v version '%s-%s-%04d' "$timestamp" "${revision:0:12}" "$discriminator"
+    if claim_release_version "$out" "$version" >/dev/null 2>&1; then
+      printf '%s\n' "$version"
+      return 0
+    fi
+  done
+  echo "raspi-image: exhausted release claims for $timestamp and ${revision:0:12}" >&2
+  return 1
+}
