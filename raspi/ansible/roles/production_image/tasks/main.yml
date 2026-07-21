@@ -113,11 +113,11 @@
 - name: Derive the production boot command line
   ansible.builtin.set_fact:
     production_image_cmdline_base: >-
-      {{ production_image_cmdline.content | b64decode | trim
-         | regex_replace('(^|\\s)resize(?=\\s|$)', ' ')
-         | regex_replace('(^|\\s)cloud-init=disabled(?=\\s|$)', ' ')
-         | regex_replace('(^|\\s)cfg80211\\.ieee80211_regdom=[A-Z]{2}(?=\\s|$)', ' ')
-         | regex_replace('\\s+', ' ') | trim }}
+      {{ (production_image_cmdline.content | b64decode).split()
+         | reject('equalto', 'resize')
+         | reject('equalto', 'cloud-init=disabled')
+         | reject('match', '^cfg80211[.]ieee80211_regdom=[A-Z]{2}$')
+         | join(' ') }}
 
 - name: Apply the production boot command line
   ansible.builtin.copy:
@@ -125,9 +125,8 @@
     owner: root
     group: root
     mode: '0755'
-    content: >-
-      {{ production_image_cmdline_base }} cloud-init=disabled
-      cfg80211.ieee80211_regdom={{ dancam_wifi_country }}{{ '\n' }}
+    content: |
+      {{ production_image_cmdline_base }} cloud-init=disabled cfg80211.ieee80211_regdom={{ dancam_wifi_country }}
 
 - name: Leave the generic root machine identity empty
   ansible.builtin.copy:

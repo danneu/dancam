@@ -32,6 +32,28 @@ verify_ini_value() {
     verify_die "wrong [$section] $option value in $path"
 }
 
+verify_boot_command_line() {
+  local path=$1 root_partuuid=$2 wifi_country=$3 token count
+  if grep -Fq '\n' "$path"; then
+    verify_die 'boot command line contains a literal newline escape'
+    return 1
+  fi
+  for token in \
+    "root=PARTUUID=$root_partuuid" \
+    cloud-init=disabled \
+    "cfg80211.ieee80211_regdom=$wifi_country"; do
+    count=$(tr ' ' '\n' < "$path" | grep -cxF "$token" || true)
+    if [ "$count" -ne 1 ]; then
+      verify_die "boot command line token count is not one: $token"
+      return 1
+    fi
+  done
+  if tr ' ' '\n' < "$path" | grep -qxF resize; then
+    verify_die 'base-image resize action remains enabled'
+    return 1
+  fi
+}
+
 verify_absent_release_state() {
   local image_root=$1 connection_root connection_persist signing_secret
   connection_root="$image_root/etc/NetworkManager/system-connections"
@@ -113,14 +135,7 @@ verify_production_image() {
 
   verify_line "$image_root/boot/firmware/config.txt" 'camera_auto_detect=0'
   verify_line "$image_root/boot/firmware/config.txt" 'dtoverlay=imx708'
-  grep -qw "root=PARTUUID=$root_partuuid" "$image_root/boot/firmware/cmdline.txt" || \
-    verify_die 'boot root PARTUUID is wrong'
-  grep -qw 'cloud-init=disabled' "$image_root/boot/firmware/cmdline.txt" || \
-    verify_die 'cloud-init is not disabled on the kernel command line'
-  grep -qw "cfg80211.ieee80211_regdom=$wifi_country" "$image_root/boot/firmware/cmdline.txt" || \
-    verify_die 'wireless regulatory domain is wrong'
-  ! grep -qw resize "$image_root/boot/firmware/cmdline.txt" || \
-    verify_die 'base-image resize action remains enabled'
+  verify_boot_command_line "$image_root/boot/firmware/cmdline.txt" "$root_partuuid" "$wifi_country"
 
   verify_line "$image_root/etc/systemd/journald.conf.d/60-dancam-persistent.conf" 'Storage=persistent'
   verify_line "$image_root/etc/systemd/journald.conf.d/60-dancam-persistent.conf" 'SystemMaxUse=200M'
