@@ -157,9 +157,9 @@ struct ClipThumbnailCellTests {
 
         cell.configure(recording: recording, loader: .noop)
         #expect(cell.accessoryType == .disclosureIndicator)
-        #expect(cell.titleTextForTesting == "Recording")
+        #expect(cell.titleTextForTesting == "Session")
         #expect(cell.subtitleTextForTesting == "1m · 2 clips")
-        #expect(cell.accessibilityLabel == "Recording, 1m · 2 clips")
+        #expect(cell.accessibilityLabel == "Session, 1m · 2 clips")
 
         cell.configure(
             clip: clip(id: 9, startMs: nil, durMs: nil, bytes: 9, etag: "9-100", timeApproximate: false),
@@ -194,9 +194,9 @@ struct ClipThumbnailCellTests {
         cell.configure(recording: recording, loader: .noop)
 
         #expect(cell.accessoryType == .disclosureIndicator)
-        #expect(cell.titleTextForTesting == "Recording")
+        #expect(cell.titleTextForTesting == "Session")
         #expect(cell.subtitleTextForTesting == "1m · 2 clips")
-        #expect(cell.accessibilityLabel == "Recording, 1m · 2 clips")
+        #expect(cell.accessibilityLabel == "Session, 1m · 2 clips")
     }
 
     @Test func configureRecordingShowsLiveRecordingPill() {
@@ -206,7 +206,7 @@ struct ClipThumbnailCellTests {
 
         #expect(cell.isRecordingPillVisibleForTesting)
         #expect(colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemRed))
-        #expect(cell.accessibilityLabel == "Recording, 1m · 2 clips, Recording")
+        #expect(cell.accessibilityLabel == "Session, 1m · 2 clips, Live session")
     }
 
     @Test func configureRecordingShowsLastKnownRecordingPill() {
@@ -216,7 +216,7 @@ struct ClipThumbnailCellTests {
 
         #expect(cell.isRecordingPillVisibleForTesting)
         #expect(colorMatches(cell.recordingPillForTesting.dotColorForTesting, .systemGray))
-        #expect(cell.accessibilityLabel == "Recording, 1m · 2 clips, Last known recording")
+        #expect(cell.accessibilityLabel == "Session, 1m · 2 clips, Last known session")
     }
 
     @Test func clipConfigureAndReuseHideRecordingPill() {

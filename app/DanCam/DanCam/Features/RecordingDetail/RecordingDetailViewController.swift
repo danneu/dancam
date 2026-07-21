@@ -62,7 +62,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        navigationItem.title = "Recording"
+        navigationItem.title = "Session"
         view.backgroundColor = .systemBackground
         configureTable()
 
@@ -181,7 +181,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         clips = newState.clips
         clipsByID = Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0) })
         paginationTailID = clips.last?.id
-        navigationItem.title = recordingTitle(for: clips)
+        updateSessionTitle()
         prunePrefetches(surviving: Set(clips.map(ClipThumbnailIdentity.init)))
         preservedVisibleThumbnails = visibleThumbnails
 
@@ -214,6 +214,7 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         let statusChanged = liveRecordingStatus != status
         liveRecordingStatus = status
         self.showsLiveRow = showsLiveRow
+        updateSessionTitle()
 
         let reconfigure: [RecordingDetailRow] = wasShowing && showsLiveRow && statusChanged
             ? [.liveRecording]
@@ -255,13 +256,30 @@ final class RecordingDetailViewController: UIViewController, UITableViewDelegate
         }
     }
 
-    private func recordingTitle(for clips: [Clip]) -> String {
-        guard let start = clips.last?.resolvedStartDate,
-              let end = clips.first?.resolvedStartDate else {
-            return "Recording"
+    private func updateSessionTitle() {
+        let newestEnd = clips.first.flatMap { clip -> Date? in
+            guard let start = clip.resolvedStartDate, let durMs = clip.durMs else { return nil }
+            return start.addingTimeInterval(Double(durMs) / 1_000)
         }
-
-        return Formatters.recordingCardTitle(start: start, end: end)
+        let freshness: RecordingAttribution.Freshness?
+        if showsLiveRow {
+            switch liveRecordingStatus {
+            case .pending:
+                freshness = .live
+            case .live(let segment):
+                freshness = segment.isTicking ? .live : .lastKnown
+            case .none:
+                freshness = nil
+            }
+        } else {
+            freshness = nil
+        }
+        navigationItem.title = Formatters.sessionTitle(
+            start: clips.last?.resolvedStartDate,
+            end: newestEnd,
+            freshness: freshness,
+            now: dependencies.wallNow()
+        )
     }
 
     private func removeFromNavigationStack() {

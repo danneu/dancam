@@ -239,7 +239,7 @@ struct FormattersTests {
         #expect(Formatters.timeOfDayShort(start, timeZone: utc) == "14:02")
     }
 
-    @Test func timeSpanFormatsSameDayAndCrossMidnightRanges() throws {
+    @Test func sessionTitleFormatsLiveFinishedAndCrossDayRanges() throws {
         let utc = try #require(TimeZone(secondsFromGMT: 0))
         let calendar = gregorianCalendar(timeZone: utc)
         let sameDayStart = try date(2026, 1, 1, hour: 14, minute: 2, calendar: calendar)
@@ -247,8 +247,10 @@ struct FormattersTests {
         let crossMidnightStart = try date(2026, 1, 1, hour: 23, minute: 58, calendar: calendar)
         let crossMidnightEnd = try date(2026, 1, 2, hour: 0, minute: 2, calendar: calendar)
 
-        #expect(Formatters.timeSpan(start: sameDayStart, end: sameDayEnd, timeZone: utc) == "14:02 - 15:37")
-        #expect(Formatters.timeSpan(start: crossMidnightStart, end: crossMidnightEnd, timeZone: utc) == "23:58 - 00:02")
+        #expect(Formatters.sessionTitle(start: sameDayStart, end: sameDayEnd, freshness: nil, now: sameDayEnd, calendar: calendar) == "14:02 - 15:37")
+        #expect(Formatters.sessionTitle(start: sameDayStart, end: sameDayEnd, freshness: .live, now: sameDayEnd, calendar: calendar) == "14:02 - now")
+        #expect(Formatters.sessionTitle(start: crossMidnightStart, end: crossMidnightEnd, freshness: nil, now: crossMidnightEnd, calendar: calendar) == "Jan 1, 23:58 - Jan 2, 00:02")
+        #expect(Formatters.sessionTitle(start: crossMidnightStart, end: nil, freshness: .live, now: crossMidnightEnd, calendar: calendar) == "Jan 1, 23:58 - now")
     }
 
     @Test func dayHeaderFormatsRelativeAndCalendarDates() throws {
@@ -355,16 +357,16 @@ struct FormattersTests {
         }
     }
 
-    @Test func recordingCardTitleUsesSpanOrUndatedFallback() throws {
+    @Test func sessionTitleUsesGenericFallbackWhenRequiredTimesAreMissing() throws {
         let utc = try #require(TimeZone(secondsFromGMT: 0))
         let calendar = gregorianCalendar(timeZone: utc)
         let start = try date(2026, 1, 1, hour: 14, minute: 2, calendar: calendar)
         let end = try date(2026, 1, 1, hour: 15, minute: 37, calendar: calendar)
 
-        #expect(Formatters.recordingCardTitle(start: start, end: end, timeZone: utc) == "14:02 - 15:37")
-        #expect(Formatters.recordingCardTitle(start: nil, end: end, timeZone: utc) == "Recording")
-        #expect(Formatters.recordingCardTitle(start: start, end: nil, timeZone: utc) == "Recording")
-        #expect(Formatters.recordingCardTitle(start: nil, end: nil, timeZone: utc) == "Recording")
+        #expect(Formatters.sessionTitle(start: start, end: end, freshness: nil, now: end, calendar: calendar) == "14:02 - 15:37")
+        #expect(Formatters.sessionTitle(start: nil, end: end, freshness: nil, now: end, calendar: calendar) == "Session")
+        #expect(Formatters.sessionTitle(start: start, end: nil, freshness: nil, now: end, calendar: calendar) == "Session")
+        #expect(Formatters.sessionTitle(start: start, end: nil, freshness: .live, now: end, calendar: calendar) == "14:02 - now")
     }
 
     @Test func recordingCardSubtitleOmitsUnknownDurationAndFormatsClipCount() {

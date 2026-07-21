@@ -310,7 +310,7 @@ struct LiveRecordingStatusTests {
         let clock = ContinuousClock()
         let tickingSegment = ticking(sessionId: 5, id: 7, seedDurMs: 1_000, anchor: clock.now)
         let frozenSegment = frozen(sessionId: 6, id: 7, durMs: 1_000)
-        let liveRecorder = RecorderTruth.live(recorder(session: 9, currentSegment: nil))
+        let liveRecorder = RecorderTruth.live(recorder(phase: .starting, session: 9, currentSegment: nil))
 
         // No world boot tag, or a .none status -> no attribution regardless of recorder.
         #expect(RecordingAttribution.from(status: .pending, storageGeneration: CameraSamples.storageGeneration, worldBootTag: nil, recorder: liveRecorder) == nil)
@@ -324,6 +324,22 @@ struct LiveRecordingStatusTests {
             worldBootTag: "7f3a91c2b0d4",
             recorder: liveRecorder
         ) == RecordingAttribution(id: RecordingID(storageGeneration: CameraSamples.storageGeneration, bootTag: "7f3a91c2b0d4", session: 9), freshness: .live))
+
+        // Local pending feedback cannot attribute an idle snapshot's retained session.
+        #expect(RecordingAttribution.from(
+            status: .pending,
+            storageGeneration: CameraSamples.storageGeneration,
+            worldBootTag: "7f3a91c2b0d4",
+            recorder: .live(recorder(phase: .idle, session: 8, currentSegment: nil))
+        ) == nil)
+
+        // Fresh recording truth can attribute the pre-segment gap as well as starting truth.
+        #expect(RecordingAttribution.from(
+            status: .pending,
+            storageGeneration: CameraSamples.storageGeneration,
+            worldBootTag: "7f3a91c2b0d4",
+            recorder: .live(recorder(phase: .recording, session: 10, currentSegment: nil))
+        )?.id.session == 10)
 
         // A non-live recorder cannot source a session, so pending degrades to no attribution.
         #expect(RecordingAttribution.from(

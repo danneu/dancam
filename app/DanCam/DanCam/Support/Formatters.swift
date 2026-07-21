@@ -138,8 +138,29 @@ nonisolated enum Formatters {
         return formatter.string(from: date)
     }
 
-    static func timeSpan(start: Date, end: Date, timeZone: TimeZone = .current) -> String {
-        "\(timeOfDayShort(start, timeZone: timeZone)) - \(timeOfDayShort(end, timeZone: timeZone))"
+    static func sessionTitle(
+        start: Date?,
+        end: Date?,
+        freshness: RecordingAttribution.Freshness?,
+        now: Date,
+        calendar: Calendar = .current
+    ) -> String {
+        guard let start else { return "Session" }
+
+        if freshness == .live {
+            if calendar.isDate(start, inSameDayAs: now) {
+                return "\(timeOfDayShort(start, timeZone: calendar.timeZone)) - now"
+            }
+            return "\(dateAndTime(start, relativeTo: now, calendar: calendar)) - now"
+        }
+
+        guard let end else { return "Session" }
+        if calendar.isDate(start, inSameDayAs: end) {
+            return "\(timeOfDayShort(start, timeZone: calendar.timeZone)) - \(timeOfDayShort(end, timeZone: calendar.timeZone))"
+        }
+
+        let includeYear = calendar.component(.year, from: start) != calendar.component(.year, from: end)
+        return "\(dateAndTime(start, includeYear: includeYear, calendar: calendar)) - \(dateAndTime(end, includeYear: includeYear, calendar: calendar))"
     }
 
     static func dayHeader(_ dayStart: Date, now: Date, calendar: Calendar = .current) -> String {
@@ -221,12 +242,6 @@ nonisolated enum Formatters {
         count == 1 ? "1 clip" : "\(count) clips"
     }
 
-    static func recordingCardTitle(start: Date?, end: Date?, timeZone: TimeZone = .current) -> String {
-        guard let start, let end else { return "Recording" }
-
-        return timeSpan(start: start, end: end, timeZone: timeZone)
-    }
-
     static func recordingCardSubtitle(durationMs: UInt64?, clipCount count: Int) -> String {
         let duration = durationMs.map(compactDuration)
         return [duration, clipCount(count)].compactMap { $0 }.joined(separator: " · ")
@@ -295,5 +310,26 @@ nonisolated enum Formatters {
             detailText: "\(byteSize(clampedUsed)) of \(byteSize(total))",
             usedFraction: Double(clampedUsed) / Double(total)
         )
+    }
+
+    private static func dateAndTime(
+        _ date: Date,
+        relativeTo reference: Date,
+        calendar: Calendar
+    ) -> String {
+        dateAndTime(
+            date,
+            includeYear: calendar.component(.year, from: date) != calendar.component(.year, from: reference),
+            calendar: calendar
+        )
+    }
+
+    private static func dateAndTime(_ date: Date, includeYear: Bool, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = includeYear ? "MMM d, yyyy, HH:mm" : "MMM d, HH:mm"
+        return formatter.string(from: date)
     }
 }

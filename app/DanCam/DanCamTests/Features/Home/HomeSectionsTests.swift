@@ -77,6 +77,8 @@ struct HomeSectionsTests {
         #expect(recording.recordingID == recordingID("boot-a"))
         #expect(recording.clips.map(\.id) == [5, 4])
         #expect(recording.representative?.id == 4)
+        #expect(recording.startDate == today)
+        #expect(recording.endDate == today.addingTimeInterval(30))
     }
 
     @Test func singleStampedClipIsStillARecordingCard() throws {

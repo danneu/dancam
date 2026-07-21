@@ -20,7 +20,7 @@ struct RecordingDetailViewControllerTests {
         #expect(controller.clipIDsForTesting() == [12, 10])
     }
 
-    @Test func titleUsesFullRecordingSpanAndUndatedFallback() {
+    @Test func titleUsesFullSessionSpanWithFinalizedDurationAndUndatedFallback() {
         let newestStart = UInt64(1_767_231_420_000)
         let oldestStart = UInt64(1_767_225_720_000)
         let datedController = makeController(clips: [
@@ -30,9 +30,12 @@ struct RecordingDetailViewControllerTests {
 
         datedController.loadViewIfNeeded()
 
-        #expect(datedController.navigationItem.title == Formatters.recordingCardTitle(
+        let expectedEnd = Date(timeIntervalSince1970: Double(newestStart + 30_000) / 1_000)
+        #expect(datedController.navigationItem.title == Formatters.sessionTitle(
             start: Date(timeIntervalSince1970: Double(oldestStart) / 1_000),
-            end: Date(timeIntervalSince1970: Double(newestStart) / 1_000)
+            end: expectedEnd,
+            freshness: nil,
+            now: expectedEnd
         ))
 
         let undatedController = makeController(clips: [
@@ -41,7 +44,7 @@ struct RecordingDetailViewControllerTests {
 
         undatedController.loadViewIfNeeded()
 
-        #expect(undatedController.navigationItem.title == "Recording")
+        #expect(undatedController.navigationItem.title == "Session")
     }
 
     @Test func prefetchAndCancelRoutesThroughThumbnailLoader() throws {
@@ -473,6 +476,19 @@ struct RecordingDetailViewControllerTests {
         #expect(cell.statusViewForTesting.titleTextForTesting == "Starting...")
         #expect(cell.statusViewForTesting.elapsedTextForTesting == "00:00")
         #expect(colorMatches(cell.statusViewForTesting.recBadgeForTesting.dotColorForTesting, .systemRed))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func idleSnapshotRetainedSessionDoesNotAddPendingRowToPreviousDetail() async throws {
+        let controller = makeController(
+            clips: [clip(id: 12, bootTag: "target")],
+            world: CameraSamples.world(phase: .idle, currentSegment: nil, bootTag: "target"),
+            recording: .starting
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        #expect(controller.isShowingLiveRowForTesting == false)
     }
 
     @Test(.timeLimit(.minutes(1)))

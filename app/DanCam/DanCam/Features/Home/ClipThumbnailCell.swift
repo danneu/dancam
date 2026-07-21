@@ -97,10 +97,22 @@ final class ClipThumbnailCell: UITableViewCell {
         configureThumbnail(clip: clip, loader: loader, preservedThumbnail: preservedThumbnail)
     }
 
-    func configure(recording: RecordingGroup, loader: ThumbnailLoader, preservedThumbnail: UIImage? = nil) {
+    func configure(
+        recording: RecordingGroup,
+        loader: ThumbnailLoader,
+        preservedThumbnail: UIImage? = nil,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) {
         accessoryType = .disclosureIndicator
         configureRecordingPill(recording.recording)
-        titleLabel.text = Formatters.recordingCardTitle(start: recording.startDate, end: recording.endDate)
+        titleLabel.text = Formatters.sessionTitle(
+            start: recording.startDate,
+            end: recording.endDate,
+            freshness: recording.recording,
+            now: now,
+            calendar: calendar
+        )
         let subtitle = Formatters.recordingCardSubtitle(
             durationMs: recording.totalDurMs,
             clipCount: recording.clipCount
@@ -259,9 +271,9 @@ final class ClipThumbnailCell: UITableViewCell {
         let recordingLabel: String?
         switch recording {
         case .live:
-            recordingLabel = "Recording"
+            recordingLabel = "Live session"
         case .lastKnown:
-            recordingLabel = "Last known recording"
+            recordingLabel = "Last known session"
         case nil:
             recordingLabel = nil
         }

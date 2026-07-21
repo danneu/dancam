@@ -174,10 +174,10 @@ nonisolated struct RecordingAttribution: Equatable, Sendable {
         case .none:
             return nil
         case .pending:
-            // `shouldShowPending` already guarantees a live recorder here; guard defensively
-            // for the session so a non-live truth degrades to no attribution rather than a
-            // misattributed recording.
-            guard case .live(let snapshot) = recorder else { return nil }
+            // Local command state may produce pending before the Pi leaves idle. Only fresh
+            // recorder truth that claims capture may identify the new session.
+            guard case .live(let snapshot) = recorder,
+                  snapshot.phase.claimsRecording else { return nil }
             return RecordingAttribution(
                 id: RecordingID(
                     storageGeneration: storageGeneration,

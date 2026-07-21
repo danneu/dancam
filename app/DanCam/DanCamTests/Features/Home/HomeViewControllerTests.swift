@@ -684,6 +684,38 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func pendingStartNeverAttributesPreviousSessionAndNewFootageGainsRec() async throws {
+        let previous = RecordingID(bootTag: "boot-a", session: 7)
+        let next = RecordingID(bootTag: "boot-a", session: 8)
+        let (controller, store) = makeControllerAndStore(
+            clips: [recordingClip(id: 10, bootTag: "boot-a", session: 7)],
+            loader: .noop,
+            world: CameraSamples.world(phase: .idle, session: 7, currentSegment: nil, bootTag: "boot-a"),
+            recording: .starting
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        try await waitUntil {
+            controller.isShowingPendingWidgetForTesting &&
+                controller.recordingThumbnailCellForTesting(recording: previous)?.isRecordingPillVisibleForTesting == false
+        }
+
+        store.send(.event(.recordingStarting(session: 8, atMs: 1_000)))
+
+        try await waitUntil {
+            controller.recordingThumbnailCellForTesting(recording: previous)?.isRecordingPillVisibleForTesting == false
+        }
+
+        store.send(.event(.clipFinalized(self.recordingClip(id: 11, bootTag: "boot-a", session: 8))))
+
+        try await waitUntil {
+            controller.recordingThumbnailCellForTesting(recording: next)?.isRecordingPillVisibleForTesting == true &&
+                controller.recordingThumbnailCellForTesting(recording: previous)?.isRecordingPillVisibleForTesting == false
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func finalizedRecordingClearsPillWhenStopReconfigureIsSuperseded() async throws {
         let loader = GatedThumbnailLoader()
         let finalizedClip = Clip(

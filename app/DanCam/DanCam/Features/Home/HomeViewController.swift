@@ -364,7 +364,7 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
     }
 
     private func configureClipsTable() {
-        clipsHeaderLabel.text = "Recent clips"
+        clipsHeaderLabel.text = "Sessions"
         clipsHeaderLabel.font = .preferredFont(forTextStyle: .headline)
         clipsHeaderLabel.adjustsFontForContentSizeCategory = true
 
@@ -443,7 +443,9 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
                     loader: self.dependencies.thumbnailLoader,
                     preservedThumbnail: recording.representative
                         .map(ClipThumbnailIdentity.init)
-                        .flatMap { self.preservedVisibleThumbnails[$0] }
+                        .flatMap { self.preservedVisibleThumbnails[$0] },
+                    now: self.wallNow(),
+                    calendar: self.currentCalendar()
                 )
                 return cell
             }
@@ -915,7 +917,12 @@ final class HomeViewController: UIViewController, UITableViewDelegate, UITableVi
             case .finished(let clip):
                 cell.configure(clip: clip, loader: dependencies.thumbnailLoader)
             case .recording(let recording):
-                cell.configure(recording: recording, loader: dependencies.thumbnailLoader)
+                cell.configure(
+                    recording: recording,
+                    loader: dependencies.thumbnailLoader,
+                    now: wallNow(),
+                    calendar: currentCalendar()
+                )
             }
         }
     }

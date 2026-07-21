@@ -35,7 +35,7 @@ tabs never discards a pushed stack.
 Screen content honors the tab bar through safe-area or automatic inset behavior. In
 particular, Home's bottom failure presentation and clip list remain above the bar.
 
-## Recording-first Home browse
+## Session-first Home browse
 
 Home derives its sections and rows from the root `ClipsFeature.State` list. It does not
 store a second recording collection and the Pi does not expose a grouping endpoint.
@@ -55,19 +55,26 @@ never guesses the missing half, and it never treats either identity field as a c
 sort key.
 
 Consecutive finished clips with the same non-null `RecordingID` inside a day section
-coalesce into one recording card. A single identified clip is still a card. The card is
+coalesce into one session card. A single identified clip is still a card. The card is
 a render projection, not a persisted domain entity, and shows:
 
-- the recording's visible time span;
+- the session's visible time span;
 - its clip count;
 - total duration only when every member clip has a known duration;
 - the oldest visible member as a stable representative thumbnail; and
 - a freshness-typed REC marker when this is the newest occurrence of the recording
   currently being written.
 
+The start is the oldest clip's trusted start. A fresh live session ends at the literal
+`now`; a finished or last-known session ends at the newest finalized clip's trusted
+start plus duration. A missing required trusted time or duration produces the generic
+`Session` title. Home calculates both endpoints from only that day-section occurrence.
+Same-day ranges show times only. Cross-day ranges show both dates, adding years when the
+endpoints cross a year; a live range that began before today shows its start date.
+
 Using the oldest member keeps the card's thumbnail and leading time stable as newer
 segments finalize. Deleting that member intentionally changes the representative and
-reconfigures the card. Recording cards do not have swipe-to-delete actions; deletion
+reconfigures the card. Session cards do not have swipe-to-delete actions; deletion
 stays per clip in recording detail or the clip viewer.
 
 One recording can appear in more than one day section when it spans midnight, or in
@@ -76,11 +83,10 @@ separate loaded runs when an unidentified clip interrupts it. An occurrence coun
 bottom pagination. Only occurrence 0 can carry the REC marker, so an older day card
 never claims that recording is being written there now.
 
-"Recording" is the product and domain term. A recording boundary is not a drive or trip
-boundary: the camera has no ignition, odometer, or GPS trip signal, and one trip can
-contain zero, one, or many recordings. Code and UI use `Recording`, `RecordingID`,
-`RecordingGroup`, `RecordingAttribution`, and `RecordingDetail*`; `session` remains a
-wire and persistence discriminator rather than the user-facing noun.
+"Session" is the user-facing noun for a grouped run of clips. Record and Recording
+remain the capture action and current recorder status. Internal types such as
+`RecordingID`, `RecordingGroup`, `RecordingAttribution`, and `RecordingDetail*` retain
+their implementation names; the Pi's `session` field remains an identity discriminator.
 
 ## Live recording placement and attribution
 
@@ -99,10 +105,13 @@ world's `boot_tag`. Reading these facts together prevents a reconnect transition
 pairing a new recorder session with the previous boot tag for one frame.
 
 `RecordingAttribution` pairs the world boot tag with the current segment's session.
-During the pending gap before a first segment exists, it pairs the boot tag with the
-fresh recorder snapshot's session. Missing boot identity or non-recording status yields
-no attribution. Live truth produces a red marker; last-known truth freezes the elapsed
-value and produces a gray marker rather than hiding it during a heartbeat gap.
+During the pending gap before a first segment exists, it does so only when fresh Pi
+truth says the recorder is starting or recording. Local command state still presents
+the pending widget immediately, but an idle snapshot's retained session cannot identify
+the new run. Missing boot identity or non-recording status yields no attribution. Live
+truth produces a red marker; last-known truth freezes the elapsed value and produces a
+gray marker rather than hiding it during a heartbeat gap. Segment-backed attribution
+continues through stopping while the fresh snapshot retains an open current segment.
 
 ## Recording detail and pagination
 
@@ -110,7 +119,9 @@ Tapping a card pushes `RecordingDetailViewController` for that `RecordingID`. Th
 screen observes the root clip state and filters it; it is not a child reducer or a
 snapshot copied at navigation time. Rows stay newest-first and push the existing clip
 viewer. Thumbnail loading, prefetch, cancellation, and per-clip deletion reuse the
-normal clip paths.
+normal clip paths. Its Session title uses the oldest and newest matching clips across
+all loaded pages, with the same live, finished, last-known, trusted-time, and cross-day
+range rules as Home rather than the selected Home occurrence's narrower range.
 
 Detail pagination follows the global flat clip frontier. An unidentified tail keeps the
 target recording indeterminate, so detail continues loading through `nil`-identity gaps.
@@ -367,3 +378,21 @@ The Pi removed `/v1/health` and made canonical `/v1/status` its sole operational
 That server-side consolidation did not change the app: events remain the only live state
 and heartbeat-liveness source, so Debug still has no one-shot status fetch or competing
 truth.
+
+### 2026-07-21: Let fresh recorder truth own session attribution and ranges
+
+Immediate local pending feedback briefly combined with an idle Pi snapshot's retained
+session, which could put REC and a live detail row on the completed run during a new
+start. Attribution now requires fresh starting or recording truth until a current
+segment exists; local command state still owns the immediate pending widget.
+
+Grouped footage adopted Session as its user-facing noun while Record, Recording, and
+REC remain action and recorder-status language. Session titles now end fresh live runs
+at `now` and finalized or last-known runs at the newest trustworthy clip end. Home uses
+only the clips in its occurrence, detail uses every loaded matching clip, and cross-day
+ranges expose their dates.
+
+Suppressing REC only in Home was rejected because detail would retain the same false
+identity. Predicting a new session locally was rejected because allocation belongs to
+the Pi. Ending a range at the newest clip's start was rejected because it understates
+completed footage.

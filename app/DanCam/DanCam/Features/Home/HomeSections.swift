@@ -38,7 +38,10 @@ nonisolated struct RecordingGroup: Equatable, Sendable {
     }
 
     var endDate: Date? {
-        clips.first?.resolvedStartDate
+        guard let newest = clips.first,
+              let start = newest.resolvedStartDate,
+              let durMs = newest.durMs else { return nil }
+        return start.addingTimeInterval(Double(durMs) / 1_000)
     }
 }
 
