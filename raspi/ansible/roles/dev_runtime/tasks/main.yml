@@ -9,7 +9,7 @@
 
 - name: Require the dancam SD card layout before provisioning
   ansible.builtin.fail:
-    msg: "Missing /dev/disk/by-label/dancam-data; reflash and run `just raspi-partition` before provisioning."
+    msg: "Missing /dev/disk/by-label/dancam-data; replace this legacy card with `just raspi-flash dev`."
   when: not dev_runtime_data_partition_label.stat.exists
 
 - name: Upgrade all development packages to current

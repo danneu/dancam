@@ -48,6 +48,17 @@ printf '{"raw_size":5511315456}\n' > "$compact_manifest"
 [ "$(manifest_raw_size "$legacy_manifest")" -eq 10737418240 ]
 [ "$(manifest_raw_size "$compact_manifest")" -eq 5511315456 ]
 
+development_dir="$TMP/development"
+mkdir "$development_dir"
+development_manifest="$development_dir/dancam-development.img.zst.manifest.json"
+printf '{}\n' > "$development_manifest"
+[ "$(select_only_development_manifest "$development_dir")" = "$development_manifest" ]
+printf '{}\n' > "$development_dir/dancam-second.img.zst.manifest.json"
+if select_only_development_manifest "$development_dir" >/dev/null 2>&1; then
+  echo 'multiple development manifests were accepted' >&2
+  exit 1
+fi
+
 zstd() {
   [ "$1" = -dc ]
   printf 'authenticated image bytes'

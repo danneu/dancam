@@ -234,3 +234,11 @@ artifact is shared and locally cached. Passing values through generated shell or
 keyfile syntax was also rejected; the commissioner validates bounded single-line
 values and supplies them to NetworkManager as individual arguments, so punctuation
 cannot become syntax.
+
+### 2026-07-21 -- Personalize development networking during flashing
+
+The profile-explicit development flash validates home and AP credentials before image
+construction or removable-media discovery, then places them only in the per-card
+image-bound envelope. First boot consumes that envelope to create the fixed
+`dancam-home` and `dancam-ap` profiles. This retires manual AP password entry while
+preserving `just raspi-ap` as the safe timed switch between those profiles.

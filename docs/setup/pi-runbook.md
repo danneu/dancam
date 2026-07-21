@@ -1,26 +1,35 @@
 # Raspberry Pi setup
 
-## Production card: one command
+## Flash a card
 
-Released production cards do not require Raspberry Pi Imager, home Wi-Fi, SSH,
-target-side apt or Ansible, manual partitioning, deploy, or a hardening pass. On the
-Apple Silicon Mac, enter the development shell and run:
+Card creation does not use Raspberry Pi Imager, live partitioning, or a manual
+network bootstrap. On the Apple Silicon Mac, choose the profile explicitly:
 
 ```sh
-just raspi-flash
+just raspi-flash production                 # newest signed release under dist/
+just raspi-flash production path/to/image.img.zst.manifest.json
+just raspi-flash dev                        # fresh image from tracked worktree content
 ```
 
-The command authenticates the lexically newest released image under `dist/` (or
-accepts an explicit manifest path), lists eligible removable whole disks, and does not
-mutate a disk until the image is authenticated and the displayed identifier is typed
-exactly.
-It writes and verifies the complete image, creates the per-unit setup QR and recovery
-record in the current directory, verifies personalization, and ejects the card. The
+Bare and unknown profiles fail before building or inspecting removable media.
+Production authenticates the supplied or lexically newest release. Development first
+validates `.env`, derives the authorized public key from `DANCAM_SSH_KEY`, and builds
+a fresh generic writable image from current staged and unstaged tracked content in
+the controlled OrbStack builder. Untracked files are excluded.
+
+Both paths list eligible removable whole disks and do not mutate one until the
+displayed identifier is typed exactly. They write and verify the complete image, add
+an image-bound per-card envelope, remount and verify personalization, and eject the
+card. Production also creates the setup QR and recovery record in the current
+directory. The
 writer holds an exclusive macOS Disk Arbitration claim from image transfer through
 readback so the FAT boot volume cannot be auto-mounted and changed between those
 phases. If a run is interrupted after the complete image write,
-`just raspi-flash-resume` compares every authenticated image chunk with the card,
+`just raspi-flash-resume production [manifest]` compares every authenticated image
+chunk with the card,
 repairs and rereads up to 64 MiB of differing chunks, and refuses larger recovery.
+Development cannot resume: rerun `just raspi-flash dev` for a fresh build and full
+write.
 
 Move the ejected card to the Zero 2 W and power it with upstream networking absent.
 In the app, open Settings -> Add Camera and scan the generated QR. Setup status moves
@@ -38,7 +47,11 @@ artifact is 5,511,315,456 bytes (5,256 MiB) for the current pinned base: 512 MiB
 all 5,256 authenticated MiB. On first boot, commissioning grows only data to the
 aligned 95% card boundary; root and persist retain their release sizes.
 
-The remaining sections are the writable development-card workflow.
+For development, move the ejected card to the Pi and allow first boot to create the
+configured login, SSH host keys, `dancam-home` client, `dancam-ap` hotspot, machine
+identity, expanded data filesystem, and storage generation. Commissioning removes
+the consumed envelope and returns the Pi on home Wi-Fi. Use a whole-card reflash after
+a durable commissioning failure.
 
 Release publishers run `just raspi-image` on the Apple Silicon Mac with the protected
 minisign secret key at `secrets/image-release.key`, or override that checkout-local path
@@ -73,7 +86,7 @@ OS: Raspberry Pi OS Lite (64-bit), Trixie.
 Command context: Mac-side commands that use repo-relative paths (`just ...`,
 `cp .env.example .env`, `ffmpeg ... raspi/service/assets/...`) run from the repo
 root on the Mac. Pi-side commands (`rpicam-*`, `nmcli`, `systemctl`,
-`journalctl`, the `camera.py` smoke test, the AP PSK prompt) run on the Pi over
+`journalctl`, and the `camera.py` smoke test) run on the Pi over
 SSH.
 
 ## Configure for your hardware
@@ -87,14 +100,12 @@ cp .env.example .env
 
 Edit `.env`:
 
-- `DANCAM_HOST=<your-username>@dancam.local` -- the user must match the Raspberry Pi
-  Imager username you pick in section 1. When mDNS is flaky, keep the same user and
-  replace the host with the Pi's raw LAN IP.
-- `DANCAM_SSH_KEY=~/.ssh/id_ed25519` -- the private key whose `.pub` counterpart you
-  add in Imager.
-- `DANCAM_HOME_WIFI=<your-home-wifi>` -- the Pi's NetworkManager home-Wi-Fi
-  connection name, found on the Pi with `nmcli connection show`. Current Raspberry
-  Pi OS images often name the Imager-created profile `preconfigured`.
+- `DANCAM_HOST=<your-username>@dancam.local` -- first boot creates this key-only
+  login. When mDNS is flaky, retain the user and use the Pi's raw LAN IP after boot.
+- `DANCAM_SSH_KEY=~/.ssh/id_ed25519` -- flashing derives and installs its public key.
+- `DANCAM_HOME_WIFI_SSID` and `DANCAM_HOME_WIFI_PSK` -- the home network stored in
+  the fixed `dancam-home` profile.
+- `DANCAM_DEV_AP_PSK` -- the WPA2 password stored in the fixed `dancam-ap` profile.
 
 These are connection settings only. The camera service always runs as the fixed
 `dancam` system user and records under `/data/rec`; there is no service user to
@@ -104,84 +115,10 @@ configure. `raspi/ansible/inventory.ini` is tracked and contains only the shared
 Direct `./raspi/deploy.sh` runs do not auto-load `.env`; either use
 `just raspi-deploy` or export the same variables in your shell first.
 
-## 1. Flash Raspberry Pi OS Lite
-
-Flash the microSD with **Raspberry Pi Imager 2.0.10 or newer** (older Imager can't
-customize Trixie -- 1.9.x writes the wrong format and 2.0.6-2.0.8 can leave SSH off):
-
-1. **Choose OS:** `Raspberry Pi OS (other)` -> `Raspberry Pi OS Lite (64-bit)`.
-2. **Choose storage:** a 32 GB or larger high-endurance consumer microSD.
-3. **Edit Settings** (the OS-customization step) and set:
-   - Hostname: `dancam`
-   - Username `<your-username>` + a password
-   - Enable SSH -> "Allow public-key authentication only", and add your
-     `~/.ssh/<your-key>.pub`
-   - Configure wireless LAN: your home Wi-Fi SSID + password (so it joins headless)
-4. Write the card. Leave it available to the Mac for the next step; do not boot it
-   yet.
-
-## 2. Disable auto-expand and partition the card
-
-Cards flashed before the `dune` SD-card layout migration must be reflashed. The old
-expanded-root layout cannot be migrated in place because ext4 can grow online but
-cannot shrink online; `just raspi-partition` will refuse that card shape.
-
-Before first boot, edit `cmdline.txt` on the Mac-mounted FAT boot partition. It is a
-single line; remove the root auto-expand trigger from that line, then save and eject
-the card. Current Raspberry Pi OS images use this standalone token:
-
-```text
-resize
-```
-
-Older images used this `init=` hook instead:
-
-```text
- init=/usr/lib/raspi-config/init_resize.sh
-```
-
-For example, the current Imager output may look like this before editing (the
-`PARTUUID` and `ds=nocloud;i=...` value vary per write):
-
-```text
-console=serial0,115200 console=tty1 root=PARTUUID=041bba91-02 rootfstype=ext4 fsck.repair=yes rootwait resize cfg80211.ieee80211_regdom=US ds=nocloud;i=rpi-imager-1783445063965
-```
-
-Remove only `resize`, leaving the rest of the line intact:
-
-```text
-console=serial0,115200 console=tty1 root=PARTUUID=041bba91-02 rootfstype=ext4 fsck.repair=yes rootwait cfg80211.ieee80211_regdom=US ds=nocloud;i=rpi-imager-1783445063965
-```
-
-Insert the card in the Pi and power on through the `PWR` micro-USB port. First boot
-runs cloud-init -- it creates `<your-username>`, installs your key, joins Wi-Fi, and
-sets the hostname, then reboots once. Give it ~60-90s.
-
-Then partition the card from the Mac:
-
-```sh
-just raspi-partition
-```
-
-The partitioner grows root to the fixed 8 GiB size, creates labeled ext4
-`dancam-persist` and `dancam-data` partitions, and leaves about 5% of the card
-unpartitioned. It does not write fstab, mount anything, or create mountpoint
-directories; provisioning owns those facts.
-
-Verify the four-partition shape and labels:
-
-```sh
-ssh dancam.local 'lsblk -o NAME,SIZE,LABEL /dev/mmcblk0'
-```
-
-Expect `mmcblk0p1` through `mmcblk0p4`, with `dancam-persist` on p3 and
-`dancam-data` on p4. Mountpoints appear only after section 4 provisioning.
-
-## 3. SSH in
+## Connect to a development card
 
 From the Mac over the home LAN (mDNS). `-i` points at the **private** key -- the
-counterpart of the `.pub` you added when flashing (omit `-i` if it's a default name
-like `id_ed25519`):
+key configured by `DANCAM_SSH_KEY` (omit `-i` if it has a default name):
 
 ```sh
 ssh -i ~/.ssh/<your-key> <your-username>@dancam.local
@@ -193,12 +130,12 @@ Confirm it came up as the 64-bit Trixie kernel (`aarch64` / `v8` = 64-bit):
 uname -a
 ```
 
-## 4. Provision the system layer (Ansible)
+## Provision the system layer (Ansible)
 
 The Pi's onboard system state -- apt upgrade, the IMX708 camera overlay, the camera
 process dependencies (`python3-picamera2`, `python3-av`, plus `ffmpeg` as a media
 validator), mDNS scoping, the
-`en_US.UTF-8` locale, the `dancam-ap` access-point profile (without its password),
+`en_US.UTF-8` locale, the commissioned `dancam-ap` access-point profile,
 the `dancam` service user's `video`-group membership, `/persist` and `/data` mounts,
 persistent journald backed by `/persist/journal`, recording-namespace ownership,
 the tracked service unit and camera process, kernel
@@ -206,9 +143,10 @@ writeback clamps, weekly `fstrim.timer`, and the on-board hardware watchdog -- i
 provisioned declaratively with Ansible. The development entry playbook and its roles
 (`raspi/ansible/development.yml`) are the source of truth for that state; the *why* behind each
 choice lives in its task comments (see also the
-[provisioning design](../design/pi/provisioning.md)). Run it from the
-repo root **over home Wi-Fi** -- it needs internet for apt, and the Pi's AP has no
-upstream:
+[provisioning design](../design/pi/provisioning.md)). A generated card already has
+this state and can go directly to deploy. Re-run live provisioning only for drift
+repair, from the repo root **over home Wi-Fi** -- it needs internet for apt, and the
+Pi's AP has no upstream:
 
 ```sh
 just raspi-provision          # converge the Pi; reboots itself if a task needs it
@@ -228,10 +166,10 @@ just raspi-provision-lint     # --syntax-check + ansible-lint, hardware-free
 ```
 
 Re-running is idempotent: a converged Pi reports `changed=0` and does not reboot. The
-playbook now fails fast on pre-`dune` cards that do not expose
-`/dev/disk/by-label/dancam-data`; reflash and rerun section 2 before provisioning. The
-one piece the playbook deliberately leaves unset is the AP password -- that is a
-one-time manual step in section 7, so the secret never enters the repo.
+playbook fails fast on legacy cards that do not expose
+`/dev/disk/by-label/dancam-data`; create a new card with `just raspi-flash dev`.
+The playbook preserves the commissioned AP password, so the secret never enters the
+repository or Ansible inputs.
 
 Two of these -- persistent journald and the hardware watchdog -- are the freeze-
 recovery layer from the
@@ -275,9 +213,9 @@ A watchdog reboot recovers the *service*, not the recording: the recorder comes 
 `curl -s http://dancam.local:8080/v1/status` showing `recorder.phase` `idle` is
 expected, not a failure.
 
-## 5. Enable the camera (IMX708)
+## Enable the camera (IMX708)
 
-Provisioning (section 4) turned off `camera_auto_detect` and loaded the in-kernel
+Provisioning turned off `camera_auto_detect` and loaded the in-kernel
 `dtoverlay=imx708` in `/boot/firmware/config.txt`, then rebooted to apply it (the why
 -- not an official module, in-kernel overlay survives `apt upgrade` unlike Arducam's
 prebuilt-driver script -- lives in the playbook task comments). SSH back in and
@@ -296,54 +234,26 @@ Optionally pull the image to the Mac to eyeball focus/orientation:
 scp -i ~/.ssh/<your-key> <your-username>@dancam.local:/tmp/test.jpg ~/Desktop/dancam-test.jpg
 ```
 
-## 6. Verify the camera process dependencies
+## Verify the camera process dependencies
 
 The production camera owner is a Python Picamera2 subprocess supervised by the Rust
-service. Provisioning (section 4) installed Picamera2 and PyAV from apt, not pip, so
+service. Provisioning installed Picamera2 and PyAV from apt, not pip, so
 they match the Raspberry Pi OS libcamera/libav stack and omit desktop GUI recommends.
 Confirm the exact deployed interpreter initializes both dependencies -- the camera
-overlay from section 5 must already be enabled before the camera open path is useful:
+camera overlay must already be enabled before the camera open path is useful:
 
 ```sh
 python3 -c "import av; from picamera2 import Picamera2; av.Packet(b''); print('ok')"
 sudo -u dancam python3 -c "import av; from picamera2 import Picamera2; av.Packet(b''); print('ok')"
 ```
 
-## 7. Create the dev access point profile
+## Switch a development card to its access point
 
-Provisioning (section 4) created the `dancam-ap` NetworkManager hotspot profile --
-SSID `dancam-dev`, WPA2-AES (RSN/CCMP, no TKIP), channel 1, `10.42.0.1/24`, shared
-IPv4, `connection.autoconnect no` -- with one field left unset on purpose: the WPA2
-password. Set it once by hand on the Pi so the secret never lands in the repo, the
-playbook, or shell history (the `read -rsp` prompt keeps it out of history, and
-re-running the playbook does not disturb it):
-
-```sh
-read -rsp 'dancam-dev WPA2 PSK: ' DANCAM_AP_PSK; echo
-sudo nmcli connection modify dancam-ap 802-11-wireless-security.psk "$DANCAM_AP_PSK"
-unset DANCAM_AP_PSK
-```
-
-A cipher or PSK change only takes effect the next time `dancam-ap` is activated. If
-the AP is already up, run `sudo nmcli connection down dancam-ap` and then
-`sudo nmcli connection up dancam-ap` (or `sudo nmcli device reapply wlan0`); otherwise
-the live beacon can still advertise the old profile and iOS may keep showing the
-weak-security warning.
-
-Before flipping the Pi into AP mode over SSH, always arm a systemd-owned return
-timer. Replace the home profile name if `nmcli connection show` reports a
-different one:
-
-```sh
-HOME_WIFI_CONNECTION="${DANCAM_HOME_WIFI:-dancam-home}"
-sudo systemd-run --unit=dancam-restore-home-wifi --on-active=5min /usr/bin/nmcli connection up "$HOME_WIFI_CONNECTION"
-sudo nmcli connection up dancam-ap
-```
-
-Shortcut: from the Mac (with the Pi still on home Wi-Fi), `just raspi-ap [minutes]`
-(default 5) does the arm + flip in one step and then prints a local countdown to the
-revert. It differs from the manual block above in one way: it schedules the AP-up as a
-detached transient `dancam-go-ap` unit firing ~2s out, so the SSH session returns
+First boot creates `dancam-ap` with SSID `dancam-dev`, the configured WPA2 password,
+channel 1, gateway `10.42.0.1`, and autoconnect disabled. From the Mac while the Pi is
+still on home Wi-Fi, `just raspi-ap [minutes]` (default 5) arms a systemd-owned return
+to fixed profile `dancam-home`, then schedules the AP-up as a detached transient unit
+about 2 seconds later. The SSH session returns
 cleanly before Wi-Fi drops instead of dying mid-command. The countdown runs on the Mac
 (which can no longer see the Pi once the AP is up), so it is a local estimate of the
 armed duration, not a probe of the Pi. Generated cards use the fixed `dancam-home`
@@ -361,7 +271,7 @@ not autoconnect. Do not join `dancam-dev` from the Mac during an active remote
 LLM session if the Mac's only internet path is your home Wi-Fi; use the iPhone for
 AP testing.
 
-## 8. Deploy and run the service
+## Deploy and run the service
 
 Cross-compile and deploy from the Mac in one command (Nix flake + `deploy.sh`;
 details in [`AGENTS.md`](../design/pi/service.md) "Rust dev loop"). From the repo
@@ -371,8 +281,8 @@ root:
 just raspi-deploy   # wraps ./raspi/deploy.sh
 ```
 
-Provision first: the unit runs as `User=dancam`, and `just raspi-provision`
-creates that system user before deploy starts the service.
+Generated cards already contain the fixed `dancam` service user and tracked unit.
+Legacy cards must be provisioned before deploy starts the service.
 
 This ships a static aarch64 binary and the camera process
 (`/usr/local/lib/dancam/camera.py`), restarts the Ansible-installed
@@ -612,7 +522,7 @@ the control on the sensor subdevice, restarts the service, and waits until
 2304x1296@30, which still covers the 1080p30 recording ceiling. The setting resets
 to off when the Pi reboots.
 
-## 9. Smoke-test the AP path
+## Smoke-test the AP path
 
 With the service deployed, arm the home-Wi-Fi restore timer, flip the AP up, join
 `dancam-dev` from the iPhone, and fetch:
@@ -643,11 +553,11 @@ that the camera feed is moving. Stop then Start should resume the stream.
 In the 2026-06-25 `fox` spike, this worked over `dancam-dev` with cellular left on; no
 captive sheet was observed.
 
-## 10. Build a production card
+## Build a production release
 
 Do not convert a writable development card into production posture. Production cards
-come only from `just raspi-image` followed by the authenticated `just raspi-flash`
-flow in section 1. The signed image owns read-only root and boot, persistent state,
+come only from `just raspi-image` followed by `just raspi-flash production`. The
+signed image owns read-only root and boot, persistent state,
 offline commissioning, and the production AP; development cards remain writable.
 The image already contains the `dancam`-owned recording namespace. Commissioning
 validates it, grows p4, mints the storage generation and per-card identity, and admits

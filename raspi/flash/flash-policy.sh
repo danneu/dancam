@@ -7,6 +7,23 @@ select_latest_release_manifest() {
   find "$release_dir" -name 'dancam-*.img.zst.manifest.json' -type f -print | LC_ALL=C sort | tail -1
 }
 
+select_only_development_manifest() {
+  local development_dir=$1 manifest count
+  manifest=$(find "$development_dir" \
+    -name 'dancam-*.img.zst.manifest.json' -type f -print)
+  count=$(printf '%s\n' "$manifest" | sed '/^$/d' | wc -l | tr -d ' ')
+  [ "$count" -eq 1 ] || return 1
+  printf '%s\n' "$manifest"
+}
+
+flash_profile() {
+  case "$1" in
+    production) printf 'production\n' ;;
+    dev) printf 'development\n' ;;
+    *) return 1 ;;
+  esac
+}
+
 manifest_raw_size() {
   local manifest=$1 raw_size
   raw_size=$(/usr/bin/plutil -extract raw_size raw -o - "$manifest") || return 1

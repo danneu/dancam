@@ -82,6 +82,7 @@ rm "$TMP/checkout/secrets/release.key"
 bash "$TMP/checkout/raspi/image/build-orbstack.sh" development
 grep -Fq 'nix --extra-experimental-features nix-command\ flakes develop -c just _raspi-image-native development' \
   "$ORB_TEST_LOG"
+grep -Eq 'DANCAM_IMAGE_OUT=.*/checkout/\.dancam-development-image' "$ORB_TEST_LOG"
 if grep -q 'DANCAM_IMAGE_SIGNING_KEY=' "$ORB_TEST_LOG"; then
   echo "development build received the production signing key" >&2
   exit 1

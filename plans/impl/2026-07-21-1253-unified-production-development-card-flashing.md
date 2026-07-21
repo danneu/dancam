@@ -113,10 +113,17 @@ names are fixed as `dancam-home` and `dancam-ap`.
 
 - [x] 1. Build and verify generic writable development images
 - [x] 2. Personalize and commission development cards on first boot
-- [ ] 3. Unify profile-explicit flashing and retire manual card creation
+- [x] 3. Unify profile-explicit flashing and retire manual card creation
 
 ## Implementation notes
 
 - Development commissioning generates fresh SSH host keys after the generic image
   verifier requires them to be absent, so cached development artifacts cannot give
   multiple cards the same SSH server identity.
+
+## Follow Up
+
+- Run the real-card acceptance pass in `docs/setup/pi-runbook.md` with a newly
+  flashed development card: confirm first-boot home Wi-Fi, key-only SSH, passwordless
+  sudo, mounts and geometry, recording readiness, deploy, zero-drift provisioning,
+  AP switch and revert, and return to home Wi-Fi after a power cycle.

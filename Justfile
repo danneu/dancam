@@ -37,20 +37,21 @@ raspi-image-builder-test:
     bash raspi/image/production-offline-policy-test.sh
     bash raspi/image/verify-image-test.sh
 
-# Authenticate, personalize, verify, and eject a removable production card.
-# With no argument, flash the newest released manifest under dist/.
-raspi-flash manifest='':
-    nix develop -c env -u DEVELOPER_DIR -u SDKROOT bash raspi/flash/flash.sh {{quote(manifest)}}
+# Build/authenticate, personalize, verify, and eject one removable card. The profile
+# is required: production accepts an optional manifest; dev always builds fresh.
+raspi-flash profile manifest='':
+    nix develop -c env -u DEVELOPER_DIR -u SDKROOT bash raspi/flash/flash.sh {{quote(profile)}} {{quote(manifest)}}
 
 # Resume a card whose image write completed but whose readback or personalization
 # was interrupted. Verification must match before the card is changed further.
-raspi-flash-resume manifest='':
-    DANCAM_FLASH_RESUME=1 nix develop -c env -u DEVELOPER_DIR -u SDKROOT bash raspi/flash/flash.sh {{quote(manifest)}}
+raspi-flash-resume profile manifest='':
+    DANCAM_FLASH_RESUME=1 nix develop -c env -u DEVELOPER_DIR -u SDKROOT bash raspi/flash/flash.sh {{quote(profile)}} {{quote(manifest)}}
 
 # Hardware-free target eligibility and exact-confirmation regression.
 raspi-flash-test:
     bash raspi/flash/flash-policy-test.sh
     bash raspi/flash/personalization-test.sh
+    bash raspi/flash/flash-test.sh
 
 # Hardware-free geometry and replay regression for first-boot commissioning.
 raspi-commission-test:
@@ -140,21 +141,6 @@ raspi-reset-data:
 # Hardware-free behavioral regression for the recording-data reset.
 raspi-reset-data-test:
     bash raspi/scripts/reset-data-test.sh
-
-# Hardware-free regression for the SD-card partition math.
-raspi-partition-test:
-    bash raspi/scripts/partition-card-test.sh
-
-# Copy the SD-card partitioner to the Pi and run it with sudo.
-raspi-partition:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    HOST="${DANCAM_HOST:-pi@dancam.local}"
-    SSH_KEY="${DANCAM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
-    SSH_KEY="${SSH_KEY/#\~/$HOME}"
-    scp -i "$SSH_KEY" raspi/scripts/partition-card.sh "$HOST:/tmp/dancam-partition-card.sh"
-    scp -i "$SSH_KEY" raspi/system/card-layout.env "$HOST:/tmp/card-layout.env"
-    ssh -t -i "$SSH_KEY" "$HOST" "sudo bash /tmp/dancam-partition-card.sh"
 
 # Toggle IMX708 on-sensor HDR while the camera is closed, then restart dancam and
 # wait for recording readiness. HDR caps the sensor at 2304x1296@30 (still enough

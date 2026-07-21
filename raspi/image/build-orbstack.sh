@@ -58,7 +58,13 @@ if [ "$PROFILE" = production ]; then
     nix --extra-experimental-features 'nix-command flakes' \
     develop -c just _raspi-image-native production
 else
+  DEVELOPMENT_OUT=${DANCAM_IMAGE_OUT:-"$ROOT/.dancam-development-image"}
+  case "$DEVELOPMENT_OUT" in
+    "$ROOT"/*) ;;
+    *) die "development image output must be inside the shared checkout" ;;
+  esac
   orbctl run --machine "$MACHINE" --path --workdir "$ROOT" \
+    env "DANCAM_IMAGE_OUT=$DEVELOPMENT_OUT" \
     nix --extra-experimental-features 'nix-command flakes' \
     develop -c just _raspi-image-native development
 fi

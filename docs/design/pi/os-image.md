@@ -206,9 +206,9 @@ versions use UTC second resolution, the repository revision, and a fixed-width
 collision discriminator. The builder atomically claims that release basename before
 assembly, so concurrent builds from the same revision cannot interleave outputs and
 no build replaces an existing release. The lexical format sorts after the legacy
-same-day format, preserving newest-release selection for `just raspi-flash`.
-The image builder, first-boot commissioner, Mac eligibility policy, and writable
-development partitioner all consume `raspi/system/card-layout.env`, so geometry,
+same-day format, preserving newest-release selection for `just raspi-flash production`.
+The image builder, first-boot commissioner, and Mac eligibility policy all consume
+`raspi/system/card-layout.env`, so geometry,
 labels, minimum capacity, and the reserved-tail boundary have one definition.
 The publisher signs that manifest with the DanCam minisign key. The manifest records
 both compressed and raw digests, raw size, OS release and digest, repository revision,
@@ -224,16 +224,21 @@ effective hostname, packages, units, camera and regulatory configuration, write 
 mount posture, recording namespace, and absence of secrets or admission state.
 Inventory, compression, manifest creation, and signing occur only after those gates.
 
-`just raspi-flash` is the native Mac consumer. It authenticates the manifest and
-compressed image before media discovery, admits only writable removable whole disks
-of at least 32 GB outside system storage, and binds typed confirmation to the I/O
-Registry media identity. It verifies the raw image before personalization, writes a
-versioned envelope to the FAT boot partition, verifies that envelope after remount,
-and reports success only after eject. The Mac transfer holds an exclusive Disk
+`just raspi-flash production [manifest]` and `just raspi-flash dev` are the native
+Mac consumers. The required profile is resolved before any build or media discovery.
+Production authenticates the selected manifest and compressed image; development
+validates credentials, builds a fresh unsigned generic artifact from current tracked
+content in the controlled ARM64 builder, and accepts no manifest argument. Both admit
+only writable removable whole disks of at least 32 GB outside system storage and bind
+typed confirmation to the I/O Registry media identity. They verify the raw image
+before personalization, write a profile-specific image-bound envelope to the FAT boot
+partition, verify it after remount, and report success only after eject. The Mac
+transfer holds an exclusive Disk
 Arbitration claim across writing and readback so the OS cannot auto-mount and mutate
 the FAT boot volume between those phases. An explicitly requested interrupted-write
-resume compares every authenticated image chunk, retains up to 64 MiB of differing
-chunks in memory, repairs and rereads only those chunks, and refuses broader repair.
+production resume compares every authenticated image chunk, retains up to 64 MiB of
+differing chunks in memory, repairs and rereads only those chunks, and refuses broader
+repair. Development always restarts with a fresh build and complete write.
 
 Image assembly preserves the base Raspberry Pi OS DOS disk identifier when it
 rewrites the partition geometry and asserts that the kernel's root `PARTUUID`
@@ -476,3 +481,16 @@ because it makes network access depend on the very account and home profile bein
 created. The small FAT envelope is accepted as transient trusted-card state and is
 removed after successful development commissioning; its deletion is not secure
 erasure.
+
+### 2026-07-21 -- Require a profile at the unified card writer
+
+Card creation now enters through `just raspi-flash production [manifest]` or
+`just raspi-flash dev`. Both profiles share removable-media admission, complete
+write verification, personalization readback, and ejection, while keeping their trust
+boundaries distinct: production consumes signed releases and development builds fresh
+tracked content before media discovery. Bare and ambiguous invocations were rejected
+because choosing the wrong image posture must not be a default.
+
+Development resume and the Raspberry Pi Imager plus live-partition path were removed.
+The former could reuse a stale local artifact after source or credentials changed; the
+latter made a live card rewrite its own layout and duplicated the controlled builder.

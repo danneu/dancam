@@ -16,7 +16,7 @@ policy; [networking](networking.md) owns the AP and mDNS behavior; and
 
 ## Ownership boundary
 
-The repository has seven distinct configuration owners:
+The repository has six distinct configuration owners:
 
 - `raspi/ansible/development.yml` converges writable cards over SSH. The
   `system_common` role owns shared machine identity, configuration, service unit,
@@ -40,8 +40,6 @@ The repository has seven distinct configuration owners:
 - `raspi/deploy.sh` owns the cross-built service binary, camera-process refresh,
   and fast restart loop. The tracked systemd unit is Ansible-owned, so unit changes
   require provisioning before deploy.
-- `raspi/scripts/partition-card.sh` owns SD-card geometry and filesystem
-  creation. The playbook owns the resulting mounts and directory ownership.
 - The [Pi setup runbook](../../setup/pi-runbook.md) owns human and runtime
   operations that cannot be expressed as converged system state: flashing,
   first boot, smoke tests, safe AP toggling,
@@ -78,8 +76,8 @@ when mDNS is unreliable.
 
 The playbook fails before mutating package or configuration state when the card
 does not expose the required `dancam-data` partition label. Old expanded-root
-cards cannot be shrunk into the current layout and must be reflashed and
-partitioned first.
+cards cannot be shrunk into the current layout and must be replaced with a freshly
+built development card.
 
 An apt full-upgrade notifies the reboot handler whenever any package changes,
 not only for a kernel or firmware upgrade. The unconditional-on-change rule is
@@ -133,7 +131,8 @@ not need an interactive password. The camera daemon does not inherit that identi
 Ansible creates a project-owned, non-login `dancam`
 system user and grants it `video` access for the camera and DMA devices. The
 static unit declares `User=dancam`, and the playbook creates the recording namespace
-owned by that user. Provisioning therefore precedes the first deploy on a fresh card.
+owned by that user. Offline image convergence therefore makes a generated card ready
+for its first deploy; live provisioning is only a repair path.
 
 Only per-machine connection settings are configurable. The gitignored `.env`
 supplies:
@@ -385,3 +384,16 @@ that would contaminate the reusable artifact and its convergence logs. Keeping t
 old password prompt was also rejected: a generated key-only account has no login
 password to supply, so its per-account sudoers grant is the durable automation
 boundary.
+
+### 2026-07-21 -- Make card creation profile-explicit
+
+The Mac flash entry point now requires production or development explicitly.
+Development validates its local login and network inputs, then invokes the controlled
+offline builder with current tracked source before it asks which removable disk to
+erase. The resulting card is already converged and commissioned enough for the normal
+deploy and optional live drift-repair loop.
+
+The Raspberry Pi Imager, live partitioner, and manual AP-password bootstrap were
+removed from current operations because they split ownership among an external GUI,
+a mutable running card, and hand-entered state. Live Ansible remains available for
+repair, not card construction.
