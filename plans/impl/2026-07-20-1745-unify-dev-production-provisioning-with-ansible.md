@@ -181,3 +181,7 @@ temporary helpers are removed.
 - The shared package catalog is JSON, which is also valid as an Ansible vars file.
   This lets the independent shell verifier read the exact production pins with
   `jq` instead of duplicating them or adding a second YAML parser to the builder.
+- Clean candidate `b3df1b5e2f1f7f6abd47c0ce1e8fcf78623deb10` completed a real
+  `just raspi-image` build. The second production play reported `changed=0`,
+  independent image inspection passed, and the signed manifest and its artifact
+  and package-inventory hashes verified against `raspi/image/release.pub`.
