@@ -684,6 +684,53 @@ struct HomeViewControllerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func finalizedRecordingClearsPillWhenStopReconfigureIsSuperseded() async throws {
+        let loader = GatedThumbnailLoader()
+        let finalizedClip = Clip(
+            id: 24,
+            startMs: nil,
+            durMs: 9_000,
+            bytes: 2_400,
+            locked: false,
+            etag: "24-2400",
+            timeApproximate: true,
+            bootTag: "boot-a",
+            session: 7
+        )
+        let world = CameraSamples.world(
+            phase: .recording,
+            currentSegment: RecorderSegment(id: 24, durMs: 9_000),
+            bootTag: "boot-a"
+        )
+        let (controller, store) = makeControllerAndStore(
+            clips: [],
+            loader: loader.loader(),
+            world: world,
+            recording: .recording
+        )
+        let window = try embed(controller)
+        defer { window.isHidden = true }
+
+        store.send(.event(.clipFinalized(finalizedClip)))
+        store.send(.event(.recordingStopped(session: 7, atMs: 62_000)))
+        NotificationCenter.default.post(
+            name: UIApplication.significantTimeChangeNotification,
+            object: nil
+        )
+
+        try await waitUntil {
+            guard let cell = controller.recordingThumbnailCellForTesting(
+                recording: RecordingID(bootTag: "boot-a", session: 7)
+            ) else { return false }
+            return cell.isRecordingPillVisibleForTesting == false &&
+                cell.subtitleTextForTesting == "9s · 1 clip" &&
+                cell.displayedImageForTesting != nil
+        }
+
+        #expect(loader.requestCount(ClipThumbnailIdentity(finalizedClip)) == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func recordingCardGraysWhenLinkDrops() async throws {
         let world = CameraSamples.world(
             phase: .recording,

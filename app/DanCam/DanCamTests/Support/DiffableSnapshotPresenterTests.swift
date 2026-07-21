@@ -151,6 +151,116 @@ struct DiffableSnapshotPresenterTests {
         #expect(commitCount == 1)
     }
 
+    @Test func newerSnapshotCarriesSupersededReconfigurationUntilCommit() throws {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = try attach(view)
+        defer { window.isHidden = true }
+        var appliedSnapshots: [NSDiffableDataSourceSnapshot<Int, Int>] = []
+        var applyCompletions: [() -> Void] = []
+        var commitCount = 0
+        let presenter = DiffableSnapshotPresenter<Int, Int>(
+            listView: view,
+            apply: { snapshot, _, completion in
+                appliedSnapshots.append(snapshot)
+                applyCompletions.append(completion)
+            },
+            applyUsingReloadData: { _, _ in
+                Issue.record("Ready submissions should not use reload-data.")
+            },
+            didCommitLatest: { commitCount += 1 }
+        )
+
+        presenter.setActive(true)
+        presenter.submit(snapshot(items: [1]))
+        presenter.submit(snapshot(items: [1], reconfigure: [1]))
+        presenter.submit(snapshot(items: [1]))
+
+        let firstCompletion = try #require(applyCompletions.first)
+        firstCompletion()
+
+        #expect(appliedSnapshots.count == 2)
+        #expect(Set(appliedSnapshots[1].reconfiguredItemIdentifiers) == [1])
+        #expect(commitCount == 0)
+
+        let latestCompletion = try #require(applyCompletions.last)
+        latestCompletion()
+
+        #expect(commitCount == 1)
+
+        presenter.submit(snapshot(items: [1]))
+        #expect(appliedSnapshots.count == 3)
+        #expect(appliedSnapshots[2].reconfiguredItemIdentifiers.isEmpty)
+    }
+
+    @Test func temporaryRemovalDoesNotDiscardPendingReconfiguration() throws {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = try attach(view)
+        defer { window.isHidden = true }
+        var appliedSnapshots: [NSDiffableDataSourceSnapshot<Int, Int>] = []
+        var applyCompletions: [() -> Void] = []
+        let presenter = DiffableSnapshotPresenter<Int, Int>(
+            listView: view,
+            apply: { snapshot, _, completion in
+                appliedSnapshots.append(snapshot)
+                applyCompletions.append(completion)
+            },
+            applyUsingReloadData: { _, _ in
+                Issue.record("Ready submissions should not use reload-data.")
+            },
+            didCommitLatest: {}
+        )
+
+        presenter.setActive(true)
+        presenter.submit(snapshot(items: [1]))
+        let initialCompletion = try #require(applyCompletions.first)
+        initialCompletion()
+
+        presenter.submit(snapshot(items: [1, 2]))
+        presenter.submit(snapshot(items: [1, 2], reconfigure: [1]))
+        presenter.submit(snapshot(items: [2]))
+        presenter.submit(snapshot(items: [1, 2]))
+
+        let blockerCompletion = try #require(applyCompletions.last)
+        blockerCompletion()
+
+        #expect(appliedSnapshots.count == 3)
+        #expect(Set(appliedSnapshots[2].reconfiguredItemIdentifiers) == [1])
+    }
+
+    @Test func committedRemovalClearsObsoleteReconfiguration() throws {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = try attach(view)
+        defer { window.isHidden = true }
+        var appliedSnapshots: [NSDiffableDataSourceSnapshot<Int, Int>] = []
+        var applyCompletions: [() -> Void] = []
+        let presenter = DiffableSnapshotPresenter<Int, Int>(
+            listView: view,
+            apply: { snapshot, _, completion in
+                appliedSnapshots.append(snapshot)
+                applyCompletions.append(completion)
+            },
+            applyUsingReloadData: { _, _ in
+                Issue.record("Ready submissions should not use reload-data.")
+            },
+            didCommitLatest: {}
+        )
+
+        presenter.setActive(true)
+        presenter.submit(snapshot(items: [1]))
+        applyCompletions[0]()
+
+        presenter.submit(snapshot(items: [1, 2]))
+        presenter.submit(snapshot(items: [1, 2], reconfigure: [1]))
+        presenter.submit(snapshot(items: [2]))
+        applyCompletions[1]()
+        applyCompletions[2]()
+
+        presenter.submit(snapshot(items: [1, 2]))
+
+        #expect(appliedSnapshots.count == 4)
+        #expect(appliedSnapshots[3].reconfiguredItemIdentifiers.isEmpty)
+    }
+
     @Test func reactivationImmediatelyRepairsInterruptedApplyAndIgnoresStaleCallback() throws {
         let view = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         let window = try attach(view)
@@ -190,6 +300,44 @@ struct DiffableSnapshotPresenterTests {
         repairCompletion()
 
         #expect(commitCount == 1)
+    }
+
+    @Test func reloadRepairSatisfiesPendingReconfigurationDespiteStaleCallback() throws {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = try attach(view)
+        defer { window.isHidden = true }
+        var diffSnapshots: [NSDiffableDataSourceSnapshot<Int, Int>] = []
+        var diffCompletions: [() -> Void] = []
+        var reloadSnapshots: [NSDiffableDataSourceSnapshot<Int, Int>] = []
+        var reloadCompletions: [() -> Void] = []
+        let presenter = DiffableSnapshotPresenter<Int, Int>(
+            listView: view,
+            apply: { snapshot, _, completion in
+                diffSnapshots.append(snapshot)
+                diffCompletions.append(completion)
+            },
+            applyUsingReloadData: { snapshot, completion in
+                reloadSnapshots.append(snapshot)
+                reloadCompletions.append(completion)
+            },
+            didCommitLatest: {}
+        )
+
+        presenter.setActive(true)
+        presenter.submit(snapshot(items: [1]))
+        presenter.setActive(false)
+        presenter.submit(snapshot(items: [1], reconfigure: [1]))
+        presenter.submit(snapshot(items: [1]))
+        presenter.setActive(true)
+
+        #expect(reloadSnapshots.count == 1)
+        diffCompletions[0]()
+        reloadCompletions[0]()
+
+        presenter.submit(snapshot(items: [1]))
+
+        #expect(diffSnapshots.count == 2)
+        #expect(diffSnapshots[1].reconfiguredItemIdentifiers.isEmpty)
     }
 
     @Test func commitHandlerMaySynchronouslySubmitAnotherSnapshot() throws {
@@ -291,10 +439,14 @@ struct DiffableSnapshotPresenterTests {
         #expect(reloadCount == 0)
     }
 
-    private func snapshot(items: [Int]) -> NSDiffableDataSourceSnapshot<Int, Int> {
+    private func snapshot(
+        items: [Int],
+        reconfigure: [Int] = []
+    ) -> NSDiffableDataSourceSnapshot<Int, Int> {
         var snapshot = NSDiffableDataSourceSnapshot<Int, Int>()
         snapshot.appendSections([0])
         snapshot.appendItems(items)
+        snapshot.reconfigureItems(reconfigure)
         return snapshot
     }
 

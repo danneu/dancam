@@ -23,6 +23,8 @@ final class DiffableSnapshotPresenter<Section: Hashable & Sendable, Item: Hashab
     private var isApplying = false
     private var applySequence = 0
     private var currentApplyID: Int?
+    private var presentedItems = Set<Item>()
+    private var pendingReconfiguredItems = Set<Item>()
 
     init(
         dataSource: UITableViewDiffableDataSource<Section, Item>,
@@ -70,6 +72,7 @@ final class DiffableSnapshotPresenter<Section: Hashable & Sendable, Item: Hashab
         _ snapshot: Snapshot,
         animatingDifferences: Bool = true
     ) {
+        pendingReconfiguredItems.formUnion(snapshot.reconfiguredItemIdentifiers)
         nextRevision += 1
         desiredSubmission = Submission(
             revision: nextRevision,
@@ -120,11 +123,15 @@ final class DiffableSnapshotPresenter<Section: Hashable & Sendable, Item: Hashab
         applySequence += 1
         let applyID = applySequence
         currentApplyID = applyID
+        let snapshot = useReload
+            ? submission.snapshot
+            : carryingPendingReconfigurations(in: submission.snapshot)
 
         let didApply = { [weak self] in
             guard let self, self.currentApplyID == applyID else { return }
             self.currentApplyID = nil
             self.isApplying = false
+            self.presentedItems = Set(snapshot.itemIdentifiers)
 
             guard self.isReady else {
                 self.requiresReload = true
@@ -137,14 +144,31 @@ final class DiffableSnapshotPresenter<Section: Hashable & Sendable, Item: Hashab
             }
 
             self.desiredSubmission = nil
+            self.pendingReconfiguredItems.removeAll()
             self.didCommitLatest()
             self.applyDesiredIfReady()
         }
 
         if useReload {
-            applyUsingReloadData(submission.snapshot, didApply)
+            applyUsingReloadData(snapshot, didApply)
         } else {
-            apply(submission.snapshot, submission.animatingDifferences, didApply)
+            apply(snapshot, submission.animatingDifferences, didApply)
         }
+    }
+
+    private func carryingPendingReconfigurations(in snapshot: Snapshot) -> Snapshot {
+        let reconfigured = Set(snapshot.reconfiguredItemIdentifiers)
+        let reloaded = Set(snapshot.reloadedItemIdentifiers)
+        let carried = snapshot.itemIdentifiers.filter {
+            presentedItems.contains($0) &&
+                pendingReconfiguredItems.contains($0) &&
+                reconfigured.contains($0) == false &&
+                reloaded.contains($0) == false
+        }
+        guard carried.isEmpty == false else { return snapshot }
+
+        var snapshot = snapshot
+        snapshot.reconfigureItems(carried)
+        return snapshot
     }
 }

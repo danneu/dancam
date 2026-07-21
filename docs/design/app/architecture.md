@@ -224,8 +224,11 @@ Content is never used as identity, and unrelated domains do not trigger table re
 
 Home submits `reconfigureItems`, not `reloadItems`, for changed rows. This configures a
 visible cell in place, preserving an already-painted same-identity thumbnail and scroll
-position. The cell provider captures its controller weakly. Thumbnail prefetch handles
-are keyed by clip identity (`id` plus `etag`), not index path, and a new row projection
+position. Reconfiguration markers are presentation work rather than declarative
+snapshot structure, so the shared snapshot presenter carries them across coalesced
+submissions until the latest presentation commits or a reload-data repair rebuilds the
+cells. The cell provider captures its controller weakly. Thumbnail prefetch handles are
+keyed by clip identity (`id` plus `etag`), not index path, and a new row projection
 prunes only identities that actually departed.
 
 The exact Home grouping and row identities can evolve with the browsing model. The
@@ -408,3 +411,18 @@ main-actor store free of filesystem and media pipeline state.
 Scene-owned coordinators were rejected because phone and CarPlay or incident work can
 overlap without sharing a scene. Store-owned task dictionaries were rejected because
 viewer lifetime and artifact leasing are not reducer state.
+
+### 2026-07-21: Preserve content invalidations while coalescing snapshots
+
+The snapshot presenter coalesced structural snapshots to the newest desired state, but
+treated `reconfigureItems` markers as if they were part of that declarative state. A
+newer same-identity snapshot could therefore replace the only pending marker after the
+controller advanced its diff baseline. The model was current while a visible cell kept
+old content, observed as a completed recording card retaining its REC marker until Home
+reappeared and configured the cell again.
+
+The presenter now retains reconfiguration obligations until the latest presentation
+commits. A reload-data lifecycle repair also satisfies them because it rebuilds every
+cell. Directly hiding Home's badge was rejected because other same-identity content
+could still freeze. Reloading the list or making content part of identity was rejected
+because either approach discards stable cells, thumbnails, and scroll position.
